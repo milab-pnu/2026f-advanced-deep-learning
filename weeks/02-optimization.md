@@ -8,7 +8,9 @@ order: 0
 
 파라미터 갱신 규칙:
 
-$$\theta \leftarrow \theta - \eta \, \nabla_\theta \mathcal{L}(\theta)$$
+$$
+\theta \leftarrow \theta - \eta \, \nabla_\theta \mathcal{L}(\theta)
+$$
 
 - $\eta$: 학습률(learning rate)
 - 미니배치 SGD, 모멘텀, Adam 으로 확장
