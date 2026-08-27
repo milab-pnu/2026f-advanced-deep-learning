@@ -45,20 +45,13 @@ Transformer 의 출발점은 이것이다: **recurrence 를 완전히 버리고,
 Transformer 도 encoder-decoder 다. 다만 두 스택 모두 recurrence 나 convolution 없이
 **attention 과 position-wise feed-forward 두 종류의 연산만** 쌓는다.
 
-- **Encoder**: 동일한 레이어 $N=6$ 개. 각 레이어는 (1) multi-head **self-attention** +
-  (2) position-wise **feed-forward network** 두 sub-layer 로 구성. source 시퀀스를 받아
-  같은 길이의 표현 시퀀스 $z_1, \dots, z_n$ 을 출력한다.
+- **Encoder**: 동일한 구조의 레이어 $N=6$ 개.<Sidenote>"동일한 레이어"는 구조가 같다는 뜻이지 가중치를 공유한다는 뜻이 아니다. 6개 레이어는 각자 별도의 파라미터를 가진다.</Sidenote> 각 레이어는 (1) multi-head **self-attention** + (2) position-wise **feed-forward network** 두 sub-layer 로 구성. source 시퀀스를 받아 같은 길이의 표현 시퀀스 $z_1, \dots, z_n$ 을 출력한다.
 - **Decoder**: 역시 $N=6$ 개 레이어. encoder 레이어에 sub-layer 하나가 추가된다 —
   encoder 출력을 향한 **cross-attention**. 또한 decoder 의 self-attention 은 미래
   토큰을 못 보도록 **masking** 된다(아래 5절).
 - 모든 sub-layer 출력에는 **residual connection** 과 **layer normalization** 이 붙는다.
 - 임베딩 차원은 전 구간에서 $d_{\text{model}} = 512$ 로 고정된다 (residual 을 더하려면
   차원이 같아야 한다).
-
-<Sidenote>
-"동일한 레이어를 쌓는다"는 것은 구조가 같다는 뜻이지 가중치를 공유한다는 뜻이 아니다.
-6개 레이어는 각자 별도의 파라미터를 가진다.
-</Sidenote>
 
 이제 핵심 부품인 attention 부터 본다.
 
@@ -257,7 +250,7 @@ PE_{(pos,\, 2i)} = \sin\!\left( \frac{pos}{10000^{2i/d_{\text{model}}}} \right),
 PE_{(pos,\, 2i+1)} = \cos\!\left( \frac{pos}{10000^{2i/d_{\text{model}}}} \right)
 $$
 
-이 벡터를 토큰 임베딩에 **더한다**.
+이 벡터를 토큰 임베딩에 **더한다**.<Sidenote>논문은 학습되는 positional embedding 도 실험했고 성능은 거의 같았다. 정현파를 택한 이유는 학습 때 본 것보다 긴 시퀀스로도 외삽(extrapolate)될 가능성 때문이다.</Sidenote>
 
 <Callout type="intuition">
 차원마다 파장이 기하급수적으로 달라지는 정현파를 겹쳐놓은 것이다. 낮은 차원은
@@ -265,11 +258,6 @@ $$
 게다가 삼각함수 덧셈정리에 의해 $PE_{pos+k}$ 는 $PE_{pos}$ 의 **선형변환**으로
 표현된다 — 모델이 "상대 위치 $k$ 만큼 이동"을 선형 연산으로 배우기 쉽다.
 </Callout>
-
-<Sidenote>
-논문은 학습되는 positional embedding 도 실험했고 성능은 거의 같았다. 정현파를 택한
-이유는 학습 때 본 것보다 긴 시퀀스로도 외삽(extrapolate)될 가능성 때문이다.
-</Sidenote>
 
 ## 7. Position-wise Feed-Forward Network
 
@@ -327,12 +315,7 @@ y3 = LayerNorm(y2 + FFN(y2))
 1. source 토큰 → 임베딩 + positional encoding → encoder 6레이어 → $z$ (source 표현)
 2. target 토큰(shift right) → 임베딩 + positional encoding → decoder 6레이어(매
    레이어에서 $z$ 를 cross-attention 으로 참조)
-3. decoder 출력 → 임베딩 행렬과 묶인(tied) linear → softmax → 다음 토큰 분포
-
-<Sidenote>
-입력·출력 임베딩 행렬과 최종 pre-softmax linear 는 같은 가중치를 공유한다(weight
-tying). 파라미터를 아끼고 대체로 성능도 좋아진다.
-</Sidenote>
+3. decoder 출력 → 임베딩 행렬과 묶인(tied) linear → softmax → 다음 토큰 분포<Sidenote>입력·출력 임베딩 행렬과 최종 pre-softmax linear 는 같은 가중치를 공유한다(weight tying). 파라미터를 아끼고 대체로 성능도 좋아진다.</Sidenote>
 
 ## 10. 왜 되는가 — 복잡도와 경로 길이
 
