@@ -12,6 +12,7 @@ weeks:
   - { n: 1, topic: "Introduction & Course Logistics" }
   - { n: 2, topic: "Optimization for Deep Learning" }
   - { n: 3, topic: "Regularization & Generalization" }
+  - { n: 4, topic: "Convolutional Neural Networks" }
 ---
 
 ## Goals
