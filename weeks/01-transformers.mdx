@@ -122,40 +122,40 @@ $i$번째 query 에 대한 value 들의 가중 평균이다. Alammar 는 이 한
 단계(Q·K·V 만들기 → 내적으로 점수 → $\sqrt{d_k}$ 로 나누기 → softmax → value 에
 가중 → 합산)를 행렬로 압축한 것이라고 풀어 설명한다.<Cite n={4} />
 
-<figure class="lecture-figure lecture-figure--wide">
-  <svg viewBox="0 0 720 210" role="img" aria-label="Scaled dot-product attention 의 계산 흐름: Q와 K의 곱, 스케일링, softmax, 그리고 V와의 곱">
-    <rect x="10" y="80" width="70" height="36" rx="6" fill="#e2e8f0" stroke="#0f172a" stroke-width="1.5" />
-    <text x="45" y="103" text-anchor="middle" font-size="14" fill="#0f172a">Q</text>
-    <rect x="10" y="130" width="70" height="36" rx="6" fill="#e2e8f0" stroke="#0f172a" stroke-width="1.5" />
-    <text x="45" y="153" text-anchor="middle" font-size="14" fill="#0f172a">K</text>
-    <rect x="10" y="20" width="70" height="36" rx="6" fill="#e2e8f0" stroke="#0f172a" stroke-width="1.5" />
-    <text x="45" y="43" text-anchor="middle" font-size="14" fill="#0f172a">V</text>
+<figure class="lecture-figure">
+  <svg viewBox="0 0 640 220" role="img" aria-label="Scaled dot-product attention 의 계산 흐름: Q와 K의 곱, 스케일링, softmax, 그리고 V와의 곱">
+    <rect x="14" y="24" width="60" height="36" rx="7" fill="#e2e8f0" stroke="#0f172a" stroke-width="1.5" />
+    <text x="44" y="47" text-anchor="middle" font-size="16" fill="#0f172a">V</text>
+    <rect x="14" y="92" width="60" height="36" rx="7" fill="#e2e8f0" stroke="#0f172a" stroke-width="1.5" />
+    <text x="44" y="115" text-anchor="middle" font-size="16" fill="#0f172a">Q</text>
+    <rect x="14" y="150" width="60" height="36" rx="7" fill="#e2e8f0" stroke="#0f172a" stroke-width="1.5" />
+    <text x="44" y="173" text-anchor="middle" font-size="16" fill="#0f172a">K</text>
 
-    <rect x="150" y="105" width="92" height="44" rx="6" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
-    <text x="196" y="125" text-anchor="middle" font-size="12" fill="#0f172a">MatMul</text>
-    <text x="196" y="141" text-anchor="middle" font-size="11" fill="#64748b">Q Kᵀ</text>
+    <rect x="110" y="95" width="108" height="50" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
+    <text x="164" y="116" text-anchor="middle" font-size="16" fill="#0f172a">MatMul</text>
+    <text x="164" y="134" text-anchor="middle" font-size="13" fill="#64748b">Q Kᵀ</text>
 
-    <rect x="292" y="105" width="92" height="44" rx="6" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
-    <text x="338" y="125" text-anchor="middle" font-size="12" fill="#0f172a">scale</text>
-    <text x="338" y="141" text-anchor="middle" font-size="11" fill="#64748b">÷ √dₖ</text>
+    <rect x="252" y="95" width="108" height="50" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
+    <text x="306" y="116" text-anchor="middle" font-size="16" fill="#0f172a">scale</text>
+    <text x="306" y="134" text-anchor="middle" font-size="13" fill="#64748b">÷ √dₖ</text>
 
-    <rect x="434" y="105" width="92" height="44" rx="6" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
-    <text x="480" y="131" text-anchor="middle" font-size="12" fill="#0f172a">softmax</text>
+    <rect x="394" y="95" width="108" height="50" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
+    <text x="448" y="125" text-anchor="middle" font-size="16" fill="#0f172a">softmax</text>
 
-    <rect x="576" y="60" width="92" height="44" rx="6" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
-    <text x="622" y="80" text-anchor="middle" font-size="12" fill="#0f172a">MatMul</text>
-    <text x="622" y="96" text-anchor="middle" font-size="11" fill="#64748b">× V</text>
+    <rect x="520" y="64" width="108" height="50" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
+    <text x="574" y="85" text-anchor="middle" font-size="16" fill="#0f172a">MatMul</text>
+    <text x="574" y="103" text-anchor="middle" font-size="13" fill="#64748b">× V</text>
 
-    <rect x="576" y="10" width="92" height="34" rx="6" fill="#0f172a" />
-    <text x="622" y="32" text-anchor="middle" font-size="13" fill="#ffffff">output</text>
+    <rect x="520" y="16" width="108" height="34" rx="7" fill="#0f172a" />
+    <text x="574" y="38" text-anchor="middle" font-size="15" fill="#ffffff">output</text>
 
-    <line x1="80" y1="98" x2="150" y2="120" stroke="#0f172a" stroke-width="1.5" />
-    <line x1="80" y1="148" x2="150" y2="134" stroke="#0f172a" stroke-width="1.5" />
-    <line x1="242" y1="127" x2="292" y2="127" stroke="#0f172a" stroke-width="1.5" />
-    <line x1="384" y1="127" x2="434" y2="127" stroke="#0f172a" stroke-width="1.5" />
-    <line x1="526" y1="127" x2="576" y2="95" stroke="#0f172a" stroke-width="1.5" />
-    <line x1="80" y1="38" x2="576" y2="82" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3" />
-    <line x1="622" y1="60" x2="622" y2="44" stroke="#0f172a" stroke-width="1.5" />
+    <line x1="74" y1="110" x2="110" y2="112" stroke="#0f172a" stroke-width="1.6" />
+    <line x1="74" y1="168" x2="110" y2="128" stroke="#0f172a" stroke-width="1.6" />
+    <line x1="218" y1="120" x2="252" y2="120" stroke="#0f172a" stroke-width="1.6" />
+    <line x1="360" y1="120" x2="394" y2="120" stroke="#0f172a" stroke-width="1.6" />
+    <line x1="502" y1="120" x2="574" y2="114" stroke="#0f172a" stroke-width="1.6" />
+    <line x1="74" y1="42" x2="574" y2="64" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="5 4" />
+    <line x1="574" y1="64" x2="574" y2="50" stroke="#0f172a" stroke-width="1.6" />
   </svg>
   <figcaption>Scaled dot-product attention 의 데이터 흐름. 점선은 value $V$ 가 마지막 곱까지 그대로 전달됨을 나타낸다.</figcaption>
 </figure>
@@ -213,32 +213,32 @@ $$
 전체 연산량이 single-head full-dimension attention 과 비슷하다.
 
 <figure class="lecture-figure">
-  <svg viewBox="0 0 700 210" role="img" aria-label="Multi-head attention: 입력을 h개의 head로 투영해 병렬로 attention 을 수행한 뒤 concat, 마지막에 선형 투영">
-    <rect x="15" y="85" width="80" height="40" rx="6" fill="#e2e8f0" stroke="#0f172a" stroke-width="1.5" />
-    <text x="55" y="110" text-anchor="middle" font-size="13" fill="#0f172a">Q, K, V</text>
+  <svg viewBox="0 0 640 220" role="img" aria-label="Multi-head attention: 입력을 h개의 head로 투영해 병렬로 attention 을 수행한 뒤 concat, 마지막에 선형 투영">
+    <rect x="14" y="90" width="76" height="40" rx="7" fill="#e2e8f0" stroke="#0f172a" stroke-width="1.5" />
+    <text x="52" y="114" text-anchor="middle" font-size="15" fill="#0f172a">Q, K, V</text>
 
-    <rect x="175" y="18" width="160" height="32" rx="6" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
-    <text x="255" y="39" text-anchor="middle" font-size="12" fill="#0f172a">Attention · head 1</text>
-    <rect x="175" y="92" width="160" height="32" rx="6" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
-    <text x="255" y="113" text-anchor="middle" font-size="12" fill="#0f172a">Attention · head 2</text>
-    <text x="255" y="148" text-anchor="middle" font-size="15" fill="#64748b">⋮</text>
-    <rect x="175" y="160" width="160" height="32" rx="6" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
-    <text x="255" y="181" text-anchor="middle" font-size="12" fill="#0f172a">Attention · head h</text>
+    <rect x="170" y="26" width="156" height="32" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
+    <text x="248" y="46" text-anchor="middle" font-size="13" fill="#0f172a">Attention · head 1</text>
+    <rect x="170" y="92" width="156" height="32" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
+    <text x="248" y="112" text-anchor="middle" font-size="13" fill="#0f172a">Attention · head 2</text>
+    <text x="248" y="146" text-anchor="middle" font-size="18" fill="#64748b">⋮</text>
+    <rect x="170" y="156" width="156" height="32" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
+    <text x="248" y="176" text-anchor="middle" font-size="13" fill="#0f172a">Attention · head h</text>
 
-    <rect x="410" y="80" width="90" height="50" rx="6" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
-    <text x="455" y="109" text-anchor="middle" font-size="12" fill="#0f172a">Concat</text>
+    <rect x="396" y="88" width="88" height="52" rx="7" fill="#f8fafc" stroke="#0f172a" stroke-width="1.5" />
+    <text x="440" y="119" text-anchor="middle" font-size="15" fill="#0f172a">Concat</text>
 
-    <rect x="550" y="80" width="90" height="50" rx="6" fill="#0f172a" />
-    <text x="595" y="102" text-anchor="middle" font-size="12" fill="#ffffff">Linear</text>
-    <text x="595" y="118" text-anchor="middle" font-size="11" fill="#cbd5e1">Wᴼ</text>
+    <rect x="520" y="88" width="88" height="52" rx="7" fill="#0f172a" />
+    <text x="564" y="110" text-anchor="middle" font-size="14" fill="#ffffff">Linear</text>
+    <text x="564" y="127" text-anchor="middle" font-size="12" fill="#cbd5e1">Wᴼ</text>
 
-    <line x1="95" y1="100" x2="175" y2="34" stroke="#94a3b8" stroke-width="1.5" />
-    <line x1="95" y1="105" x2="175" y2="108" stroke="#94a3b8" stroke-width="1.5" />
-    <line x1="95" y1="110" x2="175" y2="176" stroke="#94a3b8" stroke-width="1.5" />
-    <line x1="335" y1="34" x2="410" y2="96" stroke="#0f172a" stroke-width="1.5" />
-    <line x1="335" y1="108" x2="410" y2="105" stroke="#0f172a" stroke-width="1.5" />
-    <line x1="335" y1="176" x2="410" y2="114" stroke="#0f172a" stroke-width="1.5" />
-    <line x1="500" y1="105" x2="550" y2="105" stroke="#0f172a" stroke-width="1.5" />
+    <line x1="90" y1="108" x2="170" y2="42" stroke="#94a3b8" stroke-width="1.6" />
+    <line x1="90" y1="110" x2="170" y2="108" stroke="#94a3b8" stroke-width="1.6" />
+    <line x1="90" y1="112" x2="170" y2="172" stroke="#94a3b8" stroke-width="1.6" />
+    <line x1="326" y1="42" x2="396" y2="100" stroke="#0f172a" stroke-width="1.6" />
+    <line x1="326" y1="108" x2="396" y2="114" stroke="#0f172a" stroke-width="1.6" />
+    <line x1="326" y1="172" x2="396" y2="128" stroke="#0f172a" stroke-width="1.6" />
+    <line x1="484" y1="114" x2="520" y2="114" stroke="#0f172a" stroke-width="1.6" />
   </svg>
   <figcaption>Multi-head attention. 입력을 $h$개의 저차원 부분공간으로 투영해 병렬로 attention 을 수행한다.</figcaption>
 </figure>
