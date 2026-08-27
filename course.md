@@ -9,7 +9,7 @@ location: 제12공학관 326호
 credits: 3
 summary: 딥러닝의 핵심 구조와 학습 원리를 이론과 구현 양쪽에서 깊이 있게 다룬다.
 weeks:
-  - { n: 1, topic: "Introduction & Course Logistics", discussion: 1 }
+  - { n: 1, topic: "Transformers — Attention Is All You Need", discussion: 1 }
   - { n: 2, topic: "Optimization for Deep Learning", discussion: 2 }
   - { n: 3, topic: "Regularization & Generalization", discussion: 3 }
   - { n: 4, topic: "Convolutional Neural Networks", discussion: 4 }
