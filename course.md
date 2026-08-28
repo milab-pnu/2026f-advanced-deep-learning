@@ -13,18 +13,18 @@ weeks:
   - { n: 2, topic: "Tokenizer & Pre-training", discussion: 2 }
   - { n: 3, topic: "LLM Architecture Variants", discussion: 3 }
   - { n: 4, topic: "Post-training 1", discussion: 4 }
-  - { n: 5, topic: "Post-training 2" }
-  - { n: 6, topic: "Inference Optimization 1" }
-  - { n: 7, topic: "Inference Optimization 2" }
-  - { n: 8, topic: "Final Project Proposal Presentation" }
-  - { n: 9, topic: "Multi-/Omni-modal LLM" }
-  - { n: 10, topic: "Diffusion Model" }
-  - { n: 11, topic: "Diffusion LLM" }
-  - { n: 12, topic: "Flow Matching, Consistency Model" }
-  - { n: 13, topic: "3D Generation, Gaussian Splatting" }
-  - { n: 14, topic: "Vision-Language-Action Model, World Model" }
-  - { n: 15, topic: "Safety" }
-  - { n: 16, topic: "Final Project Presentation" }
+  - { n: 5, topic: "Post-training 2", discussion: 5 }
+  - { n: 6, topic: "Inference Optimization 1", discussion: 6 }
+  - { n: 7, topic: "Inference Optimization 2", discussion: 7 }
+  - { n: 8, topic: "Final Project Proposal Presentation", discussion: 8 }
+  - { n: 9, topic: "Multi-/Omni-modal LLM", discussion: 9 }
+  - { n: 10, topic: "Diffusion Model", discussion: 10 }
+  - { n: 11, topic: "Diffusion LLM", discussion: 11 }
+  - { n: 12, topic: "Flow Matching, Consistency Model", discussion: 12 }
+  - { n: 13, topic: "3D Generation, Gaussian Splatting", discussion: 13 }
+  - { n: 14, topic: "Vision-Language-Action Model, World Model", discussion: 14 }
+  - { n: 15, topic: "Safety", discussion: 15 }
+  - { n: 16, topic: "Final Project Presentation", discussion: 16 }
 ---
 
 ## Course Description
