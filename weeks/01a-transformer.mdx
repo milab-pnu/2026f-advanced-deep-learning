@@ -282,40 +282,30 @@ $x + \text{Sublayer}(x)$. 덕분에 backward pass 에서 gradient 가 덧셈 경
 batch normalization 과 달리 batch 축이나 시퀀스 축을 건드리지 않으므로 batch 크기·문장
 길이에 무관하고, 순차적 의존도 없다.
 
-**Post-LN vs Pre-LN.** 원논문의 배치는
+**두 겹의 배치.** 원논문은 sub-layer 출력을 입력에 더한 **뒤에** LayerNorm 을 건다:
 
 $$
 x_{\ell+1} = \text{LayerNorm}\big( x_\ell + \text{Sublayer}(x_\ell) \big)
-\qquad \text{(post-LN)}
 $$
 
-인데, 이러면 residual 경로에도 LayerNorm 이 얹혀 깊은 스택에서 학습 초기가 불안정하고
-warmup 에 민감하다. 현대 모델은 거의 예외 없이
-
-$$
-x_{\ell+1} = x_\ell + \text{Sublayer}\big( \text{LayerNorm}(x_\ell) \big)
-\qquad \text{(pre-LN)}
-$$
-
-를 쓴다.<Cite n={9} /> residual 경로가 정규화 없이 그대로 뚫려 있어, warmup 없이도
-깊게 안정적으로 학습된다. 다음 노트의 decoder-only 블록은 pre-LN 을 전제한다.
+이 배치를 **post-LN** 이라 부른다.<Sidenote>이후 연구는 LayerNorm 을 sub-layer **앞**에 두는 **pre-LN** 배치 $x_{\ell+1} = x_\ell + \text{Sublayer}(\text{LayerNorm}(x_\ell))$ 를 제안했다.<Cite n={9} /> residual 경로에 정규화가 안 얹혀 gradient 가 그대로 흐르므로, learning-rate warmup 없이도 깊은 스택이 안정적으로 학습된다. GPT 계열을 비롯한 현대 LLM 은 거의 예외 없이 pre-LN(+RMSNorm)을 쓴다 — 다음 노트에서 Llama 3 블록으로 본다.</Sidenote>
 
 ## 9. 전체 조립
 
-encoder 블록 하나(pre-LN 표기)를 차원과 함께 따라가 보자. 입력 $X \in \mathbb{R}^{n \times d_{\text{model}}}$:
+encoder 블록 하나(원논문의 post-LN 표기)를 차원과 함께 따라가 보자. 입력
+$X \in \mathbb{R}^{n \times d_{\text{model}}}$:
 
 $$
-A = X + \text{MultiHead}\big( \text{LayerNorm}(X) \big)
+A = \text{LayerNorm}\big( X + \text{MultiHead}(X) \big)
 $$
 
 $$
-Y = A + \text{FFN}\big( \text{LayerNorm}(A) \big)
+Y = \text{LayerNorm}\big( A + \text{FFN}(A) \big)
 $$
 
-- `LayerNorm(X)`: $n \times d_{\text{model}}$
-- `MultiHead(...)`: head 8개가 각자 $n \times 64$ → concat $n \times 512$ → $W^O$ → $n \times d_{\text{model}}$
-- 첫 residual 후 $A$: $n \times d_{\text{model}}$
-- `FFN(LayerNorm(A))`: $n \times 512 \to n \times 2048 \to n \times 512$
+- `MultiHead(X)`: head 8개가 각자 $n \times 64$ → concat $n \times 512$ → $W^O$ → $n \times d_{\text{model}}$
+- 첫 residual + LayerNorm 후 $A$: $n \times d_{\text{model}}$
+- `FFN(A)`: $n \times 512 \to n \times 2048 \to n \times 512$
 - 출력 $Y$: $n \times d_{\text{model}}$ — 입력과 같은 모양
 
 이 블록을 $N$ 번 반복하면 encoder 다. decoder 블록은 두 residual 사이에
@@ -367,7 +357,8 @@ $k$: convolution kernel).
 - self-attention 은 순서를 모르므로 **positional encoding** 으로 위치를 주입한다.
 - 같은 attention 이 encoder self / decoder masked self / encoder–decoder 세 자리에 쓰이며,
   차이는 $Q,K,V$ 출처와 **causal mask** 유무다.
-- **residual + (pre-)LayerNorm** 이 깊은 스택의 학습을 가능하게 한다.
+- **residual + LayerNorm** 이 깊은 스택의 학습을 가능하게 한다 (원논문은 post-LN,
+  현대 LLM 은 pre-LN + RMSNorm).
 - 비용: 순차 연산 $O(1)$, 경로 길이 $O(1)$ 을 얻는 대신 길이에 대해 $O(n^2)$.
 
 다음 노트에서는 이 구조를 **encoder 계열(BERT)과 decoder 계열(GPT)** 로 갈라 보고, 왜
