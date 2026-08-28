@@ -1,0 +1,386 @@
+---
+title: "Transformer 구조"
+week: 1
+order: 0
+---
+
+이 노트는 Vaswani 등의 2017년 논문 <em>Attention Is All You Need</em><Cite n={1} /> 를
+1차 자료로 삼아 Transformer 아키텍처를 수식 수준에서 조립한다. 설명 순서와 그림은 이
+주제를 가장 잘 풀어낸 해설들 — Alammar 의 <em>The Illustrated Transformer</em><Cite n={3} />,
+Harvard NLP 의 <em>The Annotated Transformer</em><Cite n={4} />, Weng 의
+<em>Attention? Attention!</em><Cite n={5} />, Bloem 의 <em>Transformers from Scratch</em><Cite n={6} /> —
+에서 가져왔다. 각 구성요소를 **무엇을 계산하는가 · 왜 그렇게 하는가 · 작은 예시**
+순서로 본다. 코드는 쓰지 않는다.
+
+이번 주 나머지 노트(decoder-only LLM, inference)가 전부 이 블록 위에 서 있으므로,
+여기서 차원 하나하나를 분명히 해 둔다.
+
+<Figure hero
+  src="https://upload.wikimedia.org/wikipedia/commons/8/8f/The-Transformer-model-architecture.png"
+  alt="Transformer 전체 아키텍처 — 왼쪽 encoder 스택, 오른쪽 decoder 스택"
+  caption="Transformer 전체 구조. 왼쪽이 encoder, 오른쪽이 decoder. 각 스택은 동일한 블록 N개를 쌓은 것이다. 원논문 Figure 1."
+  source="Wikimedia Commons, “The-Transformer-model-architecture” (Vaswani et al., 2017, Figure 1)" />
+
+## 1. 순차 모델의 벽
+
+2017년 이전의 기계번역(neural machine translation)은 대부분 **RNN 기반 encoder–decoder**
+구조였다. encoder 가 source 문장을 왼쪽에서 오른쪽으로 한 토큰씩 읽어 hidden state
+
+$$
+h_t = f(h_{t-1},\, x_t)
+$$
+
+를 갱신하고, decoder 가 그 정보를 받아 target 문장을 한 토큰씩 생성한다. 여기에
+attention 을 얹어 decoder 가 매 스텝 source 의 특정 위치를 "돌아보게" 한 것이 Bahdanau
+등의 기여였다.<Cite n={2} /> attention 자체는 Transformer 의 발명이 아니다 — Transformer 의
+주장은 **RNN 을 걷어내고 attention 만 남겨도 된다**는 것이다.
+
+RNN 방식의 구조적 한계는 두 가지다.
+
+<Callout type="warning">
+**순차 계산.** $h_t$ 를 구하려면 $h_{t-1}$ 이 있어야 한다. 길이 $n$ 문장의 forward
+pass 는 $n$ 번의 순차 스텝을 강제하고, 이 사슬은 병렬화할 수 없다. 시퀀스가 길수록
+학습이 느려지고 GPU 활용률이 떨어진다.
+</Callout>
+
+<Callout type="warning">
+**장거리 의존성.** 문장 첫 단어의 정보가 마지막 단어에 닿으려면 $n$ 개의 RNN 스텝을
+통과해야 한다. 경로가 길수록 gradient 가 소실·폭발하기 쉽고, 멀리 떨어진 단어 사이의
+관계를 학습하기 어렵다.
+</Callout>
+
+Transformer 는 이 두 문제를 한 번에 없앤다. 모든 위치를 **동시에** 처리하고(순차 사슬
+제거), 임의의 두 위치를 attention 한 번으로 직접 연결한다(경로 길이 1). 대가는 위치
+정보를 따로 주입해야 한다는 것과, 시퀀스 길이에 대한 계산량이 $O(n^2)$ 라는 것이다 —
+10절에서 저울질한다.
+
+## 2. 큰 그림
+
+입력 문장은 먼저 **토큰**의 열로 쪼개지고(다음 노트에서 자세히), 각 토큰은 학습되는
+임베딩 테이블에서 $d_{\text{model}}$ 차원 벡터로 바뀐다. 원논문 base 모델에서
+$d_{\text{model}} = 512$ 다. 길이 $n$ 문장은 이렇게 행렬
+
+$$
+X \in \mathbb{R}^{n \times d_{\text{model}}}
+$$
+
+이 된다. 여기에 위치 정보를 더한 뒤(5절), **동일한 구조의 블록 $N$ 개**를 통과시킨다
+(base 는 $N = 6$). 블록을 지나도 텐서 모양 $n \times d_{\text{model}}$ 은 그대로다 —
+블록은 각 토큰 벡터를 "문맥을 반영한 더 나은 벡터"로 다듬을 뿐 개수나 차원을 바꾸지
+않는다. 이 모양 보존이 residual connection 과 스택 쌓기를 가능하게 한다.
+
+encoder 블록 하나는 두 개의 sub-layer 로 되어 있다:
+
+1. **Multi-head self-attention** — 각 토큰이 같은 문장의 모든 토큰을 참조해 정보를 모은다.
+2. **Position-wise feed-forward network** — 모인 정보를 토큰별로 비선형 변환한다.
+
+decoder 블록은 여기에 **encoder–decoder attention** 이 하나 더 붙어 세 개의 sub-layer 를
+가진다(6절). 모든 sub-layer 는 residual connection 과 layer normalization 으로 감싼다(8절).
+
+<Sidenote>원논문은 sub-layer 출력을 $\mathrm{LayerNorm}(x + \mathrm{Sublayer}(x))$ 로 쓴다. 이 배치를 post-LN 이라 부르며, 현대 LLM 은 거의 pre-LN 을 쓴다 — 8절에서 다룬다.</Sidenote>
+
+## 3. Attention 이라는 연산
+
+### 3.1 Soft dictionary lookup
+
+Python 딕셔너리를 떠올리자. 키로 조회하면 정확히 일치하는 항목의 값 하나가 나온다.
+attention 은 이걸 **부드럽게** 만든 것이다: 쿼리와 모든 키의 유사도를 재고, 그 유사도를
+가중치로 삼아 **모든 값의 가중 평균**을 돌려준다.
+
+- **query** $q$ — "나는 지금 어떤 정보를 찾고 있는가"
+- **key** $k_j$ — "위치 $j$ 는 어떤 정보를 제공하는가" (색인표)
+- **value** $v_j$ — "위치 $j$ 가 실제로 건네는 내용"
+
+출력은
+
+$$
+\text{attention}(q) = \sum_j \alpha_j\, v_j,
+\qquad
+\alpha_j = \frac{\exp(\text{score}(q, k_j))}{\sum_{j'} \exp(\text{score}(q, k_{j'}))}
+$$
+
+로, $\alpha_j$ 는 합이 1인 비음수 가중치다. score 함수로 원논문은 **내적** $q \cdot k_j$ 를
+쓴다(추가 파라미터가 없고 행렬곱으로 병렬화된다).
+
+self-attention 에서는 query·key·value 가 모두 **같은 입력**에서 나온다. 토큰 벡터
+$x_i$ 하나로부터 세 개의 학습되는 projection 으로
+
+$$
+q_i = x_i W^Q,\quad k_i = x_i W^K,\quad v_i = x_i W^V
+$$
+
+를 만든다. 즉 각 토큰은 "내가 찾는 것($q$)", "내가 색인되는 방식($k$)", "내가 내놓는
+내용($v$)"을 스스로 정한다.
+
+### 3.2 예시: 대명사는 무엇을 가리키는가
+
+> The animal didn't cross the street because **it** was too tired.
+
+`it` 위치의 query 는 "나는 주어 명사를 찾는다"에 가까운 방향을 갖도록 학습된다. `animal`
+의 key 가 이 query 와 내적이 크고 `street` 의 key 는 작다면, softmax 후 `it` 의 출력은
+`animal` 의 value 를 주로 담는다. 다음 블록에서 `it` 벡터는 "동물을 가리키는 대명사"로
+읽히게 된다. `tired` 대신 `wide` 였다면 다른 head 가 `street` 쪽으로 정렬될 수도 있다 —
+그래서 head 가 여럿 필요하다(4절).
+
+### 3.3 Scaled Dot-Product Attention
+
+토큰별 벡터를 행으로 쌓아 행렬로 한 번에 계산한다. $Q \in \mathbb{R}^{n \times d_k}$,
+$K \in \mathbb{R}^{n \times d_k}$, $V \in \mathbb{R}^{n \times d_v}$ 에 대해
+
+$$
+\text{Attention}(Q, K, V) = \text{softmax}\!\left( \frac{Q K^\top}{\sqrt{d_k}} \right) V
+$$
+
+- $Q K^\top \in \mathbb{R}^{n \times n}$ — 모든 (query 위치, key 위치) 쌍의 내적. $(i,j)$
+  성분은 토큰 $i$ 가 토큰 $j$ 에 주는 raw score.
+- softmax 는 **행별로** 적용된다 — 각 query 위치에서 key 들에 대한 확률분포가 된다.
+- 그 $n \times n$ 확률행렬을 $V$ 에 곱하면 다시 $n \times d_v$ — 위치마다 value 들의 가중 평균.
+
+행렬곱 두 번과 softmax 한 번. 순차 사슬이 없다.
+
+### 3.4 왜 루트 d_k 로 나누는가
+
+$q$ 와 $k$ 의 각 성분이 평균 0, 분산 1로 독립이라고 하자. 그러면 내적
+
+$$
+q \cdot k = \sum_{m=1}^{d_k} q_m k_m
+$$
+
+은 평균 0, **분산 $d_k$** (독립 항 $d_k$ 개의 합), 따라서 표준편차 $\sqrt{d_k}$ 다.
+$d_k = 64$ 면 score 가 대략 $\pm 8$ 규모로 흩어진다. 이렇게 큰 값이 softmax 에 들어가면
+분포가 한 위치로 거의 완전히 쏠리고, 그 지점에서 softmax 의 Jacobian 이 0에 가까워져
+**gradient 가 사라진다**. $\sqrt{d_k}$ 로 나누면 score 의 분산이 다시 1 근처로 돌아와
+softmax 가 포화되지 않는다.<Cite n={1} />
+
+<Callout type="intuition">
+스케일링은 "temperature" 조정이다. $\sqrt{d_k}$ 로 나누는 것은 softmax 온도를 $d_k$ 에
+맞춰 올려, 차원이 커져도 attention 이 지나치게 뾰족해지지 않게 유지한다.
+</Callout>
+
+## 4. Multi-Head Attention
+
+한 번의 attention 은 위치당 하나의 가중 평균만 만든다 — 한 종류의 관계밖에 못 잡는다.
+3.2 의 예처럼 문장에는 여러 관계(주어–대명사, 동사–목적어, 수식–피수식)가 동시에 있다.
+
+**Multi-head attention** 은 $d_{\text{model}}$ 차원 공간을 $h$ 개의 부분공간으로 나눠
+각각에서 독립적으로 attention 을 돌린다. head $i$ 마다 별도의 projection
+
+$$
+\text{head}_i = \text{Attention}(X W_i^Q,\; X W_i^K,\; X W_i^V),
+\qquad
+W_i^{Q}, W_i^{K} \in \mathbb{R}^{d_{\text{model}} \times d_k},\;
+W_i^{V} \in \mathbb{R}^{d_{\text{model}} \times d_v}
+$$
+
+를 두고, 결과를 이어붙인 뒤 한 번 더 섞는다:
+
+$$
+\text{MultiHead}(X) = \text{Concat}(\text{head}_1, \dots, \text{head}_h)\, W^O,
+\qquad
+W^O \in \mathbb{R}^{h d_v \times d_{\text{model}}}
+$$
+
+원논문은 $h = 8$, $d_k = d_v = d_{\text{model}} / h = 64$ 로 잡는다. head 차원을 이렇게
+줄여서, multi-head 의 총 계산량은 full-dimension single-head 와 비슷하게 유지된다.
+
+<Callout type="example">
+base 모델: $d_{\text{model}} = 512$, $h = 8$. 각 head 는 64차원에서 attention 을 하고,
+8개 head 의 64차원 출력을 concat 해 512차원으로 되돌린 뒤 $W^O$ 로 섞는다. head 별
+$W_i^Q$ 등은 "512차원 벡터에서 이 head 가 볼 64차원을 뽑는" 학습되는 slice 다.
+</Callout>
+
+학습된 모델을 열어 보면 head 마다 다른 패턴이 보인다 — 어떤 head 는 바로 앞 토큰에,
+어떤 head 는 구문상 짝이 되는 토큰에, 어떤 head 는 문장 전체에 고르게 정렬한다.<Cite n={3} />
+
+## 5. Positional Encoding
+
+self-attention 은 **집합 연산**이다. $Q K^\top$ 은 위치 $i, j$ 의 내용만 보고 그 순서는
+모른다 — 입력 토큰을 섞으면 출력도 똑같이 섞일 뿐, 값 자체는 안 바뀐다(permutation
+equivariant). "개가 사람을 물었다"와 "사람이 개를 물었다"를 구분하려면 순서 정보를
+따로 넣어야 한다.
+
+원논문은 학습 없이 **사인·코사인** 위치 인코딩을 더한다. 위치 $pos$, 차원 인덱스 $i$ 에 대해
+
+$$
+PE_{(pos,\, 2i)} = \sin\!\left( \frac{pos}{10000^{\,2i / d_{\text{model}}}} \right)
+$$
+
+$$
+PE_{(pos,\, 2i+1)} = \cos\!\left( \frac{pos}{10000^{\,2i / d_{\text{model}}}} \right)
+$$
+
+차원마다 파장이 $2\pi$ 에서 $2\pi \cdot 10000$ 까지 기하적으로 늘어나는 사인파를 배치한
+것이다. 낮은 차원은 빠르게 진동해 인접 위치를 구분하고, 높은 차원은 느리게 진동해
+긴 범위를 구분한다 — 여러 자리 이진수 카운터와 비슷하다.
+
+이 형태를 고른 이유: 임의의 고정 offset $\delta$ 에 대해 $PE_{pos+\delta}$ 가 $PE_{pos}$
+의 **선형 변환**(고정 회전 행렬)으로 표현된다. 모델이 "상대 위치 $\delta$ 만큼 떨어진
+곳"을 선형 연산으로 참조하기 쉬워진다.<Cite n={1} /> 또 학습 시 본 것보다 긴 문장에도
+공식만으로 값을 만들 수 있다.
+
+<Sidenote>이후 연구는 위치 정보를 절대 임베딩으로 더하지 않고 attention score 단계에서 상대적으로 주입하는 방향으로 옮겨갔다. 특히 **RoPE**(Rotary Position Embedding)는 query·key 를 위치에 따라 회전시켜 내적이 상대 위치의 함수가 되게 한다 — 다음 노트에서 다룬다.</Sidenote>
+
+## 6. Transformer 안의 세 가지 Attention
+
+같은 scaled dot-product attention 이 세 자리에서 쓰인다. 차이는 **$Q, K, V$ 가 어디서
+오는가**와 **mask 가 있는가**뿐이다.
+
+| 위치 | Q 출처 | K, V 출처 | mask | 역할 |
+|---|---|---|---|---|
+| encoder self-attention | encoder 입력 | encoder 입력 | 없음 | source 토큰끼리 문맥 교환 (양방향) |
+| decoder masked self-attention | decoder 입력 | decoder 입력 | causal | 지금까지 생성한 target 토큰끼리 문맥 교환 (왼쪽만) |
+| encoder–decoder attention | decoder | encoder 출력 | 없음 | 생성 중 각 위치가 source 문장을 참조 |
+
+**Causal mask** 는 학습 때 정답 문장 전체를 한꺼번에 넣으면서도 위치 $i$ 가 미래 토큰
+$j > i$ 를 못 보게 막는 장치다. softmax 이전에 미래 위치의 score 를 $-\infty$ 로 덮으면
+
+$$
+\text{score}_{ij} \leftarrow
+\begin{cases}
+\text{score}_{ij} & j \le i \\[2pt]
+-\infty & j > i
+\end{cases}
+$$
+
+그 자리의 softmax 가중치가 0이 된다. 덕분에 길이 $n$ 문장의 모든 위치에 대한 loss 를
+**한 번의 forward 로 병렬** 계산하면서도, 각 위치는 자기 왼쪽만 본 셈이 된다(teacher
+forcing). 이 causal mask 가 decoder-only LLM 의 핵심이며 다음 노트의 출발점이다.
+
+## 7. Position-wise Feed-Forward Network
+
+attention sub-layer 다음에는 각 위치에 **독립적으로 똑같이** 적용되는 2층 MLP 가 온다:
+
+$$
+\text{FFN}(x) = \max(0,\; x W_1 + b_1)\, W_2 + b_2,
+\qquad
+W_1 \in \mathbb{R}^{d_{\text{model}} \times d_{\text{ff}}},\;
+W_2 \in \mathbb{R}^{d_{\text{ff}} \times d_{\text{model}}}
+$$
+
+base 모델은 $d_{\text{ff}} = 2048$ 로 $d_{\text{model}}$ 의 4배다. 차원을 한 번 넓혔다가
+(ReLU 비선형) 다시 좁힌다.
+
+역할 분담이 분명하다: **attention 은 위치 사이에서 정보를 섞고(mixing across positions),
+FFN 은 그 위치 안에서 정보를 변환한다(processing per position).** attention 만 쌓으면
+각 토큰 벡터에 대한 비선형 변환 능력이 부족하다 — FFN 이 그걸 채운다. 현대 LLM 에서
+파라미터의 대부분(대략 2/3)이 이 FFN 에 있다. 다음 노트에서 Llama 3 로 확인한다.
+
+<Sidenote>원논문은 FFN 활성화로 ReLU 를 쓰지만, 최근 모델은 **SwiGLU** 등 gated 변형을 쓴다. gate 를 위한 세 번째 행렬이 생기므로 같은 파라미터 예산을 맞추려면 $d_{\text{ff}}$ 를 $\tfrac{2}{3}$ 배로 줄인다.</Sidenote>
+
+## 8. Residual Connection 과 Layer Normalization
+
+각 sub-layer 는 두 겹으로 감싼다.
+
+**Residual connection.**<Cite n={7} /> sub-layer 의 출력을 그 입력에 **더한다**:
+$x + \text{Sublayer}(x)$. 덕분에 backward pass 에서 gradient 가 덧셈 경로를 따라
+아래층까지 감쇠 없이 흐른다. $N = 6$, 나중엔 수십~수백 층을 쌓을 수 있는 것은 이
+지름길 덕이다. 모양이 블록을 지나도 $n \times d_{\text{model}}$ 로 보존되기에(2절) 이
+덧셈이 성립한다.
+
+**Layer normalization.**<Cite n={8} /> 각 토큰 벡터를 그 $d_{\text{model}}$ 개 성분에
+대해 평균 0, 분산 1로 정규화한 뒤 학습되는 $\gamma, \beta$ 로 다시 스케일·시프트한다.
+batch normalization 과 달리 batch 축이나 시퀀스 축을 건드리지 않으므로 batch 크기·문장
+길이에 무관하고, 순차적 의존도 없다.
+
+**Post-LN vs Pre-LN.** 원논문의 배치는
+
+$$
+x_{\ell+1} = \text{LayerNorm}\big( x_\ell + \text{Sublayer}(x_\ell) \big)
+\qquad \text{(post-LN)}
+$$
+
+인데, 이러면 residual 경로에도 LayerNorm 이 얹혀 깊은 스택에서 학습 초기가 불안정하고
+warmup 에 민감하다. 현대 모델은 거의 예외 없이
+
+$$
+x_{\ell+1} = x_\ell + \text{Sublayer}\big( \text{LayerNorm}(x_\ell) \big)
+\qquad \text{(pre-LN)}
+$$
+
+를 쓴다.<Cite n={9} /> residual 경로가 정규화 없이 그대로 뚫려 있어, warmup 없이도
+깊게 안정적으로 학습된다. 다음 노트의 decoder-only 블록은 pre-LN 을 전제한다.
+
+## 9. 전체 조립
+
+encoder 블록 하나(pre-LN 표기)를 차원과 함께 따라가 보자. 입력 $X \in \mathbb{R}^{n \times d_{\text{model}}}$:
+
+$$
+A = X + \text{MultiHead}\big( \text{LayerNorm}(X) \big)
+$$
+
+$$
+Y = A + \text{FFN}\big( \text{LayerNorm}(A) \big)
+$$
+
+- `LayerNorm(X)`: $n \times d_{\text{model}}$
+- `MultiHead(...)`: head 8개가 각자 $n \times 64$ → concat $n \times 512$ → $W^O$ → $n \times d_{\text{model}}$
+- 첫 residual 후 $A$: $n \times d_{\text{model}}$
+- `FFN(LayerNorm(A))`: $n \times 512 \to n \times 2048 \to n \times 512$
+- 출력 $Y$: $n \times d_{\text{model}}$ — 입력과 같은 모양
+
+이 블록을 $N$ 번 반복하면 encoder 다. decoder 블록은 두 residual 사이에
+encoder–decoder attention(+ residual)을 하나 더 끼운다. decoder 스택의 마지막 출력은
+LayerNorm 을 거쳐 vocabulary 크기의 linear + softmax 로 다음 토큰 분포가 된다. 원논문은
+이 출력 projection 행렬을 입력 임베딩 행렬과 **공유**한다(weight tying).
+
+<Details summary="원논문 학습 레시피 (base 모델)">
+
+- optimizer: Adam, $\beta_1 = 0.9$, $\beta_2 = 0.98$, $\epsilon = 10^{-9}$
+- learning rate 스케줄: $lr = d_{\text{model}}^{-0.5} \cdot \min\!\big( step^{-0.5},\; step \cdot warmup^{-1.5} \big)$, $warmup = 4000$ — 처음엔 선형 증가, 이후 $step^{-0.5}$ 로 감소
+- regularization: 모든 sub-layer 출력·임베딩 합에 dropout $P_{\text{drop}} = 0.1$ (big EN-DE 는 0.3), label smoothing $\epsilon_{ls} = 0.1$
+- base 모델은 8× P100 GPU 로 약 12시간, big 은 약 3.5일 학습
+
+label smoothing 은 정답 확률 1 대신 $1 - \epsilon_{ls}$ 를 목표로 둔다 — perplexity 는
+나빠지지만 BLEU 와 calibration 이 좋아진다.
+</Details>
+
+## 10. 왜 되는가 — 복잡도와 경로 길이
+
+layer 하나가 시퀀스를 처리하는 비용을 세 가지로 비교한다($n$: 길이, $d$: 표현 차원,
+$k$: convolution kernel).
+
+| layer 종류 | layer 당 복잡도 | 순차 연산 | 최대 경로 길이 |
+|---|---|---|---|
+| self-attention | $O(n^2 \cdot d)$ | $O(1)$ | $O(1)$ |
+| recurrent | $O(n \cdot d^2)$ | $O(n)$ | $O(n)$ |
+| convolution | $O(k \cdot n \cdot d^2)$ | $O(1)$ | $O(\log_k n)$ |
+
+두 가지가 핵심이다.
+
+- **순차 연산 $O(1)$.** self-attention 은 행렬곱이라 한 layer 안의 모든 위치가 병렬로
+  계산된다. RNN 의 $O(n)$ 순차 사슬이 사라진다.
+- **최대 경로 길이 $O(1)$.** 임의의 두 위치가 attention 한 번으로 직접 연결된다.
+  gradient 가 통과하는 경로가 짧아 장거리 의존성 학습이 쉽다.
+
+대가는 $O(n^2 \cdot d)$ 다. $n \lesssim d$ 인 흔한 구간(문장 단위 번역)에서는 recurrent
+의 $O(n \cdot d^2)$ 보다 오히려 싸지만, context 가 수천~수만 토큰으로 길어지면 $n^2$
+항이 지배한다. 이 $n^2$ 비용과 그것을 완화하는 방법(그리고 inference 에서의 KV cache)이
+이번 주 네 번째 노트의 주제다.
+
+## 11. 정리
+
+- Transformer 는 RNN 의 순차 사슬을 걷어내고 **self-attention + position-wise FFN** 블록을
+  $N$ 개 쌓은 구조다. 블록을 지나도 텐서 모양 $n \times d_{\text{model}}$ 이 보존된다.
+- **attention = soft dictionary lookup**: query·key 유사도(스케일된 내적)로 value 들의
+  가중 평균을 낸다. $\sqrt{d_k}$ 스케일링은 softmax 포화를 막는다.
+- **multi-head** 는 표현 공간을 쪼개 여러 종류의 관계를 동시에 잡는다.
+- self-attention 은 순서를 모르므로 **positional encoding** 으로 위치를 주입한다.
+- 같은 attention 이 encoder self / decoder masked self / encoder–decoder 세 자리에 쓰이며,
+  차이는 $Q,K,V$ 출처와 **causal mask** 유무다.
+- **residual + (pre-)LayerNorm** 이 깊은 스택의 학습을 가능하게 한다.
+- 비용: 순차 연산 $O(1)$, 경로 길이 $O(1)$ 을 얻는 대신 길이에 대해 $O(n^2)$.
+
+다음 노트에서는 이 구조를 **encoder 계열(BERT)과 decoder 계열(GPT)** 로 갈라 보고, 왜
+생성형 LLM 이 decoder-only 로 수렴했는지를 본다.
+
+<References items={[
+  { id: 1, text: "Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., & Polosukhin, I. (2017). Attention Is All You Need. NeurIPS 2017. arXiv:1706.03762. — §3.1–3.3 (attention, multi-head), §3.5 (positional encoding), Table 1 (복잡도), §5 (학습 설정), Table 2 (BLEU: big EN-DE 28.4, base EN-DE 27.3)." },
+  { id: 2, text: "Bahdanau, D., Cho, K., & Bengio, Y. (2015). Neural Machine Translation by Jointly Learning to Align and Translate. ICLR 2015. arXiv:1409.0473. — RNN encoder–decoder 에 additive attention 을 처음 결합." },
+  { id: 3, text: "Alammar, J. (2018). The Illustrated Transformer. https://jalammar.github.io/illustrated-transformer/ — Q/K/V 행렬 계산과 multi-head 시각화, head 별 attention 패턴 예시." },
+  { id: 4, text: "Rush, A. et al. (2018, 2022 rev.). The Annotated Transformer. Harvard NLP. https://nlp.seas.harvard.edu/annotated-transformer/ — 원논문을 코드와 함께 절별로 주석." },
+  { id: 5, text: "Weng, L. (2018). Attention? Attention! https://lilianweng.github.io/posts/2018-06-24-attention/ — attention 계열의 통일된 표기와 self-attention 유도." },
+  { id: 6, text: "Bloem, P. (2019). Transformers from Scratch. https://peterbloem.nl/blog/transformers — self-attention 을 permutation equivariance 관점에서 설명." },
+  { id: 7, text: "He, K., Zhang, X., Ren, S., & Sun, J. (2016). Deep Residual Learning for Image Recognition. CVPR 2016. arXiv:1512.03385. — residual connection." },
+  { id: 8, text: "Ba, J. L., Kiros, J. R., & Hinton, G. E. (2016). Layer Normalization. arXiv:1607.06450." },
+  { id: 9, text: "Xiong, R. et al. (2020). On Layer Normalization in the Transformer Architecture. ICML 2020. arXiv:2002.04745. — pre-LN 이 warmup 없이 안정적으로 깊게 학습됨을 분석." },
+]} />

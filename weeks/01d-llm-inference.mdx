@@ -1,0 +1,201 @@
+---
+title: "LLM inference — prefill/decode, memory wall, KV cache"
+week: 1
+order: 3
+---
+
+앞 노트에서 decoder-only 모델의 forward 를 한 바퀴 돌았다. 이 노트는 그 모델로
+**문장을 생성할 때 실제로 무엇이 비싼가**를 다룬다. 학습과 달리 inference 는
+autoregressive 라서, 비용 구조가 전혀 다르고 하드웨어를 잘 못 쓰기 쉽다. 기준 모델은
+계속 **Llama 3 8B**($L = 32$, query head 32 / KV head 8, $d_{\text{head}} = 128$,
+$d = 4096$, $V = 128{,}256$)<Cite n={1} /> 이다.
+
+## 1. 학습과 무엇이 다른가
+
+학습은 길이 $n$ 시퀀스를 **한 번의 forward** 로 처리하고 모든 위치의 loss 를 병렬로
+구한다(teacher forcing). inference 는 정답이 없으니 토큰을 **하나씩** 만들어야 한다:
+
+$$
+x_{n+1} \sim p_\theta(\cdot \mid x_{1:n}), \qquad
+x_{n+2} \sim p_\theta(\cdot \mid x_{1:n+1}), \qquad \dots
+$$
+
+한 번의 요청이 수십~수천 번의 순차 forward 로 쪼개진다. 이 순차성이 모든 문제의 뿌리다.
+
+## 2. 두 국면 — prefill 과 decode
+
+한 번의 생성 요청은 성격이 다른 두 단계로 나뉜다.<Cite n={6} />
+
+**Prefill.** 프롬프트 $x_{1:n}$ 전체를 **한 번에** 넣어 첫 출력 토큰을 만든다. 학습
+때처럼 $n$ 개 위치가 병렬로 계산된다 — 큰 행렬곱, GPU 를 꽉 채움. **compute-bound.**
+
+**Decode.** 그 뒤로는 매 스텝 **토큰 하나**만 새로 넣어 다음 토큰을 뽑는다. 위치 1개짜리
+행렬-벡터곱이라 연산량은 작은데, 그걸 하려고 **모델 가중치 전체를 HBM 에서 읽어야**
+한다. **memory-bound.**
+
+<Callout type="intuition">
+prefill 은 "문단을 통째로 읽기", decode 는 "한 글자 쓸 때마다 사전 전체를 다시
+펼쳐보기". 사용자 체감의 "첫 응답까지 시간(TTFT)"은 prefill 이, "토큰이 흘러나오는
+속도(TPOT)"는 decode 가 좌우한다.
+</Callout>
+
+## 3. KV cache — 왜, 무엇을
+
+decode 스텝마다 시퀀스 전체를 다시 넣으면, 이미 계산했던 위치 $1..n$ 의 key·value 를
+**매번 다시 계산**하게 된다 — 스텝마다 $O(n)$ 낭비.
+
+그런데 causal attention 에서 과거 위치의 $k_j, v_j$ 는 **새 토큰이 붙어도 변하지 않는다**
+(RoPE 회전각도 위치 고정). 그러니 한 번 계산해 **캐시**하고, 새 토큰의 $q$ 만 캐시된
+$K, V$ 와 attention 하면 된다. 이것이 **KV cache** 다.<Cite n={7} /> decode 한 스텝의 비용이 $O(n)$
+재계산에서 캐시 조회 + $O(n)$ dot-product 로 줄고, 모델 forward 는 새 토큰 1개분만 돈다.
+
+대가는 **메모리**다. 저장해야 할 것은 layer 마다, KV head 마다, 지금까지의 모든 위치에
+대한 $k$ 와 $v$ 벡터다.
+
+$$
+\text{KV cache 크기}
+= \underbrace{2}_{K,\,V}
+\cdot L
+\cdot n_{\text{kv}}
+\cdot d_{\text{head}}
+\cdot \underbrace{s}_{\text{시퀀스 길이}}
+\cdot \underbrace{b}_{\text{batch}}
+\cdot \underbrace{p}_{\text{요소당 바이트}}
+\quad \text{[bytes]}
+$$
+
+여기서 $n_{\text{kv}}$ 는 **KV head 수**다(MHA 면 query head 수와 같고, GQA/MQA 면 더 작다 —
+6절).
+
+## 4. Llama 3 8B 로 계산
+
+fp16($p = 2$ bytes), GQA 라 $n_{\text{kv}} = 8$:
+
+$$
+\frac{\text{KV cache}}{\text{토큰}}
+= 2 \cdot 32 \cdot 8 \cdot 128 \cdot 2\ \text{bytes}
+= 131{,}072\ \text{bytes}
+= 128\ \text{KiB / token}
+$$
+
+- **context 8192, batch 1**: $128\ \text{KiB} \times 8192 = 1\ \text{GiB}$.
+- **context 128K(Llama 3.1), batch 1**: $128\ \text{KiB} \times 131072 = 16\ \text{GiB}$ —
+  모델 가중치(fp16 기준 $8.03\text{B} \times 2 = 16.06\ \text{GB}$)와 맞먹는다.
+- **context 8192, batch 32**: $1\ \text{GiB} \times 32 = 32\ \text{GiB}$.
+
+| | 가중치 (fp16) | KV cache |
+|---|---|---|
+| batch 1, 8K context | 16.1 GB | 1.0 GiB |
+| batch 1, 128K context | 16.1 GB | 16 GiB |
+| batch 32, 8K context | 16.1 GB | 32 GiB |
+
+<Callout type="warning">
+가중치 메모리는 batch·context 와 무관하게 고정이다. **KV cache 는 둘 다에 비례**해서
+자란다. 서빙에서 동시 처리 가능한 요청 수(batch), 지원 context 길이는 결국 "가중치를
+뺀 나머지 HBM 에 KV cache 가 몇 개 들어가느냐"로 정해진다.
+</Callout>
+
+만약 이 모델이 GQA 가 아니라 **MHA**($n_{\text{kv}} = 32$)였다면 토큰당 512 KiB,
+8K context 에서 **4 GiB** — GQA 가 KV cache 를 정확히 4배 줄인 것이다.
+
+## 5. Memory wall — 왜 decode 는 FLOPs 가 남아도 느린가
+
+행렬곱의 하드웨어 효율은 **arithmetic intensity**(HBM 에서 읽은 바이트당 수행하는
+FLOP 수)로 가늠한다. 이걸 기계의 "연산 처리량 ÷ 메모리 대역폭" 비율(ridge point)과
+비교한다 — **roofline 모델.**
+
+<svg viewBox="0 0 460 240" role="img" aria-label="Roofline 그래프. 가로축 arithmetic intensity(로그), 세로축 달성 처리량(로그). 왼쪽은 대역폭에 비례해 올라가는 사선, 오른쪽은 연산 상한 수평선. 둘이 만나는 ridge point. decode 는 ridge 왼쪽(대역폭 한계), prefill 은 오른쪽(연산 한계)." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <line x1="55" y1="30" x2="55" y2="195" stroke="#0f172a"/>
+  <line x1="55" y1="195" x2="435" y2="195" stroke="#0f172a"/>
+  <text x="30" y="115" font-size="11" fill="#64748b" transform="rotate(-90 30 115)" text-anchor="middle">달성 처리량 (log)</text>
+  <text x="245" y="222" font-size="11" fill="#64748b" text-anchor="middle">arithmetic intensity — FLOP / byte (log)</text>
+  <line x1="55" y1="195" x2="235" y2="55" stroke="#0f172a" stroke-width="2"/>
+  <line x1="235" y1="55" x2="435" y2="55" stroke="#0f172a" stroke-width="2"/>
+  <line x1="235" y1="55" x2="235" y2="195" stroke="#94a3b8" stroke-dasharray="4 3"/>
+  <text x="235" y="45" font-size="10" fill="#64748b" text-anchor="middle">ridge point (~300 FLOP/byte)</text>
+  <text x="120" y="110" font-size="10" fill="#64748b" text-anchor="middle" transform="rotate(-38 120 110)">대역폭 한계</text>
+  <text x="340" y="48" font-size="10" fill="#64748b" text-anchor="middle">연산 한계</text>
+  <circle cx="105" cy="172" r="5" fill="#0f172a"/>
+  <text x="105" y="188" font-size="10" fill="#0f172a" text-anchor="middle">decode</text>
+  <circle cx="340" cy="55" r="5" fill="#0f172a"/>
+  <text x="365" y="72" font-size="10" fill="#0f172a" text-anchor="middle">prefill</text>
+</svg>
+
+**Decode 한 스텝.** 새 토큰 1개에 대해 forward 를 돌리려면 가중치 전체(16 GB)를 읽어야
+하고, 실제 연산은 파라미터당 약 2 FLOP → $2 \times 8.03\text{B} \approx 16\ \text{GFLOP}$.
+H100(HBM 대역폭 ≈ 3.3 TB/s, bf16 ≈ 990 TFLOP/s)에서:
+
+$$
+t_{\text{읽기}} \approx \frac{16\ \text{GB}}{3.3\ \text{TB/s}} \approx 4.9\ \text{ms},
+\qquad
+t_{\text{연산}} \approx \frac{16\ \text{GFLOP}}{990\ \text{TFLOP/s}} \approx 0.016\ \text{ms}
+$$
+
+연산 시간은 읽기 시간의 **1/300**. GPU 의 연산 유닛은 사실상 놀고, 스텝 시간은 전적으로
+"16 GB 를 얼마나 빨리 읽나"로 정해진다. arithmetic intensity 가 ridge point 한참 왼쪽에
+있는 것이다.
+
+**왜 batching 이 답인가.** batch $b$ 개 요청을 함께 decode 하면 가중치는 **한 번만** 읽고
+$b$ 개 토큰에 재사용한다 → intensity 가 $b$ 배. $b$ 가 충분히 크면 ridge point 를 넘어
+compute-bound 로 바뀐다. 단 5절에서 봤듯 batch 를 키우면 KV cache 가 선형으로 늘어 HBM
+한도에 부딪힌다 — 서빙 throughput 튜닝은 이 줄다리기다.
+
+**Prefill** 은 반대다. $n$ 개 토큰을 함께 넣으므로 가중치 한 번 읽기에 연산이 $n$ 배 —
+$n$ 이 수백만 넘으면 곧바로 compute-bound. 그래서 같은 요청도 prefill 은 빠르고 decode 는
+질질 끈다.
+
+## 6. KV cache 줄이기 — 공식의 어느 항을 건드리나
+
+5절 공식 $2 \cdot L \cdot n_{\text{kv}} \cdot d_{\text{head}} \cdot s \cdot b \cdot p$
+에서 각 방법이 줄이는 항:
+
+| 방법 | 건드리는 항 | Llama 3 8B 기준 효과 |
+|---|---|---|
+| **MHA** (기준) | — | $n_{\text{kv}} = n_{\text{head}} = 32$ |
+| **MQA**<Cite n={2} /> | $n_{\text{kv}} \to 1$ | 모든 query head 가 K/V head 하나 공유. 32배 절감, 품질 손해 |
+| **GQA**<Cite n={3} /> | $n_{\text{kv}} \to g$ | query head 를 $g$ 그룹으로. $g=8$ 이면 4배 절감, 품질은 MHA 에 근접 (Llama 2/3 의 선택) |
+| **MLA**<Cite n={4} /> | $n_{\text{kv}} \cdot d_{\text{head}} \to d_c$ | K/V 를 저차원 latent $c_t$ 로 압축해 그것만 캐시(DeepSeek-V2: $d_c \approx 512$ + RoPE용 64). 계산 시 head 별로 up-project. GQA 보다 더 줄이며 MHA급 품질 목표 |
+| **KV 양자화** | $p \to 1$ 또는 0.5 | K/V 를 int8/int4 로 저장. $s, b$ 는 그대로, 요소 크기만 축소 |
+| **sliding-window / 압축** | $s \to w$ | 최근 $w$ 개 위치만 유지(예: Mistral). 아주 긴 context 에서 상한 고정 |
+
+MHA→MQA→GQA→MLA 는 전부 **같은 공식의 $n_{\text{kv}} \cdot d_{\text{head}}$ 항을
+공략**한다. 아키텍처 관점의 세부(왜 GQA 가 품질을 지키는지, MLA 의 저랭크 분해)는
+**3주차**에서 다룬다.
+
+## 7. 그 밖의 inference 최적화 (한 줄씩)
+
+- **Weight quantization** — 가중치를 int8/int4/FP8 로. 읽을 바이트가 줄어 5절의
+  memory wall 을 직접 완화한다. 6·7주차에서 자세히.
+- **PagedAttention / continuous batching**<Cite n={5} /> — KV cache 를 OS 페이지처럼
+  고정 블록으로 관리해 단편화를 없애고, 요청이 끝나는 대로 새 요청을 배치에 끼워
+  GPU 를 놀리지 않는다(vLLM).
+- **Speculative decoding** — 작은 draft 모델이 여러 토큰을 미리 제안하고 큰 모델이
+  한 번의 forward 로 검증·수용. decode 의 순차성을 부분적으로 병렬화.
+- **FlashAttention** — attention 을 HBM 왕복 없이 SRAM 안에서 블록 단위로 계산.
+  주로 prefill/학습의 $O(n^2)$ 상수를 줄인다.
+
+## 8. 정리 — 비용 모델
+
+- inference 는 autoregressive → **prefill**(프롬프트 병렬, compute-bound)과
+  **decode**(토큰당 1회, memory-bound)로 나뉜다.
+- **KV cache** 는 과거 $k, v$ 를 저장해 decode 재계산을 없앤다. 크기 =
+  $2 L\, n_{\text{kv}}\, d_{\text{head}}\, s\, b\, p$. Llama 3 8B fp16 = **128 KiB/token**
+  (8K·batch1 → 1 GiB, 128K → 16 GiB).
+- **Memory wall**: decode 스텝은 16 GB 가중치를 읽어 16 GFLOP 만 쓴다 → H100 에서
+  연산이 300배 놀고 대역폭이 병목. **batching** 으로 가중치 읽기를 여러 요청에 분산해야
+  ridge point 를 넘긴다 — 그런데 batch↑ 는 KV cache↑ 라 HBM 이 한계.
+- **MHA→MQA→GQA→MLA** 는 KV cache 공식의 $n_{\text{kv}} d_{\text{head}}$ 항을 줄이는
+  같은 계열의 시도다. quantization·paged attention·speculative decoding 은 각각 읽을
+  바이트·메모리 단편화·순차성을 공략한다 (6·7주차).
+
+이것으로 1주차를 마친다. 2주차부터는 tokenizer 와 pre-training 을 파고든다.
+
+<References items={[
+  { id: 1, text: "Grattafiori, A. et al. (Llama Team, Meta AI) (2024). The Llama 3 Herd of Models. arXiv:2407.21783. — 8B 아키텍처(32층, 32 query / 8 KV head, d_head 128), context 길이(3.0: 8K, 3.1: 128K)." },
+  { id: 2, text: "Shazeer, N. (2019). Fast Transformer Decoding: One Write-Head is All You Need. arXiv:1911.02150. — Multi-Query Attention: 모든 head 가 K/V 하나를 공유해 decode 시 메모리 대역폭 병목 완화." },
+  { id: 3, text: "Ainslie, J. et al. (2023). GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints. EMNLP 2023. arXiv:2305.13245. — MHA 와 MQA 사이를 보간하는 grouped-query attention." },
+  { id: 4, text: "DeepSeek-AI (2024). DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model. arXiv:2405.04434. — §2.1 Multi-head Latent Attention: K/V 저랭크 압축 후 latent 만 캐시, decoupled RoPE." },
+  { id: 5, text: "Kwon, W. et al. (2023). Efficient Memory Management for Large Language Model Serving with PagedAttention. SOSP 2023. arXiv:2309.06180 (vLLM). — KV cache 를 페이지 블록으로 관리 + continuous batching." },
+  { id: 6, text: "Pope, R. et al. (2022). Efficiently Scaling Transformer Inference. arXiv:2211.05102. — prefill/decode 비용 분석, arithmetic intensity 관점의 서빙 분석." },
+  { id: 7, text: "kipply (2022). Transformer Inference Arithmetic. https://kipp.ly/transformer-inference-arithmetic/ — KV cache 크기·memory bandwidth bound 를 수식으로 유도." },
+]} />

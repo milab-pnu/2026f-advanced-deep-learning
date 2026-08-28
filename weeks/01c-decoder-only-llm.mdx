@@ -1,0 +1,214 @@
+---
+title: "Decoder-only LLM 한 바퀴 — tokenizer에서 sampling까지"
+week: 1
+order: 2
+---
+
+앞 노트에서 생성형 LLM 이 causal decoder-only 로 수렴한 이유를 봤다. 이 노트는 그런
+모델 하나를 **입력 문자열이 들어와서 다음 토큰이 나오기까지** 순서대로 따라간다. 기준
+모델은 **Llama 3 8B**<Cite n={1} /> 이고, 각 단계에서 실제 크기를 확인한다.
+
+$$
+\text{텍스트}
+\;\xrightarrow{\text{tokenize}}\;
+\text{토큰 id 열}
+\;\xrightarrow{\text{embed}}\;
+X \in \mathbb{R}^{n \times d}
+\;\xrightarrow{\text{decoder} \times L}\;
+H \in \mathbb{R}^{n \times d}
+\;\xrightarrow{\text{LM head}}\;
+\text{logits} \in \mathbb{R}^{n \times V}
+\;\xrightarrow{\text{sample}}\;
+\text{다음 토큰}
+$$
+
+Llama 3 8B 의 기호: $d = d_{\text{model}} = 4096$, $L = 32$ 층, query head 32개,
+KV head 8개(GQA), $d_{\text{head}} = 128$, FFN 중간차원 $d_{\text{ff}} = 14336$,
+vocabulary $V = 128{,}256$, 학습 context 길이 8192(Llama 3.1 은 128K).
+
+## 1. Tokenization
+
+모델은 문자가 아니라 **정수 id** 를 받는다. 텍스트를 id 열로 바꾸는 규칙이 tokenizer 다.
+현대 LLM 은 대부분 **BPE**(Byte-Pair Encoding)<Cite n={2} /> 계열을 쓴다.
+
+**아이디어.** 아주 작은 어휘(개별 문자/바이트)에서 출발해, 말뭉치에서 **가장 자주
+인접해 나오는 쌍**을 하나의 새 토큰으로 병합하는 일을 원하는 어휘 크기가 될 때까지
+반복한다. 학습이 끝나면 병합 규칙의 순서가 곧 tokenizer 다.
+
+<Callout type="example">
+말뭉치에 `low`, `lower`, `newest`, `widest` 가 자주 나온다고 하자. 문자에서 시작해
+빈도가 높은 쌍부터 병합하면 `e`+`s` → `es`, `es`+`t` → `est`, `l`+`o` → `lo`,
+`lo`+`w` → `low` … 식으로 진행된다. 결과적으로 `lowest` 는 `low` + `est` 두 토큰,
+처음 보는 `slowest` 는 `s` + `low` + `est` 세 토큰으로 쪼개진다. 자주 쓰는 조각은
+한 토큰, 드문 단어는 여러 조각.
+</Callout>
+
+**Byte-level BPE.** 유니코드 문자 대신 **UTF-8 바이트**(256개)에서 시작한다. 그러면
+이모지든 한글이든 처음 보는 기호든 최소한 바이트 단위로는 항상 표현되어 "unknown
+token" 이 없다. GPT-2 이후 표준이고 Llama 3 도 이 방식(tiktoken 계열)이다.
+
+**어휘 크기 트레이드오프.** $V$ 를 키우면:
+
+- 문장당 토큰 수 $n$ 이 줄어 같은 텍스트를 더 짧은 시퀀스로 처리한다($O(n^2)$ attention
+  비용에 유리, 유효 context 가 길어짐).
+- embedding 행렬과 LM head 가 각각 $V \times d$ 로 커진다. Llama 3 는 $V$ 를 32K(Llama 2)
+  에서 **128K** 로 키웠다 — 다국어·코드 효율이 좋아지는 대신 두 행렬이 4배로.
+
+Llama 3 8B 에서 $128{,}256 \times 4096 \approx 5.25 \times 10^8$, 입력 embedding 과
+출력 LM head 각각 약 **525M 파라미터** — 8B 중 무시 못 할 몫이다(6절).
+
+<Sidenote>tokenization 은 조용한 버그의 온상이다. 숫자를 자릿수별로 안 쪼개면 산술이 약해지고, 공백·개행 처리 방식이 코드 생성 품질을 좌우한다. "왜 이 모델이 이 글자를 못 세지?" 류 현상은 대개 tokenizer 탓이다.</Sidenote>
+
+## 2. Embedding 과 위치 정보
+
+토큰 id $t_i$ 는 embedding 테이블 $E \in \mathbb{R}^{V \times d}$ 의 $t_i$ 번째 행을
+뽑아 $x_i \in \mathbb{R}^{d}$ 가 된다. 길이 $n$ 입력은 $X \in \mathbb{R}^{n \times d}$.
+
+위치 정보는 원 Transformer 의 사인·코사인 덧셈(앞 노트 5절) 대신 **RoPE**(Rotary
+Position Embedding)<Cite n={3} /> 로 준다. RoPE 는 각 attention 층에서 query·key 벡터를
+**위치에 비례한 각도만큼 회전**시킨다. 두 벡터를 각각 위치 $i$, $j$ 로 회전시킨 뒤
+내적하면, 그 값이 **상대 위치 $i - j$ 의 함수**가 된다:
+
+$$
+\big(R_i\, q\big) \cdot \big(R_j\, k\big) = g(q, k,\; i - j)
+$$
+
+절대 위치를 더하지 않으므로 학습 길이 밖으로의 확장이 상대적으로 수월하고, 상대 위치
+정보가 모든 층에 자연스럽게 들어간다. 자세한 유도는 3주차에서 다룬다.
+
+## 3. Decoder 블록 스택
+
+Llama 3 의 블록 하나는 앞 노트에서 조립한 것과 같은 골격에, 현대적 부품을 끼운
+**pre-LN** 구조다. 입력 $x \in \mathbb{R}^{n \times d}$:
+
+$$
+a = x + \text{Attn}\big( \text{RMSNorm}(x) \big)
+$$
+
+$$
+y = a + \text{FFN}\big( \text{RMSNorm}(a) \big)
+$$
+
+**RMSNorm**<Cite n={4} /> — LayerNorm 에서 평균 빼기(re-centering)를 없애고 크기만
+맞춘다:
+
+$$
+\text{RMSNorm}(x) = \frac{x}{\sqrt{\tfrac{1}{d}\sum_{m} x_m^2 + \epsilon}} \odot \gamma
+$$
+
+계산이 더 싸고 성능은 동등해서 최근 모델의 표준이다.
+
+**Attention — causal + GQA.** self-attention 은 causal mask 를 쓴다(위치 $i$ 는 $j \le i$
+만 참조). Llama 3 8B 는 query head 는 32개지만 **KV head 는 8개**만 두고 4개 query head 가
+한 KV head 를 공유한다(Grouped-Query Attention). 이유는 **KV cache 메모리** 이고, 공식과
+절감량은 네 번째 노트에서 계산한다. 여기서는 "생성 효율을 위해 K/V 쪽을 줄인 변형"으로만
+기억하면 된다.
+
+**FFN — SwiGLU.**<Cite n={5} /> ReLU MLP 대신 gate 가 붙은 형태:
+
+$$
+\text{FFN}(x) = \big( \text{SiLU}(x W_{\text{gate}}) \odot (x W_{\text{up}}) \big)\, W_{\text{down}}
+$$
+
+행렬이 2개에서 3개로 늘었으므로, 같은 파라미터 예산을 맞추려 중간차원을
+$\tfrac{2}{3} \times 4d$ 정도로 잡는다 — Llama 3 8B 는 $d_{\text{ff}} = 14336 \approx 3.5\,d$.
+
+블록을 지나도 텐서 모양은 $n \times d$ 로 보존된다. 이 블록을 $L = 32$ 번 통과한다.
+
+## 4. 최종 정규화와 LM head
+
+마지막 블록 출력에 RMSNorm 을 한 번 더 걸어 $H \in \mathbb{R}^{n \times d}$ 를 얻고,
+**LM head** $W_{\text{LM}} \in \mathbb{R}^{d \times V}$ 로 vocabulary 공간에 투영한다:
+
+$$
+\text{logits} = H\, W_{\text{LM}} \in \mathbb{R}^{n \times V}
+$$
+
+행 $i$ 는 "위치 $i$ 다음에 올 토큰"에 대한 $V$ 차원 점수 벡터다. GPT-2 등은 이
+$W_{\text{LM}}$ 을 입력 embedding $E$ 와 공유하지만(weight tying), Llama 3 는 별도
+행렬을 쓴다.
+
+## 5. 다음 토큰 뽑기 (sampling)
+
+마지막 위치의 logits $z \in \mathbb{R}^{V}$ 를 확률로 바꾼다:
+
+$$
+p_v = \frac{\exp(z_v / T)}{\sum_{u} \exp(z_u / T)}
+$$
+
+- **Temperature $T$.** $T \to 0$ 이면 argmax(항상 최빈 토큰), $T = 1$ 이면 모델 원분포,
+  $T > 1$ 이면 더 평평(다양·무작위). 
+- **Greedy decoding.** 매 스텝 argmax. 결정적이지만 반복·단조로움에 빠지기 쉽다.
+- **Top-k.** 확률 상위 $k$ 개만 남기고 재정규화 후 샘플링.
+- **Top-p (nucleus).** 확률을 큰 순서로 더해 누적이 $p$(예: 0.9)를 넘는 최소 집합만
+  남기고 샘플링. 분포가 뾰족하면 후보가 적고, 평평하면 많아진다 — top-k 보다 적응적.
+
+<Callout type="warning">
+temperature·top-p 는 **모델을 바꾸지 않는다.** 같은 logits 에서 어떻게 뽑느냐의
+문제다. 벤치마크 점수를 비교할 때 decoding 설정이 다르면 공정한 비교가 아니다.
+</Callout>
+
+## 6. Autoregressive 루프와 크기 감
+
+생성은 한 토큰씩 이어 붙이며 반복한다:
+
+1. 현재 시퀀스 $x_{1:n}$ 을 모델에 넣어 마지막 위치 logits 를 얻는다.
+2. sampling 으로 $x_{n+1}$ 을 뽑는다.
+3. $x_{n+1}$ 을 시퀀스에 붙이고 1로 — `<eos>` 가 나오거나 길이 한도까지.
+
+매 스텝 전체 스택을 다시 도는 것은 낭비다. causal 구조라 과거 위치의 key/value 는
+안 변하므로 **캐시**할 수 있다 — 이것이 KV cache 이고, prefill/decode 국면 구분과 함께
+네 번째 노트의 주제다.
+
+**Llama 3 8B 파라미터 8.03B 의 분해** (근사):
+
+| 구성 | 계산 | 파라미터 |
+|---|---|---|
+| 입력 embedding $E$ | $128{,}256 \times 4096$ | ≈ 0.53B |
+| 층당 attention ($W_Q, W_K, W_V, W_O$) | $4096^2 + 2(4096 \times 1024) + 4096^2$ | ≈ 41.9M |
+| 층당 FFN ($W_{\text{gate}}, W_{\text{up}}, W_{\text{down}}$) | $3 \times (4096 \times 14336)$ | ≈ 176M |
+| 32개 층 합계 | $32 \times (41.9\text{M} + 176\text{M})$ | ≈ 6.98B |
+| LM head $W_{\text{LM}}$ | $4096 \times 128{,}256$ | ≈ 0.53B |
+
+- **FFN 이 전체의 약 70%** (32 × 176M ≈ 5.6B). attention 은 약 17% (≈ 1.34B).
+  embedding + LM head 가 나머지 약 13%.
+- KV head 를 8개로 줄인 덕에 $W_K, W_V$ 가 $W_Q$ 의 1/4 크기다 — attention 파라미터도,
+  뒤에서 볼 KV cache 도 그만큼 작다.
+
+<Callout type="intuition">
+"8B 모델"의 8B 는 대부분 **32개 층의 FFN 행렬**이다. 지식은 주로 여기 저장되고, attention 은
+그 지식을 문맥에 맞게 라우팅하는 역할에 가깝다.
+</Callout>
+
+## 7. 학습은 어떻게 (개요)
+
+이 노트는 **학습이 끝난 모델의 forward** 를 따라갔다. 사전학습 자체는 앞 노트의 causal
+LM 목적함수 그대로다:
+
+$$
+\mathcal{L}(\theta) = -\frac{1}{n}\sum_{i=1}^{n} \log p_\theta\big( x_i \mid x_{<i} \big)
+$$
+
+거대 말뭉치를 고정 길이 조각으로 잘라, 각 조각에서 **모든 위치의 next-token 예측**을
+한 번의 forward 로 채점한다(teacher forcing). Llama 3 8B 는 15조(15T) 토큰 규모로
+학습됐다. tokenizer·데이터·스케일링 법칙·pre-training 세부는 **2주차**에서 다룬다.
+
+## 8. 정리
+
+- **tokenizer**: byte-level BPE. 자주 쓰는 조각은 한 토큰. $V$ 를 키우면 시퀀스가
+  짧아지지만 embedding/LM head 가 커진다 (Llama 3: $V = 128$K, 두 행렬 각 ≈ 0.53B).
+- **embedding → RoPE → (RMSNorm · causal GQA attention · SwiGLU FFN) × 32 → RMSNorm → LM head**.
+  블록 내내 모양은 $n \times d$.
+- 출력 logits($n \times V$)의 마지막 행에서 **temperature + top-k/top-p** 로 다음 토큰을
+  뽑고, 이어 붙여 반복한다.
+- 8B 파라미터의 **약 70%가 FFN**, 17%가 attention, 13%가 embedding/LM head.
+- 생성은 autoregressive 루프 — 그 비용 구조(prefill vs decode, KV cache, memory wall)가
+  다음 노트다.
+
+<References items={[
+  { id: 1, text: "Grattafiori, A. et al. (Llama Team, Meta AI) (2024). The Llama 3 Herd of Models. arXiv:2407.21783. — §3.2 (아키텍처: 8B = 32층, d 4096, 32 query / 8 KV head, GQA, SwiGLU, RMSNorm, RoPE θ=500000, vocab 128,256), §3 (15T 토큰 사전학습)." },
+  { id: 2, text: "Sennrich, R., Haddow, B., & Birch, A. (2016). Neural Machine Translation of Rare Words with Subword Units. ACL 2016. arXiv:1508.07909. — BPE 를 subword tokenization 에 도입." },
+  { id: 3, text: "Su, J., Lu, Y., Pan, S., Wen, B., & Liu, Y. (2021). RoFormer: Enhanced Transformer with Rotary Position Embedding. arXiv:2104.09864. — §3 (회전 행렬로 상대 위치를 내적에 주입)." },
+  { id: 4, text: "Zhang, B., & Sennrich, R. (2019). Root Mean Square Layer Normalization. NeurIPS 2019. arXiv:1910.07467." },
+  { id: 5, text: "Shazeer, N. (2020). GLU Variants Improve Transformer. arXiv:2002.05202. — SwiGLU 등 gated FFN, 파라미터 맞춤을 위한 2/3 배 규칙." },
+]} />
