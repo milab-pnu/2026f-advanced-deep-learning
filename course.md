@@ -4,7 +4,7 @@ titleEn: Advanced Deep Learning
 term: 2026 Fall
 semester: "2026-02"
 instructor: 오재훈
-schedule: 금 13:00–16:00
+schedule: 금 13:00–16:00 (데이터사이언스학과·데이터사이언스융합전공)
 location: 제12공학관 201호
 credits: 3
 summary: 딥러닝 연구의 최전선(LLM·생성모델·멀티모달 등)을 서베이 논문 중심으로 다루는 박사과정 강의식 과목.
