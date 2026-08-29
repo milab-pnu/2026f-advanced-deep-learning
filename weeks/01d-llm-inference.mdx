@@ -269,7 +269,7 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
 이것으로 1주차를 마친다. 2주차부터는 tokenizer 와 pre-training 을 파고든다.
 
 <References items={[
-  { id: 1, text: "Grattafiori, A. et al. (Llama Team, Meta AI) (2024). The Llama 3 Herd of Models. arXiv:2407.21783. — 8B 아키텍처(32층, 32 query / 8 KV head, d_head 128), context 길이(3.0: 8K, 3.1: 128K)." },
+  { id: 1, text: "Llama Team, AI @ Meta (2024). The Llama 3 Herd of Models. arXiv:2407.21783. — 8B 아키텍처(32층, 32 query / 8 KV head, d_head 128), context 길이(3.0: 8K, 3.1: 128K)." },
   { id: 2, text: "Shazeer, N. (2019). Fast Transformer Decoding: One Write-Head is All You Need. arXiv:1911.02150. — Multi-Query Attention: 모든 head 가 K/V 하나를 공유해 decode 시 메모리 대역폭 병목 완화." },
   { id: 3, text: "Ainslie, J. et al. (2023). GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints. EMNLP 2023. arXiv:2305.13245. — MHA 와 MQA 사이를 보간하는 grouped-query attention." },
   { id: 4, text: "DeepSeek-AI (2024). DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model. arXiv:2405.04434. — §2.1 Multi-head Latent Attention: K/V 저랭크 압축(d_c=512) 후 latent 만 캐시, decoupled RoPE(d_rope=64), matrix absorption." },

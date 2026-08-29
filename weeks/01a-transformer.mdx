@@ -310,8 +310,8 @@ $$
 
 이 블록을 $N$ 번 반복하면 encoder 다. decoder 블록은 두 residual 사이에
 encoder–decoder attention(+ residual)을 하나 더 끼운다. decoder 스택의 마지막 출력은
-LayerNorm 을 거쳐 vocabulary 크기의 linear + softmax 로 다음 토큰 분포가 된다. 원논문은
-이 출력 projection 행렬을 입력 임베딩 행렬과 **공유**한다(weight tying).
+vocabulary 크기의 linear + softmax 로 다음 토큰 분포가 된다. 원논문은 이 출력 projection
+행렬을 입력 임베딩 행렬과 **공유**한다(weight tying).<Sidenote>pre-LN 모델에서는 residual 경로가 정규화 없이 스택 끝까지 뚫려 있으므로, linear 앞에 최종 정규화를 하나 더 둔다 — 다음 노트의 Llama 3 블록에서 본다.</Sidenote>
 
 <Details summary="원논문 학습 레시피 (base 모델)">
 

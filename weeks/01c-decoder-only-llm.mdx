@@ -110,8 +110,9 @@ $$
 \text{FFN}(x) = \big( \text{SiLU}(x W_{\text{gate}}) \odot (x W_{\text{up}}) \big)\, W_{\text{down}}
 $$
 
-행렬이 2개에서 3개로 늘었으므로, 같은 파라미터 예산을 맞추려 중간차원을
-$\tfrac{2}{3} \times 4d$ 정도로 잡는다 — Llama 3 8B 는 $d_{\text{ff}} = 14336 \approx 3.5\,d$.
+행렬이 2개에서 3개로 늘었으므로 중간차원을 줄여 파라미터를 맞춘다. Shazeer 는 원
+Transformer 의 $4d$ 대신 $\tfrac{2}{3}\times 4d$ 를 권했고, Llama 계열은 여기에 배율을
+더 얹는다 — Llama 3 8B 는 $d_{\text{ff}} = 14336$ ($\approx 3.5\,d$).
 
 블록을 지나도 텐서 모양은 $n \times d$ 로 보존된다. 이 블록을 $L = 32$ 번 통과한다.
 
@@ -208,7 +209,7 @@ $$
   다음 노트다.
 
 <References items={[
-  { id: 1, text: "Grattafiori, A. et al. (Llama Team, Meta AI) (2024). The Llama 3 Herd of Models. arXiv:2407.21783. — §3.2 (아키텍처: 8B = 32층, d 4096, 32 query / 8 KV head, GQA, SwiGLU, RMSNorm, RoPE θ=500000, vocab 128,256), §3 (15T 토큰 사전학습)." },
+  { id: 1, text: "Llama Team, AI @ Meta (2024). The Llama 3 Herd of Models. arXiv:2407.21783. — §3.2 (아키텍처: 8B = 32층, d 4096, 32 query / 8 KV head, GQA, SwiGLU, RMSNorm, RoPE θ=500000, vocab 128,256), §3 (15T 토큰 사전학습)." },
   { id: 2, text: "Sennrich, R., Haddow, B., & Birch, A. (2016). Neural Machine Translation of Rare Words with Subword Units. ACL 2016. arXiv:1508.07909. — BPE 를 subword tokenization 에 도입." },
   { id: 3, text: "Su, J., Lu, Y., Pan, S., Wen, B., & Liu, Y. (2021). RoFormer: Enhanced Transformer with Rotary Position Embedding. arXiv:2104.09864. — §3 (회전 행렬로 상대 위치를 내적에 주입)." },
   { id: 4, text: "Zhang, B., & Sennrich, R. (2019). Root Mean Square Layer Normalization. NeurIPS 2019. arXiv:1910.07467." },
