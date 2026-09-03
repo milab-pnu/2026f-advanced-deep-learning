@@ -27,8 +27,14 @@ $$
 를 갱신하고, decoder 가 그 정보를 받아 target 문장을 한 토큰씩 생성한다. 여기에
 attention 을 얹어 decoder 가 매 스텝 source 의 특정 위치를 "돌아보게" 한 것이 Bahdanau
 등의 기여였다.[^bahdanau] attention 자체는 Transformer 의 발명이 아니다 — Transformer 의
-주장은 **RNN 을 걷어내고 attention 만 남겨도 된다**는 것이다. 이 seq2seq + attention
-구조가 스텝마다 어떻게 움직이는지는 Alammar 의 애니메이션 시각화가 잘 보여준다.[^nmt]
+주장은 **RNN 을 걷어내고 attention 만 남겨도 된다**는 것이다.
+
+<figure>
+<video src="https://jalammar.github.io/images/seq2seq_5.mp4" autoplay loop muted playsinline controls width="100%" aria-label="RNN encoder 가 source 토큰을 왼쪽에서 오른쪽으로 하나씩 읽으며 hidden state 를 갱신하고, 마지막 hidden state 하나만 context 로 decoder 에 넘기는 애니메이션."></video>
+<figcaption>attention 이전의 seq2seq — encoder 의 hidden state 는 토큰마다 갱신되고(순차 사슬), 마지막 하나만 context 로 decoder 에 넘어간다(병목). 그림 Jay Alammar · jalammar.github.io 2018 · CC BY-NC-SA 4.0 · 수정 없음</figcaption>
+</figure>
+
+전체 흐름과 여기에 attention 을 얹는 단계까지는 Alammar 의 단계별 시각화에 있다.[^nmt]
 
 RNN 방식의 구조적 한계는 두 가지다.
 
