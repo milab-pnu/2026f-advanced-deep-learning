@@ -288,9 +288,19 @@ decoder 정답:  <X> for inviting <Y> last <Z>
 ```
 
 (`<Z>` 는 "여기서 끝"이라는 종료 표시다.) BERT 의 빈칸 채우기와 비슷하지만, 빈칸이
-여러 토큰짜리 구간이고 복원을 decoder 가 생성으로 한다는 점이 다르다. 여기서 **손상된
-문장 전체는 encoder 로, 지워진 조각들의 정답은 decoder 로** 간다 — 둘은 서로 다른
-입력이다.
+여러 토큰짜리 구간이고 복원을 decoder 가 생성으로 한다는 점이 다르다.
+
+여기서 **손상된 문장 전체는 encoder 로, 지워진 조각들의 정답은 decoder 로** 간다 — 둘은
+서로 다른 문자열이다. §1a 의 번역용 encoder–decoder 와 완전히 같은 배선이고, 넣는 내용만
+바뀐다.
+
+| | encoder 입력 (조건, 통째로) | decoder 입력 (정답을 한 칸 민 것) | decoder 가 맞힐 정답 |
+|---|---|---|---|
+| 원 Transformer · 번역 | `That is good .` | `<s> Das ist gut` | `Das ist gut <eos>` |
+| T5 · span corruption | `Thank you <X> me … <Y> week .` | `<s> <X> for inviting <Y> last` | `<X> for inviting <Y> last <Z>` |
+
+규칙은 하나다 — encoder 는 조건이 되는 문장을 통째로 받고, decoder 는 정답을 한 칸 민
+것을 받아 "그 다음 토큰"을 위치마다 맞힌다.
 
 그럼 encoder 는 어떻게 학습되나? decoder 쪽을 한 스텝씩 펼쳐 보면 분명해진다.
 

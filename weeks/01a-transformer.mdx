@@ -78,11 +78,68 @@ encoder 블록 하나는 두 개의 sub-layer 로 되어 있다:
 decoder 블록은 여기에 **encoder–decoder attention** 이 하나 더 붙어 세 개의 sub-layer 를
 가진다(6절). 모든 sub-layer 는 residual connection 과 layer normalization(LN) 으로 감싼다(8절).<Sidenote>원논문은 sub-layer 출력을 $\mathrm{LayerNorm}(x + \mathrm{Sublayer}(x))$ 로 쓴다. 이 배치를 post-LN 이라 부르며, 현대 LLM(large language model) 은 거의 pre-LN 을 쓴다 (8절).</Sidenote>
 
-<Figure
-  src="https://upload.wikimedia.org/wikipedia/commons/8/8f/The-Transformer-model-architecture.png"
-  alt="Transformer 전체 아키텍처 — 왼쪽 encoder 스택, 오른쪽 decoder 스택"
-  caption="Transformer 전체 구조 — 왼쪽이 encoder, 오른쪽이 decoder, 각 스택은 동일한 블록 N개. 원논문(Vaswani et al., 2017)의 아키텍처."
-  source="그림 Yuening Jia, Wikimedia Commons · CC BY-SA 3.0 · 수정 없음 · 아키텍처는 Vaswani et al. 2017" />
+<svg viewBox="0 0 500 350" role="img" aria-label="원 Transformer 전체 구조. 왼쪽 encoder 스택과 오른쪽 decoder 스택이 나란히 선다. encoder 는 아래에서 위로 '입력 임베딩 + 위치 인코딩 → self-attention(양방향, mask 없음) → feed-forward network' 이고 이 블록을 N 번 쌓는다. decoder 는 '출력 임베딩 + 위치 인코딩 → masked self-attention(causal, 왼쪽만) → cross-attention(Q 는 decoder, K·V 는 encoder 출력) → feed-forward network' 블록을 N 번 쌓고 맨 위에 Linear + Softmax 를 얹어 다음 토큰 확률을 낸다. 모든 sub-layer 는 잔차 연결과 LayerNorm 으로 감싼다. encoder 입력은 source 문장 전체이고 decoder 입력은 target 을 한 칸 오른쪽으로 민 것으로, 둘은 서로 다른 문자열이다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <text x="126" y="15" text-anchor="middle" font-size="10" font-weight="600" fill="#0f172a">encoder — source 이해</text>
+  <text x="394" y="15" text-anchor="middle" font-size="10" font-weight="600" fill="#0f172a">decoder — target 생성</text>
+  <rect x="300" y="30" width="188" height="26" rx="4" fill="#f8fafc" stroke="#0f172a"/>
+  <text x="394" y="47" text-anchor="middle" font-size="9" fill="#0f172a">Linear → Softmax → 다음 토큰 확률</text>
+  <line x1="394" y1="74" x2="394" y2="58" stroke="#0f172a"/><polygon points="394,56 391,62 397,62" fill="#0f172a"/>
+  <rect x="30" y="120" width="192" height="112" rx="5" fill="none" stroke="#94a3b8" stroke-dasharray="4 3"/>
+  <rect x="198" y="112" width="30" height="16" rx="3" fill="#0f172a"/>
+  <text x="213" y="124" text-anchor="middle" font-size="8" font-weight="600" fill="#f8fafc">×N</text>
+  <rect x="44" y="130" width="164" height="30" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="126" y="149" text-anchor="middle" font-size="9" fill="#0f172a">feed-forward network</text>
+  <rect x="44" y="180" width="164" height="38" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="126" y="196" text-anchor="middle" font-size="9" fill="#0f172a">self-attention</text>
+  <text x="126" y="209" text-anchor="middle" font-size="7.5" fill="#64748b">양방향 · mask 없음</text>
+  <line x1="126" y1="180" x2="126" y2="162" stroke="#0f172a"/><polygon points="126,160 123,166 129,166" fill="#0f172a"/>
+  <text x="126" y="228" text-anchor="middle" font-size="7" fill="#64748b">칸마다 + 잔차 · LayerNorm</text>
+  <rect x="298" y="74" width="192" height="158" rx="5" fill="none" stroke="#94a3b8" stroke-dasharray="4 3"/>
+  <rect x="466" y="66" width="30" height="16" rx="3" fill="#0f172a"/>
+  <text x="481" y="78" text-anchor="middle" font-size="8" font-weight="600" fill="#f8fafc">×N</text>
+  <rect x="312" y="84" width="164" height="28" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="394" y="102" text-anchor="middle" font-size="9" fill="#0f172a">feed-forward network</text>
+  <rect x="312" y="130" width="164" height="38" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="394" y="146" text-anchor="middle" font-size="9" fill="#0f172a">cross-attention</text>
+  <text x="394" y="159" text-anchor="middle" font-size="7.5" fill="#64748b">Q: decoder · K, V: encoder 출력</text>
+  <rect x="312" y="186" width="164" height="38" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="394" y="202" text-anchor="middle" font-size="9" fill="#0f172a">masked self-attention</text>
+  <text x="394" y="215" text-anchor="middle" font-size="7.5" fill="#64748b">causal · 왼쪽만</text>
+  <line x1="394" y1="130" x2="394" y2="114" stroke="#0f172a"/><polygon points="394,112 391,118 397,118" fill="#0f172a"/>
+  <line x1="394" y1="186" x2="394" y2="170" stroke="#0f172a"/><polygon points="394,168 391,174 397,174" fill="#0f172a"/>
+  <path d="M 222 178 C 256 178, 270 149, 310 149" fill="none" stroke="#0f172a"/>
+  <polygon points="312,149 305,146 305,152" fill="#0f172a"/>
+  <text x="264" y="143" text-anchor="middle" font-size="7" fill="#64748b">encoder 출력</text>
+  <rect x="30" y="250" width="192" height="30" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="126" y="269" text-anchor="middle" font-size="8.5" fill="#0f172a">입력 임베딩 + 위치 인코딩</text>
+  <rect x="298" y="250" width="192" height="30" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="394" y="269" text-anchor="middle" font-size="8.5" fill="#0f172a">출력 임베딩 + 위치 인코딩</text>
+  <line x1="126" y1="250" x2="126" y2="234" stroke="#0f172a"/><polygon points="126,232 123,238 129,238" fill="#0f172a"/>
+  <line x1="394" y1="250" x2="394" y2="234" stroke="#0f172a"/><polygon points="394,232 391,238 397,238" fill="#0f172a"/>
+  <line x1="126" y1="300" x2="126" y2="282" stroke="#0f172a"/><polygon points="126,280 123,286 129,286" fill="#0f172a"/>
+  <line x1="394" y1="300" x2="394" y2="282" stroke="#0f172a"/><polygon points="394,280 391,286 397,286" fill="#0f172a"/>
+  <text x="126" y="312" text-anchor="middle" font-size="8" fill="#0f172a">source 문장 전체</text>
+  <text x="126" y="324" text-anchor="middle" font-size="7.5" fill="#64748b">예: "That is good ."</text>
+  <text x="394" y="312" text-anchor="middle" font-size="8" fill="#0f172a">target 을 한 칸 오른쪽으로 민 것</text>
+  <text x="394" y="324" text-anchor="middle" font-size="7.5" fill="#64748b">예: "&lt;s&gt; Das ist gut"</text>
+  <text x="250" y="344" text-anchor="middle" font-size="8" fill="#64748b">원 Transformer (Vaswani et al. 2017) · 같은 블록을 각 스택에 N개 · encoder 입력 ≠ decoder 입력</text>
+</svg>
+
+원논문 Figure 1 을 하우스 표기로 다시 그렸다(원본은 Vaswani et al. 2017, §3). 왼쪽이
+source 를 이해하는 **encoder**, 오른쪽이 target 을 생성하는 **decoder** 이고, 각 스택은
+동일한 블록을 $N$ 개 쌓는다(base 는 $N = 6$).
+
+그림에서 **decoder 아래쪽 입력**이 헷갈리기 쉽다. decoder 는 target 문장을 스스로
+만들어야 하지만, 학습 때는 정답을 이미 안다. 그래서 정답 문장을 통째로 넣되 **한 칸
+오른쪽으로 민다** — 위치 $i$ 의 입력이 정답의 $(i-1)$ 번째 토큰이 되도록. 그러면 위치
+$i$ 는 "정답의 $i$ 번째 토큰"을 예측하는 문제가 되고, causal mask 가 그 자리에서 미래를
+가린다(6절). 추론 때는 정답이 없으니 생성한 토큰을 도로 이어 붙여 한 칸씩 늘려 간다.
+
+강조할 점은 **encoder 입력과 decoder 입력이 서로 다른 문자열**이라는 것이다. 번역이라면
+encoder 에는 source(영어) 문장 전체가, decoder 에는 지금까지의 target(독일어)이 들어간다.
+두 스택은 나란히 서고, **cross-attention** 이 그 사이를 잇는 유일한 통로다. 다음 노트의
+BERT·GPT·T5 도 모두 이 그림 위에서 갈린다 — BERT 는 왼쪽 기둥만, GPT 는 오른쪽 기둥만
+(cross-attention 을 뺀 채), T5 는 이 구조를 거의 그대로 쓴다.
 
 ## 3. Attention 이라는 연산
 
