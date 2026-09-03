@@ -15,16 +15,10 @@ Harvard NLP 의 *The Annotated Transformer*[^annotated], Weng 의
 이번 주 나머지 노트(BERT vs GPT, decoder-only LLM(large language model), inference)가 전부 이 블록
 위에 서 있으므로, 여기서 차원 하나하나를 분명히 해 둔다.
 
-<Figure hero
-  src="https://upload.wikimedia.org/wikipedia/commons/8/8f/The-Transformer-model-architecture.png"
-  alt="Transformer 전체 아키텍처 — 왼쪽 encoder 스택, 오른쪽 decoder 스택"
-  caption="Transformer 전체 구조. 왼쪽이 encoder, 오른쪽이 decoder. 각 스택은 동일한 블록 N개를 쌓은 것이다. 원논문(Vaswani et al., 2017)의 아키텍처를 옮긴 그림."
-  source="그림 Yuening Jia, Wikimedia Commons — CC BY-SA 3.0, 수정 없음 · 아키텍처는 Vaswani et al. 2017" />
-
 ## 1. 순차 모델의 벽
 
 2017년 이전의 기계번역(neural machine translation)은 대부분 **RNN(recurrent neural
-network) 기반 encoder–decoder** 구조였다. encoder 가 source 문장을 왼쪽에서 오른쪽으로 한 토큰씩 읽어 hidden state
+network) 기반 encoder–decoder**(seq2seq) 구조였다.[^seq2seq] encoder 가 source 문장을 왼쪽에서 오른쪽으로 한 토큰씩 읽어 hidden state
 
 $$
 h_t = f(h_{t-1},\, x_t)
@@ -33,7 +27,8 @@ $$
 를 갱신하고, decoder 가 그 정보를 받아 target 문장을 한 토큰씩 생성한다. 여기에
 attention 을 얹어 decoder 가 매 스텝 source 의 특정 위치를 "돌아보게" 한 것이 Bahdanau
 등의 기여였다.[^bahdanau] attention 자체는 Transformer 의 발명이 아니다 — Transformer 의
-주장은 **RNN 을 걷어내고 attention 만 남겨도 된다**는 것이다.
+주장은 **RNN 을 걷어내고 attention 만 남겨도 된다**는 것이다. 이 seq2seq + attention
+구조가 스텝마다 어떻게 움직이는지는 Alammar 의 애니메이션 시각화가 잘 보여준다.[^nmt]
 
 RNN 방식의 구조적 한계는 두 가지다.
 
@@ -76,6 +71,12 @@ encoder 블록 하나는 두 개의 sub-layer 로 되어 있다:
 
 decoder 블록은 여기에 **encoder–decoder attention** 이 하나 더 붙어 세 개의 sub-layer 를
 가진다(6절). 모든 sub-layer 는 residual connection 과 layer normalization(LN) 으로 감싼다(8절).<Sidenote>원논문은 sub-layer 출력을 $\mathrm{LayerNorm}(x + \mathrm{Sublayer}(x))$ 로 쓴다. 이 배치를 post-LN 이라 부르며, 현대 LLM 은 거의 pre-LN 을 쓴다 — 8절에서 다룬다.</Sidenote>
+
+<Figure
+  src="https://upload.wikimedia.org/wikipedia/commons/8/8f/The-Transformer-model-architecture.png"
+  alt="Transformer 전체 아키텍처 — 왼쪽 encoder 스택, 오른쪽 decoder 스택"
+  caption="Transformer 전체 구조 — 왼쪽이 encoder, 오른쪽이 decoder, 각 스택은 동일한 블록 N개. 원논문(Vaswani et al., 2017)의 아키텍처."
+  source="그림 Yuening Jia, Wikimedia Commons · CC BY-SA 3.0 · 수정 없음 · 아키텍처는 Vaswani et al. 2017" />
 
 ## 3. Attention 이라는 연산
 
@@ -362,7 +363,11 @@ $k$: convolution kernel).
 
 [^aiayn]: Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., & Polosukhin, I. (2017). Attention Is All You Need. NeurIPS 2017. [arXiv:1706.03762](https://arxiv.org/abs/1706.03762). — §3.1–3.3 (attention, multi-head), §3.5 (positional encoding), Table 1 (복잡도), §5 (학습 설정), Table 2 (BLEU: big EN-DE 28.4, base EN-DE 27.3).
 
+[^seq2seq]: Sutskever, I., Vinyals, O., & Le, Q. V. (2014). Sequence to Sequence Learning with Neural Networks. NeurIPS 2014. [arXiv:1409.3215](https://arxiv.org/abs/1409.3215). — RNN(LSTM) encoder 로 source 를 벡터로 인코딩하고 decoder 로 생성하는 seq2seq.
+
 [^bahdanau]: Bahdanau, D., Cho, K., & Bengio, Y. (2015). Neural Machine Translation by Jointly Learning to Align and Translate. ICLR 2015. [arXiv:1409.0473](https://arxiv.org/abs/1409.0473). — RNN encoder–decoder 에 additive attention 을 처음 결합.
+
+[^nmt]: Alammar, J. (2018). [Visualizing A Neural Machine Translation Model (Mechanics of Seq2seq Models with Attention)](https://jalammar.github.io/visualizing-neural-machine-translation-mechanics-of-seq2seq-models-with-attention/). — RNN encoder–decoder 와 Bahdanau attention 을 단계별 애니메이션으로 시각화.
 
 [^illustrated]: Alammar, J. (2018). [The Illustrated Transformer](https://jalammar.github.io/illustrated-transformer/). — Q/K/V 행렬 계산과 multi-head 시각화, head 별 attention 패턴 예시.
 
