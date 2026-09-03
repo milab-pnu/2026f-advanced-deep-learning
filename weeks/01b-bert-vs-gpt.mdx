@@ -47,8 +47,13 @@ $-\infty$ 로 덮느냐에 따라 두 가지로 갈린다.
 
 행 = query 위치 $i$, 열 = key 위치 $j$. 채워진 칸이 attention 이 허용된 쌍이다.
 
-두 계열은 §1a 에서 조립한 **바로 그 블록**을 그대로 쌓는다. 다른 것은 딱 둘이다 —
-self-attention 의 mask, 그리고 스택 맨 위에 올리는 출력층.
+§1a 에서 조립한 블록은 **self-attention → FFN** 두 겹(각각 뒤에 잔차·LayerNorm)이다.
+원 Transformer 는 이 블록을 두 자리에 쓴다 — mask 없이 쌓은 스택이 **encoder**, causal
+mask 를 걸고 encoder–decoder attention 한 겹을 더 얹은 스택이 **decoder** 다. BERT 는
+encoder 스택을 그대로 가져오고, GPT 는 decoder 스택에서 — 참조할 encoder 가 없으니 —
+encoder–decoder attention 을 떼어낸다. 그러면 두 겹짜리 블록만 남아, encoder 블록과
+**causal mask 하나로만** 갈린다. 이것이 "같은 블록, 다른 mask" 의 뜻이다. 남는 차이는
+스택 맨 위에 올리는 출력층 하나뿐이다.
 
 <svg viewBox="0 0 460 316" role="img" aria-label="BERT 와 GPT 의 블록 구조 비교. 둘 다 '토큰+위치 임베딩 → self-attention → 잔차·LayerNorm → feed-forward network → 잔차·LayerNorm' 블록을 N 번 쌓는다. 유일한 구조 차이는 self-attention 의 mask 다: BERT(encoder)는 각 토큰이 좌·우 모든 토큰을 참조하고, GPT(decoder-only)는 각 토큰이 자기 왼쪽까지만 참조한다. 출력도 다르다: BERT 는 위치마다 양방향 문맥 표현을 내고 그 위에 과제별 head 를 붙여 fine-tune 하며, GPT 는 위치마다 다음 토큰 확률을 내어 프롬프트에 이어 바로 생성한다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <line x1="230" y1="14" x2="230" y2="304" stroke="#94a3b8" stroke-dasharray="3 4"/>
@@ -285,6 +290,14 @@ GPT-2 → GPT-3 의 **스케일 + zero/few-shot**: 하나의 고정된 모델이
 (`<Z>` 는 "여기서 끝"이라는 종료 표시다.) BERT 의 빈칸 채우기와 비슷하지만, 빈칸이
 여러 토큰짜리 구간이고 복원을 decoder 가 생성으로 한다는 점이 다르다.
 
+그럼 encoder 는 어떻게 학습되나? **손실은 decoder 출력 한 곳에만 걸린다.** decoder 가
+정답 문자열(위 예의 `<X> for inviting <Y> …`)을 왼쪽에서 오른쪽으로 맞히는 next-token
+손실이며, §3 GPT 의 손실과 같은 형태다 — 단 매 스텝 encoder 표현도 함께 본다. encoder
+자체에는 손실이 없다. encoder · cross-attention · decoder 가 하나의 계산 그래프로 이어져
+있어서, 이 손실의 그래디언트가 cross-attention 을 타고 encoder 까지 역전파된다. 즉
+encoder 는 "입력을 어떻게 표현해 두어야 decoder 가 정답을 잘 맞히나"라는 신호만으로
+학습된다. 입력 토큰 자체를 맞히는 목표는 따로 없다.
+
 **BART**[^bart] 는 같은 encoder–decoder 이되 입력을 더 다양하게 망가뜨린다 — 토큰을
 지우고, 문장 순서를 섞고, 구간을 마스킹한 문장을 넣어 decoder 가 **원문 전체**를
 되살리게 한다(denoising autoencoder, 잡음 섞은 입력에서 원본을 복원하는 모델).
@@ -342,7 +355,7 @@ encoder–decoder 가 여전히 효율적이고, 분류·검색이라면 encoder
 | 사용 방식 | 과제별 fine-tuning | 프롬프트(zero/few-shot) | text-to-text fine-tuning |
 | 대표 | BERT, RoBERTa, DeBERTa | GPT-3/4, Llama, Mistral, Qwen | T5, BART, FLAN-T5 |
 
-- Transformer 블록은 공유하고, **mask + 목적함수**가 계열을 가른다.
+- BERT·GPT 는 같은 두 겹(self-attention + FFN) 블록을 쌓고, **mask + 목적함수**가 계열을 가른다. encoder–decoder 는 여기에 cross-attention 을 더한 형태다.
 - BERT = 양방향 이해, GPT = 인과적 생성, encoder–decoder(및 prefix LM) = 입력/출력이 나뉘는 과제.
 - 범용 생성 LLM 은 **단순성 · 사전학습 밀도 · 사용 일치 · zero/few-shot · KV cache**
   때문에 causal decoder-only 로 수렴했다.
