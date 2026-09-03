@@ -97,7 +97,7 @@ $$
 \text{RMSNorm}(x) = \frac{x}{\sqrt{\tfrac{1}{d}\sum_{m} x_m^2 + \epsilon}} \odot \gamma
 $$
 
-계산이 더 싸고 성능은 동등해서 최근 모델의 표준이다.
+계산이 더 싸고 성능은 비슷해서 최근 모델의 표준이다.
 
 **Attention — causal + GQA.** self-attention 은 causal mask 를 쓴다(위치 $i$ 는 $j \le i$
 만 참조). Llama 3 8B 는 query head 는 32개지만 **KV head 는 8개**만 두고 4개 query head 가
@@ -217,6 +217,6 @@ $$
 
 [^rope]: Su, J., Lu, Y., Pan, S., Wen, B., & Liu, Y. (2021). RoFormer: Enhanced Transformer with Rotary Position Embedding. [arXiv:2104.09864](https://arxiv.org/abs/2104.09864). — §3 (회전 행렬로 상대 위치를 내적에 주입).
 
-[^rmsnorm]: Zhang, B., & Sennrich, R. (2019). Root Mean Square Layer Normalization. NeurIPS 2019. [arXiv:1910.07467](https://arxiv.org/abs/1910.07467).
+[^rmsnorm]: Zhang, B., & Sennrich, R. (2019). Root Mean Square Layer Normalization. NeurIPS 2019. [arXiv:1910.07467](https://arxiv.org/abs/1910.07467). — LayerNorm 에서 평균 빼기를 없애고 RMS 로 크기만 정규화 (계산 절감).
 
 [^swiglu]: Shazeer, N. (2020). GLU Variants Improve Transformer. [arXiv:2002.05202](https://arxiv.org/abs/2002.05202). — SwiGLU 등 gated FFN, 파라미터 맞춤을 위한 2/3 배 규칙.

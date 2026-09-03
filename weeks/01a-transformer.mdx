@@ -4,12 +4,12 @@ week: 1
 order: 0
 ---
 
-이 노트는 Vaswani 등의 2017년 논문 <em>Attention Is All You Need</em>[^aiayn] 를
-1차 자료로 삼아 Transformer 아키텍처를 수식 수준에서 조립한다. 설명 순서와 그림은 이
-주제를 가장 잘 풀어낸 해설들 — Alammar 의 <em>The Illustrated Transformer</em>[^illustrated],
-Harvard NLP 의 <em>The Annotated Transformer</em>[^annotated], Weng 의
-<em>Attention? Attention!</em>[^weng], Bloem 의 <em>Transformers from Scratch</em>[^bloem] —
-에서 가져왔다. 각 구성요소를 **무엇을 계산하는가 · 왜 그렇게 하는가 · 작은 예시**
+이 노트는 Vaswani 등의 2017년 논문 *Attention Is All You Need*[^aiayn] 를
+1차 자료로 삼아 Transformer 아키텍처를 수식 수준에서 조립한다. 설명 방식과 비유는 이
+주제를 잘 풀어낸 해설들 — Alammar 의 *The Illustrated Transformer*[^illustrated],
+Harvard NLP 의 *The Annotated Transformer*[^annotated], Weng 의
+*Attention? Attention!*[^weng], Bloem 의 *Transformers from Scratch*[^bloem] —
+을 참고했다. 각 구성요소를 **무엇을 계산하는가 · 왜 그렇게 하는가 · 작은 예시**
 순서로 본다. 코드는 쓰지 않는다.
 
 이번 주 나머지 노트(decoder-only LLM(large language model), inference)가 전부 이 블록 위에 서 있으므로,
@@ -378,6 +378,6 @@ $k$: convolution kernel).
 
 [^resnet]: He, K., Zhang, X., Ren, S., & Sun, J. (2016). Deep Residual Learning for Image Recognition. CVPR 2016. [arXiv:1512.03385](https://arxiv.org/abs/1512.03385). — residual connection.
 
-[^layernorm]: Ba, J. L., Kiros, J. R., & Hinton, G. E. (2016). Layer Normalization. [arXiv:1607.06450](https://arxiv.org/abs/1607.06450).
+[^layernorm]: Ba, J. L., Kiros, J. R., & Hinton, G. E. (2016). Layer Normalization. [arXiv:1607.06450](https://arxiv.org/abs/1607.06450). — 토큰 벡터를 성분 축으로 평균 0·분산 1 정규화 (batch·시퀀스 축 무관).
 
 [^preln]: Xiong, R., et al. (2020). On Layer Normalization in the Transformer Architecture. ICML 2020. [arXiv:2002.04745](https://arxiv.org/abs/2002.04745). — pre-LN 이 warmup 없이 안정적으로 깊게 학습됨을 분석.
