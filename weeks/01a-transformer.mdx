@@ -318,7 +318,13 @@ $$
 - `FFN(A)`: $n \times 512 \to n \times 2048 \to n \times 512$
 - 출력 $Y$: $n \times d_{\text{model}}$ — 입력과 같은 모양
 
-이 블록을 $N$ 번 반복하면 encoder 다. decoder 블록은 두 residual 사이에
+<Figure
+  src="https://jalammar.github.io/images/t/transformer_resideual_layer_norm_3.png"
+  alt="encoder 2개와 decoder 2개를 쌓은 Transformer. 각 encoder 블록은 self-attention 다음 Add & Normalize, 그다음 feed forward, 다시 Add & Normalize 로 이어지고 점선이 residual 연결이다. decoder 블록은 self-attention 과 feed forward 사이에 encoder-decoder attention(+ Add & Normalize)이 하나 더 들어가며, encoder 스택의 최종 출력이 각 decoder 블록의 encoder-decoder attention 으로 전달된다. decoder 스택 위에 Linear, 그 위에 Softmax 가 얹혀 다음 토큰 분포를 낸다. 입력 토큰 임베딩에는 positional encoding 이 더해진다."
+  caption="encoder·decoder 를 2개씩 쌓은 모습. 각 sub-layer(주황 self-attention, 파랑 feed forward)를 'Add & Normalize'(초록 = residual 덧셈 + LayerNorm, 점선이 residual 경로)가 감싸고, 텐서 모양은 블록 내내 n×d_model 로 보존된다. decoder 블록에는 encoder–decoder attention 이 하나 더 붙는다."
+  source="Jay Alammar, The Illustrated Transformer (jalammar.github.io, 2018) · CC BY-NC-SA 4.0 · 수정 없음" />
+
+이 블록을 $N$ 번 쌓으면 encoder 스택이다. decoder 블록은 두 residual 사이에
 encoder–decoder attention(+ residual)을 하나 더 끼운다. decoder 스택의 마지막 출력은
 vocabulary 크기의 linear + softmax 로 다음 토큰 분포가 된다. 원논문은 이 출력 projection
 행렬을 입력 임베딩 행렬과 **공유**한다(weight tying).<Sidenote>pre-LN 모델에서는 residual 경로가 정규화 없이 스택 끝까지 뚫려 있으므로, linear 앞에 최종 정규화를 하나 더 둔다.</Sidenote>
