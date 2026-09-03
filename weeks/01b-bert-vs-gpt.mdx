@@ -139,7 +139,7 @@ Qwen, Gemma …). 이유를 정리하면:
 5. **in-context learning 과 궁합.** 프롬프트에 예시를 이어 붙이면 그대로 "이어 쓰기"
    문제가 된다 — 별도 입력/출력 분리가 필요 없다.
 6. **KV(key–value) cache 로 생성이 효율적이다.** causal 구조라서 이미 계산한 key/value 를
-   캐시해 토큰당 비용을 낮출 수 있다(네 번째 노트).
+   캐시해 토큰당 비용을 낮출 수 있다.
 
 <Callout type="warning">
 "decoder-only 가 항상 최선"은 아니다. 고정 입력을 반복 참조하는 번역·요약 전용이라면

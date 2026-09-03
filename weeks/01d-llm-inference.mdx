@@ -210,79 +210,16 @@ $n$ 이 수백 넘으면 곧바로 compute-bound. 그래서 같은 요청도 pre
 
 MHA→MQA→GQA 는 전부 **$n_{\text{kv}}$ 를 줄여** K/V head 개수를 깎는다.
 
-<svg viewBox="0 0 460 196" role="img" aria-label="MHA, GQA, MQA 세 attention 의 query head 와 key/value head 공유 구조 비교. MHA 는 query head 8개가 각자 전용 KV head 를 가진다. GQA 는 query head 를 그룹으로 묶어 그룹당 KV head 하나를 공유한다. MQA 는 모든 query head 가 KV head 하나를 공유한다. KV head 수가 줄수록 캐시가 작아진다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
-  <text x="12" y="46" font-size="10" fill="#64748b">Q</text>
-  <text x="4" y="146" font-size="10" fill="#64748b">KV</text>
-  <text x="94" y="24" text-anchor="middle" font-size="12" fill="#0f172a">MHA</text>
-  <line x1="43.5" y1="50" x2="43.5" y2="138" stroke="#94a3b8"/>
-  <line x1="58.5" y1="50" x2="58.5" y2="138" stroke="#94a3b8"/>
-  <line x1="73.5" y1="50" x2="73.5" y2="138" stroke="#94a3b8"/>
-  <line x1="88.5" y1="50" x2="88.5" y2="138" stroke="#94a3b8"/>
-  <line x1="103.5" y1="50" x2="103.5" y2="138" stroke="#94a3b8"/>
-  <line x1="118.5" y1="50" x2="118.5" y2="138" stroke="#94a3b8"/>
-  <line x1="133.5" y1="50" x2="133.5" y2="138" stroke="#94a3b8"/>
-  <line x1="148.5" y1="50" x2="148.5" y2="138" stroke="#94a3b8"/>
-  <rect x="38.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="53.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="68.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="83.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="98.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="113.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="128.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="143.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="38.0" y="138" width="11" height="12" fill="#0f172a"/>
-  <rect x="53.0" y="138" width="11" height="12" fill="#0f172a"/>
-  <rect x="68.0" y="138" width="11" height="12" fill="#0f172a"/>
-  <rect x="83.0" y="138" width="11" height="12" fill="#0f172a"/>
-  <rect x="98.0" y="138" width="11" height="12" fill="#0f172a"/>
-  <rect x="113.0" y="138" width="11" height="12" fill="#0f172a"/>
-  <rect x="128.0" y="138" width="11" height="12" fill="#0f172a"/>
-  <rect x="143.0" y="138" width="11" height="12" fill="#0f172a"/>
-  <text x="94" y="178" text-anchor="middle" font-size="11" fill="#64748b">KV head 8</text>
-  <text x="246" y="24" text-anchor="middle" font-size="12" fill="#0f172a">GQA</text>
-  <line x1="195.5" y1="50" x2="218.0" y2="138" stroke="#94a3b8"/>
-  <line x1="210.5" y1="50" x2="218.0" y2="138" stroke="#94a3b8"/>
-  <line x1="225.5" y1="50" x2="218.0" y2="138" stroke="#94a3b8"/>
-  <line x1="240.5" y1="50" x2="218.0" y2="138" stroke="#94a3b8"/>
-  <line x1="255.5" y1="50" x2="278.0" y2="138" stroke="#94a3b8"/>
-  <line x1="270.5" y1="50" x2="278.0" y2="138" stroke="#94a3b8"/>
-  <line x1="285.5" y1="50" x2="278.0" y2="138" stroke="#94a3b8"/>
-  <line x1="300.5" y1="50" x2="278.0" y2="138" stroke="#94a3b8"/>
-  <rect x="190.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="205.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="220.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="235.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="250.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="265.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="280.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="295.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="212.5" y="138" width="11" height="12" fill="#0f172a"/>
-  <rect x="272.5" y="138" width="11" height="12" fill="#0f172a"/>
-  <text x="246" y="178" text-anchor="middle" font-size="11" fill="#64748b">KV head 2</text>
-  <text x="394" y="24" text-anchor="middle" font-size="12" fill="#0f172a">MQA</text>
-  <line x1="343.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
-  <line x1="358.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
-  <line x1="373.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
-  <line x1="388.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
-  <line x1="403.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
-  <line x1="418.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
-  <line x1="433.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
-  <line x1="448.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
-  <rect x="338.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="353.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="368.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="383.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="398.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="413.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="428.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="443.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
-  <rect x="390.5" y="138" width="11" height="12" fill="#0f172a"/>
-  <text x="394" y="178" text-anchor="middle" font-size="11" fill="#64748b">KV head 1</text>
-</svg>
+<Figure
+  src="https://arxiv.org/html/2305.13245v3/images/gmq_architecture.png"
+  alt="Multi-head, grouped-query, multi-query attention 의 query·key·value head 구조 비교. 아래 줄이 query head, 위 두 줄이 key·value head, 점선이 어느 query 가 어느 key/value 를 쓰는지를 나타낸다. multi-head 는 셋의 개수가 같고, multi-query 는 모든 query 가 key·value head 하나를 공유하며, grouped-query 는 query 를 그룹으로 묶어 그룹마다 key·value head 하나를 공유한다."
+  caption="MHA·GQA·MQA — query head 수는 그대로, key/value head 수만 줄인다. GQA 는 MHA(개수 동일)와 MQA(K/V 하나) 사이를 보간한다."
+  source="그림 Ainslie et al. 2023, GQA (EMNLP 2023, aclanthology.org/2023.emnlp-main.298) · CC BY 4.0 · 수정 없음" />
 
-위 칸이 query head, 아래 칸이 K/V head, 선이 "이 query 가 어느 K/V 를 쓰는가"다. 오른쪽으로
-갈수록 캐시할 K/V 가 줄어드는 대신 여러 query 가 같은 K/V 를 공유한다. 그림은 8 query 기준이고,
-Llama 3 8B 은 32 query / 8 K/V(그룹당 4개)로 같은 4:1 비율이다. MLA 는 이 축과 다른 접근이다.
+이 그림은 query head 8개, GQA 는 그룹 4개(2:1) 기준이다. Llama 3 8B 은 query 32 / K/V 8,
+곧 그룹당 query 4개(4:1)로 한층 공격적으로 줄인 경우다. 어느 쪽이든 캐시해야 할 K/V 벡터는
+$n_{\text{kv}}$ 개로 정해지고, query 여럿이 그것을 나눠 쓴다. MLA 는 이 "head 수" 축이 아니라
+K/V 를 저차원 latent 로 압축하는 다른 접근이다.
 
 ### MLA (Multi-head Latent Attention)
 
