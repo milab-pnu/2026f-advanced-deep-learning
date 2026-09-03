@@ -16,7 +16,7 @@ weeks:
   - { n: 5, topic: "Post-training 2" }
   - { n: 6, topic: "Inference Optimization 1" }
   - { n: 7, topic: "Inference Optimization 2" }
-  - { n: 8, topic: "Final Project Proposal Presentation" }
+  - { n: 8, topic: "Final Project Proposal — Open Peer Review" }
   - { n: 9, topic: "Multi-/Omni-modal LLM" }
   - { n: 10, topic: "Diffusion Model" }
   - { n: 11, topic: "Diffusion LLM" }
@@ -24,7 +24,7 @@ weeks:
   - { n: 13, topic: "3D Generation, Gaussian Splatting" }
   - { n: 14, topic: "Vision-Language-Action Model, World Model" }
   - { n: 15, topic: "Safety" }
-  - { n: 16, topic: "Final Project Presentation" }
+  - { n: 16, topic: "Final Project — Open Peer Review" }
 ---
 
 ## Course Description
