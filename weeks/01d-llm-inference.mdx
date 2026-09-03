@@ -79,7 +79,7 @@ fp32·fp16·bf16 은 각각 32비트·16비트·16비트 **부동소수점**(flo
 | **fp32** | 1 / 8 / 23 | 4 | 전통적 학습 기본. 범위·정밀도 모두 넉넉 |
 | **fp16** | 1 / 5 / 10 | 2 | 메모리·대역폭 절반. 지수 5비트라 **범위가 좁아**(최대 약 65,504) gradient 가 쉽게 overflow/underflow → loss scaling 필요 |
 | **bf16** | 1 / 8 / 7 | 2 | 지수부는 fp32 와 **동일**(같은 범위), 가수부만 7비트로 거칠다. 범위가 넓어 학습이 안정적 |
-| **FP8** (8비트 부동소수점, E4M3 등) | 1 / 4 / 3 | 1 | H100 이후 하드웨어에서 학습·추론에 사용 |
+| **fp8** (8비트 부동소수점, E4M3 등) | 1 / 4 / 3 | 1 | H100 이후 하드웨어에서 학습·추론에 사용 |
 
 <Callout type="intuition">
 숫자를 담는 칸이 32칸(fp32)에서 16칸으로 줄었다고 하자. **fp16** 은 "큰 수 담는 칸"과
@@ -183,7 +183,7 @@ $$
 
 연산 시간은 읽기 시간의 **1/300**. intensity 1 은 ridge point 300 의 한참 왼쪽 —
 GPU 의 연산 유닛은 사실상 놀고, decode 스텝 시간은 전적으로 "16 GB 를 얼마나 빨리
-읽나"로 정해진다. 이것이 **memory wall** 이다.
+읽나"로 정해진다. 이것이 **memory wall** 이다.[^llmsurvey]
 
 **왜 batching 이 답인가.** batch $b$ 개 요청을 함께 decode 하면 가중치는 **한 번만** 읽고
 $b$ 개 토큰에 재사용한다 → intensity 가 $b$ 배(그림에서 decode 점이 오른쪽으로 이동).
@@ -240,7 +240,7 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
 
 ## 8. 그 밖의 inference 최적화 (한 줄씩)
 
-- **Weight quantization** — 가중치를 int8/int4/FP8 로. 읽을 바이트($p$)가 줄어 6절의
+- **Weight quantization** — 가중치를 int8/int4/fp8 로. 읽을 바이트($p$)가 줄어 6절의
   memory wall 을 직접 완화한다. 6·7주차에서 자세히.
 - **PagedAttention / continuous batching**[^vllm] — KV cache 를 OS(operating system)
   페이지처럼 고정 블록으로 관리해 단편화를 없애고, 요청이 끝나는 대로 새 요청을 배치에
@@ -249,6 +249,12 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
   한 번의 forward 로 검증·수용. decode 의 순차성을 부분적으로 병렬화.
 - **FlashAttention** — attention 을 HBM 왕복 없이 SRAM(static random-access memory) 안에서 블록 단위로 계산.
   주로 prefill/학습의 $O(n^2)$ 상수를 줄인다.
+
+<Callout type="note">
+이 절은 전부 **같은 출력을 더 싸게** 내는 기법이다. 반대 방향 — inference 연산을 **더
+써서 더 나은 출력**을 얻는 것(test-time scaling: 여러 후보를 샘플링·검색, o1·DeepSeek-R1
+류 추론 모델) — 은 별개의 축이며 6–7주차와 기말 프로젝트에서 다룬다.[^reasoningsurvey]
+</Callout>
 
 ## 9. 정리 — 비용 모델
 
@@ -282,3 +288,7 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
 [^pope]: Pope, R., et al. (2022). Efficiently Scaling Transformer Inference. [arXiv:2211.05102](https://arxiv.org/abs/2211.05102). — prefill/decode 비용 분석, arithmetic intensity 관점의 서빙 분석.
 
 [^kipply]: kipply (2022). [Transformer Inference Arithmetic](https://kipp.ly/transformer-inference-arithmetic/). — KV cache 크기·memory bandwidth bound 를 수식으로 유도.
+
+[^llmsurvey]: Zhao, W. X., et al. (2026). A Survey of Large Language Models. *Frontiers of Computer Science*, 20(12). [arXiv:2303.18223](https://arxiv.org/abs/2303.18223). — §5.4 가 prefill/decode·memory wall·KV cache 최적화(토큰/모델/시스템 층위)·양자화를 이 노트와 같은 틀로 정리. 이 과목의 여러 주차를 관통하는 종합 서베이.
+
+[^reasoningsurvey]: Ke, Z., et al. (2026). A Survey of Frontiers in LLM Reasoning: Inference Scaling, Learning to Reason, and Agentic Systems. [arXiv:2504.09037](https://arxiv.org/abs/2504.09037). — inference-time 연산을 추론 능력 향상에 쓰는 기법(inference scaling)과 learning-to-reason 전반.

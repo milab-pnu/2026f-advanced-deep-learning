@@ -55,6 +55,8 @@ token" 이 없다. GPT-2 이후 표준이고 Llama 3 도 이 방식(tiktoken 계
 - embedding 행렬과 LM(language model) head 가 각각 $V \times d$ 로 커진다. Llama 3 는 $V$ 를 32K(Llama 2)
   에서 **128K** 로 키웠다 — 다국어·코드 효율이 좋아지는 대신 두 행렬이 4배로.
 
+최근 모델의 어휘 크기는 대체로 100K–256K 대다 (GPT-4o 약 200K, Gemma 2 256K).[^llmsurvey]
+
 Llama 3 8B 에서 $128{,}256 \times 4096 \approx 5.25 \times 10^8$, 입력 embedding 과
 출력 LM head 각각 약 **525M 파라미터** — 8B 중 무시 못 할 몫이다(6절).
 
@@ -220,3 +222,5 @@ $$
 [^rmsnorm]: Zhang, B., & Sennrich, R. (2019). Root Mean Square Layer Normalization. NeurIPS 2019. [arXiv:1910.07467](https://arxiv.org/abs/1910.07467). — LayerNorm 에서 평균 빼기를 없애고 RMS 로 크기만 정규화 (계산 절감).
 
 [^swiglu]: Shazeer, N. (2020). GLU Variants Improve Transformer. [arXiv:2002.05202](https://arxiv.org/abs/2002.05202). — SwiGLU 등 gated FFN, 파라미터 맞춤을 위한 2/3 배 규칙.
+
+[^llmsurvey]: Zhao, W. X., et al. (2026). A Survey of Large Language Models. *Frontiers of Computer Science*, 20(12). [arXiv:2303.18223](https://arxiv.org/abs/2303.18223). — §3.1.2: 현대 LLM 어휘 크기는 대체로 100K–256K, byte-level BPE 가 표준. 이 과목의 여러 주차를 관통하는 종합 서베이.

@@ -94,7 +94,7 @@ GPT 라인의 궤적이 이 노트의 핵심이다.
   없이 **zero-shot** 으로 여러 과제를 수행. "언어모델은 비지도 멀티태스크 학습기".
 - **GPT-3**[^gpt3] (2020, 175B) — **in-context learning**. 파라미터를 안 바꾸고,
   프롬프트에 예시 몇 개를 넣는 것(few-shot)만으로 과제를 수행. 이때부터 "모델을 과제에
-  맞추는" 대신 "프롬프트로 과제를 지시하는" 틀로 넘어간다.
+  맞추는" 대신 "프롬프트로 과제를 지시하는" 틀로 넘어간다.<Sidenote>in-context learning 처럼 스케일이 커지며 두드러지는 능력을 초기엔 **emergent ability** — 작은 모델엔 없다가 큰 모델에서 갑자기 나타나는 능력 — 라 불렀다.[^wei22] 이후 이 "급격한 출현"의 상당 부분은 불연속적 평가지표가 만든 착시이며, 잘 최적화된 소형 모델도 유사한 능력을 보인다는 반론이 자리잡았다.[^mirage]</Sidenote>
 
 <Callout type="intuition">
 BERT 와 GPT-1 은 "사전학습 + fine-tuning" 이라는 같은 게임을 했다. 판을 바꾼 것은
@@ -102,7 +102,7 @@ GPT-2 → GPT-3 의 **스케일 + zero/few-shot**: 하나의 고정된 모델이
 과제를 처리한다. fine-tuning 데이터셋도, 과제별 모델도 필요 없어진다.
 </Callout>
 
-## 4. Encoder–decoder 도 있다 — T5, BART
+## 4. 그 사이의 선택지 — encoder–decoder, prefix LM
 
 세 번째 선택지는 원래 Transformer 처럼 **encoder + decoder** 를 다 쓰는 것이다.
 
@@ -115,6 +115,13 @@ GPT-2 → GPT-3 의 **스케일 + zero/few-shot**: 하나의 고정된 모델이
 encoder–decoder 는 **입력과 출력이 뚜렷이 나뉘는** 과제(번역, 요약)에서 강하다. 입력을
 양방향으로 충분히 인코딩한 뒤 출력을 생성하기 때문이다. 대가는 구조가 복잡하고(두 스택 +
 cross-attention), 하나의 모델로 "그냥 이어 쓰기"를 하기엔 어색하다는 것.
+
+스택을 하나만 두는 절충안도 있다. **Prefix LM**(non-causal decoder)은 decoder-only 처럼
+단일 스택이지만 attention mask 를 구간별로 나눈다 — 프롬프트(프리픽스)는 양방향으로,
+그 뒤 생성 구간은 causal 로. encoder–decoder 의 양방향 인코딩을 스택 하나 안에서
+근사한 형태로 GLM·U-PaLM 등이 채택했다. 아래 §5 에서 볼 Wang 등(2022)[^wang22] 의
+비교는 이 세 형태(causal decoder-only, non-causal decoder, encoder–decoder)를 같은
+조건에서 나란히 놓은 것이다.
 
 ## 5. 왜 생성형 LLM 은 decoder-only 로 수렴했나
 
@@ -154,7 +161,7 @@ encoder–decoder 가 여전히 효율적이고, 분류·검색이라면 encoder
 | 대표 | BERT, RoBERTa, DeBERTa | GPT-3/4, Llama, Mistral, Qwen | T5, BART, FLAN-T5 |
 
 - Transformer 블록은 공유하고, **mask + 목적함수**가 계열을 가른다.
-- BERT = 양방향 이해, GPT = 인과적 생성, encoder–decoder = 입력/출력 분리 과제.
+- BERT = 양방향 이해, GPT = 인과적 생성, encoder–decoder(및 prefix LM) = 입력/출력이 나뉘는 과제.
 - 범용 생성 LLM 은 **단순성 · 사전학습 밀도 · 사용 일치 · zero/few-shot · KV cache**
   때문에 causal decoder-only 로 수렴했다.
 
@@ -173,4 +180,8 @@ encoder–decoder 가 여전히 효율적이고, 분류·검색이라면 encoder
 
 [^t5]: Raffel, C., et al. (2020). Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer. JMLR 21(140). [arXiv:1910.10683](https://arxiv.org/abs/1910.10683) (T5). — §3.1.4 (span corruption), text-to-text 프레이밍.
 
-[^wang22]: Wang, T., et al. (2022). What Language Model Architecture and Pretraining Objective Work Best for Zero-Shot Generalization? ICML 2022, PMLR 162. [arXiv:2204.05832](https://arxiv.org/abs/2204.05832). — causal decoder-only + autoregressive LM 이 순수 자기지도 후 zero-shot 일반화가 가장 강함.
+[^wang22]: Wang, T., et al. (2022). What Language Model Architecture and Pretraining Objective Work Best for Zero-Shot Generalization? ICML 2022, PMLR 162. [arXiv:2204.05832](https://arxiv.org/abs/2204.05832). — causal decoder-only + autoregressive LM 이 순수 자기지도 후 zero-shot 일반화가 가장 강함. non-causal decoder(prefix LM)·encoder–decoder 를 같은 조건에서 비교.
+
+[^wei22]: Wei, J., et al. (2022). Emergent Abilities of Large Language Models. TMLR. [arXiv:2206.07682](https://arxiv.org/abs/2206.07682). — 스케일에서 불연속적으로 나타나는 능력이라는 관찰과 "emergent ability" 용어.
+
+[^mirage]: Schaeffer, R., Miranda, B., & Koyejo, S. (2023). Are Emergent Abilities of Large Language Models a Mirage? NeurIPS 2023. [arXiv:2304.15004](https://arxiv.org/abs/2304.15004). — 급격한 출현의 상당 부분이 discontinuous metric 의 산물임을 보임.
