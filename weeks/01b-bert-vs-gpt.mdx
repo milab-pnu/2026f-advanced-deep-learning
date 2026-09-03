@@ -5,9 +5,9 @@ order: 1
 ---
 
 앞 노트에서 조립한 Transformer 블록은 그대로 두고, **어떤 mask 로 어떤 목적함수를
-학습하느냐**만 바꾸면 성격이 전혀 다른 두 계열이 나온다. 2018–2020년의 BERT<Cite n={1} />
-와 GPT<Cite n={2} /><Cite n={3} /><Cite n={4} /> 가 그것이다. 이 노트는 둘의 차이를
-정리하고, 왜 생성형 LLM 이 **decoder-only** 로 수렴했는지<Cite n={7} /> 를 본다. 다음
+학습하느냐**만 바꾸면 성격이 전혀 다른 두 계열이 나온다. 2018–2020년의 BERT[^bert]
+와 GPT[^gpt1][^gpt2][^gpt3] 가 그것이다. 이 노트는 둘의 차이를
+정리하고, 왜 생성형 LLM 이 **decoder-only** 로 수렴했는지[^wang22] 를 본다. 다음
 노트부터는 decoder-only 만 다룬다.
 
 ## 1. 같은 블록, 다른 mask
@@ -49,7 +49,7 @@ $-\infty$ 로 덮느냐에 따라 두 가지로 갈린다.
 
 ## 2. BERT — 양방향 encoder
 
-BERT(Bidirectional Encoder Representations from Transformers)<Cite n={1} /> 는 Transformer
+BERT(Bidirectional Encoder Representations from Transformers)[^bert] 는 Transformer
 **encoder** 스택이다(BERT-base: 12층, $d_{\text{model}} = 768$, 12 head, 110M 파라미터).
 mask 가 없으므로 다음 토큰 예측은 못 한다. 대신 두 개의 자기지도 목적함수로 학습한다.
 
@@ -61,7 +61,7 @@ mask 가 없으므로 다음 토큰 예측은 못 한다. 대신 두 개의 자�
 <Sidenote>`[MASK]` 는 fine-tuning·추론 때는 안 나온다. 10% 를 임의 토큰, 10% 를 원본으로 두는 것은 이 train/test 불일치를 줄이려는 장치다.</Sidenote>
 
 **Next Sentence Prediction (NSP).** 두 문장 A, B 를 이어 붙이고 B 가 A 의 실제 다음
-문장인지 이진 분류한다. 이후 연구(RoBERTa<Cite n={5} />)에서 NSP 는 별 도움이 안 되고
+문장인지 이진 분류한다. 이후 연구(RoBERTa[^roberta])에서 NSP 는 별 도움이 안 되고
 오히려 빼는 게 낫다는 게 밝혀졌다.
 
 **입력 형식과 사용법.** 문장 앞에 `[CLS]`, 문장 사이·끝에 `[SEP]` 를 넣는다. 학습 후
@@ -75,7 +75,7 @@ BERT 계열이 지금도 쓰이는 자리: **분류, 검색용 임베딩(retriev
 
 ## 3. GPT — 인과적 decoder
 
-GPT(Generative Pre-Training)<Cite n={2} /> 는 Transformer **decoder** 스택에서
+GPT(Generative Pre-Training)[^gpt1] 는 Transformer **decoder** 스택에서
 cross-attention 을 뺀 것이다(GPT-1: 12층, 117M). causal mask 하에 **오직 next-token
 prediction** 만 학습한다:
 
@@ -88,11 +88,11 @@ $$
 
 GPT 라인의 궤적이 이 노트의 핵심이다.
 
-- **GPT-1**<Cite n={2} /> (2018) — generative pre-training + 과제별 discriminative
+- **GPT-1**[^gpt1] (2018) — generative pre-training + 과제별 discriminative
   fine-tuning. 아직 BERT 와 같은 "불러와서 fine-tune" 틀.
-- **GPT-2**<Cite n={3} /> (2019, 1.5B) — 더 크게, 더 많은 데이터(WebText). fine-tuning
+- **GPT-2**[^gpt2] (2019, 1.5B) — 더 크게, 더 많은 데이터(WebText). fine-tuning
   없이 **zero-shot** 으로 여러 과제를 수행. "언어모델은 비지도 멀티태스크 학습기".
-- **GPT-3**<Cite n={4} /> (2020, 175B) — **in-context learning**. 파라미터를 안 바꾸고,
+- **GPT-3**[^gpt3] (2020, 175B) — **in-context learning**. 파라미터를 안 바꾸고,
   프롬프트에 예시 몇 개를 넣는 것(few-shot)만으로 과제를 수행. 이때부터 "모델을 과제에
   맞추는" 대신 "프롬프트로 과제를 지시하는" 틀로 넘어간다.
 
@@ -106,7 +106,7 @@ GPT-2 → GPT-3 의 **스케일 + zero/few-shot**: 하나의 고정된 모델이
 
 세 번째 선택지는 원래 Transformer 처럼 **encoder + decoder** 를 다 쓰는 것이다.
 
-- **T5**<Cite n={6} /> — 모든 NLP 과제를 "text-in → text-out" 으로 통일. 사전학습은
+- **T5**[^t5] — 모든 NLP 과제를 "text-in → text-out" 으로 통일. 사전학습은
   **span corruption**: 입력에서 연속된 토큰 구간을 하나의 sentinel 로 가리고, decoder 가
   그 구간을 복원. encoder 는 양방향으로 입력을 읽고 decoder 가 인과적으로 출력을 생성.
 - **BART** — encoder 에 다양한 noise(토큰 삭제, 순서 섞기 등)를 준 문장을 넣고 decoder 가
@@ -127,7 +127,7 @@ Qwen, Gemma …). 이유를 정리하면:
    준다. BERT-MLM 은 15% 만 예측하므로 같은 데이터에서 학습 신호가 적다.
 3. **사전학습과 사용 방식이 일치한다.** "다음 토큰 예측"으로 배우고 "다음 토큰 생성"으로
    쓴다. 이해·생성·대화·추론이 모두 같은 인터페이스(이어 쓰기)로 표현된다.
-4. **zero/few-shot 일반화가 가장 좋다.** Wang 등(2022)<Cite n={7} /> 은 동일 조건에서
+4. **zero/few-shot 일반화가 가장 좋다.** Wang 등(2022)[^wang22] 은 동일 조건에서
    아키텍처×목적함수를 비교해, **순수 자기지도 사전학습만 했을 때는 causal decoder-only +
    autoregressive LM 이 zero-shot 일반화가 가장 강함**을 보였다(멀티태스크 fine-tuning 을
    추가하면 non-causal + MLM 이 앞서지만, 범용 기반 모델의 기본기는 전자).
@@ -161,12 +161,16 @@ encoder–decoder 가 여전히 효율적이고, 분류·검색이라면 encoder
 다음 노트는 이 decoder-only 모델을 **tokenizer 입력부터 sampling 출력까지** 한 바퀴
 돌며, Llama 3 8B 로 각 부분의 크기를 확인한다.
 
-<References items={[
-  { id: 1, text: "Devlin, J., Chang, M.-W., Lee, K., & Toutanova, K. (2019). BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding. NAACL 2019. arXiv:1810.04805. — §3.1 (MLM, 15% 마스킹의 80/10/10), §3.1 (NSP), §A (BERT-base 110M / large 340M)." },
-  { id: 2, text: "Radford, A., Narasimhan, K., Salimans, T., & Sutskever, I. (2018). Improving Language Understanding by Generative Pre-Training. OpenAI 기술보고서. — decoder-only generative pre-training + task-specific fine-tuning." },
-  { id: 3, text: "Radford, A., Wu, J., Child, R., Luan, D., Amodei, D., & Sutskever, I. (2019). Language Models are Unsupervised Multitask Learners. OpenAI (GPT-2, 1.5B). — zero-shot task transfer." },
-  { id: 4, text: "Brown, T. et al. (2020). Language Models are Few-Shot Learners. NeurIPS 2020. arXiv:2005.14165 (GPT-3, 175B). — §2 (in-context learning), few-shot 프롬프트." },
-  { id: 5, text: "Liu, Y. et al. (2019). RoBERTa: A Robustly Optimized BERT Pretraining Approach. arXiv:1907.11692. — NSP 제거, 더 긴 학습이 BERT 를 개선." },
-  { id: 6, text: "Raffel, C. et al. (2020). Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer. JMLR 21(140) (T5). — §3.1.4 (span corruption), text-to-text 프레이밍." },
-  { id: 7, text: "Wang, T. et al. (2022). What Language Model Architecture and Pretraining Objective Works Best for Zero-Shot Generalization? ICML 2022. PMLR 162. — causal decoder-only + autoregressive LM 이 순수 자기지도 후 zero-shot 일반화가 가장 강함." },
-]} />
+[^bert]: Devlin, J., Chang, M.-W., Lee, K., & Toutanova, K. (2019). BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding. NAACL 2019. [arXiv:1810.04805](https://arxiv.org/abs/1810.04805). — §3.1 (MLM, 15% 마스킹의 80/10/10), §3.1 (NSP), §A (BERT-base 110M / large 340M).
+
+[^gpt1]: Radford, A., Narasimhan, K., Salimans, T., & Sutskever, I. (2018). Improving Language Understanding by Generative Pre-Training. OpenAI 기술보고서. — decoder-only generative pre-training + task-specific fine-tuning.
+
+[^gpt2]: Radford, A., Wu, J., Child, R., Luan, D., Amodei, D., & Sutskever, I. (2019). Language Models are Unsupervised Multitask Learners. OpenAI (GPT-2, 1.5B). — zero-shot task transfer.
+
+[^gpt3]: Brown, T., et al. (2020). Language Models are Few-Shot Learners. NeurIPS 2020. [arXiv:2005.14165](https://arxiv.org/abs/2005.14165) (GPT-3, 175B). — §2 (in-context learning), few-shot 프롬프트.
+
+[^roberta]: Liu, Y., et al. (2019). RoBERTa: A Robustly Optimized BERT Pretraining Approach. [arXiv:1907.11692](https://arxiv.org/abs/1907.11692). — NSP 제거, 더 긴 학습이 BERT 를 개선.
+
+[^t5]: Raffel, C., et al. (2020). Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer. JMLR 21(140) (T5). — §3.1.4 (span corruption), text-to-text 프레이밍.
+
+[^wang22]: Wang, T., et al. (2022). What Language Model Architecture and Pretraining Objective Works Best for Zero-Shot Generalization? ICML 2022. PMLR 162. — causal decoder-only + autoregressive LM 이 순수 자기지도 후 zero-shot 일반화가 가장 강함.

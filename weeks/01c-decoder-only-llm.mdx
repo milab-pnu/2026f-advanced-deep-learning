@@ -6,7 +6,7 @@ order: 2
 
 앞 노트에서 생성형 LLM 이 causal decoder-only 로 수렴한 이유를 봤다. 이 노트는 그런
 모델 하나를 **입력 문자열이 들어와서 다음 토큰이 나오기까지** 순서대로 따라간다. 기준
-모델은 **Llama 3 8B**<Cite n={1} /> 이고, 각 단계에서 실제 크기를 확인한다.
+모델은 **Llama 3 8B**[^llama3] 이고, 각 단계에서 실제 크기를 확인한다.
 
 $$
 \text{텍스트}
@@ -29,7 +29,7 @@ vocabulary $V = 128{,}256$, 학습 context 길이 8192(Llama 3.1 은 128K).
 ## 1. Tokenization
 
 모델은 문자가 아니라 **정수 id** 를 받는다. 텍스트를 id 열로 바꾸는 규칙이 tokenizer 다.
-현대 LLM 은 대부분 **BPE**(Byte-Pair Encoding)<Cite n={2} /> 계열을 쓴다.
+현대 LLM 은 대부분 **BPE**(Byte-Pair Encoding)[^bpe] 계열을 쓴다.
 
 **아이디어.** 아주 작은 어휘(개별 문자/바이트)에서 출발해, 말뭉치에서 **가장 자주
 인접해 나오는 쌍**을 하나의 새 토큰으로 병합하는 일을 원하는 어휘 크기가 될 때까지
@@ -65,7 +65,7 @@ Llama 3 8B 에서 $128{,}256 \times 4096 \approx 5.25 \times 10^8$, 입력 embed
 뽑아 $x_i \in \mathbb{R}^{d}$ 가 된다. 길이 $n$ 입력은 $X \in \mathbb{R}^{n \times d}$.
 
 위치 정보는 원 Transformer 의 사인·코사인 덧셈(앞 노트 5절) 대신 **RoPE**(Rotary
-Position Embedding)<Cite n={3} /> 로 준다. RoPE 는 각 attention 층에서 query·key 벡터를
+Position Embedding)[^rope] 로 준다. RoPE 는 각 attention 층에서 query·key 벡터를
 **위치에 비례한 각도만큼 회전**시킨다. 두 벡터를 각각 위치 $i$, $j$ 로 회전시킨 뒤
 내적하면, 그 값이 **상대 위치 $i - j$ 의 함수**가 된다:
 
@@ -89,7 +89,7 @@ $$
 y = a + \text{FFN}\big( \text{RMSNorm}(a) \big)
 $$
 
-**RMSNorm**<Cite n={4} /> — LayerNorm 에서 평균 빼기(re-centering)를 없애고 크기만
+**RMSNorm**[^rmsnorm] — LayerNorm 에서 평균 빼기(re-centering)를 없애고 크기만
 맞춘다:
 
 $$
@@ -104,7 +104,7 @@ $$
 절감량은 네 번째 노트에서 계산한다. 여기서는 "생성 효율을 위해 K/V 쪽을 줄인 변형"으로만
 기억하면 된다.
 
-**FFN — SwiGLU.**<Cite n={5} /> ReLU MLP 대신 gate 가 붙은 형태:
+**FFN — SwiGLU.**[^swiglu] ReLU MLP 대신 gate 가 붙은 형태:
 
 $$
 \text{FFN}(x) = \big( \text{SiLU}(x W_{\text{gate}}) \odot (x W_{\text{up}}) \big)\, W_{\text{down}}
@@ -208,10 +208,12 @@ $$
 - 생성은 autoregressive 루프 — 그 비용 구조(prefill vs decode, KV cache, memory wall)가
   다음 노트다.
 
-<References items={[
-  { id: 1, text: "Llama Team, AI @ Meta (2024). The Llama 3 Herd of Models. arXiv:2407.21783. — §3.2 (아키텍처: 8B = 32층, d 4096, 32 query / 8 KV head, GQA, SwiGLU, RMSNorm, RoPE θ=500000, vocab 128,256), §3 (15T 토큰 사전학습)." },
-  { id: 2, text: "Sennrich, R., Haddow, B., & Birch, A. (2016). Neural Machine Translation of Rare Words with Subword Units. ACL 2016. arXiv:1508.07909. — BPE 를 subword tokenization 에 도입." },
-  { id: 3, text: "Su, J., Lu, Y., Pan, S., Wen, B., & Liu, Y. (2021). RoFormer: Enhanced Transformer with Rotary Position Embedding. arXiv:2104.09864. — §3 (회전 행렬로 상대 위치를 내적에 주입)." },
-  { id: 4, text: "Zhang, B., & Sennrich, R. (2019). Root Mean Square Layer Normalization. NeurIPS 2019. arXiv:1910.07467." },
-  { id: 5, text: "Shazeer, N. (2020). GLU Variants Improve Transformer. arXiv:2002.05202. — SwiGLU 등 gated FFN, 파라미터 맞춤을 위한 2/3 배 규칙." },
-]} />
+[^llama3]: Llama Team, AI @ Meta (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783). — §3.2 (아키텍처: 8B = 32층, d 4096, 32 query / 8 KV head, GQA, SwiGLU, RMSNorm, RoPE θ=500000, vocab 128,256), §3 (15T 토큰 사전학습).
+
+[^bpe]: Sennrich, R., Haddow, B., & Birch, A. (2016). Neural Machine Translation of Rare Words with Subword Units. ACL 2016. [arXiv:1508.07909](https://arxiv.org/abs/1508.07909). — BPE 를 subword tokenization 에 도입.
+
+[^rope]: Su, J., Lu, Y., Pan, S., Wen, B., & Liu, Y. (2021). RoFormer: Enhanced Transformer with Rotary Position Embedding. [arXiv:2104.09864](https://arxiv.org/abs/2104.09864). — §3 (회전 행렬로 상대 위치를 내적에 주입).
+
+[^rmsnorm]: Zhang, B., & Sennrich, R. (2019). Root Mean Square Layer Normalization. NeurIPS 2019. [arXiv:1910.07467](https://arxiv.org/abs/1910.07467).
+
+[^swiglu]: Shazeer, N. (2020). GLU Variants Improve Transformer. [arXiv:2002.05202](https://arxiv.org/abs/2002.05202). — SwiGLU 등 gated FFN, 파라미터 맞춤을 위한 2/3 배 규칙.

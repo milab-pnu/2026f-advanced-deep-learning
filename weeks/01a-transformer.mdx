@@ -4,11 +4,11 @@ week: 1
 order: 0
 ---
 
-이 노트는 Vaswani 등의 2017년 논문 <em>Attention Is All You Need</em><Cite n={1} /> 를
+이 노트는 Vaswani 등의 2017년 논문 <em>Attention Is All You Need</em>[^aiayn] 를
 1차 자료로 삼아 Transformer 아키텍처를 수식 수준에서 조립한다. 설명 순서와 그림은 이
-주제를 가장 잘 풀어낸 해설들 — Alammar 의 <em>The Illustrated Transformer</em><Cite n={3} />,
-Harvard NLP 의 <em>The Annotated Transformer</em><Cite n={4} />, Weng 의
-<em>Attention? Attention!</em><Cite n={5} />, Bloem 의 <em>Transformers from Scratch</em><Cite n={6} /> —
+주제를 가장 잘 풀어낸 해설들 — Alammar 의 <em>The Illustrated Transformer</em>[^illustrated],
+Harvard NLP 의 <em>The Annotated Transformer</em>[^annotated], Weng 의
+<em>Attention? Attention!</em>[^weng], Bloem 의 <em>Transformers from Scratch</em>[^bloem] —
 에서 가져왔다. 각 구성요소를 **무엇을 계산하는가 · 왜 그렇게 하는가 · 작은 예시**
 순서로 본다. 코드는 쓰지 않는다.
 
@@ -32,7 +32,7 @@ $$
 
 를 갱신하고, decoder 가 그 정보를 받아 target 문장을 한 토큰씩 생성한다. 여기에
 attention 을 얹어 decoder 가 매 스텝 source 의 특정 위치를 "돌아보게" 한 것이 Bahdanau
-등의 기여였다.<Cite n={2} /> attention 자체는 Transformer 의 발명이 아니다 — Transformer 의
+등의 기여였다.[^bahdanau] attention 자체는 Transformer 의 발명이 아니다 — Transformer 의
 주장은 **RNN 을 걷어내고 attention 만 남겨도 된다**는 것이다.
 
 RNN 방식의 구조적 한계는 두 가지다.
@@ -150,7 +150,7 @@ $$
 $d_k = 64$ 면 score 가 대략 $\pm 8$ 규모로 흩어진다. 이렇게 큰 값이 softmax 에 들어가면
 분포가 한 위치로 거의 완전히 쏠리고, 그 지점에서 softmax 의 Jacobian 이 0에 가까워져
 **gradient 가 사라진다**. $\sqrt{d_k}$ 로 나누면 score 의 분산이 다시 1 근처로 돌아와
-softmax 가 포화되지 않는다.<Cite n={1} />
+softmax 가 포화되지 않는다.[^aiayn]
 
 <Callout type="intuition">
 스케일링은 "temperature" 조정이다. $\sqrt{d_k}$ 로 나누는 것은 softmax 온도를 $d_k$ 에
@@ -190,7 +190,7 @@ $W_i^Q$ 등은 "512차원 벡터에서 이 head 가 볼 64차원을 뽑는" 학�
 </Callout>
 
 학습된 모델을 열어 보면 head 마다 다른 패턴이 보인다 — 어떤 head 는 바로 앞 토큰에,
-어떤 head 는 구문상 짝이 되는 토큰에, 어떤 head 는 문장 전체에 고르게 정렬한다.<Cite n={3} />
+어떤 head 는 구문상 짝이 되는 토큰에, 어떤 head 는 문장 전체에 고르게 정렬한다.[^illustrated]
 
 ## 5. Positional Encoding
 
@@ -215,7 +215,7 @@ $$
 
 이 형태를 고른 이유: 임의의 고정 offset $\delta$ 에 대해 $PE_{pos+\delta}$ 가 $PE_{pos}$
 의 **선형 변환**(고정 회전 행렬)으로 표현된다. 모델이 "상대 위치 $\delta$ 만큼 떨어진
-곳"을 선형 연산으로 참조하기 쉬워진다.<Cite n={1} /> 또 학습 시 본 것보다 긴 문장에도
+곳"을 선형 연산으로 참조하기 쉬워진다.[^aiayn] 또 학습 시 본 것보다 긴 문장에도
 공식만으로 값을 만들 수 있다.
 
 <Sidenote>이후 연구는 위치 정보를 절대 임베딩으로 더하지 않고 attention score 단계에서 상대적으로 주입하는 방향으로 옮겨갔다. 특히 **RoPE**(Rotary Position Embedding)는 query·key 를 위치에 따라 회전시켜 내적이 상대 위치의 함수가 되게 한다 — 다음 노트에서 다룬다.</Sidenote>
@@ -271,13 +271,13 @@ FFN 은 그 위치 안에서 정보를 변환한다(processing per position).** 
 
 각 sub-layer 는 두 겹으로 감싼다.
 
-**Residual connection.**<Cite n={7} /> sub-layer 의 출력을 그 입력에 **더한다**:
+**Residual connection.**[^resnet] sub-layer 의 출력을 그 입력에 **더한다**:
 $x + \text{Sublayer}(x)$. 덕분에 backward pass 에서 gradient 가 덧셈 경로를 따라
 아래층까지 감쇠 없이 흐른다. $N = 6$, 나중엔 수십~수백 층을 쌓을 수 있는 것은 이
 지름길 덕이다. 모양이 블록을 지나도 $n \times d_{\text{model}}$ 로 보존되기에(2절) 이
 덧셈이 성립한다.
 
-**Layer normalization.**<Cite n={8} /> 각 토큰 벡터를 그 $d_{\text{model}}$ 개 성분에
+**Layer normalization.**[^layernorm] 각 토큰 벡터를 그 $d_{\text{model}}$ 개 성분에
 대해 평균 0, 분산 1로 정규화한 뒤 학습되는 $\gamma, \beta$ 로 다시 스케일·시프트한다.
 batch normalization 과 달리 batch 축이나 시퀀스 축을 건드리지 않으므로 batch 크기·문장
 길이에 무관하고, 순차적 의존도 없다.
@@ -288,7 +288,7 @@ $$
 x_{\ell+1} = \text{LayerNorm}\big( x_\ell + \text{Sublayer}(x_\ell) \big)
 $$
 
-이 배치를 **post-LN** 이라 부른다.<Sidenote>이후 연구는 LayerNorm 을 sub-layer **앞**에 두는 **pre-LN** 배치 $x_{\ell+1} = x_\ell + \text{Sublayer}(\text{LayerNorm}(x_\ell))$ 를 제안했다.<Cite n={9} /> residual 경로에 정규화가 안 얹혀 gradient 가 그대로 흐르므로, learning-rate warmup 없이도 깊은 스택이 안정적으로 학습된다. GPT 계열을 비롯한 현대 LLM 은 거의 예외 없이 pre-LN(+RMSNorm)을 쓴다 — 다음 노트에서 Llama 3 블록으로 본다.</Sidenote>
+이 배치를 **post-LN** 이라 부른다.<Sidenote>이후 연구는 LayerNorm 을 sub-layer **앞**에 두는 **pre-LN** 배치 $x_{\ell+1} = x_\ell + \text{Sublayer}(\text{LayerNorm}(x_\ell))$ 를 제안했다.[^preln] residual 경로에 정규화가 안 얹혀 gradient 가 그대로 흐르므로, learning-rate warmup 없이도 깊은 스택이 안정적으로 학습된다. GPT 계열을 비롯한 현대 LLM 은 거의 예외 없이 pre-LN(+RMSNorm)을 쓴다 — 다음 노트에서 Llama 3 블록으로 본다.</Sidenote>
 
 ## 9. 전체 조립
 
@@ -364,14 +364,20 @@ $k$: convolution kernel).
 다음 노트에서는 이 구조를 **encoder 계열(BERT)과 decoder 계열(GPT)** 로 갈라 보고, 왜
 생성형 LLM 이 decoder-only 로 수렴했는지를 본다.
 
-<References items={[
-  { id: 1, text: "Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., & Polosukhin, I. (2017). Attention Is All You Need. NeurIPS 2017. arXiv:1706.03762. — §3.1–3.3 (attention, multi-head), §3.5 (positional encoding), Table 1 (복잡도), §5 (학습 설정), Table 2 (BLEU: big EN-DE 28.4, base EN-DE 27.3)." },
-  { id: 2, text: "Bahdanau, D., Cho, K., & Bengio, Y. (2015). Neural Machine Translation by Jointly Learning to Align and Translate. ICLR 2015. arXiv:1409.0473. — RNN encoder–decoder 에 additive attention 을 처음 결합." },
-  { id: 3, text: "Alammar, J. (2018). The Illustrated Transformer. https://jalammar.github.io/illustrated-transformer/ — Q/K/V 행렬 계산과 multi-head 시각화, head 별 attention 패턴 예시." },
-  { id: 4, text: "Rush, A. et al. (2018, 2022 rev.). The Annotated Transformer. Harvard NLP. https://nlp.seas.harvard.edu/annotated-transformer/ — 원논문을 코드와 함께 절별로 주석." },
-  { id: 5, text: "Weng, L. (2018). Attention? Attention! https://lilianweng.github.io/posts/2018-06-24-attention/ — attention 계열의 통일된 표기와 self-attention 유도." },
-  { id: 6, text: "Bloem, P. (2019). Transformers from Scratch. https://peterbloem.nl/blog/transformers — self-attention 을 permutation equivariance 관점에서 설명." },
-  { id: 7, text: "He, K., Zhang, X., Ren, S., & Sun, J. (2016). Deep Residual Learning for Image Recognition. CVPR 2016. arXiv:1512.03385. — residual connection." },
-  { id: 8, text: "Ba, J. L., Kiros, J. R., & Hinton, G. E. (2016). Layer Normalization. arXiv:1607.06450." },
-  { id: 9, text: "Xiong, R. et al. (2020). On Layer Normalization in the Transformer Architecture. ICML 2020. arXiv:2002.04745. — pre-LN 이 warmup 없이 안정적으로 깊게 학습됨을 분석." },
-]} />
+[^aiayn]: Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., & Polosukhin, I. (2017). Attention Is All You Need. NeurIPS 2017. [arXiv:1706.03762](https://arxiv.org/abs/1706.03762). — §3.1–3.3 (attention, multi-head), §3.5 (positional encoding), Table 1 (복잡도), §5 (학습 설정), Table 2 (BLEU: big EN-DE 28.4, base EN-DE 27.3).
+
+[^bahdanau]: Bahdanau, D., Cho, K., & Bengio, Y. (2015). Neural Machine Translation by Jointly Learning to Align and Translate. ICLR 2015. [arXiv:1409.0473](https://arxiv.org/abs/1409.0473). — RNN encoder–decoder 에 additive attention 을 처음 결합.
+
+[^illustrated]: Alammar, J. (2018). [The Illustrated Transformer](https://jalammar.github.io/illustrated-transformer/). — Q/K/V 행렬 계산과 multi-head 시각화, head 별 attention 패턴 예시.
+
+[^annotated]: Rush, A., et al. (2018, 2022 rev.). [The Annotated Transformer](https://nlp.seas.harvard.edu/annotated-transformer/). Harvard NLP. — 원논문을 코드와 함께 절별로 주석.
+
+[^weng]: Weng, L. (2018). [Attention? Attention!](https://lilianweng.github.io/posts/2018-06-24-attention/) — attention 계열의 통일된 표기와 self-attention 유도.
+
+[^bloem]: Bloem, P. (2019). [Transformers from Scratch](https://peterbloem.nl/blog/transformers). — self-attention 을 permutation equivariance 관점에서 설명.
+
+[^resnet]: He, K., Zhang, X., Ren, S., & Sun, J. (2016). Deep Residual Learning for Image Recognition. CVPR 2016. [arXiv:1512.03385](https://arxiv.org/abs/1512.03385). — residual connection.
+
+[^layernorm]: Ba, J. L., Kiros, J. R., & Hinton, G. E. (2016). Layer Normalization. [arXiv:1607.06450](https://arxiv.org/abs/1607.06450).
+
+[^preln]: Xiong, R., et al. (2020). On Layer Normalization in the Transformer Architecture. ICML 2020. [arXiv:2002.04745](https://arxiv.org/abs/2002.04745). — pre-LN 이 warmup 없이 안정적으로 깊게 학습됨을 분석.

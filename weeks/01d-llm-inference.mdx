@@ -8,7 +8,7 @@ order: 3
 **문장을 생성할 때 실제로 무엇이 비싼가**를 다룬다. 학습과 달리 inference 는
 autoregressive 라서, 비용 구조가 전혀 다르고 하드웨어를 잘 못 쓰기 쉽다. 기준 모델은
 계속 **Llama 3 8B**($L = 32$, query head 32 / KV head 8, $d_{\text{head}} = 128$,
-$d = 4096$, $V = 128{,}256$)<Cite n={1} /> 이다.
+$d = 4096$, $V = 128{,}256$)[^llama3] 이다.
 
 ## 1. 학습과 무엇이 다른가
 
@@ -24,7 +24,7 @@ $$
 
 ## 2. 두 국면 — prefill 과 decode
 
-한 번의 생성 요청은 성격이 다른 두 단계로 나뉜다.<Cite n={6} />
+한 번의 생성 요청은 성격이 다른 두 단계로 나뉜다.[^pope]
 
 **Prefill.** 프롬프트 $x_{1:n}$ 전체를 **한 번에** 넣어 첫 출력 토큰을 만든다. 학습
 때처럼 $n$ 개 위치가 병렬로 계산된다 — 큰 행렬곱, GPU 를 꽉 채움. **compute-bound.**
@@ -46,7 +46,7 @@ decode 스텝마다 시퀀스 전체를 다시 넣으면, 이미 계산했던 �
 
 그런데 causal attention 에서 과거 위치의 $k_j, v_j$ 는 **새 토큰이 붙어도 변하지 않는다**
 (RoPE 회전각도 위치 고정). 그러니 한 번 계산해 **캐시**하고, 새 토큰의 $q$ 만 캐시된
-$K, V$ 와 attention 하면 된다. 이것이 **KV cache** 다.<Cite n={7} /> decode 한 스텝의
+$K, V$ 와 attention 하면 된다. 이것이 **KV cache** 다.[^kipply] decode 한 스텝의
 비용이 $O(n)$ 재계산에서 캐시 조회 + $O(n)$ dot-product 로 줄고, 모델 forward 는 새
 토큰 1개분만 돈다.
 
@@ -201,9 +201,9 @@ $n$ 이 수백 넘으면 곧바로 compute-bound. 그래서 같은 요청도 pre
 | 방법 | 건드리는 항 | Llama 3 8B 기준 효과 |
 |---|---|---|
 | **MHA** (기준) | — | $n_{\text{kv}} = n_{\text{head}} = 32$ |
-| **MQA**<Cite n={2} /> | $n_{\text{kv}} \to 1$ | 모든 query head 가 K/V head 하나 공유. 32배 절감, 품질 손해 |
-| **GQA**<Cite n={3} /> | $n_{\text{kv}} \to g$ | query head 를 $g$ 그룹으로. $g=8$ 이면 4배 절감, 품질은 MHA 에 근접 (Llama 2/3 의 선택) |
-| **MLA**<Cite n={4} /> | $2\, n_{\text{kv}} d_{\text{head}} \to d_c + d_{\text{rope}}$ | K/V 를 저차원 latent 로 압축해 그것만 캐시. 아래 참조 |
+| **MQA**[^mqa] | $n_{\text{kv}} \to 1$ | 모든 query head 가 K/V head 하나 공유. 32배 절감, 품질 손해 |
+| **GQA**[^gqa] | $n_{\text{kv}} \to g$ | query head 를 $g$ 그룹으로. $g=8$ 이면 4배 절감, 품질은 MHA 에 근접 (Llama 2/3 의 선택) |
+| **MLA**[^mla] | $2\, n_{\text{kv}} d_{\text{head}} \to d_c + d_{\text{rope}}$ | K/V 를 저차원 latent 로 압축해 그것만 캐시. 아래 참조 |
 | **KV 양자화** | $p \to 1$ 또는 0.5 | K/V 를 int8/int4 로 저장. $s, b$ 는 그대로, 요소 크기만 축소 |
 | **sliding-window** | $s \to w$ | 최근 $w$ 개 위치만 유지(예: Mistral). 아주 긴 context 에서 상한 고정 |
 
@@ -212,7 +212,7 @@ MHA→MQA→GQA 는 전부 **$n_{\text{kv}}$ 를 줄여** K/V head 개수를 깎
 ### MLA (Multi-head Latent Attention)
 
 GQA 로 $n_{\text{kv}}$ 를 너무 줄이면 품질이 떨어진다 — 캐시하는 벡터 하나하나는 여전히
-$d_{\text{head}}$ 차원 full 이고, 그걸 여러 query head 가 공유하기 때문이다. **MLA**<Cite n={4} />
+$d_{\text{head}}$ 차원 full 이고, 그걸 여러 query head 가 공유하기 때문이다. **MLA**[^mla]
 는 K/V 를 아예 캐시하지 않는다. 대신 토큰마다 **latent 벡터 $c_t$ 하나**만 캐시한다.
 
 1. **압축(down-projection).** 토큰의 hidden state $h_t \in \mathbb{R}^{d}$ 를 학습되는
@@ -241,7 +241,7 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
 
 - **Weight quantization** — 가중치를 int8/int4/FP8 로. 읽을 바이트($p$)가 줄어 6절의
   memory wall 을 직접 완화한다. 6·7주차에서 자세히.
-- **PagedAttention / continuous batching**<Cite n={5} /> — KV cache 를 OS 페이지처럼
+- **PagedAttention / continuous batching**[^vllm] — KV cache 를 OS 페이지처럼
   고정 블록으로 관리해 단편화를 없애고, 요청이 끝나는 대로 새 요청을 배치에 끼워
   GPU 를 놀리지 않는다(vLLM).
 - **Speculative decoding** — 작은 draft 모델이 여러 토큰을 미리 제안하고 큰 모델이
@@ -268,12 +268,16 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
 
 이것으로 1주차를 마친다. 2주차부터는 tokenizer 와 pre-training 을 파고든다.
 
-<References items={[
-  { id: 1, text: "Llama Team, AI @ Meta (2024). The Llama 3 Herd of Models. arXiv:2407.21783. — 8B 아키텍처(32층, 32 query / 8 KV head, d_head 128), context 길이(3.0: 8K, 3.1: 128K)." },
-  { id: 2, text: "Shazeer, N. (2019). Fast Transformer Decoding: One Write-Head is All You Need. arXiv:1911.02150. — Multi-Query Attention: 모든 head 가 K/V 하나를 공유해 decode 시 메모리 대역폭 병목 완화." },
-  { id: 3, text: "Ainslie, J. et al. (2023). GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints. EMNLP 2023. arXiv:2305.13245. — MHA 와 MQA 사이를 보간하는 grouped-query attention." },
-  { id: 4, text: "DeepSeek-AI (2024). DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model. arXiv:2405.04434. — §2.1 Multi-head Latent Attention: K/V 저랭크 압축(d_c=512) 후 latent 만 캐시, decoupled RoPE(d_rope=64), matrix absorption." },
-  { id: 5, text: "Kwon, W. et al. (2023). Efficient Memory Management for Large Language Model Serving with PagedAttention. SOSP 2023. arXiv:2309.06180 (vLLM). — KV cache 를 페이지 블록으로 관리 + continuous batching." },
-  { id: 6, text: "Pope, R. et al. (2022). Efficiently Scaling Transformer Inference. arXiv:2211.05102. — prefill/decode 비용 분석, arithmetic intensity 관점의 서빙 분석." },
-  { id: 7, text: "kipply (2022). Transformer Inference Arithmetic. https://kipp.ly/transformer-inference-arithmetic/ — KV cache 크기·memory bandwidth bound 를 수식으로 유도." },
-]} />
+[^llama3]: Llama Team, AI @ Meta (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783). — 8B 아키텍처(32층, 32 query / 8 KV head, $d_{\text{head}}$ 128), context 길이(3.0: 8K, 3.1: 128K).
+
+[^mqa]: Shazeer, N. (2019). Fast Transformer Decoding: One Write-Head is All You Need. [arXiv:1911.02150](https://arxiv.org/abs/1911.02150). — Multi-Query Attention: 모든 head 가 K/V 하나를 공유해 decode 시 메모리 대역폭 병목 완화.
+
+[^gqa]: Ainslie, J., et al. (2023). GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints. EMNLP 2023. [arXiv:2305.13245](https://arxiv.org/abs/2305.13245). — MHA 와 MQA 사이를 보간하는 grouped-query attention.
+
+[^mla]: DeepSeek-AI (2024). DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model. [arXiv:2405.04434](https://arxiv.org/abs/2405.04434). — §2.1 Multi-head Latent Attention: K/V 저랭크 압축($d_c = 512$) 후 latent 만 캐시, decoupled RoPE($d_{\text{rope}} = 64$), matrix absorption.
+
+[^vllm]: Kwon, W., et al. (2023). Efficient Memory Management for Large Language Model Serving with PagedAttention. SOSP 2023. [arXiv:2309.06180](https://arxiv.org/abs/2309.06180) (vLLM). — KV cache 를 페이지 블록으로 관리 + continuous batching.
+
+[^pope]: Pope, R., et al. (2022). Efficiently Scaling Transformer Inference. [arXiv:2211.05102](https://arxiv.org/abs/2211.05102). — prefill/decode 비용 분석, arithmetic intensity 관점의 서빙 분석.
+
+[^kipply]: kipply (2022). [Transformer Inference Arithmetic](https://kipp.ly/transformer-inference-arithmetic/). — KV cache 크기·memory bandwidth bound 를 수식으로 유도.
