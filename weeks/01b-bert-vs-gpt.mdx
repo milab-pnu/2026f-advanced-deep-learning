@@ -17,10 +17,10 @@ $-\infty$ 로 덮느냐에 따라 두 가지로 갈린다.
 
 - **양방향(bidirectional) attention** — mask 없음. 위치 $i$ 가 문장의 **모든** 위치를
   본다. 앞뒤 문맥을 다 쓰므로 각 토큰의 표현이 풍부하지만, "다음 토큰"을 정의할 수 없다
-  (이미 다 봤으므로). → **encoder**, 이해(understanding)용.
+  (이미 다 봤으므로). 이해(understanding)에 유리 — **BERT 계열**.
 - **인과(causal) attention** — causal mask. 위치 $i$ 는 $j \le i$ 만 본다. 위치 $i$ 의
   표현은 "지금까지 본 것"만 담으므로 그 자리에서 다음 토큰 $x_{i+1}$ 을 예측하는 것이
-  잘 정의된다. → **decoder**, 생성(generation)용.
+  잘 정의된다. 생성(generation)에 유리 — **GPT 계열**.
 
 <svg viewBox="0 0 460 220" role="img" aria-label="양방향 attention mask 와 causal attention mask 비교. 왼쪽은 5x5 격자가 모두 채워져 있고, 오른쪽은 하삼각만 채워져 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <text x="90" y="24" text-anchor="middle" font-size="14" fill="#0f172a">bidirectional (encoder)</text>
@@ -47,18 +47,24 @@ $-\infty$ 로 덮느냐에 따라 두 가지로 갈린다.
 
 행 = query 위치 $i$, 열 = key 위치 $j$. 채워진 칸이 attention 이 허용된 쌍이다.
 
-§1a 에서 조립한 블록은 **self-attention → FFN** 두 겹(각각 뒤에 잔차·LayerNorm)이다.
-원 Transformer 는 이 블록을 두 자리에 쓴다 — mask 없이 쌓은 스택이 **encoder**, causal
-mask 를 걸고 encoder–decoder attention 한 겹을 더 얹은 스택이 **decoder** 다. BERT 는
-encoder 스택을 그대로 가져오고, GPT 는 decoder 스택에서 — 참조할 encoder 가 없으니 —
-encoder–decoder attention 을 떼어낸다. 그러면 두 겹짜리 블록만 남아, encoder 블록과
-**causal mask 하나로만** 갈린다. 이것이 "같은 블록, 다른 mask" 의 뜻이다. 남는 차이는
-스택 맨 위에 올리는 출력층 하나뿐이다.
+왜 한쪽은 **encoder**, 다른 쪽은 **decoder** 라 부르나. 원 Transformer(§1a)에는 스택이
+둘이었다 — 입력 문장을 양방향으로 **읽어 표현으로 바꾸는** encoder, 그 표현을 참조해
+출력을 왼쪽에서 오른쪽으로 **써 나가는** decoder. "읽기"에는 mask 가 필요 없고, "쓰기"
+에는 causal mask 가 필요하다. 두 계열은 이 스택을 하나씩 떼어 온 것이다:
+
+- **BERT = encoder-only** — §1a 의 블록(self-attention + FFN)을 mask 없이 쌓은 것. 원
+  Transformer 의 encoder 스택 그대로다.
+- **GPT = decoder-only** — 같은 블록에 causal mask 를 건 것. 원 Transformer 의 decoder
+  블록에는 encoder 를 들여다보는 sub-layer(encoder–decoder attention)가 하나 더 있지만,
+  GPT 는 참조할 encoder 가 없으니 그 겹을 뺀다 — 그러면 encoder 블록과 **causal mask
+  하나로만** 갈린다.
+
+이것이 "같은 블록, 다른 mask" 다. 나머지 차이는 스택 맨 위에 올리는 출력층 하나뿐이다.
 
 <svg viewBox="0 0 460 316" role="img" aria-label="BERT 와 GPT 의 블록 구조 비교. 둘 다 '토큰+위치 임베딩 → self-attention → 잔차·LayerNorm → feed-forward network → 잔차·LayerNorm' 블록을 N 번 쌓는다. 유일한 구조 차이는 self-attention 의 mask 다: BERT(encoder)는 각 토큰이 좌·우 모든 토큰을 참조하고, GPT(decoder-only)는 각 토큰이 자기 왼쪽까지만 참조한다. 출력도 다르다: BERT 는 위치마다 양방향 문맥 표현을 내고 그 위에 과제별 head 를 붙여 fine-tune 하며, GPT 는 위치마다 다음 토큰 확률을 내어 프롬프트에 이어 바로 생성한다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <line x1="230" y1="14" x2="230" y2="304" stroke="#94a3b8" stroke-dasharray="3 4"/>
   <text x="118" y="22" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">BERT</text>
-  <text x="118" y="36" text-anchor="middle" font-size="9" fill="#64748b">encoder 스택</text>
+  <text x="118" y="36" text-anchor="middle" font-size="9" fill="#64748b">encoder-only 스택</text>
   <text x="342" y="22" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">GPT</text>
   <text x="342" y="36" text-anchor="middle" font-size="9" fill="#64748b">decoder-only 스택</text>
   <text x="118" y="55" text-anchor="middle" font-size="9" fill="#64748b">토큰 + 위치 임베딩</text>
@@ -103,11 +109,11 @@ encoder–decoder attention 을 떼어낸다. 그러면 두 겹짜리 블록만 
 올 토큰"의 예측이 된다 — 그걸 이어 붙이면 생성이다. 층을 아무리 쌓아도 이 성격은
 그대로다.
 
-## 2. BERT — 양방향 encoder
+## 2. BERT — encoder-only (양방향)
 
 BERT(Bidirectional Encoder Representations from Transformers)[^bert] 는 §1a 의 블록을
-mask 없이 쌓은 **encoder** 스택이다(BERT-base: 12층, $d_{\text{model}} = 768$, 12 head,
-110M 파라미터). 각 위치가 문장 전체를 보므로 표현은 풍부하지만, 그 대가로 "다음 토큰"
+mask 없이 쌓은 **encoder-only** 스택이다(BERT-base: 12층, $d_{\text{model}} = 768$,
+12 head, 110M 파라미터). 각 위치가 문장 전체를 보므로 표현은 풍부하지만, 그 대가로 "다음 토큰"
 이라는 학습 목표를 쓸 수 없다 — 예측해야 할 토큰까지 이미 입력에서 봐 버리기 때문이다.
 그래서 BERT 는 다른 학습 과제를 만든다.
 
@@ -158,10 +164,10 @@ BERT 계열이 지금도 쓰이는 자리는 **분류, 검색용 임베딩(retri
 한 번에 이해하기만 하면 되고 생성이 필요 없는 곳이다. 이런 용도는 생성형 LLM 시대에도
 encoder 가 효율적이다(양방향 + 단 한 번의 forward).
 
-## 3. GPT — 인과적 decoder
+## 3. GPT — decoder-only (인과적)
 
-GPT(Generative Pre-Training)[^gpt1] 는 Transformer **decoder** 스택에서
-encoder–decoder attention(cross-attention)을 뺀 것이다(GPT-1: 12층, 117M) — 참조할
+GPT(Generative Pre-Training)[^gpt1] 는 §1에서 봤듯 원 Transformer 의 **decoder** 블록에서
+encoder–decoder attention(cross-attention)을 뺀 스택이다(GPT-1: 12층, 117M) — 참조할
 encoder 가 없으니 masked self-attention 과 FFN 만 남는다. causal mask 하에 **오직
 next-token prediction** 만 학습한다:
 
@@ -482,7 +488,7 @@ encoder–decoder 가 여전히 효율적이고, 분류·검색이라면 encoder
 
 ## 6. 정리
 
-| | BERT (encoder) | GPT (decoder-only) | T5 (encoder–decoder) |
+| | BERT (encoder-only) | GPT (decoder-only) | T5 (encoder–decoder) |
 |---|---|---|---|
 | attention | 양방향 | causal | encoder 양방향 + decoder causal |
 | 사전학습 목적 | MLM (+NSP) | next-token prediction | span corruption |
