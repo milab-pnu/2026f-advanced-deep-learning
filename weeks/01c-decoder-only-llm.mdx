@@ -46,7 +46,7 @@ vocabulary $V = 128{,}256$, 학습 context 길이 8192(Llama 3.1 은 128K).
 
 **Byte-level BPE.** 유니코드 문자 대신 **UTF-8(8비트 유니코드 인코딩) 바이트**(256개)에서 시작한다. 그러면
 이모지든 한글이든 처음 보는 기호든 최소한 바이트 단위로는 항상 표현되어 "unknown
-token" 이 없다. GPT-2 이후 표준이고 Llama 3 도 이 방식(tiktoken 계열)이다.
+token" 이 없다. GPT-2 이후 표준이고 Llama 3 도 이 방식(tiktoken 계열)이다.<Sidenote>tokenization 은 조용한 버그의 온상이다. 숫자를 자릿수별로 안 쪼개면 산술이 약해지고, 공백·개행 처리 방식이 코드 생성 품질을 좌우한다. "왜 이 모델이 이 글자를 못 세지?" 류 현상은 대개 tokenizer 탓이다.</Sidenote>
 
 **어휘 크기 트레이드오프.** $V$ 를 키우면:
 
@@ -59,8 +59,6 @@ token" 이 없다. GPT-2 이후 표준이고 Llama 3 도 이 방식(tiktoken 계
 
 Llama 3 8B 에서 $128{,}256 \times 4096 \approx 5.25 \times 10^8$, 입력 embedding 과
 출력 LM head 각각 약 **525M 파라미터** — 8B 중 무시 못 할 몫이다(6절).
-
-<Sidenote>tokenization 은 조용한 버그의 온상이다. 숫자를 자릿수별로 안 쪼개면 산술이 약해지고, 공백·개행 처리 방식이 코드 생성 품질을 좌우한다. "왜 이 모델이 이 글자를 못 세지?" 류 현상은 대개 tokenizer 탓이다.</Sidenote>
 
 ## 2. Embedding 과 위치 정보
 
