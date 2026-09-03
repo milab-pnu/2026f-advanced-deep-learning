@@ -12,8 +12,8 @@ Harvard NLP 의 *The Annotated Transformer*[^annotated], Weng 의
 을 참고했다. 각 구성요소를 **무엇을 계산하는가 · 왜 그렇게 하는가 · 작은 예시**
 순서로 본다. 코드는 쓰지 않는다.
 
-이번 주 나머지 노트(decoder-only LLM(large language model), inference)가 전부 이 블록 위에 서 있으므로,
-여기서 차원 하나하나를 분명히 해 둔다.
+이번 주 나머지 노트(BERT vs GPT, decoder-only LLM(large language model), inference)가 전부 이 블록
+위에 서 있으므로, 여기서 차원 하나하나를 분명히 해 둔다.
 
 <Figure hero
   src="https://upload.wikimedia.org/wikipedia/commons/8/8f/The-Transformer-model-architecture.png"
@@ -56,7 +56,7 @@ Transformer 는 이 두 문제를 한 번에 없앤다. 모든 위치를 **동�
 
 ## 2. 큰 그림
 
-입력 문장은 먼저 **토큰**의 열로 쪼개지고(다음 노트에서 자세히), 각 토큰은 학습되는
+입력 문장은 먼저 **토큰**의 열로 쪼개지고(이번 주 세 번째 노트에서 자세히), 각 토큰은 학습되는
 임베딩 테이블에서 $d_{\text{model}}$ 차원 벡터로 바뀐다. 원논문 base 모델에서
 $d_{\text{model}} = 512$ 다. 길이 $n$ 문장은 이렇게 행렬
 
@@ -218,7 +218,7 @@ $$
 곳"을 선형 연산으로 참조하기 쉬워진다.[^aiayn] 또 학습 시 본 것보다 긴 문장에도
 공식만으로 값을 만들 수 있다.
 
-<Sidenote>이후 연구는 위치 정보를 절대 임베딩으로 더하지 않고 attention score 단계에서 상대적으로 주입하는 방향으로 옮겨갔다. 특히 **RoPE**(Rotary Position Embedding)는 query·key 를 위치에 따라 회전시켜 내적이 상대 위치의 함수가 되게 한다 — 다음 노트에서 다룬다.</Sidenote>
+<Sidenote>이후 연구는 위치 정보를 절대 임베딩으로 더하지 않고 attention score 단계에서 상대적으로 주입하는 방향으로 옮겨갔다. 특히 **RoPE**(Rotary Position Embedding)는 query·key 를 위치에 따라 회전시켜 내적이 상대 위치의 함수가 되게 한다 — 이번 주 세 번째 노트에서 다룬다.</Sidenote>
 
 ## 6. Transformer 안의 세 가지 Attention
 
@@ -263,7 +263,7 @@ base 모델은 $d_{\text{ff}} = 2048$ 로 $d_{\text{model}}$ 의 4배다. 차원
 역할 분담이 분명하다: **attention 은 위치 사이에서 정보를 섞고(mixing across positions),
 FFN 은 그 위치 안에서 정보를 변환한다(processing per position).** attention 만 쌓으면
 각 토큰 벡터에 대한 비선형 변환 능력이 부족하다 — FFN 이 그걸 채운다. 현대 LLM 에서
-파라미터의 대부분(대략 2/3)이 이 FFN 에 있다. 다음 노트에서 Llama 3 로 확인한다.
+파라미터의 대부분(대략 2/3)이 이 FFN 에 있다. 이번 주 세 번째 노트에서 Llama 3 로 확인한다.
 
 <Sidenote>원논문은 FFN 활성화로 ReLU 를 쓰지만, 최근 모델은 **SwiGLU**(Swish-gated linear unit) 등 gated 변형을 쓴다. gate 를 위한 세 번째 행렬이 생기므로 같은 파라미터 예산을 맞추려면 $d_{\text{ff}}$ 를 $\tfrac{2}{3}$ 배로 줄인다.</Sidenote>
 
@@ -288,7 +288,7 @@ $$
 x_{\ell+1} = \text{LayerNorm}\big( x_\ell + \text{Sublayer}(x_\ell) \big)
 $$
 
-이 배치를 **post-LN** 이라 부른다.<Sidenote>이후 연구는 LayerNorm 을 sub-layer **앞**에 두는 **pre-LN** 배치 $x_{\ell+1} = x_\ell + \text{Sublayer}(\text{LayerNorm}(x_\ell))$ 를 제안했다.[^preln] residual 경로에 정규화가 안 얹혀 gradient 가 그대로 흐르므로, learning-rate warmup 없이도 깊은 스택이 안정적으로 학습된다. GPT 계열을 비롯한 현대 LLM 은 거의 예외 없이 pre-LN 과 RMSNorm(root mean square normalization)을 쓴다 — 다음 노트에서 Llama 3 블록으로 본다.</Sidenote>
+이 배치를 **post-LN** 이라 부른다.<Sidenote>이후 연구는 LayerNorm 을 sub-layer **앞**에 두는 **pre-LN** 배치 $x_{\ell+1} = x_\ell + \text{Sublayer}(\text{LayerNorm}(x_\ell))$ 를 제안했다.[^preln] residual 경로에 정규화가 안 얹혀 gradient 가 그대로 흐르므로, learning-rate warmup 없이도 깊은 스택이 안정적으로 학습된다. GPT 계열을 비롯한 현대 LLM 은 거의 예외 없이 pre-LN 과 RMSNorm(root mean square normalization)을 쓴다 — 이번 주 세 번째 노트에서 Llama 3 블록으로 본다.</Sidenote>
 
 ## 9. 전체 조립
 
@@ -311,7 +311,7 @@ $$
 이 블록을 $N$ 번 반복하면 encoder 다. decoder 블록은 두 residual 사이에
 encoder–decoder attention(+ residual)을 하나 더 끼운다. decoder 스택의 마지막 출력은
 vocabulary 크기의 linear + softmax 로 다음 토큰 분포가 된다. 원논문은 이 출력 projection
-행렬을 입력 임베딩 행렬과 **공유**한다(weight tying).<Sidenote>pre-LN 모델에서는 residual 경로가 정규화 없이 스택 끝까지 뚫려 있으므로, linear 앞에 최종 정규화를 하나 더 둔다 — 다음 노트의 Llama 3 블록에서 본다.</Sidenote>
+행렬을 입력 임베딩 행렬과 **공유**한다(weight tying).<Sidenote>pre-LN 모델에서는 residual 경로가 정규화 없이 스택 끝까지 뚫려 있으므로, linear 앞에 최종 정규화를 하나 더 둔다 — 이번 주 세 번째 노트의 Llama 3 블록에서 본다.</Sidenote>
 
 <Details summary="원논문 학습 레시피 (base 모델)">
 
