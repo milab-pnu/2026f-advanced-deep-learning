@@ -112,6 +112,8 @@ $$
 
 ### 3.2 예시: 대명사는 무엇을 가리키는가
 
+Alammar 의 예시를 빌리면:[^illustrated]
+
 > The animal didn't cross the street because **it** was too tired.
 
 `it` 위치의 query 는 "나는 주어 명사를 찾는다"에 가까운 방향을 갖도록 학습된다. `animal`
@@ -259,7 +261,7 @@ base 모델은 $d_{\text{ff}} = 2048$ 로 $d_{\text{model}}$ 의 4배다. 차원
 역할 분담이 분명하다: **attention 은 위치 사이에서 정보를 섞고(mixing across positions),
 FFN 은 그 위치 안에서 정보를 변환한다(processing per position).** attention 만 쌓으면
 각 토큰 벡터에 대한 비선형 변환 능력이 부족하다 — FFN 이 그걸 채운다. 현대 LLM 에서
-파라미터의 대부분(대략 2/3)이 이 FFN 에 있다. 이번 주 세 번째 노트에서 Llama 3 로 확인한다.
+파라미터의 대부분(약 70%)이 이 FFN 에 있다. 이번 주 세 번째 노트에서 Llama 3 로 확인한다.
 
 ## 8. Residual Connection 과 Layer Normalization
 

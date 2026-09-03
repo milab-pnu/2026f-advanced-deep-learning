@@ -80,7 +80,46 @@ $$
 ## 3. Decoder 블록 스택
 
 Llama 3 의 블록 하나는 앞 노트에서 조립한 것과 같은 골격에, 현대적 부품을 끼운
-**pre-LN** 구조다. 입력 $x \in \mathbb{R}^{n \times d}$:
+**pre-LN** 구조다.
+
+<svg viewBox="0 0 460 450" role="img" aria-label="Llama 3 디코더 블록 하나의 구조. 입력 x 가 두 하위 블록을 지난다. 첫째 하위 블록은 RMSNorm 다음 causal GQA attention, 그 출력을 입력 x 에 더한다(residual). 둘째 하위 블록은 RMSNorm 다음 SwiGLU FFN, 그 출력을 다시 더한다. 결과 y 는 같은 구조의 블록 32개 중 다음 블록으로 들어간다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <text x="230" y="20" text-anchor="middle" font-size="12" fill="#0f172a">입력  x</text>
+  <line x1="230" y1="26" x2="230" y2="44" stroke="#0f172a"/>
+  <path d="M230 34 L60 34 L60 176 L207 176" stroke="#94a3b8" fill="none"/>
+  <text x="66" y="115" font-size="10" fill="#64748b" transform="rotate(-90 66 115)" text-anchor="middle">residual</text>
+  <path d="M230 210 L40 210 L40 360 L207 360" stroke="#94a3b8" fill="none"/>
+  <rect x="130" y="44" width="200" height="32" fill="#f8fafc" stroke="#0f172a"/>
+  <text x="230" y="64" text-anchor="middle" font-size="12" fill="#0f172a">RMSNorm</text>
+  <line x1="230" y1="76" x2="230" y2="94" stroke="#0f172a"/>
+  <polygon points="230,94 226,86 234,86" fill="#0f172a"/>
+  <rect x="130" y="94" width="200" height="38" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="230" y="117" text-anchor="middle" font-size="12" fill="#0f172a">causal GQA attention</text>
+  <line x1="230" y1="132" x2="230" y2="159" stroke="#0f172a"/>
+  <polygon points="230,159 226,151 234,151" fill="#0f172a"/>
+  <circle cx="230" cy="176" r="15" fill="#f8fafc" stroke="#0f172a"/>
+  <text x="230" y="181" text-anchor="middle" font-size="15" fill="#0f172a">+</text>
+  <polygon points="215,176 207,172 207,180" fill="#94a3b8"/>
+  <line x1="230" y1="191" x2="230" y2="228" stroke="#0f172a"/>
+  <polygon points="230,228 226,220 234,220" fill="#0f172a"/>
+  <text x="246" y="213" font-size="11" fill="#64748b">a</text>
+  <rect x="130" y="228" width="200" height="32" fill="#f8fafc" stroke="#0f172a"/>
+  <text x="230" y="248" text-anchor="middle" font-size="12" fill="#0f172a">RMSNorm</text>
+  <line x1="230" y1="260" x2="230" y2="278" stroke="#0f172a"/>
+  <polygon points="230,278 226,270 234,270" fill="#0f172a"/>
+  <rect x="130" y="278" width="200" height="38" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="230" y="301" text-anchor="middle" font-size="12" fill="#0f172a">SwiGLU FFN</text>
+  <line x1="230" y1="316" x2="230" y2="343" stroke="#0f172a"/>
+  <polygon points="230,343 226,335 234,335" fill="#0f172a"/>
+  <circle cx="230" cy="360" r="15" fill="#f8fafc" stroke="#0f172a"/>
+  <text x="230" y="365" text-anchor="middle" font-size="15" fill="#0f172a">+</text>
+  <polygon points="215,360 207,356 207,364" fill="#94a3b8"/>
+  <line x1="230" y1="375" x2="230" y2="400" stroke="#0f172a"/>
+  <polygon points="230,400 226,392 234,392" fill="#0f172a"/>
+  <text x="230" y="420" text-anchor="middle" font-size="12" fill="#0f172a">출력  y   →   다음 블록</text>
+  <text x="230" y="438" text-anchor="middle" font-size="11" fill="#64748b">같은 구조의 블록 L = 32 개</text>
+</svg>
+
+회색 우회선이 residual, 네모가 sub-layer 다. 입력 $x \in \mathbb{R}^{n \times d}$ 에 대해
 
 $$
 a = x + \text{Attn}\big( \text{RMSNorm}(x) \big)
@@ -141,7 +180,7 @@ p_v = \frac{\exp(z_v / T)}{\sum_{u} \exp(z_u / T)}
 $$
 
 - **Temperature $T$.** $T \to 0$ 이면 argmax(항상 최빈 토큰), $T = 1$ 이면 모델 원분포,
-  $T > 1$ 이면 더 평평(다양·무작위). 
+  $T > 1$ 이면 더 평평(다양·무작위).
 - **Greedy decoding.** 매 스텝 argmax. 결정적이지만 반복·단조로움에 빠지기 쉽다.
 - **Top-k.** 확률 상위 $k$ 개만 남기고 재정규화 후 샘플링.
 - **Top-p (nucleus).** 확률을 큰 순서로 더해 누적이 $p$(예: 0.9)를 넘는 최소 집합만

@@ -208,7 +208,81 @@ $n$ 이 수백 넘으면 곧바로 compute-bound. 그래서 같은 요청도 pre
 | **KV 양자화** | $p \to 1$ 또는 0.5 | K/V 를 int8/int4 로 저장. $s, b$ 는 그대로, 요소 크기만 축소 |
 | **sliding-window** | $s \to w$ | 최근 $w$ 개 위치만 유지(예: Mistral). 아주 긴 context 에서 상한 고정 |
 
-MHA→MQA→GQA 는 전부 **$n_{\text{kv}}$ 를 줄여** K/V head 개수를 깎는다. MLA 는 접근이 다르다.
+MHA→MQA→GQA 는 전부 **$n_{\text{kv}}$ 를 줄여** K/V head 개수를 깎는다.
+
+<svg viewBox="0 0 460 196" role="img" aria-label="MHA, GQA, MQA 세 attention 의 query head 와 key/value head 공유 구조 비교. MHA 는 query head 8개가 각자 전용 KV head 를 가진다. GQA 는 query head 를 그룹으로 묶어 그룹당 KV head 하나를 공유한다. MQA 는 모든 query head 가 KV head 하나를 공유한다. KV head 수가 줄수록 캐시가 작아진다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <text x="12" y="46" font-size="10" fill="#64748b">Q</text>
+  <text x="4" y="146" font-size="10" fill="#64748b">KV</text>
+  <text x="94" y="24" text-anchor="middle" font-size="12" fill="#0f172a">MHA</text>
+  <line x1="43.5" y1="50" x2="43.5" y2="138" stroke="#94a3b8"/>
+  <line x1="58.5" y1="50" x2="58.5" y2="138" stroke="#94a3b8"/>
+  <line x1="73.5" y1="50" x2="73.5" y2="138" stroke="#94a3b8"/>
+  <line x1="88.5" y1="50" x2="88.5" y2="138" stroke="#94a3b8"/>
+  <line x1="103.5" y1="50" x2="103.5" y2="138" stroke="#94a3b8"/>
+  <line x1="118.5" y1="50" x2="118.5" y2="138" stroke="#94a3b8"/>
+  <line x1="133.5" y1="50" x2="133.5" y2="138" stroke="#94a3b8"/>
+  <line x1="148.5" y1="50" x2="148.5" y2="138" stroke="#94a3b8"/>
+  <rect x="38.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="53.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="68.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="83.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="98.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="113.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="128.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="143.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="38.0" y="138" width="11" height="12" fill="#0f172a"/>
+  <rect x="53.0" y="138" width="11" height="12" fill="#0f172a"/>
+  <rect x="68.0" y="138" width="11" height="12" fill="#0f172a"/>
+  <rect x="83.0" y="138" width="11" height="12" fill="#0f172a"/>
+  <rect x="98.0" y="138" width="11" height="12" fill="#0f172a"/>
+  <rect x="113.0" y="138" width="11" height="12" fill="#0f172a"/>
+  <rect x="128.0" y="138" width="11" height="12" fill="#0f172a"/>
+  <rect x="143.0" y="138" width="11" height="12" fill="#0f172a"/>
+  <text x="94" y="178" text-anchor="middle" font-size="11" fill="#64748b">KV head 8</text>
+  <text x="246" y="24" text-anchor="middle" font-size="12" fill="#0f172a">GQA</text>
+  <line x1="195.5" y1="50" x2="218.0" y2="138" stroke="#94a3b8"/>
+  <line x1="210.5" y1="50" x2="218.0" y2="138" stroke="#94a3b8"/>
+  <line x1="225.5" y1="50" x2="218.0" y2="138" stroke="#94a3b8"/>
+  <line x1="240.5" y1="50" x2="218.0" y2="138" stroke="#94a3b8"/>
+  <line x1="255.5" y1="50" x2="278.0" y2="138" stroke="#94a3b8"/>
+  <line x1="270.5" y1="50" x2="278.0" y2="138" stroke="#94a3b8"/>
+  <line x1="285.5" y1="50" x2="278.0" y2="138" stroke="#94a3b8"/>
+  <line x1="300.5" y1="50" x2="278.0" y2="138" stroke="#94a3b8"/>
+  <rect x="190.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="205.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="220.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="235.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="250.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="265.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="280.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="295.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="212.5" y="138" width="11" height="12" fill="#0f172a"/>
+  <rect x="272.5" y="138" width="11" height="12" fill="#0f172a"/>
+  <text x="246" y="178" text-anchor="middle" font-size="11" fill="#64748b">KV head 2</text>
+  <text x="394" y="24" text-anchor="middle" font-size="12" fill="#0f172a">MQA</text>
+  <line x1="343.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
+  <line x1="358.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
+  <line x1="373.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
+  <line x1="388.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
+  <line x1="403.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
+  <line x1="418.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
+  <line x1="433.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
+  <line x1="448.5" y1="50" x2="396.0" y2="138" stroke="#94a3b8"/>
+  <rect x="338.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="353.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="368.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="383.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="398.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="413.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="428.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="443.0" y="38" width="11" height="12" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="390.5" y="138" width="11" height="12" fill="#0f172a"/>
+  <text x="394" y="178" text-anchor="middle" font-size="11" fill="#64748b">KV head 1</text>
+</svg>
+
+위 칸이 query head, 아래 칸이 K/V head, 선이 "이 query 가 어느 K/V 를 쓰는가"다. 오른쪽으로
+갈수록 캐시할 K/V 가 줄어드는 대신 여러 query 가 같은 K/V 를 공유한다. 그림은 8 query 기준이고,
+Llama 3 8B 은 32 query / 8 K/V(그룹당 4개)로 같은 4:1 비율이다. MLA 는 이 축과 다른 접근이다.
 
 ### MLA (Multi-head Latent Attention)
 
@@ -245,9 +319,9 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
 - **PagedAttention / continuous batching**[^vllm] — KV cache 를 OS(operating system)
   페이지처럼 고정 블록으로 관리해 단편화를 없애고, 요청이 끝나는 대로 새 요청을 배치에
   끼워 GPU 를 놀리지 않는다(vLLM).
-- **Speculative decoding** — 작은 draft 모델이 여러 토큰을 미리 제안하고 큰 모델이
+- **Speculative decoding**[^specdecode] — 작은 draft 모델이 여러 토큰을 미리 제안하고 큰 모델이
   한 번의 forward 로 검증·수용. decode 의 순차성을 부분적으로 병렬화.
-- **FlashAttention** — attention 을 HBM 왕복 없이 SRAM(static random-access memory) 안에서 블록 단위로 계산.
+- **FlashAttention**[^flashattn] — attention 을 HBM 왕복 없이 SRAM(static random-access memory) 안에서 블록 단위로 계산.
   주로 prefill/학습의 $O(n^2)$ 상수를 줄인다.
 
 <Callout type="note">
@@ -284,6 +358,10 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
 [^mla]: DeepSeek-AI (2024). DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model. [arXiv:2405.04434](https://arxiv.org/abs/2405.04434). — §2.1 Multi-head Latent Attention: K/V 저랭크 압축($d_c = 512$) 후 latent 만 캐시, decoupled RoPE($d_{\text{rope}} = 64$), matrix absorption.
 
 [^vllm]: Kwon, W., et al. (2023). Efficient Memory Management for Large Language Model Serving with PagedAttention. SOSP 2023. [arXiv:2309.06180](https://arxiv.org/abs/2309.06180) (vLLM). — KV cache 를 페이지 블록으로 관리 + continuous batching.
+
+[^flashattn]: Dao, T., Fu, D. Y., Ermon, S., Rudra, A., & Ré, C. (2022). FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. NeurIPS 2022. [arXiv:2205.14135](https://arxiv.org/abs/2205.14135). — attention 을 SRAM 블록 단위로 계산해 HBM 왕복을 없앤 IO-aware exact attention.
+
+[^specdecode]: Leviathan, Y., Kalman, M., & Matias, Y. (2023). Fast Inference from Transformers via Speculative Decoding. ICML 2023. [arXiv:2211.17192](https://arxiv.org/abs/2211.17192). — draft 모델이 제안한 토큰을 대형 모델이 한 번의 forward 로 검증·수용.
 
 [^pope]: Pope, R., et al. (2022). Efficiently Scaling Transformer Inference. [arXiv:2211.05102](https://arxiv.org/abs/2211.05102). — prefill/decode 비용 분석, arithmetic intensity 관점의 서빙 분석.
 
