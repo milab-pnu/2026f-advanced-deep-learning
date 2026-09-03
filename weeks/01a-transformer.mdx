@@ -199,6 +199,9 @@ $W_i^Q$ 등은 "512차원 벡터에서 이 head 가 볼 64차원을 뽑는" 학�
 학습된 모델을 열어 보면 head 마다 다른 패턴이 보인다 — 어떤 head 는 바로 앞 토큰에,
 어떤 head 는 구문상 짝이 되는 토큰에, 어떤 head 는 문장 전체에 고르게 정렬한다.[^illustrated]
 
+<Video src="https://www.youtube.com/watch?v=eMlx5fFNoYc"
+  caption="attention 을 움직이는 그림으로 다시 — self-attention, multi-head, cross-attention. 3Blue1Brown, Deep Learning 6장." />
+
 ## 5. Positional Encoding
 
 self-attention 은 **집합 연산**이다. $Q K^\top$ 은 위치 $i, j$ 의 내용만 보고 그 순서는
@@ -235,6 +238,12 @@ $$
 | encoder self-attention | encoder 입력 | encoder 입력 | 없음 | source 토큰끼리 문맥 교환 (양방향) |
 | decoder masked self-attention | decoder 입력 | decoder 입력 | causal | 지금까지 생성한 target 토큰끼리 문맥 교환 (왼쪽만) |
 | encoder–decoder attention | decoder | encoder 출력 | 없음 | 생성 중 각 위치가 source 문장을 참조 |
+
+<Figure
+  src="https://jalammar.github.io/images/t/transformer_decoding_1.gif"
+  alt="encoder 스택의 출력이 decoder 의 encoder–decoder attention 층으로 전달되고, decoder 가 첫 출력 토큰을 생성하는 애니메이션."
+  caption="encoder–decoder attention — encoder 가 만든 K·V 를 decoder 의 매 위치가 참조해 다음 토큰을 낸다."
+  source="Jay Alammar, The Illustrated Transformer (jalammar.github.io, 2018) · CC BY-NC-SA 4.0 · 수정 없음" />
 
 **Causal mask** 는 학습 때 정답 문장 전체를 한꺼번에 넣으면서도 위치 $i$ 가 미래 토큰
 $j > i$ 를 못 보게 막는 장치다. softmax 이전에 미래 위치의 score 를 $-\infty$ 로 덮으면
