@@ -231,7 +231,47 @@ GPT-2 → GPT-3 의 **스케일 + zero/few-shot**: 하나의 고정된 모델이
 번역·요약에 잘 맞는다("이 문장(입력)을 이 문장(출력)으로 바꿔라").
 
 대표가 **T5**[^t5] 다. T5 는 모든 과제를 "문자열 하나를 받아 문자열 하나를 내놓는다"로
-통일한다 — 번역도, 감성 분류도(출력이 `"positive"` 라는 단어), 요약도 같은 틀이다.
+통일한다 — 번역도, 감성 분류도(출력이 `"positive"` 라는 단어), 문장 유사도도(출력이
+`"3.8"` 이라는 숫자 문자열), 요약도 같은 틀이다.
+
+<svg viewBox="0 0 620 250" role="img" aria-label="T5 의 text-to-text 틀. 왼쪽에 서로 다른 과제 네 개가 모두 '과제 접두사 + 텍스트' 한 덩어리로 입력되어 가운데 T5 모델을 거쳐 오른쪽에 모두 텍스트 한 덩어리로 출력된다. 번역은 'translate English to German: That is good.' 이 들어가 'Das ist gut.' 이, 문법성 판단은 'cola sentence: ...' 가 들어가 'not acceptable' 이, 문장 유사도는 'stsb sentence1: ... sentence2: ...' 가 들어가 '3.8' 이, 요약은 'summarize: ...' 가 들어가 요약문이 나온다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <rect x="6" y="12" width="250" height="44" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="16" y="30" font-size="9" font-weight="600" fill="#0f172a">translate English to German:</text>
+  <text x="16" y="44" font-size="9" fill="#64748b">That is good.</text>
+  <rect x="6" y="68" width="250" height="44" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="16" y="86" font-size="9" font-weight="600" fill="#0f172a">cola sentence:</text>
+  <text x="16" y="100" font-size="9" fill="#64748b">The course is jumping well.</text>
+  <rect x="6" y="124" width="250" height="44" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="16" y="142" font-size="9" font-weight="600" fill="#0f172a">stsb sentence1: The rhino grazed.</text>
+  <text x="16" y="156" font-size="9" fill="#64748b">sentence2: A rhino is grazing.</text>
+  <rect x="6" y="180" width="250" height="44" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="16" y="198" font-size="9" font-weight="600" fill="#0f172a">summarize:</text>
+  <text x="16" y="212" font-size="9" fill="#64748b">state authorities dispatched emergency crews …</text>
+  <line x1="256" y1="34" x2="290" y2="118" stroke="#94a3b8"/>
+  <line x1="256" y1="90" x2="290" y2="118" stroke="#94a3b8"/>
+  <line x1="256" y1="146" x2="290" y2="122" stroke="#94a3b8"/>
+  <line x1="256" y1="202" x2="290" y2="122" stroke="#94a3b8"/>
+  <rect x="292" y="96" width="60" height="48" rx="6" fill="#0f172a"/>
+  <text x="322" y="126" text-anchor="middle" font-size="16" font-weight="600" fill="#f8fafc">T5</text>
+  <line x1="354" y1="118" x2="400" y2="34" stroke="#94a3b8"/>
+  <line x1="354" y1="118" x2="400" y2="90" stroke="#94a3b8"/>
+  <line x1="354" y1="122" x2="400" y2="146" stroke="#94a3b8"/>
+  <line x1="354" y1="122" x2="400" y2="202" stroke="#94a3b8"/>
+  <rect x="402" y="12" width="212" height="44" rx="6" fill="#e2e8f0"/>
+  <text x="412" y="39" font-size="10" fill="#0f172a">Das ist gut.</text>
+  <rect x="402" y="68" width="212" height="44" rx="6" fill="#e2e8f0"/>
+  <text x="412" y="95" font-size="10" fill="#0f172a">not acceptable</text>
+  <rect x="402" y="124" width="212" height="44" rx="6" fill="#e2e8f0"/>
+  <text x="412" y="151" font-size="10" fill="#0f172a">3.8</text>
+  <rect x="402" y="180" width="212" height="44" rx="6" fill="#e2e8f0"/>
+  <text x="412" y="203" font-size="9" fill="#0f172a">six people hospitalized after</text>
+  <text x="412" y="216" font-size="9" fill="#0f172a">storm in attala county .</text>
+</svg>
+
+과제가 번역이든 문법성 판단이든 유사도 점수(회귀)든 요약이든, 입력도 출력도 **텍스트
+한 덩어리**다. 과제의 종류는 입력 맨 앞의 접두사(`translate English to German:`,
+`cola sentence:` …)로만 지시한다. 구조는 Raffel et al. 2020(T5) Figure 1 을 다시 그렸다.
+
 사전학습은 **span corruption**: 입력에서 짧은 토큰 구간 몇 개를 통째로 지우고 각 자리를
 자리표시 토큰(sentinel, `<X>`·`<Y>` …) 하나로 대체한 뒤, decoder 가 지워진 구간들만
 순서대로 복원하게 한다.
