@@ -319,6 +319,77 @@ decoder (정답을 한 토큰씩 생성, teacher forcing):
 cross-attention 을 타고 encoder 까지 흘러든다. encoder 는 "입력을 어떻게 표현해 두어야
 저 6개를 더 잘 맞히나"라는 방향으로만 조정된다.
 
+헷갈리기 쉬운 점 — encoder 스택과 decoder 스택은 **위아래로 쌓이지 않는다.** 나란히 선
+두 기둥이고, decoder 의 **모든 층**이 cross-attention 으로 encoder 의 **최종 출력**을
+읽는다. encoder 층은 전부 양방향, decoder 층은 전부 causal(+ cross-attention)이다. 층을
+encoder 2 · decoder 2 로 줄여 손실과 그래디언트가 흐르는 길을 그리면:
+
+<svg viewBox="0 0 560 300" role="img" aria-label="encoder-decoder 한 네트워크에서 손실과 그래디언트가 흐르는 경로. 왼쪽은 encoder 스택(층 2개, 양방향 self-attention), 오른쪽은 decoder 스택(층 2개, causal self-attention 과 cross-attention). 손상된 입력은 encoder 로, 정답을 한 칸 민 문자열은 decoder 로 들어간다. 손실은 decoder 꼭대기 LM head 위 한 곳에만 있다. cross-attention 은 모든 decoder 층이 encoder 최종 출력을 읽는 연결이다. 그래디언트(점선)는 손실에서 출발해 decoder 를 내려오고 cross-attention 을 거쳐 encoder 까지 역전파된다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <text x="145" y="16" text-anchor="middle" font-size="10" font-weight="600" fill="#0f172a">encoder 스택</text>
+  <text x="415" y="16" text-anchor="middle" font-size="10" font-weight="600" fill="#0f172a">decoder 스택</text>
+  <rect x="40" y="216" width="210" height="30" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="145" y="230" text-anchor="middle" font-size="8" fill="#64748b">손상된 입력 → encoder</text>
+  <text x="145" y="241" text-anchor="middle" font-size="7.5" fill="#0f172a">Thank you &lt;X&gt; me to your party &lt;Y&gt; week .</text>
+  <rect x="40" y="160" width="210" height="44" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="145" y="178" text-anchor="middle" font-size="9" fill="#0f172a">encoder 층 1</text>
+  <text x="145" y="192" text-anchor="middle" font-size="7.5" fill="#64748b">self-attention (양방향) · FFN</text>
+  <rect x="40" y="104" width="210" height="44" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="145" y="122" text-anchor="middle" font-size="9" fill="#0f172a">encoder 층 2</text>
+  <text x="145" y="136" text-anchor="middle" font-size="7.5" fill="#64748b">self-attention (양방향) · FFN</text>
+  <rect x="310" y="216" width="210" height="30" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="415" y="230" text-anchor="middle" font-size="8" fill="#64748b">정답을 한 칸 민 것 → decoder</text>
+  <text x="415" y="241" text-anchor="middle" font-size="7.5" fill="#0f172a">&lt;s&gt; &lt;X&gt; for inviting &lt;Y&gt; last</text>
+  <rect x="310" y="160" width="210" height="44" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="415" y="176" text-anchor="middle" font-size="9" fill="#0f172a">decoder 층 1</text>
+  <text x="415" y="189" text-anchor="middle" font-size="7" fill="#64748b">causal self-attn · cross-attn · FFN</text>
+  <rect x="310" y="104" width="210" height="44" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="415" y="120" text-anchor="middle" font-size="9" fill="#0f172a">decoder 층 2</text>
+  <text x="415" y="133" text-anchor="middle" font-size="7" fill="#64748b">causal self-attn · cross-attn · FFN</text>
+  <rect x="310" y="64" width="210" height="28" rx="4" fill="#f8fafc" stroke="#0f172a"/>
+  <text x="415" y="82" text-anchor="middle" font-size="8" fill="#0f172a">LM head → 다음 토큰 확률</text>
+  <rect x="342" y="30" width="146" height="24" rx="4" fill="#0f172a"/>
+  <text x="415" y="46" text-anchor="middle" font-size="8.5" font-weight="600" fill="#f8fafc">손실 · 여기 한 곳뿐</text>
+  <g stroke="#0f172a" fill="#0f172a">
+    <line x1="138" y1="216" x2="138" y2="206"/><polygon points="138,203 135,209 141,209"/>
+    <line x1="138" y1="160" x2="138" y2="150"/><polygon points="138,147 135,153 141,153"/>
+    <line x1="408" y1="216" x2="408" y2="206"/><polygon points="408,203 405,209 411,209"/>
+    <line x1="408" y1="160" x2="408" y2="150"/><polygon points="408,147 405,153 411,153"/>
+    <line x1="408" y1="104" x2="408" y2="94"/><polygon points="408,91 405,97 411,97"/>
+    <line x1="408" y1="64" x2="408" y2="56"/><polygon points="408,53 405,59 411,59"/>
+  </g>
+  <g stroke="#0f172a" fill="#0f172a">
+    <line x1="250" y1="119" x2="308" y2="121"/><polygon points="310,121 304,118 304,124"/>
+    <line x1="250" y1="125" x2="308" y2="179"/><polygon points="310,180 303,177 306,183"/>
+  </g>
+  <text x="280" y="100" text-anchor="middle" font-size="7" fill="#64748b">cross-attention</text>
+  <g stroke="#0f172a" fill="#0f172a" stroke-dasharray="3 2">
+    <line x1="424" y1="55" x2="424" y2="62"/>
+    <line x1="424" y1="92" x2="424" y2="102"/>
+    <line x1="424" y1="148" x2="424" y2="158"/>
+    <line x1="424" y1="204" x2="424" y2="214"/>
+    <line x1="307" y1="132" x2="254" y2="132"/>
+    <line x1="152" y1="148" x2="152" y2="158"/>
+    <line x1="152" y1="204" x2="152" y2="214"/>
+  </g>
+  <g fill="#0f172a">
+    <polygon points="424,64 421,57 427,57"/>
+    <polygon points="424,104 421,97 427,97"/>
+    <polygon points="424,160 421,153 427,153"/>
+    <polygon points="424,216 421,209 427,209"/>
+    <polygon points="252,132 258,129 258,135"/>
+    <polygon points="152,160 149,153 155,153"/>
+    <polygon points="152,216 149,209 155,209"/>
+  </g>
+  <text x="280" y="270" text-anchor="middle" font-size="8" fill="#64748b">실선 = 순전파(데이터) · 점선 = 역전파(그래디언트)</text>
+  <text x="280" y="284" text-anchor="middle" font-size="8" fill="#64748b">손실 → decoder → cross-attention → encoder 순으로 그래디언트가 흐른다</text>
+</svg>
+
+순전파(실선)는 두 입력이 각자 기둥을 타고 올라가고, decoder 가 cross-attention 으로
+encoder 출력을 당겨 쓴 뒤 맨 위에서 예측·손실을 낸다. 역전파(점선)는 그 손실 **하나**에서
+출발해 같은 배선을 거꾸로 흐른다 — decoder 를 내려오다 cross-attention 지점에서 encoder
+로 건너가고, encoder 를 마저 내려간다. encoder 가중치는 이때 받는 그래디언트로만
+갱신된다. (실제 T5-base 는 encoder 12 · decoder 12 층.)
+
 **BART**[^bart] 는 같은 encoder–decoder 이되 입력을 더 다양하게 망가뜨린다 — 토큰을
 지우고, 문장 순서를 섞고, 구간을 마스킹한 문장을 넣어 decoder 가 **원문 전체**를
 되살리게 한다(denoising autoencoder, 잡음 섞은 입력에서 원본을 복원하는 모델).
