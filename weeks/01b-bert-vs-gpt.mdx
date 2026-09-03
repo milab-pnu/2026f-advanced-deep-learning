@@ -7,7 +7,7 @@ order: 1
 앞 노트에서 조립한 Transformer 블록은 그대로 두고, **어떤 mask 로 어떤 목적함수를
 학습하느냐**만 바꾸면 성격이 전혀 다른 두 계열이 나온다. 2018–2020년의 BERT[^bert]
 와 GPT[^gpt1][^gpt2][^gpt3] 가 그것이다. 이 노트는 둘의 차이를
-정리하고, 왜 생성형 LLM 이 **decoder-only** 로 수렴했는지[^wang22] 를 본다. 다음
+정리하고, 왜 생성형 LLM(large language model) 이 **decoder-only** 로 수렴했는지[^wang22] 를 본다. 다음
 노트부터는 decoder-only 만 다룬다.
 
 ## 1. 같은 블록, 다른 mask
@@ -106,7 +106,7 @@ GPT-2 → GPT-3 의 **스케일 + zero/few-shot**: 하나의 고정된 모델이
 
 세 번째 선택지는 원래 Transformer 처럼 **encoder + decoder** 를 다 쓰는 것이다.
 
-- **T5**[^t5] — 모든 NLP 과제를 "text-in → text-out" 으로 통일. 사전학습은
+- **T5**[^t5] — 모든 NLP(natural language processing) 과제를 "text-in → text-out" 으로 통일. 사전학습은
   **span corruption**: 입력에서 연속된 토큰 구간을 하나의 sentinel 로 가리고, decoder 가
   그 구간을 복원. encoder 는 양방향으로 입력을 읽고 decoder 가 인과적으로 출력을 생성.
 - **BART** — encoder 에 다양한 noise(토큰 삭제, 순서 섞기 등)를 준 문장을 넣고 decoder 가
@@ -123,8 +123,8 @@ Qwen, Gemma …). 이유를 정리하면:
 
 1. **구조가 가장 단순하다.** 스택 하나, attention 한 종류(masked self), cross-attention
    없음. 스케일링·최적화·서빙 스택을 이 한 형태에 집중할 수 있다.
-2. **사전학습이 밀도 높다.** causal LM 은 길이 $n$ 시퀀스에서 위치 $n$ 개 전부에 loss 를
-   준다. BERT-MLM 은 15% 만 예측하므로 같은 데이터에서 학습 신호가 적다.
+2. **사전학습이 밀도 높다.** causal LM(language model) 은 길이 $n$ 시퀀스에서 위치 $n$ 개
+   전부에 loss 를 준다. BERT-MLM 은 15% 만 예측하므로 같은 데이터에서 학습 신호가 적다.
 3. **사전학습과 사용 방식이 일치한다.** "다음 토큰 예측"으로 배우고 "다음 토큰 생성"으로
    쓴다. 이해·생성·대화·추론이 모두 같은 인터페이스(이어 쓰기)로 표현된다.
 4. **zero/few-shot 일반화가 가장 좋다.** Wang 등(2022)[^wang22] 은 동일 조건에서
@@ -133,8 +133,8 @@ Qwen, Gemma …). 이유를 정리하면:
    추가하면 non-causal + MLM 이 앞서지만, 범용 기반 모델의 기본기는 전자).
 5. **in-context learning 과 궁합.** 프롬프트에 예시를 이어 붙이면 그대로 "이어 쓰기"
    문제가 된다 — 별도 입력/출력 분리가 필요 없다.
-6. **KV cache 로 생성이 효율적이다.** causal 구조라서 이미 계산한 key/value 를 캐시해
-   토큰당 비용을 낮출 수 있다(네 번째 노트).
+6. **KV(key–value) cache 로 생성이 효율적이다.** causal 구조라서 이미 계산한 key/value 를
+   캐시해 토큰당 비용을 낮출 수 있다(네 번째 노트).
 
 <Callout type="warning">
 "decoder-only 가 항상 최선"은 아니다. 고정 입력을 반복 참조하는 번역·요약 전용이라면

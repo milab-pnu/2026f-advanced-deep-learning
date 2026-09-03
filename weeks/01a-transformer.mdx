@@ -12,7 +12,7 @@ Harvard NLP 의 <em>The Annotated Transformer</em>[^annotated], Weng 의
 에서 가져왔다. 각 구성요소를 **무엇을 계산하는가 · 왜 그렇게 하는가 · 작은 예시**
 순서로 본다. 코드는 쓰지 않는다.
 
-이번 주 나머지 노트(decoder-only LLM, inference)가 전부 이 블록 위에 서 있으므로,
+이번 주 나머지 노트(decoder-only LLM(large language model), inference)가 전부 이 블록 위에 서 있으므로,
 여기서 차원 하나하나를 분명히 해 둔다.
 
 <Figure hero
@@ -23,8 +23,8 @@ Harvard NLP 의 <em>The Annotated Transformer</em>[^annotated], Weng 의
 
 ## 1. 순차 모델의 벽
 
-2017년 이전의 기계번역(neural machine translation)은 대부분 **RNN 기반 encoder–decoder**
-구조였다. encoder 가 source 문장을 왼쪽에서 오른쪽으로 한 토큰씩 읽어 hidden state
+2017년 이전의 기계번역(neural machine translation)은 대부분 **RNN(recurrent neural
+network) 기반 encoder–decoder** 구조였다. encoder 가 source 문장을 왼쪽에서 오른쪽으로 한 토큰씩 읽어 hidden state
 
 $$
 h_t = f(h_{t-1},\, x_t)
@@ -40,7 +40,7 @@ RNN 방식의 구조적 한계는 두 가지다.
 <Callout type="warning">
 **순차 계산.** $h_t$ 를 구하려면 $h_{t-1}$ 이 있어야 한다. 길이 $n$ 문장의 forward
 pass 는 $n$ 번의 순차 스텝을 강제하고, 이 사슬은 병렬화할 수 없다. 시퀀스가 길수록
-학습이 느려지고 GPU 활용률이 떨어진다.
+학습이 느려지고 GPU(graphics processing unit) 활용률이 떨어진다.
 </Callout>
 
 <Callout type="warning">
@@ -72,10 +72,10 @@ $$
 encoder 블록 하나는 두 개의 sub-layer 로 되어 있다:
 
 1. **Multi-head self-attention** — 각 토큰이 같은 문장의 모든 토큰을 참조해 정보를 모은다.
-2. **Position-wise feed-forward network** — 모인 정보를 토큰별로 비선형 변환한다.
+2. **Position-wise feed-forward network (FFN)** — 모인 정보를 토큰별로 비선형 변환한다.
 
 decoder 블록은 여기에 **encoder–decoder attention** 이 하나 더 붙어 세 개의 sub-layer 를
-가진다(6절). 모든 sub-layer 는 residual connection 과 layer normalization 으로 감싼다(8절).
+가진다(6절). 모든 sub-layer 는 residual connection 과 layer normalization(LN) 으로 감싼다(8절).
 
 <Sidenote>원논문은 sub-layer 출력을 $\mathrm{LayerNorm}(x + \mathrm{Sublayer}(x))$ 로 쓴다. 이 배치를 post-LN 이라 부르며, 현대 LLM 은 거의 pre-LN 을 쓴다 — 8절에서 다룬다.</Sidenote>
 
@@ -248,7 +248,7 @@ forcing). 이 causal mask 가 decoder-only LLM 의 핵심이며 다음 노트의
 
 ## 7. Position-wise Feed-Forward Network
 
-attention sub-layer 다음에는 각 위치에 **독립적으로 똑같이** 적용되는 2층 MLP 가 온다:
+attention sub-layer 다음에는 각 위치에 **독립적으로 똑같이** 적용되는 2층 MLP(multi-layer perceptron) 가 온다:
 
 $$
 \text{FFN}(x) = \max(0,\; x W_1 + b_1)\, W_2 + b_2,
@@ -258,14 +258,14 @@ W_2 \in \mathbb{R}^{d_{\text{ff}} \times d_{\text{model}}}
 $$
 
 base 모델은 $d_{\text{ff}} = 2048$ 로 $d_{\text{model}}$ 의 4배다. 차원을 한 번 넓혔다가
-(ReLU 비선형) 다시 좁힌다.
+(ReLU(rectified linear unit) 비선형) 다시 좁힌다.
 
 역할 분담이 분명하다: **attention 은 위치 사이에서 정보를 섞고(mixing across positions),
 FFN 은 그 위치 안에서 정보를 변환한다(processing per position).** attention 만 쌓으면
 각 토큰 벡터에 대한 비선형 변환 능력이 부족하다 — FFN 이 그걸 채운다. 현대 LLM 에서
 파라미터의 대부분(대략 2/3)이 이 FFN 에 있다. 다음 노트에서 Llama 3 로 확인한다.
 
-<Sidenote>원논문은 FFN 활성화로 ReLU 를 쓰지만, 최근 모델은 **SwiGLU** 등 gated 변형을 쓴다. gate 를 위한 세 번째 행렬이 생기므로 같은 파라미터 예산을 맞추려면 $d_{\text{ff}}$ 를 $\tfrac{2}{3}$ 배로 줄인다.</Sidenote>
+<Sidenote>원논문은 FFN 활성화로 ReLU 를 쓰지만, 최근 모델은 **SwiGLU**(Swish-gated linear unit) 등 gated 변형을 쓴다. gate 를 위한 세 번째 행렬이 생기므로 같은 파라미터 예산을 맞추려면 $d_{\text{ff}}$ 를 $\tfrac{2}{3}$ 배로 줄인다.</Sidenote>
 
 ## 8. Residual Connection 과 Layer Normalization
 
@@ -288,7 +288,7 @@ $$
 x_{\ell+1} = \text{LayerNorm}\big( x_\ell + \text{Sublayer}(x_\ell) \big)
 $$
 
-이 배치를 **post-LN** 이라 부른다.<Sidenote>이후 연구는 LayerNorm 을 sub-layer **앞**에 두는 **pre-LN** 배치 $x_{\ell+1} = x_\ell + \text{Sublayer}(\text{LayerNorm}(x_\ell))$ 를 제안했다.[^preln] residual 경로에 정규화가 안 얹혀 gradient 가 그대로 흐르므로, learning-rate warmup 없이도 깊은 스택이 안정적으로 학습된다. GPT 계열을 비롯한 현대 LLM 은 거의 예외 없이 pre-LN(+RMSNorm)을 쓴다 — 다음 노트에서 Llama 3 블록으로 본다.</Sidenote>
+이 배치를 **post-LN** 이라 부른다.<Sidenote>이후 연구는 LayerNorm 을 sub-layer **앞**에 두는 **pre-LN** 배치 $x_{\ell+1} = x_\ell + \text{Sublayer}(\text{LayerNorm}(x_\ell))$ 를 제안했다.[^preln] residual 경로에 정규화가 안 얹혀 gradient 가 그대로 흐르므로, learning-rate warmup 없이도 깊은 스택이 안정적으로 학습된다. GPT 계열을 비롯한 현대 LLM 은 거의 예외 없이 pre-LN 과 RMSNorm(root mean square normalization)을 쓴다 — 다음 노트에서 Llama 3 블록으로 본다.</Sidenote>
 
 ## 9. 전체 조립
 
@@ -317,11 +317,11 @@ vocabulary 크기의 linear + softmax 로 다음 토큰 분포가 된다. 원논
 
 - optimizer: Adam, $\beta_1 = 0.9$, $\beta_2 = 0.98$, $\epsilon = 10^{-9}$
 - learning rate 스케줄: $lr = d_{\text{model}}^{-0.5} \cdot \min\!\big( step^{-0.5},\; step \cdot warmup^{-1.5} \big)$, $warmup = 4000$ — 처음엔 선형 증가, 이후 $step^{-0.5}$ 로 감소
-- regularization: 모든 sub-layer 출력·임베딩 합에 dropout $P_{\text{drop}} = 0.1$ (big EN-DE 는 0.3), label smoothing $\epsilon_{ls} = 0.1$
+- regularization: 모든 sub-layer 출력·임베딩 합에 dropout $P_{\text{drop}} = 0.1$ (big EN-DE(영어–독일어) 는 0.3), label smoothing $\epsilon_{ls} = 0.1$
 - base 모델은 8× P100 GPU 로 약 12시간, big 은 약 3.5일 학습
 
 label smoothing 은 정답 확률 1 대신 $1 - \epsilon_{ls}$ 를 목표로 둔다 — perplexity 는
-나빠지지만 BLEU 와 calibration 이 좋아진다.
+나빠지지만 BLEU(bilingual evaluation understudy) 와 calibration 이 좋아진다.
 </Details>
 
 ## 10. 왜 되는가 — 복잡도와 경로 길이
@@ -344,7 +344,7 @@ $k$: convolution kernel).
 
 대가는 $O(n^2 \cdot d)$ 다. $n \lesssim d$ 인 흔한 구간(문장 단위 번역)에서는 recurrent
 의 $O(n \cdot d^2)$ 보다 오히려 싸지만, context 가 수천~수만 토큰으로 길어지면 $n^2$
-항이 지배한다. 이 $n^2$ 비용과 그것을 완화하는 방법(그리고 inference 에서의 KV cache)이
+항이 지배한다. 이 $n^2$ 비용과 그것을 완화하는 방법(그리고 inference 에서의 KV(key–value) cache)이
 이번 주 네 번째 노트의 주제다.
 
 ## 11. 정리

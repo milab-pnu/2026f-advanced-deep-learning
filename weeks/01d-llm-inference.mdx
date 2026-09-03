@@ -4,10 +4,10 @@ week: 1
 order: 3
 ---
 
-앞 노트에서 decoder-only 모델의 forward 를 한 바퀴 돌았다. 이 노트는 그 모델로
+앞 노트에서 decoder-only LLM(large language model) 의 forward 를 한 바퀴 돌았다. 이 노트는 그 모델로
 **문장을 생성할 때 실제로 무엇이 비싼가**를 다룬다. 학습과 달리 inference 는
 autoregressive 라서, 비용 구조가 전혀 다르고 하드웨어를 잘 못 쓰기 쉽다. 기준 모델은
-계속 **Llama 3 8B**($L = 32$, query head 32 / KV head 8, $d_{\text{head}} = 128$,
+계속 **Llama 3 8B**($L = 32$, query head 32 / KV(key–value) head 8, $d_{\text{head}} = 128$,
 $d = 4096$, $V = 128{,}256$)[^llama3] 이다.
 
 ## 1. 학습과 무엇이 다른가
@@ -30,13 +30,13 @@ $$
 때처럼 $n$ 개 위치가 병렬로 계산된다 — 큰 행렬곱, GPU 를 꽉 채움. **compute-bound.**
 
 **Decode.** 그 뒤로는 매 스텝 **토큰 하나**만 새로 넣어 다음 토큰을 뽑는다. 위치 1개짜리
-행렬-벡터곱이라 연산량은 작은데, 그걸 하려고 **모델 가중치 전체를 HBM 에서 읽어야**
-한다. **memory-bound.**
+행렬-벡터곱이라 연산량은 작은데, 그걸 하려고 **모델 가중치 전체를 HBM(high-bandwidth
+memory) 에서 읽어야** 한다. **memory-bound.**
 
 <Callout type="intuition">
 prefill 은 "문단을 통째로 읽기", decode 는 "한 글자 쓸 때마다 사전 전체를 다시
-펼쳐보기". 사용자 체감의 "첫 응답까지 시간(TTFT)"은 prefill 이, "토큰이 흘러나오는
-속도(TPOT)"는 decode 가 좌우한다.
+펼쳐보기". 사용자 체감의 "첫 응답까지 시간(time to first token, TTFT)"은 prefill 이,
+"토큰이 흘러나오는 속도(time per output token, TPOT)"는 decode 가 좌우한다.
 </Callout>
 
 ## 3. KV cache — 왜, 무엇을
@@ -45,7 +45,7 @@ decode 스텝마다 시퀀스 전체를 다시 넣으면, 이미 계산했던 �
 **매번 다시 계산**하게 된다 — 스텝마다 $O(n)$ 낭비.
 
 그런데 causal attention 에서 과거 위치의 $k_j, v_j$ 는 **새 토큰이 붙어도 변하지 않는다**
-(RoPE 회전각도 위치 고정). 그러니 한 번 계산해 **캐시**하고, 새 토큰의 $q$ 만 캐시된
+(RoPE(rotary position embedding) 회전각도 위치 고정). 그러니 한 번 계산해 **캐시**하고, 새 토큰의 $q$ 만 캐시된
 $K, V$ 와 attention 하면 된다. 이것이 **KV cache** 다.[^kipply] decode 한 스텝의
 비용이 $O(n)$ 재계산에서 캐시 조회 + $O(n)$ dot-product 로 줄고, 모델 forward 는 새
 토큰 1개분만 돈다.
@@ -65,12 +65,13 @@ $$
 \quad \text{[bytes]}
 $$
 
-여기서 $n_{\text{kv}}$ 는 **KV head 수**다(MHA 면 query head 수와 같고, GQA/MQA 면 더 작다 —
-7절). $p$ 는 숫자 하나를 몇 바이트로 저장하느냐인데, 이것부터 정리한다.
+여기서 $n_{\text{kv}}$ 는 **KV head 수**다(MHA(multi-head attention) 면 query head 수와
+같고, GQA(grouped-query attention)/MQA(multi-query attention) 면 더 작다 — 7절). $p$ 는 숫자 하나를 몇 바이트로 저장하느냐인데, 이것부터 정리한다.
 
 ## 4. 숫자 표현 — fp32, fp16, bf16
 
-부동소수점 수 하나는 **부호 1비트 + 지수부(exponent) + 가수부(mantissa)** 로 저장된다.
+fp32·fp16·bf16 은 각각 32비트·16비트·16비트 **부동소수점**(floating-point) 형식이다
+(bf16 = bfloat16). 부동소수점 수 하나는 **부호 1비트 + 지수부(exponent) + 가수부(mantissa)** 로 저장된다.
 지수부는 **표현 범위**(얼마나 큰/작은 수까지), 가수부는 **정밀도**(유효 자릿수)를 정한다.
 
 | 형식 | 비트 (부호/지수/가수) | 바이트 | 특징 |
@@ -78,7 +79,7 @@ $$
 | **fp32** | 1 / 8 / 23 | 4 | 전통적 학습 기본. 범위·정밀도 모두 넉넉 |
 | **fp16** | 1 / 5 / 10 | 2 | 메모리·대역폭 절반. 지수 5비트라 **범위가 좁아**(최대 약 65,504) gradient 가 쉽게 overflow/underflow → loss scaling 필요 |
 | **bf16** | 1 / 8 / 7 | 2 | 지수부는 fp32 와 **동일**(같은 범위), 가수부만 7비트로 거칠다. 범위가 넓어 학습이 안정적 |
-| **FP8** (E4M3 등) | 1 / 4 / 3 | 1 | H100 이후 하드웨어에서 학습·추론에 사용 |
+| **FP8** (8비트 부동소수점, E4M3 등) | 1 / 4 / 3 | 1 | H100 이후 하드웨어에서 학습·추론에 사용 |
 
 <Callout type="intuition">
 숫자를 담는 칸이 32칸(fp32)에서 16칸으로 줄었다고 하자. **fp16** 은 "큰 수 담는 칸"과
@@ -126,7 +127,7 @@ $$
 
 GPU 에는 서로 다른 두 개의 속도가 있다.
 
-- **연산 속도** — 초당 할 수 있는 곱셈·덧셈 수 (FLOP/s).
+- **연산 속도** — 초당 할 수 있는 곱셈·덧셈 수 (FLOP/s — floating-point operations per second).
 - **메모리 대역폭** — 초당 HBM 에서 연산 유닛으로 옮길 수 있는 바이트 수 (byte/s).
 
 현대 가속기는 연산 속도가 메모리 대역폭보다 (숫자당 FLOP 기준) **수백 배** 빠르다.
@@ -241,12 +242,12 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
 
 - **Weight quantization** — 가중치를 int8/int4/FP8 로. 읽을 바이트($p$)가 줄어 6절의
   memory wall 을 직접 완화한다. 6·7주차에서 자세히.
-- **PagedAttention / continuous batching**[^vllm] — KV cache 를 OS 페이지처럼
-  고정 블록으로 관리해 단편화를 없애고, 요청이 끝나는 대로 새 요청을 배치에 끼워
-  GPU 를 놀리지 않는다(vLLM).
+- **PagedAttention / continuous batching**[^vllm] — KV cache 를 OS(operating system)
+  페이지처럼 고정 블록으로 관리해 단편화를 없애고, 요청이 끝나는 대로 새 요청을 배치에
+  끼워 GPU 를 놀리지 않는다(vLLM).
 - **Speculative decoding** — 작은 draft 모델이 여러 토큰을 미리 제안하고 큰 모델이
   한 번의 forward 로 검증·수용. decode 의 순차성을 부분적으로 병렬화.
-- **FlashAttention** — attention 을 HBM 왕복 없이 SRAM 안에서 블록 단위로 계산.
+- **FlashAttention** — attention 을 HBM 왕복 없이 SRAM(static random-access memory) 안에서 블록 단위로 계산.
   주로 prefill/학습의 $O(n^2)$ 상수를 줄인다.
 
 ## 9. 정리 — 비용 모델
