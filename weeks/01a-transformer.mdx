@@ -50,8 +50,10 @@ pass 는 $n$ 번의 순차 스텝을 강제하고, 이 사슬은 병렬화할 �
 
 Transformer 는 이 두 문제를 한 번에 없앤다. 모든 위치를 **동시에** 처리하고(순차 사슬
 제거), 임의의 두 위치를 attention 한 번으로 직접 연결한다(경로 길이 1). 대가는 위치
-정보를 따로 주입해야 한다는 것과, 시퀀스 길이에 대한 계산량이 $O(n^2)$ 라는 것이다 —
-10절에서 저울질한다.
+정보를 따로 주입해야 한다는 것과, 시퀀스 길이 $n$ 에 대한 계산량이 $O(n^2)$ 라는
+것이다. $n$ 이 표현 차원보다 훨씬 작은 문장 단위 번역에서는 큰 부담이 아니지만,
+context 가 수천~수만 토큰으로 길어지면 이 $n^2$ 항이 지배적이 된다 — 이후 inference
+논의의 중심 문제다.
 
 ## 2. 큰 그림
 
@@ -318,52 +320,12 @@ $$
 - `FFN(A)`: $n \times 512 \to n \times 2048 \to n \times 512$
 - 출력 $Y$: $n \times d_{\text{model}}$ — 입력과 같은 모양
 
-<Figure
-  src="https://jalammar.github.io/images/t/transformer_resideual_layer_norm_3.png"
-  alt="encoder 2개와 decoder 2개를 쌓은 Transformer. 각 encoder 블록은 self-attention 다음 Add & Normalize, 그다음 feed forward, 다시 Add & Normalize 로 이어지고 점선이 residual 연결이다. decoder 블록은 self-attention 과 feed forward 사이에 encoder-decoder attention(+ Add & Normalize)이 하나 더 들어가며, encoder 스택의 최종 출력이 각 decoder 블록의 encoder-decoder attention 으로 전달된다. decoder 스택 위에 Linear, 그 위에 Softmax 가 얹혀 다음 토큰 분포를 낸다. 입력 토큰 임베딩에는 positional encoding 이 더해진다."
-  caption="encoder·decoder 를 2개씩 쌓은 모습. 각 sub-layer(주황 self-attention, 파랑 feed forward)를 'Add & Normalize'(초록 = residual 덧셈 + LayerNorm, 점선이 residual 경로)가 감싸고, 텐서 모양은 블록 내내 n×d_model 로 보존된다. decoder 블록에는 encoder–decoder attention 이 하나 더 붙는다."
-  source="Jay Alammar, The Illustrated Transformer (jalammar.github.io, 2018) · CC BY-NC-SA 4.0 · 수정 없음" />
-
 이 블록을 $N$ 번 쌓으면 encoder 스택이다. decoder 블록은 두 residual 사이에
 encoder–decoder attention(+ residual)을 하나 더 끼운다. decoder 스택의 마지막 출력은
 vocabulary 크기의 linear + softmax 로 다음 토큰 분포가 된다. 원논문은 이 출력 projection
 행렬을 입력 임베딩 행렬과 **공유**한다(weight tying).<Sidenote>pre-LN 모델에서는 residual 경로가 정규화 없이 스택 끝까지 뚫려 있으므로, linear 앞에 최종 정규화를 하나 더 둔다.</Sidenote>
 
-<Details summary="원논문 학습 레시피 (base 모델)">
-
-- optimizer: Adam, $\beta_1 = 0.9$, $\beta_2 = 0.98$, $\epsilon = 10^{-9}$
-- learning rate 스케줄: $lr = d_{\text{model}}^{-0.5} \cdot \min\!\big( step^{-0.5},\; step \cdot warmup^{-1.5} \big)$, $warmup = 4000$ — 처음엔 선형 증가, 이후 $step^{-0.5}$ 로 감소
-- regularization: 모든 sub-layer 출력·임베딩 합에 dropout $P_{\text{drop}} = 0.1$ (big EN-DE(영어–독일어) 는 0.3), label smoothing $\epsilon_{ls} = 0.1$
-- base 모델은 8× P100 GPU 로 약 12시간, big 은 약 3.5일 학습
-
-label smoothing 은 정답 확률 1 대신 $1 - \epsilon_{ls}$ 를 목표로 둔다 — perplexity 는
-나빠지지만 BLEU(bilingual evaluation understudy) 와 calibration 이 좋아진다.
-</Details>
-
-## 10. 왜 되는가 — 복잡도와 경로 길이
-
-layer 하나가 시퀀스를 처리하는 비용을 세 가지로 비교한다($n$: 길이, $d$: 표현 차원,
-$k$: convolution kernel).
-
-| layer 종류 | layer 당 복잡도 | 순차 연산 | 최대 경로 길이 |
-|---|---|---|---|
-| self-attention | $O(n^2 \cdot d)$ | $O(1)$ | $O(1)$ |
-| recurrent | $O(n \cdot d^2)$ | $O(n)$ | $O(n)$ |
-| convolution | $O(k \cdot n \cdot d^2)$ | $O(1)$ | $O(\log_k n)$ |
-
-두 가지가 핵심이다.
-
-- **순차 연산 $O(1)$.** self-attention 은 행렬곱이라 한 layer 안의 모든 위치가 병렬로
-  계산된다. RNN 의 $O(n)$ 순차 사슬이 사라진다.
-- **최대 경로 길이 $O(1)$.** 임의의 두 위치가 attention 한 번으로 직접 연결된다.
-  gradient 가 통과하는 경로가 짧아 장거리 의존성 학습이 쉽다.
-
-대가는 $O(n^2 \cdot d)$ 다. $n \lesssim d$ 인 흔한 구간(문장 단위 번역)에서는 recurrent
-의 $O(n \cdot d^2)$ 보다 오히려 싸지만, context 가 수천~수만 토큰으로 길어지면 $n^2$
-항이 지배한다. 긴 context 에서 이 항을 어떻게 다루느냐가 이후 inference 논의의
-중심 문제가 된다.
-
-## 11. 정리
+## 10. 정리
 
 - Transformer 는 RNN 의 순차 사슬을 걷어내고 **self-attention + position-wise FFN** 블록을
   $N$ 개 쌓은 구조다. 블록을 지나도 텐서 모양 $n \times d_{\text{model}}$ 이 보존된다.
@@ -375,12 +337,13 @@ $k$: convolution kernel).
   차이는 $Q,K,V$ 출처와 **causal mask** 유무다.
 - **residual + LayerNorm** 이 깊은 스택의 학습을 가능하게 한다 (원논문은 post-LN,
   현대 LLM 은 pre-LN + RMSNorm).
-- 비용: 순차 연산 $O(1)$, 경로 길이 $O(1)$ 을 얻는 대신 길이에 대해 $O(n^2)$.
+- 모든 위치를 병렬로 처리하고 두 위치를 attention 한 번으로 잇는 대신, 시퀀스 길이에
+  대해 $O(n^2)$ 연산이 들어 긴 context 에서 병목이 된다.
 
 다음 노트에서는 이 구조를 **encoder 계열(BERT)과 decoder 계열(GPT)** 로 갈라 보고, 왜
 생성형 LLM 이 decoder-only 로 수렴했는지를 본다.
 
-[^aiayn]: Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., & Polosukhin, I. (2017). Attention Is All You Need. NeurIPS 2017. [arXiv:1706.03762](https://arxiv.org/abs/1706.03762). — §3.1–3.3 (attention, multi-head), §3.5 (positional encoding), Table 1 (복잡도), §5 (학습 설정), Table 2 (BLEU: big EN-DE 28.4, base EN-DE 27.3).
+[^aiayn]: Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., & Polosukhin, I. (2017). Attention Is All You Need. NeurIPS 2017. [arXiv:1706.03762](https://arxiv.org/abs/1706.03762). — §3.1–3.3 (attention·multi-head), §3.2.1 ($\sqrt{d_k}$ 스케일링), §3.5 (positional encoding).
 
 [^seq2seq]: Sutskever, I., Vinyals, O., & Le, Q. V. (2014). Sequence to Sequence Learning with Neural Networks. NeurIPS 2014. [arXiv:1409.3215](https://arxiv.org/abs/1409.3215). — RNN(LSTM) encoder 로 source 를 벡터로 인코딩하고 decoder 로 생성하는 seq2seq.
 
