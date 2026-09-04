@@ -102,8 +102,10 @@ decoder 블록은 여기에 **encoder–decoder attention** 이 하나 더 붙�
 가진다(6절). 모든 sub-layer 는 residual connection 과 layer normalization(LN) 으로 감싼다(8절).<Sidenote>원논문은 sub-layer 출력을 $\mathrm{LayerNorm}(x + \mathrm{Sublayer}(x))$ 로 쓴다. 이 배치를 post-LN 이라 부르며, 현대 LLM(large language model) 은 거의 pre-LN 을 쓴다 (8절).</Sidenote>
 
 <svg viewBox="0 0 500 350" role="img" aria-label="원 Transformer 전체 구조. 왼쪽 encoder 스택과 오른쪽 decoder 스택이 나란히 선다. encoder 는 아래에서 위로 '입력 임베딩 + 위치 인코딩 → self-attention(양방향, mask 없음) → feed-forward network' 이고 이 블록을 N 번 쌓는다. decoder 는 '출력 임베딩 + 위치 인코딩 → masked self-attention(causal, 왼쪽만) → cross-attention(Q 는 decoder, K·V 는 encoder 출력) → feed-forward network' 블록을 N 번 쌓고 맨 위에 Linear + Softmax 를 얹어 다음 토큰 확률을 낸다. 모든 sub-layer 는 잔차 연결과 LayerNorm 으로 감싼다. encoder 입력은 source 문장 전체이고 decoder 입력은 target 을 한 칸 오른쪽으로 민 것으로, 둘은 서로 다른 문자열이다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
-  <text x="126" y="15" text-anchor="middle" font-size="10" font-weight="600" fill="#0f172a">encoder — source 이해</text>
-  <text x="394" y="15" text-anchor="middle" font-size="10" font-weight="600" fill="#0f172a">decoder — target 생성</text>
+  <rect x="22" y="110" width="210" height="178" rx="8" fill="none" stroke="#dc2626" stroke-width="1.5"/>
+  <rect x="290" y="22" width="207" height="266" rx="8" fill="none" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="126" y="15" text-anchor="middle" font-size="10" font-weight="600" fill="#dc2626">Encoder — source 이해</text>
+  <text x="394" y="15" text-anchor="middle" font-size="10" font-weight="600" fill="#2563eb">Decoder — target 생성</text>
   <rect x="300" y="30" width="188" height="26" rx="4" fill="#f8fafc" stroke="#0f172a"/>
   <text x="394" y="47" text-anchor="middle" font-size="9" fill="#0f172a">Linear → Softmax → 다음 토큰 확률</text>
   <line x1="394" y1="74" x2="394" y2="58" stroke="#0f172a"/><polygon points="394,56 391,62 397,62" fill="#0f172a"/>
