@@ -129,7 +129,13 @@ mask 없이 쌓은 **encoder-only** 스택이다(BERT-base: 12층, $d_{\text{mod
 
 위치 $i$ 를 맞히려면 $i$ 의 왼쪽("고양이가")과 오른쪽("위에 앉았다")을 모두 봐야 하므로,
 학습이 끝나면 모든 토큰의 표현에 양방향 문맥이 담긴다. 이것이 BERT 표현이
-"bidirectional" 인 이유다.
+"bidirectional" 인 이유다.[^illbert]
+
+<Figure
+  src="https://jalammar.github.io/images/BERT-language-modeling-masked-lm.png"
+  alt="문장의 한 토큰을 [MASK] 로 가린 뒤 BERT encoder 스택을 통과시키고, 그 자리의 최종 출력 벡터에 얇은 층(FFNN + softmax)을 얹어 vocabulary 전체에 대한 확률로 원래 토큰을 맞히는 그림."
+  caption="MLM — 가려진 자리의 최종 표현으로 vocabulary 전체에서 원래 토큰을 분류한다. 가려지지 않은 위치에는 예측도 손실도 걸지 않는다."
+  source="Jay Alammar, The Illustrated BERT, ELMo, and co. (jalammar.github.io, 2018) · CC BY-NC-SA 4.0 · 수정 없음" />
 
 가리는 방법에는 사연이 있다. 매번 특수 토큰 `[MASK]` 로만 바꾸면, 모델은 `[MASK]` 가
 보이는 자리에서만 예측을 준비하게 된다. 그런데 정작 downstream 과제(분류·태깅 등)의
@@ -506,6 +512,8 @@ encoder–decoder 가 여전히 효율적이고, 분류·검색이라면 encoder
 돌며, Llama 3 8B 로 각 부분의 크기를 확인한다.
 
 [^bert]: Devlin, J., Chang, M.-W., Lee, K., & Toutanova, K. (2019). BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding. NAACL 2019. [arXiv:1810.04805](https://arxiv.org/abs/1810.04805). — §3.1 (MLM, 15% 마스킹의 80/10/10), §3.1 (NSP), §A (BERT-base 110M / large 340M).
+
+[^illbert]: Alammar, J. (2018). [The Illustrated BERT, ELMo, and co.](https://jalammar.github.io/illustrated-bert/) — MLM·NSP 와 encoder/decoder 계열 구분을 그림으로. MLM 도식의 출처.
 
 [^gpt1]: Radford, A., Narasimhan, K., Salimans, T., & Sutskever, I. (2018). Improving Language Understanding by Generative Pre-Training. OpenAI 기술보고서. — decoder-only generative pre-training + task-specific fine-tuning.
 
