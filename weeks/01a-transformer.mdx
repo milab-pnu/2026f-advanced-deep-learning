@@ -57,7 +57,30 @@ context 가 수천~수만 토큰으로 길어지면 이 $n^2$ 항이 지배적�
 
 ## 2. 큰 그림
 
-입력 문장은 먼저 **토큰**의 열로 쪼개지고, 각 토큰은 학습되는
+가장 큰 그림부터 잡자. 원 Transformer 는 두 부분으로 나뉜다 — 입력 문장을 읽어 표현으로
+바꾸는 **encoder** 와, 그 표현을 참조해 출력을 한 토큰씩 써 나가는 **decoder**. 번역이라면
+encoder 가 source(영어)를 소화하고 decoder 가 target(독일어)을 만든다. 내부 블록은 잠시
+접어 두고 이 2부 구조만 먼저 잡으면 나머지가 거기에 붙는다.[^hugman]
+
+<svg viewBox="0 0 460 180" role="img" aria-label="원 Transformer 의 가장 큰 그림. 왼쪽 Encoder 상자는 입력 문장을 읽어 표현으로 바꾸고, 오른쪽 Decoder 상자는 그 표현을 참조해 출력을 한 토큰씩 쓴다. source 문장이 아래에서 Encoder 로 들어가고, Encoder 의 문맥 표현이 Decoder 로 건너가며, Decoder 위로 출력 토큰이 나온다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <line x1="340" y1="50" x2="340" y2="26" stroke="#0f172a"/>
+  <polygon points="340,22 337,29 343,29" fill="#0f172a"/>
+  <text x="340" y="16" text-anchor="middle" font-size="8.5" fill="#0f172a">출력 토큰 · "Das ist gut …"</text>
+  <rect x="40" y="52" width="160" height="60" rx="6" fill="#f8fafc" stroke="#0f172a"/>
+  <text x="120" y="80" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Encoder</text>
+  <text x="120" y="98" text-anchor="middle" font-size="8.5" fill="#64748b">입력을 읽어 표현으로</text>
+  <rect x="260" y="52" width="160" height="60" rx="6" fill="#f8fafc" stroke="#0f172a"/>
+  <text x="340" y="80" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Decoder</text>
+  <text x="340" y="98" text-anchor="middle" font-size="8.5" fill="#64748b">표현을 참조해 출력을 씀</text>
+  <line x1="200" y1="82" x2="255" y2="82" stroke="#0f172a"/>
+  <polygon points="260,82 253,79 253,85" fill="#0f172a"/>
+  <text x="228" y="75" text-anchor="middle" font-size="8" fill="#64748b">문맥 표현</text>
+  <line x1="120" y1="150" x2="120" y2="116" stroke="#0f172a"/>
+  <polygon points="120,112 117,119 123,119" fill="#0f172a"/>
+  <text x="120" y="164" text-anchor="middle" font-size="8.5" fill="#0f172a">source 문장 전체 · "That is good ."</text>
+</svg>
+
+이제 안을 들여다보자. 입력 문장은 먼저 **토큰**의 열로 쪼개지고, 각 토큰은 학습되는
 임베딩 테이블에서 $d_{\text{model}}$ 차원 벡터로 바뀐다. 원논문 base 모델에서
 $d_{\text{model}} = 512$ 다. 길이 $n$ 문장은 이렇게 행렬
 
@@ -428,6 +451,8 @@ Hinton 등의 강연도 함께 볼 만하다([녹화 목록](https://web.stanfor
 [^weng]: Weng, L. (2018). [Attention? Attention!](https://lilianweng.github.io/posts/2018-06-24-attention/) — attention 계열의 통일된 표기와 self-attention 유도.
 
 [^bloem]: Bloem, P. (2019). [Transformers from Scratch](https://peterbloem.nl/blog/transformers). — self-attention 을 permutation equivariance 관점에서 설명.
+
+[^hugman]: Jung, H. S. (정상근, 충남대). (2024). [Transformer의 큰 그림 이해 — 기술적 복잡함 없이 핵심 아이디어 파악하기](https://medium.com/@hugmanskj/transformer%EC%9D%98-%ED%81%B0-%EA%B7%B8%EB%A6%BC-%EC%9D%B4%ED%95%B4-%EA%B8%B0%EC%88%A0%EC%A0%81-%EB%B3%B5%EC%9E%A1%ED%95%A8-%EC%97%86%EC%9D%B4-%ED%95%B5%EC%8B%AC-%EC%95%84%EC%9D%B4%EB%94%94%EC%96%B4-%ED%8C%8C%EC%95%85%ED%95%98%EA%B8%B0-5e182a40459d). Medium. — encoder–decoder 2부 구조와 Transformer 의 기능적 측면을 국문으로 풀어 쓴 해설([영문판](https://medium.com/@hugmanskj/understanding-transformers-big-ideas-without-getting-lost-in-details-fa417ad91549)).
 
 [^resnet]: He, K., Zhang, X., Ren, S., & Sun, J. (2016). Deep Residual Learning for Image Recognition. CVPR 2016. [arXiv:1512.03385](https://arxiv.org/abs/1512.03385). — residual connection.
 
