@@ -403,6 +403,13 @@ vocabulary 크기의 linear + softmax 로 다음 토큰 분포가 된다. 원논
 - 모든 위치를 병렬로 처리하고 두 위치를 attention 한 번으로 잇는 대신, 시퀀스 길이에
   대해 $O(n^2)$ 연산이 들어 긴 context 에서 병목이 된다.
 
+원논문 저자가 직접 Transformer 의 배경과 이후 전개를 되짚는 강연이 있다 — Stanford
+[CS25 *Transformers United*](https://web.stanford.edu/class/cs25/) 시리즈로, Karpathy·
+Hinton 등의 강연도 함께 볼 만하다([녹화 목록](https://web.stanford.edu/class/cs25/recordings/)).
+
+<Video src="https://www.youtube.com/watch?v=1GbDTTK3aR4"
+  caption="How I Learned to Stop Worrying and Love the Transformer — Ashish Vaswani. Stanford CS25 (V3, 2023)." />
+
 다음 노트에서는 이 구조를 **encoder 계열(BERT)과 decoder 계열(GPT)** 로 갈라 보고, 왜
 생성형 LLM 이 decoder-only 로 수렴했는지를 본다.
 
