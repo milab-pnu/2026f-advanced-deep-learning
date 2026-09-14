@@ -8,7 +8,7 @@ order: 0
 
 ## 1. 한 토큰의 생성 과정
 
-“오늘 부산의 날씨는” 뒤를 이어 쓰게 한다고 하자. 모델은 먼저 텍스트를 정수 ID 열(sequence)로 바꾸고, 각 ID에 대응하는 벡터에 문맥을 반영한다. 이 열에 들어 있는 토큰 수를 시퀀스 길이(sequence length)라고 한다. 예문의 ID가 다섯 개라면 sequence length는 $n=5$다. 문자 수나 단어 수를 세는 것과는 다르다. 마지막에는 가능한 다음 토큰마다 점수를 계산한다. **모델이 점수를 만드는 과정과, 그 점수로 토큰을 고르는 과정**을 함께 거쳐야 문장이 이어진다.
+“오늘 부산의 날씨는” 뒤를 이어 쓰게 한다고 하자. 모델은 먼저 텍스트를 정수 ID 열(sequence)로 바꾸고, 각 ID에 대응하는 벡터에 문맥을 반영한다. 이 열에 들어 있는 토큰 수를 시퀀스 길이(sequence length)라고 한다. 예문의 ID가 다섯 개라면 sequence length는 $n=5$다. 문자 수나 단어 수를 세는 것과는 다르다. 마지막에는 모든 토큰에 대응하는 점수를 계산한다. **모델이 점수를 만드는 과정과, 그 점수로 토큰을 고르는 과정**을 함께 거쳐야 문장이 이어진다.
 
 아래 그림은 한 번의 생성 과정을 보여준다. 차원은 Llama 3 8B의 실제 설정인 hidden dimension $d=4{,}096$, vocabulary size $V=128{,}256$을 사용한다. 토큰 분할·ID·벡터 값은 설명을 위한 가상 값이다. `␠`는 공백을 나타낸다.
 
@@ -95,11 +95,11 @@ $$
 E\in\mathbb{R}^{V\times d},\qquad x_i=E_{t_i},\qquad X\in\mathbb{R}^{n\times d}
 $$
 
-$n$은 앞에서 설명한 sequence length, 즉 입력 ID 열의 토큰 수다. 예문의 다섯 ID로 다섯 행을 조회하면 $5\times4096$ 행렬 $X$가 된다. 같은 ID는 처음에 같은 embedding을 받지만, decoder를 통과한 뒤에는 앞선 문맥에 따라 다른 표현을 갖게 된다.
+$n$은 앞에서 설명한 sequence length, 즉 입력 ID 열의 토큰 수다. 예문의 다섯 ID로 다섯 행을 조회하면 $5\times4096$ 행렬 $X$가 된다. 같은 ID는 처음에 같은 embedding을 받지만, 모델을 통과한 뒤에는 앞선 문맥에 따라 다른 상태(hidden state)을 갖게 된다.
 
 여기서는 tokenizer가 정해져 있다고 둔다. Vocabulary와 병합 규칙의 학습, 어휘 크기의 선택, 처음 보는 문자열의 처리는 [다음 Tokenizer 노트](/lecture/2026f-advanced-deep-learning/02b-tokenizer/)에서 다룬다.
 
-이후 그림과 수식에서는 배치(batch) 차원을 생략한다. 여러 입력을 한 번에 처리할 때에는 대부분의 텐서 앞에 batch 크기 $B$가 붙는다.
+언급이 없으면, 배치(batch) 차원을 생략한다. 여러 입력을 한 번에 처리할 때에는 대부분의 텐서 앞에 batch 크기 $B$가 붙는다.
 
 ### 2-2. Llama 3 8B 구조
 
@@ -152,11 +152,9 @@ $n$은 앞에서 설명한 sequence length, 즉 입력 ID 열의 토큰 수다. 
 <figcaption>Meta의 Llama 3 공식 구현을 바탕으로 구성한 전체 구조도. 배치 차원은 생략했다. SwiGLU의 두 입력 투영 경로는 차원 변화로 요약했으며, 블록 내부의 연산과 residual 경로는 §2-3에서 설명한다.</figcaption>
 </figure>
 
-이 노트에서 사용하는 원래 Llama 3 8B의 context 길이는 8,192토큰이다. 이후 Llama 3.1의 긴 context 설정과 구분한다.[^llama]
-
 ### 2-3. 문맥과 벡터 변환
 
-Decoder 블록 안에서는 attention과 FFN(feed-forward network)이 서로 다른 일을 한다. **Attention은 위치 사이의 정보를 섞고, FFN은 각 위치의 벡터를 변환한다.** Causal mask 때문에 각 위치는 자신과 앞선 위치만 참조한다. 예문의 마지막 “는”은 앞의 “오늘 부산의 날씨”를 반영할 수 있지만, 첫 “오늘”은 뒤쪽 토큰을 보지 못한다.
+Decoder 블록 안에서는 attention과 FFN(feed-forward network)이 서로 다른 일을 한다. **Attention은 위치 사이의 정보를 섞고, FFN은 point-wise하게 벡터를 비선형 변환한다.** Causal mask 때문에 각 위치는 자신과 앞선 위치만 참조한다. 예문의 마지막 “는”은 앞의 “오늘 부산의 날씨”를 반영할 수 있지만, 첫 “오늘”은 뒤쪽 토큰을 보지 못한다.
 
 Llama는 각 연산 전에 RMSNorm(root mean square normalization)으로 벡터의 크기를 정규화한다. 연산 결과를 원래 입력에 더하는 경로가 잔차 연결(residual connection)이다. 블록 하나의 입력을 $X$, 중간 결과를 $A$, 출력을 $Y$라고 하면 다음과 같다.[^implementation]
 
