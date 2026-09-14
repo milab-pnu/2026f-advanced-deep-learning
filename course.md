@@ -10,11 +10,11 @@ credits: 3
 summary: 딥러닝 연구의 최전선(LLM·생성모델·멀티모달 등)을 서베이 논문 중심으로 다루는 박사과정 강의식 과목.
 weeks:
   - { n: 1, topic: "Introduction, Transformer, BERT vs GPT" }
-  - { n: 2, topic: "Decoder-only LLM overview, Tokenizer & Pre-training", submissionUrl: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/1" }
+  - { n: 2, topic: "Tokenizer & Pre-training", submissionUrl: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/1" }
   - { n: 3, topic: "LLM Architecture Variants" }
   - { n: 4, topic: "Post-training 1" }
   - { n: 5, topic: "Post-training 2" }
-  - { n: 6, topic: "LLM inference, Inference Optimization 1" }
+  - { n: 6, topic: "Inference Optimization 1" }
   - { n: 7, topic: "Inference Optimization 2" }
   - { n: 8, topic: "Final Project Proposal — Open Peer Review" }
   - { n: 9, topic: "Multi-/Omni-modal LLM" }
