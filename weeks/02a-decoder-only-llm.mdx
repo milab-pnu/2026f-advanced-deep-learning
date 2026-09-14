@@ -4,16 +4,16 @@ week: 2
 order: 0
 ---
 
-“오늘 부산의 날씨는”이라는 문자열이 어떻게 다음 토큰의 확률로 바뀔까? LLM(large language model)의 구조와 학습을 정리한 Zhao 등의 서베이[^survey]를 바탕으로, Llama 3 하나의 입력부터 출력까지 따라간다. 여기서 잡을 큰 흐름은 **텍스트의 수치화 → 문맥 반영 → 다음 토큰 선택**이다.
+“오늘 부산의 날씨는”이라는 문자열이 어떻게 다음 토큰의 확률로 바뀔까? LLM(large language model)의 구조와 학습을 정리한 Zhao 등의 서베이[^survey]를 바탕으로, 텍스트 입력부터 출력까지 따라간다. 여기서 잡을 큰 흐름은 **텍스트의 수치화 → 문맥 반영 → 다음 토큰 선택**이다.
 
 ## 1. 한 토큰의 생성 과정
 
 “오늘 부산의 날씨는” 뒤를 이어 쓰게 한다고 하자. 모델은 먼저 텍스트를 정수 ID 열(sequence)로 바꾸고, 각 ID에 대응하는 벡터에 문맥을 반영한다. 마지막에는 가능한 다음 토큰마다 점수를 계산한다. **모델이 점수를 만드는 과정과, 그 점수로 토큰을 고르는 과정**을 함께 거쳐야 문장이 이어진다.
 
-아래 그림은 한 번의 생성 과정을 보여준다. 토큰 분할·ID·벡터·logits는 가상 값이며, Llama의 실제 실행 결과는 아니다. `␠`는 공백을 나타낸다.
+아래 그림은 한 번의 생성 과정을 보여준다. 차원은 Llama 3 8B의 실제 설정인 hidden dimension $d=4{,}096$, vocabulary size $V=128{,}256$을 사용한다. 토큰 분할·ID·벡터 값은 설명을 위한 가상 값이다. `␠`는 공백을 나타낸다.
 
 <figure>
-<svg viewBox="0 0 560 850" role="img" aria-label="오늘 부산의 날씨는이라는 입력이 가상 토큰 ID 17, 42, 9, 83, 11로 변환된다. 각 ID로 임베딩 행을 조회하고 decoder 32개와 최종 RMSNorm을 통과한다. 마지막 위치의 벡터를 LM head에 넣어 logits를 얻고 softmax로 확률을 만든다. 세 후보뿐인 출력 예에서 맑을 고르면 ID 21을 기존 ID 열에 추가한다. 분할과 수치는 실제 Llama 실행 결과가 아니다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 560 945" role="img" aria-label="오늘 부산의 날씨는이라는 입력이 가상 토큰 ID 17, 42, 9, 83, 11로 변환된다. 각 ID로 임베딩 행을 조회하고 decoder 32개와 최종 RMSNorm을 통과한다. 마지막 위치의 4096차원 벡터를 Linear LM head에 넣어 128256개 logits를 얻고 softmax로 같은 수의 확률을 만든다. ID 21을 고르는 예에서는 이를 기존 ID 열에 추가한다. 차원은 실제 Llama 3 8B 설정이며 분할과 ID는 가상이다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
 <rect x="24" y="8" width="512" height="59" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="40" y="30" font-size="12" text-anchor="start" fill="#0f172a" font-weight="600">입력 텍스트</text>
 <text x="280" y="53" font-size="19" text-anchor="middle" fill="#0f172a">오늘 부산의 날씨는</text>
@@ -44,39 +44,41 @@ order: 0
 <text x="40" y="409" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">3. Decoder 스택 → 최종 정규화</text>
 <text x="40" y="432" font-size="13" text-anchor="start" fill="#0f172a">각 토큰의 벡터에 앞선 문맥을 반영</text>
 <text x="40" y="451" font-size="12" text-anchor="start" fill="#0f172a">마지막 위치 “는”의 벡터 h₅를 사용 (4,096개 성분)</text>
-<path d="M280 464 V488" fill="none" stroke="#0f172a"/><polygon points="280,493 276,486 284,486" fill="#0f172a"/>
-<text x="294" y="482.5" font-size="11" text-anchor="start" fill="#64748b">LM head: h₅ → vocabulary 전체의 점수</text>
-<rect x="24" y="493" width="512" height="173" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="40" y="517" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">4. Logits → softmax → 다음 토큰 확률</text>
-<text x="40" y="538" font-size="11" text-anchor="start" fill="#64748b">아래 계산은 후보가 3개뿐인 예제</text>
-<text x="62" y="562" font-size="12" text-anchor="start" fill="#0f172a" font-weight="600">후보 (가상 ID)</text>
-<text x="242" y="562" font-size="12" text-anchor="start" fill="#0f172a" font-weight="600">logit</text>
-<text x="372" y="562" font-size="12" text-anchor="start" fill="#0f172a" font-weight="600">확률</text>
-<text x="62" y="590" font-size="14" text-anchor="start" fill="#0f172a">␠맑 (21)</text>
-<text x="255" y="590" font-size="14" text-anchor="start" fill="#0f172a">2</text>
-<rect x="364" y="574" width="106" height="21" fill="#e2e8f0"/>
-<text x="373" y="590" font-size="13" text-anchor="start" fill="#0f172a">66.5%</text>
-<text x="62" y="617" font-size="14" text-anchor="start" fill="#0f172a">␠흐 (35)</text>
-<text x="255" y="617" font-size="14" text-anchor="start" fill="#0f172a">1</text>
-<rect x="364" y="601" width="39" height="21" fill="#e2e8f0"/>
-<text x="373" y="617" font-size="13" text-anchor="start" fill="#0f172a">24.5%</text>
-<text x="62" y="644" font-size="14" text-anchor="start" fill="#0f172a">␠비 (64)</text>
-<text x="255" y="644" font-size="14" text-anchor="start" fill="#0f172a">0</text>
-<rect x="364" y="628" width="14" height="21" fill="#e2e8f0"/>
-<text x="373" y="644" font-size="13" text-anchor="start" fill="#0f172a">9.0%</text>
-<path d="M280 666 V690" fill="none" stroke="#0f172a"/><polygon points="280,695 276,688 284,688" fill="#0f172a"/>
-<text x="294" y="684.5" font-size="11" text-anchor="start" fill="#64748b">Greedy 선택: 확률이 가장 큰 ID 21</text>
-<rect x="24" y="695" width="512" height="94" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="40" y="719" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">5. 선택한 ID를 기존 ID 열 뒤에 추가</text>
-<text x="280" y="745" font-size="17" text-anchor="middle" fill="#0f172a">[17, 42, 9, 83, 11, 21]</text>
-<text x="280" y="773" font-size="13" text-anchor="middle" fill="#0f172a">문자열로 decode하면 “오늘 부산의 날씨는 맑”</text>
-<text x="280" y="816" font-size="13" text-anchor="middle" fill="#0f172a">늘어난 ID 열을 조건으로 다음 토큰을 다시 예측</text>
-<text x="280" y="836" font-size="11" text-anchor="middle" fill="#64748b"></text>
+<path d="M280 464 V487" fill="none" stroke="#0f172a"/><polygon points="280,493 276,486 284,486" fill="#0f172a"/>
+<rect x="24" y="493" width="512" height="72" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="280" y="517" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">4. lm_head · Linear(4,096 → 128,256)</text>
+<text x="280" y="543" font-size="13" text-anchor="middle" fill="#0f172a">h₅ [1 × 4,096] × W [4,096 × 128,256]</text>
+<path d="M280 565 V588" fill="none" stroke="#0f172a"/><polygon points="280,594 276,587 284,587" fill="#0f172a"/>
+<rect x="24" y="594" width="512" height="62" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="280" y="618" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">Logits z: 1 × 128,256</text>
+<text x="280" y="642" font-size="12" text-anchor="middle" fill="#0f172a">Vocabulary의 각 토큰에 점수 하나씩 (아직 확률이 아님)</text>
+<path d="M280 656 V694" fill="none" stroke="#0f172a"/><polygon points="280,700 276,693 284,693" fill="#0f172a"/>
+<text x="398" y="683" font-size="11" text-anchor="middle" fill="#0f172a">Softmax: 전체 V개에 적용</text>
+<rect x="24" y="700" width="512" height="62" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="280" y="724" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">다음 토큰 확률 p: 1 × 128,256</text>
+<text x="280" y="748" font-size="12" text-anchor="middle" fill="#0f172a">128,256개 확률의 합 = 1</text>
+<path d="M280 762 V800" fill="none" stroke="#0f172a"/><polygon points="280,806 276,799 284,799" fill="#0f172a"/>
+<text x="403" y="789" font-size="11" text-anchor="middle" fill="#0f172a">선택 예: greedy로 ID 21</text>
+<rect x="24" y="806" width="512" height="94" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="280" y="830" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">5. 선택한 ID를 기존 ID 열 뒤에 추가</text>
+<text x="280" y="856" font-size="17" text-anchor="middle" fill="#0f172a">[17, 42, 9, 83, 11, 21]</text>
+<text x="280" y="884" font-size="13" text-anchor="middle" fill="#0f172a">문자열로 decode하면 “오늘 부산의 날씨는 맑”</text>
+<text x="280" y="927" font-size="13" text-anchor="middle" fill="#0f172a">늘어난 ID 열을 조건으로 다음 토큰을 다시 예측</text>
 </svg>
-<figcaption>기존 예문으로 구성한 생성 흐름. ␠는 공백이다.</figcaption>
+<figcaption>Llama 3 8B의 차원을 적용한 생성 흐름. 배치 차원은 생략했다. ␠는 공백이다.</figcaption>
 </figure>
 
-그림의 앞부분에서는 문자열이 숫자로 바뀌고, 중간에서는 문맥을 반영한 벡터가 만들어지며, 끝에서는 다시 출력할 토큰을 고른다. 이제 이 순서대로 모델 내부를 살펴보자.
+여기서 $d$는 **토큰 하나를 표현하는 벡터의 성분 수**, $V$는 **모델이 다음 토큰으로 선택할 수 있는 전체 ID 수**다. LM head가 4,096개 성분을 128,256개 점수로 변환하고, softmax는 그 점수들의 개수를 유지하면서 확률로 바꾼다.
+
+확률 계산만 작게 살펴보기 위해, 다음 표에서는 vocabulary가 세 후보뿐이라고 가정한다. 그림의 실제 차원과 구분한 별도 계산 예제이며, 실제 Llama 출력에서 세 토큰만 발췌한 확률은 아니다.
+
+| 후보 (가상 ID) | Logit | Softmax 확률 |
+|---|---|---|
+| `␠맑` (21) | 2 | 66.5% |
+| `␠흐` (35) | 1 | 24.5% |
+| `␠비` (64) | 0 | 9.0% |
+
+이 예에서 greedy로 가장 높은 확률의 ID 21을 고르면 그림처럼 입력 뒤에 추가한다. 이제 텍스트가 벡터와 점수로 바뀌는 순서대로 모델 내부를 살펴보자.
 
 ## 2. 모델 계산과 학습
 
@@ -135,7 +137,7 @@ $n$은 입력 토큰 수다. 예문의 다섯 ID로 다섯 행을 조회하면 $
 <path d="M154 416 V441" stroke="#0f172a" fill="none"/><polygon points="154,447 150,440 158,440" fill="#0f172a"/>
 <text x="170" y="435.5" font-size="11" text-anchor="start" fill="#64748b">n × 4,096</text>
 <rect x="24" y="447" width="260" height="56" rx="5" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="154" y="470" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">LM head (linear)</text>
+<text x="154" y="470" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">lm_head (Linear)</text>
 <text x="154" y="490" font-size="12" text-anchor="middle" fill="#64748b">4,096 → 128,256</text>
 <path d="M154 503 V527" stroke="#0f172a" fill="none"/><polygon points="154,533 150,526 158,526" fill="#0f172a"/>
 <text x="154" y="552" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Logits: n × 128,256</text>
@@ -173,7 +175,7 @@ $$
 
 ### 2-4. Logits와 확률
 
-마지막 decoder 출력에 최종 RMSNorm을 적용한 결과를 $H$라고 하자. LM head는 hidden dimension $d$를 vocabulary dimension $V$로 바꾸는 선형 변환이다.
+마지막 decoder 출력에 최종 RMSNorm을 적용한 결과를 $H$라고 하자. LM head는 hidden dimension $d$를 vocabulary dimension $V$로 바꾸는 선형 변환(linear projection)이다. Llama 3 8B에서는 `Linear(4096, 128256, bias=False)`에 해당한다.[^implementation]
 
 $$
 H\in\mathbb{R}^{n\times d},\qquad
@@ -189,7 +191,7 @@ $$
 p(v\mid t_{1:n})=\frac{\exp(z_v)}{\sum_{u=1}^{V}\exp(z_u)}
 $$
 
-도입 그림의 세 후보 예에서는 $[2,1,0]$이 약 $[0.665,0.245,0.090]$이 된다. 실제 모델에서는 vocabulary 전체에 대해 계산한다. 이 분포를 얻는 것까지가 한 번의 예측이고, 어떤 토큰을 선택할지는 다음 단계에서 정한다.
+§1의 세 후보 계산 예제에서는 $[2,1,0]$이 약 $[0.665,0.245,0.090]$이 된다. 실제 모델에서는 vocabulary 전체에 대해 계산한다. 이 분포를 얻는 것까지가 한 번의 예측이고, 어떤 토큰을 선택할지는 다음 단계에서 정한다.
 
 입력 embedding과 LM head는 모양이 전치(transpose) 관계여서 가중치를 공유하는 weight tying도 가능하다. 기준 모델인 Llama 3는 그림처럼 별도 가중치를 쓴다.[^implementation]
 
@@ -221,7 +223,7 @@ $$
 
 $T$가 작을수록 큰 logit에 확률이 집중된다. $T=0$을 이 식에 대입하지는 않는다. 구현에서 temperature 0을 greedy 선택의 의미로 받는 경우가 있다. Top-k는 상위 $k$개, top-p는 누적 확률이 기준에 도달하는 최소 후보 집합을 남기고 확률의 합이 1이 되도록 다시 정규화(renormalization)한다.[^nucleus]
 
-같은 logits $[2,1,0]$에서도 설정에 따라 실제로 뽑는 분포가 달라진다. 아래 값은 도입 그림의 세 후보만 놓고 계산한 예다. 각 행은 별도 설정이며, top-k와 top-p 예시는 $T=1$을 사용한다.
+같은 logits $[2,1,0]$에서도 설정에 따라 실제로 뽑는 분포가 달라진다. 아래 값은 §1의 세 후보만 놓고 계산한 예다. 각 행은 별도 설정이며, top-k와 top-p 예시는 $T=1$을 사용한다.
 
 | 설정 | `␠맑` | `␠흐` | `␠비` | 효과 |
 |---|---|---|---|---|
