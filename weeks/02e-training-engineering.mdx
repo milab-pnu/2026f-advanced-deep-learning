@@ -192,15 +192,15 @@ PP(pipeline parallelism)는 층을 여러 stage로 나눈다. 32층 모델을 �
 
 처음과 마지막의 빈 구간이 pipeline bubble이다. 실제 학습에서는 backward를 언제 배치하는지, activation을 얼마나 보관하는지까지 scheduling해야 한다. Stage마다 층 수가 같아도 embedding·출력 head 등의 비용으로 실행 시간이 다를 수 있다.
 
-따라서 PP에서는 “나누었는가?”와 함께 **stage 사이의 작업량이 균형적인가?**를 확인한다.
+따라서 PP에서는 “나누었는가?”와 함께 <strong>stage 사이의 작업량이 균형적인가?</strong>를 확인한다.
 
 ### 3-3. SP와 CP
 
 §1-3의 sequence packing은 여러 짧은 입력을 함께 담는 방법이다. 여기서 다루는 SP·CP는 시퀀스 방향의 계산이나 저장을 여러 장치에 나누는 방법이다. 모델 가중치를 나누어도 시퀀스가 길어지면 activation이 커진다. 이때 시퀀스 방향으로 나누는 방법이 필요하다. 문헌과 구현마다 용어가 다를 수 있으므로 여기서는 Megatron의 구분을 따른다.[^parallel]
 
-**SP(sequence parallelism)**는 TP와 함께 사용해, LayerNorm 같은 일부 연산에서 TP 장치마다 중복되던 activation을 시퀀스 방향으로 분할한다. 예를 들어 길이 8인 activation을 두 장치가 길이 4씩 보유하게 하는 식이다. 다음 TP 연산에 맞춰 gather 또는 scatter를 적용한다. Activation 저장량을 줄이는 것이 주요 동기다.[^sp]
+<strong>SP(sequence parallelism)</strong>는 TP와 함께 사용해, LayerNorm 같은 일부 연산에서 TP 장치마다 중복되던 activation을 시퀀스 방향으로 분할한다. 예를 들어 길이 8인 activation을 두 장치가 길이 4씩 보유하게 하는 식이다. 다음 TP 연산에 맞춰 gather 또는 scatter를 적용한다. Activation 저장량을 줄이는 것이 주요 동기다.[^sp]
 
-**CP(context parallelism)**는 입력 시퀀스를 나누어 attention을 포함한 층 전반에서 처리한다. 예를 들어 앞 4토큰과 뒤 4토큰을 나누어 맡는다. 뒤쪽 query는 causal mask상 앞쪽 key/value도 참조해야 하므로 장치 사이에 필요한 정보를 전달해야 한다.[^parallel]
+<strong>CP(context parallelism)</strong>는 입력 시퀀스를 나누어 attention을 포함한 층 전반에서 처리한다. 예를 들어 앞 4토큰과 뒤 4토큰을 나누어 맡는다. 뒤쪽 query는 causal mask상 앞쪽 key/value도 참조해야 하므로 장치 사이에 필요한 정보를 전달해야 한다.[^parallel]
 
 ```
 GPU 0: 위치 0–3의 query 처리
