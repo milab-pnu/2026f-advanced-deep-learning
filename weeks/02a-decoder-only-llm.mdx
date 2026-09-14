@@ -78,7 +78,7 @@ order: 0
 
 그림의 앞부분에서는 문자열이 숫자로 바뀌고, 중간에서는 문맥을 반영한 벡터가 만들어지며, 끝에서는 다시 출력할 토큰을 고른다. 이제 이 순서대로 모델 내부를 살펴보자.
 
-## 2. 모델 내부 계산
+## 2. 모델 계산과 학습
 
 ### 2-1. Token ID와 embedding
 
@@ -193,11 +193,25 @@ $$
 
 입력 embedding과 LM head는 모양이 전치(transpose) 관계여서 가중치를 공유하는 weight tying도 가능하다. 기준 모델인 Llama 3는 그림처럼 별도 가중치를 쓴다.[^implementation]
 
-## 3. 토큰 선택과 반복 생성
+### 2-5. 다음 토큰 학습
+
+학습에서는 데이터에 있는 실제 앞선 토큰을 조건으로 주고 다음 토큰의 확률을 높인다. 이를 teacher forcing이라고 한다. §2-4의 각 행을 하나씩 다음 토큰 정답과 비교하면, 유효한 예측 위치에 대한 cross-entropy loss를 계산할 수 있다.
+
+$$
+\mathcal{L}_{\mathrm{NTP}}=-\frac{1}{N}\sum_{i=1}^{N}\log p_\theta(t_{i+1}\mid t_{1:i})
+$$
+
+여기서 $N$은 채점하는 위치 수이며 padding 등 제외할 위치는 세지 않는다. 예를 들어 정답 토큰이 `␠맑`이라면, 그 토큰에 준 확률이 높을수록 해당 위치의 loss는 작아진다. Loss를 역전파하면 embedding·decoder·LM head의 가중치가 갱신된다. 정수 ID와 tokenizer의 병합 규칙을 이 gradient로 바꾸는 것은 아니다.
+
+Causal mask 덕분에 여러 위치를 한 번의 forward에서 계산하면서도 각 위치는 뒤의 정답을 미리 볼 수 없다. 학습 시에는 정답 시퀀스가 이미 있으므로, 앞 위치에서 새 토큰을 뽑을 때까지 기다릴 필요가 없다. 학습 데이터의 구성과 pre-training 절차는 이번 주의 pre-training 노트에서 이어간다.
+
+## 3. 생성과 rollout
 
 ### 3-1. Greedy와 sampling
 
 가장 높은 점수의 토큰을 고르는 방식이 greedy decoding이고, 확률에 따라 뽑는 방식이 sampling이다. 도입 예문에서 greedy는 `␠맑`을 고른다. Sampling은 같은 모델 출력에서도 `␠흐`나 `␠비`를 고를 수 있다.
+
+### 3-2. Sampling parameter
 
 Temperature $T>0$는 softmax 전에 logits를 나누어 분포의 집중도를 조절한다.
 
@@ -207,9 +221,22 @@ $$
 
 $T$가 작을수록 큰 logit에 확률이 집중된다. $T=0$을 이 식에 대입하지는 않는다. 구현에서 temperature 0을 greedy 선택의 의미로 받는 경우가 있다. Top-k는 상위 $k$개, top-p는 누적 확률이 기준에 도달하는 최소 후보 집합을 남기고 확률의 합이 1이 되도록 다시 정규화(renormalization)한다.[^nucleus]
 
-실제 생성에서는 temperature·top-k·top-p 등 여러 sampling parameter로 토큰 선택 방식을 조절한다. 여기서는 같은 모델의 출력도 선택 규칙에 따라 달라질 수 있다는 점을 이해하면 된다. 각 parameter의 구체적인 설정과 생성 결과에 미치는 영향은 6주차 inference에서 살펴본다.
+같은 logits $[2,1,0]$에서도 설정에 따라 실제로 뽑는 분포가 달라진다. 아래 값은 도입 그림의 세 후보만 놓고 계산한 예다. 각 행은 별도 설정이며, top-k와 top-p 예시는 $T=1$을 사용한다.
 
-### 3-2. 생성 루프
+| 설정 | `␠맑` | `␠흐` | `␠비` | 효과 |
+|---|---|---|---|---|
+| $T=1$ | 66.5% | 24.5% | 9.0% | 원래 softmax 분포 |
+| $T=0.5$ | 86.7% | 11.7% | 1.6% | 높은 점수에 더 집중 |
+| $T=2$ | 50.6% | 30.7% | 18.6% | 낮은 점수의 후보도 더 자주 선택 |
+| Top-k, $k=2$ | 73.1% | 26.9% | 0% | 후보 수를 두 개로 제한 |
+| Top-p, $p=0.8$ | 73.1% | 26.9% | 0% | 누적 확률 80%에 도달하려면 앞의 두 후보가 필요 |
+
+Top-k는 후보 수를 고정하지만, top-p는 그 시점의 분포에 따라 남기는 후보 수가 달라진다. Temperature를 높인다고 응답 품질이 반드시 좋아지는 것은 아니다. 더 다양한 토큰을 시도하는 효과와 낮은 확률의 부적절한 토큰을 고를 가능성을 함께 보아야 한다.
+
+생성 API에는 이 밖에도 반복을 억제하는 penalty나 생성 길이·종료 조건을 정하는 parameter가 있다. 이번에는 **분포를 바꾸는 설정**과 **언제 생성을 멈추는지 정하는 설정**을 구분하면 된다. 지원 항목과 여러 설정을 적용하는 순서는 구현마다 다를 수 있다.
+
+### 3-3. 생성 루프
+
 
 선택한 token ID를 기존 ID 열 뒤에 붙이면 다음 예측의 조건이 된다. 도입 예문은 이후 다음처럼 이어질 수 있다.
 
@@ -222,27 +249,31 @@ $T$가 작을수록 큰 logit에 확률이 집중된다. $T=0$을 이 식에 대
 
 정해진 종료 토큰이나 길이 제한에 도달하면 생성을 멈춘다. 효율적인 구현에서는 과거 위치의 key와 value를 KV(key–value) cache에 보관해 재사용한다. 캐시는 이전 계산을 반복하는 비용을 줄이며, 새로 선택한 토큰을 조건에 추가한다는 원리는 같다.
 
-## 4. 학습과 생성의 차이
+### 3-4. RL의 rollout
 
-생성에서는 내가 고른 토큰을 다음 입력에 추가한다. 학습 데이터에서는 실제로 뒤에 어떤 토큰이 왔는지 이미 알기 때문에, **여러 위치의 logits를 각각 다음 토큰 정답과 비교**할 수 있다.
+이후 post-training의 강화학습(reinforcement learning, RL)에서는 모델을 <strong>다음 토큰을 선택하는 정책(policy)</strong>으로 본다. 프롬프트와 지금까지 생성한 토큰이 현재 문맥이고, 다음 토큰을 고르는 것이 행동(action)에 해당한다. 이 정책으로 토큰을 차례로 생성해 응답을 얻는 과정이 rollout이다. 여기서는 도구 호출 없이 텍스트 응답 하나를 생성하는 경우를 생각한다.
 
-| | 학습 | 생성 |
-|---|---|---|
-| 앞선 토큰 | 데이터에 있는 실제 토큰 | 프롬프트와 모델이 선택한 토큰 |
-| 사용하는 출력 | 정답이 있는 여러 위치의 logits | 현재 입력의 마지막 위치 logits |
-| 계산 순서 | Causal mask 아래 여러 위치를 한 forward에서 계산 | 새 토큰을 선택한 뒤 다음 단계 계산 |
+Rollout은 §3-3의 생성 루프를 학습에 사용할 경험을 모으는 데 쓰는 것이다. 예를 들어 InstructGPT의 RL 단계에서는 현재 정책으로 응답을 생성하고, reward model이 응답을 평가하며, 그 신호를 이용해 정책을 업데이트한다.[^instructgpt]
 
-실제 앞선 토큰을 조건으로 주는 학습 방식을 teacher forcing이라고 한다. 같은 causal LM이지만, 학습에서는 정답 시퀀스를 알고 있고 생성에서는 새 토큰을 하나씩 결정한다는 차이다. 다음 노트는 이 계산의 출발점인 token ID가 어떻게 정해지는지 살펴본다.
+| 단계 | 하는 일 |
+|---|---|
+| Rollout | 현재 정책으로 프롬프트에 대한 응답 생성 |
+| 평가 | 생성한 응답에 보상(reward) 부여 |
+| 업데이트 | 수집한 응답과 보상으로 정책의 가중치 학습 |
 
-<Details summary="보충 영상: 입력 벡터에서 출력 확률까지">
+**응답을 생성하는 것 자체가 가중치 업데이트는 아니다.** Sampling 설정을 바꾸면 수집되는 응답의 분포가 달라지므로 RL이 학습할 경험도 달라진다. 따라서 rollout에서는 어떤 정책과 sampling 설정으로 데이터를 생성했는지가 중요하다. 보상을 정의하고 업데이트하는 구체적인 방법은 post-training에서 다룬다.
 
-[3Blue1Brown의 영상](https://www.youtube.com/watch?v=wjZofJX0v4M)은 embedding에서 출력 확률까지의 변환을 시각적으로 설명한다. 영상의 GPT 계열 예시와 이 노트의 Llama 수치·정규화 방식은 구분해서 보자.
+6주차 inference에서는 이 생성 루프를 바탕으로 KV cache·메모리·처리량 등 실행 효율을 살펴본다.
 
-<Video src="https://www.youtube.com/watch?v=wjZofJX0v4M" caption="3Blue1Brown, Transformers, the tech behind LLMs (2024). 입력 벡터가 출력 확률로 바뀌는 흐름에 주목한다." />
+## 4. 정리 영상
 
-</Details>
+[3Blue1Brown의 영상](https://www.youtube.com/watch?v=wjZofJX0v4M)으로 입력 embedding이 문맥 표현과 출력 확률로 바뀌는 흐름을 복습한다. 영상의 GPT 계열 예시와 이 노트의 Llama 수치·정규화 방식은 구분해서 보자.
+
+<Video src="https://www.youtube.com/watch?v=wjZofJX0v4M" caption="3Blue1Brown, Transformers, the tech behind LLMs (2024). 입력 벡터에서 출력 확률까지의 흐름을 복습한다." />
 
 [^survey]: Zhao, W. X., et al. (2025). *A Survey of Large Language Models*. [arXiv:2303.18223v16](https://arxiv.org/abs/2303.18223v16).
 [^llama]: Dubey, A., et al. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783v1](https://arxiv.org/abs/2407.21783v1).
 [^implementation]: Meta. (2024). *Llama 3 reference implementation*. [tokenizer.py](https://github.com/meta-llama/llama3/blob/main/llama/tokenizer.py), [model.py](https://github.com/meta-llama/llama3/blob/main/llama/model.py).
 [^nucleus]: Holtzman, A., Buys, J., Du, L., Forbes, M., & Choi, Y. (2020). *The Curious Case of Neural Text Degeneration*. ICLR 2020. [arXiv:1904.09751](https://arxiv.org/abs/1904.09751).
+
+[^instructgpt]: Ouyang, L., et al. (2022). *Training language models to follow instructions with human feedback*. NeurIPS 2022. [arXiv:2203.02155](https://arxiv.org/abs/2203.02155).
