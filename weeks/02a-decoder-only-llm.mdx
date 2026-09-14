@@ -8,19 +8,19 @@ order: 0
 
 ## 1. 한 토큰의 생성 과정
 
-“오늘 부산의 날씨는” 뒤를 이어 쓰게 한다고 하자. 모델은 먼저 텍스트를 정수 ID 열(sequence)로 바꾸고, 각 ID에 대응하는 벡터에 문맥을 반영한다. 마지막에는 가능한 다음 토큰마다 점수를 계산한다. **모델이 점수를 만드는 과정과, 그 점수로 토큰을 고르는 과정**을 함께 거쳐야 문장이 이어진다.
+“오늘 부산의 날씨는” 뒤를 이어 쓰게 한다고 하자. 모델은 먼저 텍스트를 정수 ID 열(sequence)로 바꾸고, 각 ID에 대응하는 벡터에 문맥을 반영한다. 이 열에 들어 있는 토큰 수를 시퀀스 길이(sequence length)라고 한다. 예문의 ID가 다섯 개라면 sequence length는 $n=5$다. 문자 수나 단어 수를 세는 것과는 다르다. 마지막에는 가능한 다음 토큰마다 점수를 계산한다. **모델이 점수를 만드는 과정과, 그 점수로 토큰을 고르는 과정**을 함께 거쳐야 문장이 이어진다.
 
 아래 그림은 한 번의 생성 과정을 보여준다. 차원은 Llama 3 8B의 실제 설정인 hidden dimension $d=4{,}096$, vocabulary size $V=128{,}256$을 사용한다. 토큰 분할·ID·벡터 값은 설명을 위한 가상 값이다. `␠`는 공백을 나타낸다.
 
 <figure>
-<svg viewBox="0 0 560 945" role="img" aria-label="오늘 부산의 날씨는이라는 입력이 가상 토큰 ID 17, 42, 9, 83, 11로 변환된다. 각 ID로 임베딩 행을 조회하고 decoder 32개와 최종 RMSNorm을 통과한다. 마지막 위치의 4096차원 벡터를 Linear LM head에 넣어 128256개 logits를 얻고 softmax로 같은 수의 확률을 만든다. ID 21을 고르는 예에서는 이를 기존 ID 열에 추가한다. 차원은 실제 Llama 3 8B 설정이며 분할과 ID는 가상이다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 560 935" role="img" aria-label="오늘 부산의 날씨는이라는 입력이 가상 토큰 ID 17, 42, 9, 83, 11로 변환된다. 각 ID로 임베딩 행을 조회하고 decoder 32개와 최종 RMSNorm을 통과한다. 마지막 위치의 4096차원 벡터를 LM head에 넣어 128256개 logits를 얻고 softmax로 같은 수의 확률을 만든다. ID 21을 고르는 예에서는 이를 기존 ID 열에 추가한다. 차원은 실제 Llama 3 8B 설정이며 분할과 ID는 가상이다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
 <rect x="24" y="8" width="512" height="59" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="40" y="30" font-size="12" text-anchor="start" fill="#0f172a" font-weight="600">입력 텍스트</text>
 <text x="280" y="53" font-size="19" text-anchor="middle" fill="#0f172a">오늘 부산의 날씨는</text>
 <path d="M280 67 V94" fill="none" stroke="#0f172a"/><polygon points="280,99 276,92 284,92" fill="#0f172a"/>
 <text x="294" y="87.0" font-size="11" text-anchor="start" fill="#64748b">Tokenizer: 분할하고 ID 부여</text>
 <rect x="24" y="99" width="512" height="89" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="40" y="121" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">1. 토큰 조각과 정수 ID</text>
+<text x="40" y="121" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">1. 토큰 조각과 정수 ID (sequence length n = 5)</text>
 <text x="80" y="149" font-size="15" text-anchor="middle" fill="#0f172a">오늘</text>
 <text x="80" y="175" font-size="15" text-anchor="middle" fill="#0f172a">17</text>
 <text x="180" y="149" font-size="15" text-anchor="middle" fill="#0f172a">␠부산</text>
@@ -38,32 +38,33 @@ order: 0
 <text x="65" y="264" font-size="14" text-anchor="start" fill="#0f172a">17 → E₁₇ = [ 0.2, −0.1, …,  0.5 ]</text>
 <text x="65" y="287" font-size="14" text-anchor="start" fill="#0f172a">42 → E₄₂ = [−0.3,  0.8, …,  0.1 ]</text>
 <text x="65" y="310" font-size="14" text-anchor="start" fill="#0f172a"> ⋮       나머지 ID도 같은 테이블에서 조회</text>
-<text x="280" y="342" font-size="12" text-anchor="middle" fill="#0f172a">5개 토큰 × 4,096개 성분 = X의 모양 5 × 4,096</text>
+<text x="40" y="331" font-size="12" text-anchor="start" fill="#0f172a">Sequence length n = 5 · Hidden dimension d = 4,096</text>
+<text x="40" y="348" font-size="12" text-anchor="start" fill="#0f172a">X의 모양: n × d = 5 × 4,096</text>
 <path d="M280 356 V380" fill="none" stroke="#0f172a"/><polygon points="280,385 276,378 284,378" fill="#0f172a"/>
 <rect x="24" y="385" width="512" height="79" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="40" y="409" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">3. Decoder 스택 → 최종 정규화</text>
 <text x="40" y="432" font-size="13" text-anchor="start" fill="#0f172a">각 토큰의 벡터에 앞선 문맥을 반영</text>
 <text x="40" y="451" font-size="12" text-anchor="start" fill="#0f172a">마지막 위치 “는”의 벡터 h₅를 사용 (4,096개 성분)</text>
 <path d="M280 464 V487" fill="none" stroke="#0f172a"/><polygon points="280,493 276,486 284,486" fill="#0f172a"/>
-<rect x="24" y="493" width="512" height="72" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="280" y="517" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">4. lm_head · Linear(4,096 → 128,256)</text>
-<text x="280" y="543" font-size="13" text-anchor="middle" fill="#0f172a">h₅ [1 × 4,096] × W [4,096 × 128,256]</text>
-<path d="M280 565 V588" fill="none" stroke="#0f172a"/><polygon points="280,594 276,587 284,587" fill="#0f172a"/>
-<rect x="24" y="594" width="512" height="62" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="280" y="618" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">Logits z: 1 × 128,256</text>
-<text x="280" y="642" font-size="12" text-anchor="middle" fill="#0f172a">Vocabulary의 각 토큰에 점수 하나씩 (아직 확률이 아님)</text>
-<path d="M280 656 V694" fill="none" stroke="#0f172a"/><polygon points="280,700 276,693 284,693" fill="#0f172a"/>
-<text x="398" y="683" font-size="11" text-anchor="middle" fill="#0f172a">Softmax: 전체 V개에 적용</text>
-<rect x="24" y="700" width="512" height="62" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="280" y="724" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">다음 토큰 확률 p: 1 × 128,256</text>
-<text x="280" y="748" font-size="12" text-anchor="middle" fill="#0f172a">128,256개 확률의 합 = 1</text>
-<path d="M280 762 V800" fill="none" stroke="#0f172a"/><polygon points="280,806 276,799 284,799" fill="#0f172a"/>
-<text x="403" y="789" font-size="11" text-anchor="middle" fill="#0f172a">선택 예: greedy로 ID 21</text>
-<rect x="24" y="806" width="512" height="94" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="280" y="830" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">5. 선택한 ID를 기존 ID 열 뒤에 추가</text>
-<text x="280" y="856" font-size="17" text-anchor="middle" fill="#0f172a">[17, 42, 9, 83, 11, 21]</text>
-<text x="280" y="884" font-size="13" text-anchor="middle" fill="#0f172a">문자열로 decode하면 “오늘 부산의 날씨는 맑”</text>
-<text x="280" y="927" font-size="13" text-anchor="middle" fill="#0f172a">늘어난 ID 열을 조건으로 다음 토큰을 다시 예측</text>
+<rect x="24" y="493" width="512" height="237" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="40" y="517" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">4. 벡터를 확률로 바꾸는 과정</text>
+<text x="65" y="544" font-size="14" text-anchor="start" fill="#0f172a" font-weight="600">lm_head: 4,096 → 128,256</text>
+<text x="65" y="564" font-size="12" text-anchor="start" fill="#0f172a">h₅ [1 × 4,096] × W [4,096 × 128,256]</text>
+<path d="M76 571 V584" fill="none" stroke="#0f172a"/><polygon points="76,590 72,583 80,583" fill="#0f172a"/>
+<text x="65" y="609" font-size="14" text-anchor="start" fill="#0f172a" font-weight="600">Logits z: 1 × 128,256</text>
+<text x="65" y="630" font-size="12" text-anchor="start" fill="#0f172a">Vocabulary의 각 토큰에 점수 하나씩</text>
+<path d="M76 638 V671" fill="none" stroke="#0f172a"/><polygon points="76,677 72,670 80,670" fill="#0f172a"/>
+<text x="94" y="661" font-size="12" text-anchor="start" fill="#0f172a">Softmax: 전체 128,256개 점수를 확률로 변환</text>
+<text x="65" y="697" font-size="14" text-anchor="start" fill="#0f172a" font-weight="600">확률 p: 1 × 128,256</text>
+<text x="65" y="717" font-size="12" text-anchor="start" fill="#0f172a">128,256개 확률의 합 = 1</text>
+<path d="M280 730 V768" fill="none" stroke="#0f172a"/><polygon points="280,774 276,767 284,767" fill="#0f172a"/>
+<text x="294" y="757" font-size="11" text-anchor="start" fill="#0f172a">선택 예: greedy로 ID 21</text>
+<rect x="24" y="774" width="512" height="112" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="40" y="798" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">5. 선택한 ID를 기존 ID 열 뒤에 추가</text>
+<text x="40" y="824" font-size="17" text-anchor="start" fill="#0f172a">[17, 42, 9, 83, 11, 21]</text>
+<text x="40" y="848" font-size="12" text-anchor="start" fill="#0f172a">Sequence length: 5 → 6</text>
+<text x="40" y="873" font-size="13" text-anchor="start" fill="#0f172a">문자열로 decode하면 “오늘 부산의 날씨는 맑”</text>
+<text x="40" y="916" font-size="13" text-anchor="start" fill="#0f172a">늘어난 ID 열을 조건으로 다음 토큰을 다시 예측</text>
 </svg>
 <figcaption>Llama 3 8B의 차원을 적용한 생성 흐름. 배치 차원은 생략했다. ␠는 공백이다.</figcaption>
 </figure>
@@ -92,7 +93,7 @@ $$
 E\in\mathbb{R}^{V\times d},\qquad x_i=E_{t_i},\qquad X\in\mathbb{R}^{n\times d}
 $$
 
-$n$은 입력 토큰 수다. 예문의 다섯 ID로 다섯 행을 조회하면 $5\times4096$ 행렬 $X$가 된다. 같은 ID는 처음에 같은 embedding을 받지만, decoder를 통과한 뒤에는 앞선 문맥에 따라 다른 표현을 갖게 된다.
+$n$은 앞에서 설명한 sequence length, 즉 입력 ID 열의 토큰 수다. 예문의 다섯 ID로 다섯 행을 조회하면 $5\times4096$ 행렬 $X$가 된다. 같은 ID는 처음에 같은 embedding을 받지만, decoder를 통과한 뒤에는 앞선 문맥에 따라 다른 표현을 갖게 된다.
 
 여기서는 tokenizer가 정해져 있다고 둔다. Vocabulary와 병합 규칙의 학습, 어휘 크기의 선택, 처음 보는 문자열의 처리는 [다음 Tokenizer 노트](/lecture/2026f-advanced-deep-learning/02b-tokenizer/)에서 다룬다.
 
