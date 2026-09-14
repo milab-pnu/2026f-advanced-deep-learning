@@ -461,24 +461,24 @@ Causal 생성에서는 과거 key·value를 저장하는 KV cache도 쓸 수 있
 다음 노트는 이 decoder-only 모델을 **tokenizer 입력부터 sampling 출력까지** 한 바퀴
 돌며, Llama 3 8B 로 각 부분의 크기를 확인한다.
 
-[^bert]: Devlin, J., Chang, M.-W., Lee, K., & Toutanova, K. (2019). BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding. NAACL 2019. [arXiv:1810.04805](https://arxiv.org/abs/1810.04805). — §3.1 (MLM, 15% 마스킹의 80/10/10), §3.1 (NSP), §A (BERT-base 110M / large 340M).
+[^bert]: Devlin, J., Chang, M.-W., Lee, K., & Toutanova, K. (2019). BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding. NAACL 2019. [arXiv:1810.04805](https://arxiv.org/abs/1810.04805).
 
-[^illbert]: Alammar, J. (2018). [The Illustrated BERT, ELMo, and co.](https://jalammar.github.io/illustrated-bert/) — MLM·NSP 와 encoder/decoder 계열 구분을 그림으로. MLM 도식의 출처.
+[^illbert]: Alammar, J. (2018). [The Illustrated BERT, ELMo, and co.](https://jalammar.github.io/illustrated-bert/).
 
-[^gpt1]: Radford, A., Narasimhan, K., Salimans, T., & Sutskever, I. (2018). Improving Language Understanding by Generative Pre-Training. OpenAI 기술보고서. — decoder-only generative pre-training + task-specific fine-tuning.
+[^gpt1]: Radford, A., Narasimhan, K., Salimans, T., & Sutskever, I. (2018). Improving Language Understanding by Generative Pre-Training. OpenAI 기술보고서.
 
-[^gpt2]: Radford, A., Wu, J., Child, R., Luan, D., Amodei, D., & Sutskever, I. (2019). Language Models are Unsupervised Multitask Learners. OpenAI (GPT-2, 1.5B). — zero-shot task transfer.
+[^gpt2]: Radford, A., Wu, J., Child, R., Luan, D., Amodei, D., & Sutskever, I. (2019). Language Models are Unsupervised Multitask Learners. OpenAI (GPT-2, 1.5B).
 
-[^gpt3]: Brown, T., et al. (2020). Language Models are Few-Shot Learners. NeurIPS 2020. [arXiv:2005.14165](https://arxiv.org/abs/2005.14165) (GPT-3, 175B). — §2 (in-context learning), few-shot 프롬프트.
+[^gpt3]: Brown, T., et al. (2020). Language Models are Few-Shot Learners. NeurIPS 2020. [arXiv:2005.14165](https://arxiv.org/abs/2005.14165) (GPT-3, 175B).
 
-[^roberta]: Liu, Y., et al. (2019). RoBERTa: A Robustly Optimized BERT Pretraining Approach. [arXiv:1907.11692](https://arxiv.org/abs/1907.11692). — NSP 제거, 더 긴 학습이 BERT 를 개선.
+[^roberta]: Liu, Y., et al. (2019). RoBERTa: A Robustly Optimized BERT Pretraining Approach. [arXiv:1907.11692](https://arxiv.org/abs/1907.11692).
 
-[^t5]: Raffel, C., et al. (2020). Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer. JMLR 21(140). [arXiv:1910.10683](https://arxiv.org/abs/1910.10683) (T5). — §3.1.4 (span corruption 예시), §3.2 (세 아키텍처 비교), Figure 3 (attention mask 패턴: fully-visible / causal / causal-with-prefix), Figure 4 (encoder–decoder · language model · prefix LM 도식).
+[^t5]: Raffel, C., et al. (2020). Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer. JMLR 21(140). [arXiv:1910.10683](https://arxiv.org/abs/1910.10683) (T5).
 
-[^bart]: Lewis, M., et al. (2020). BART: Denoising Sequence-to-Sequence Pre-training for Natural Language Generation, Translation, and Comprehension. ACL 2020. [arXiv:1910.13461](https://arxiv.org/abs/1910.13461). — encoder 에 여러 noising(token masking·deletion·문장 순서 섞기 등)을 주고 decoder 가 원문을 복원.
+[^bart]: Lewis, M., et al. (2020). BART: Denoising Sequence-to-Sequence Pre-training for Natural Language Generation, Translation, and Comprehension. ACL 2020. [arXiv:1910.13461](https://arxiv.org/abs/1910.13461).
 
-[^wang22]: Wang, T., et al. (2022). What Language Model Architecture and Pretraining Objective Work Best for Zero-Shot Generalization? ICML 2022, PMLR 162. [arXiv:2204.05832](https://arxiv.org/abs/2204.05832). — causal decoder-only + autoregressive LM 이 순수 자기지도 후 zero-shot 일반화가 가장 강함. non-causal decoder(prefix LM)·encoder–decoder 를 같은 조건에서 비교.
+[^wang22]: Wang, T., et al. (2022). What Language Model Architecture and Pretraining Objective Work Best for Zero-Shot Generalization? ICML 2022, PMLR 162. [arXiv:2204.05832](https://arxiv.org/abs/2204.05832).
 
 
 
-[^survey]: Zhao, W. X., et al. (2025, v16). A Survey of Large Language Models. [arXiv:2303.18223v16](https://arxiv.org/abs/2303.18223v16). — LLM의 아키텍처, 사전학습과 활용을 연결하는 종합 서베이.
+[^survey]: Zhao, W. X., et al. (2025, v16). A Survey of Large Language Models. [arXiv:2303.18223v16](https://arxiv.org/abs/2303.18223v16).

@@ -272,24 +272,24 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
   캐시한다. quantization·paged attention·speculative decoding 은 각각 요소 바이트·메모리
   단편화·순차적 계산의 비용을 줄인다 (6·7주차).
 
-[^llama3]: Llama Team, AI @ Meta (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783). — 8B 아키텍처(32층, 32 query / 8 KV head, $d_{\text{head}}$ 128), context 길이(3.0: 8K, 3.1: 128K).
+[^llama3]: Llama Team, AI @ Meta (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
 
-[^mqa]: Shazeer, N. (2019). Fast Transformer Decoding: One Write-Head is All You Need. [arXiv:1911.02150](https://arxiv.org/abs/1911.02150). — Multi-Query Attention: 모든 head 가 K/V 하나를 공유해 decode 시 메모리 대역폭 병목 완화.
+[^mqa]: Shazeer, N. (2019). Fast Transformer Decoding: One Write-Head is All You Need. [arXiv:1911.02150](https://arxiv.org/abs/1911.02150).
 
-[^gqa]: Ainslie, J., et al. (2023). GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints. EMNLP 2023. [arXiv:2305.13245](https://arxiv.org/abs/2305.13245). — MHA 와 MQA 사이를 보간하는 grouped-query attention.
+[^gqa]: Ainslie, J., et al. (2023). GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints. EMNLP 2023. [arXiv:2305.13245](https://arxiv.org/abs/2305.13245).
 
-[^mla]: DeepSeek-AI (2024). DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model. [arXiv:2405.04434](https://arxiv.org/abs/2405.04434). — §2.1 Multi-head Latent Attention: K/V 저랭크 압축($d_c = 512$) 후 latent 만 캐시, decoupled RoPE($d_{\text{rope}} = 64$), matrix absorption.
+[^mla]: DeepSeek-AI (2024). DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model. [arXiv:2405.04434](https://arxiv.org/abs/2405.04434).
 
-[^vllm]: Kwon, W., et al. (2023). Efficient Memory Management for Large Language Model Serving with PagedAttention. SOSP 2023. [arXiv:2309.06180](https://arxiv.org/abs/2309.06180) (vLLM). — KV cache 를 페이지 블록으로 관리 + continuous batching.
+[^vllm]: Kwon, W., et al. (2023). Efficient Memory Management for Large Language Model Serving with PagedAttention. SOSP 2023. [arXiv:2309.06180](https://arxiv.org/abs/2309.06180) (vLLM).
 
-[^flashattn]: Dao, T., Fu, D. Y., Ermon, S., Rudra, A., & Ré, C. (2022). FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. NeurIPS 2022. [arXiv:2205.14135](https://arxiv.org/abs/2205.14135). — attention 을 SRAM 블록 단위로 계산해 HBM 왕복을 줄이는 IO-aware exact attention.
+[^flashattn]: Dao, T., Fu, D. Y., Ermon, S., Rudra, A., & Ré, C. (2022). FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. NeurIPS 2022. [arXiv:2205.14135](https://arxiv.org/abs/2205.14135).
 
-[^specdecode]: Leviathan, Y., Kalman, M., & Matias, Y. (2023). Fast Inference from Transformers via Speculative Decoding. ICML 2023. [arXiv:2211.17192](https://arxiv.org/abs/2211.17192). — draft 모델이 제안한 토큰을 대형 모델이 한 번의 forward 로 검증·수용.
+[^specdecode]: Leviathan, Y., Kalman, M., & Matias, Y. (2023). Fast Inference from Transformers via Speculative Decoding. ICML 2023. [arXiv:2211.17192](https://arxiv.org/abs/2211.17192).
 
-[^pope]: Pope, R., et al. (2022). Efficiently Scaling Transformer Inference. [arXiv:2211.05102](https://arxiv.org/abs/2211.05102). — prefill/decode 비용 분석, arithmetic intensity 관점의 서빙 분석.
+[^pope]: Pope, R., et al. (2022). Efficiently Scaling Transformer Inference. [arXiv:2211.05102](https://arxiv.org/abs/2211.05102).
 
-[^kipply]: kipply (2022). [Transformer Inference Arithmetic](https://kipp.ly/transformer-inference-arithmetic/). — KV cache 크기·memory bandwidth bound 를 수식으로 유도.
+[^kipply]: kipply (2022). [Transformer Inference Arithmetic](https://kipp.ly/transformer-inference-arithmetic/).
 
-[^llmsurvey]: Zhao, W. X., et al. (2025, v16). A Survey of Large Language Models. [arXiv:2303.18223v16](https://arxiv.org/abs/2303.18223v16). — LLM의 아키텍처, 사전학습과 활용을 연결하는 종합 서베이.
+[^llmsurvey]: Zhao, W. X., et al. (2025, v16). A Survey of Large Language Models. [arXiv:2303.18223v16](https://arxiv.org/abs/2303.18223v16).
 
-[^reasoningsurvey]: Ke, Z., et al. (2026). A Survey of Frontiers in LLM Reasoning: Inference Scaling, Learning to Reason, and Agentic Systems. [arXiv:2504.09037](https://arxiv.org/abs/2504.09037). — inference-time 연산을 추론 능력 향상에 쓰는 기법(inference scaling)과 learning-to-reason 전반.
+[^reasoningsurvey]: Ke, Z., et al. (2026). A Survey of Frontiers in LLM Reasoning: Inference Scaling, Learning to Reason, and Agentic Systems. [arXiv:2504.09037](https://arxiv.org/abs/2504.09037).

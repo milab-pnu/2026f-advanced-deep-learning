@@ -286,23 +286,23 @@ Nemotron은 FSDP와 동일한 종류의 병렬화 API 이름이 아니다. [공�
 
 실행을 재개하려면 가중치 외에 optimizer·학습률 scheduler·random state·데이터 진행 위치를 어떻게 복원할지도 정해야 한다. 학습 로그에는 loss뿐 아니라 유효 tokens/s, peak memory, 통신 대기와 재시작 이력을 남긴다. 시스템을 바꾼 뒤 속도는 올랐지만 처리하는 데이터나 loss 정규화가 달라졌다면 같은 학습의 가속이라고 보기 어렵다.
 
-[^survey]: Duan, J., et al. (2024). *Efficient Training of Large Language Models on Distributed Infrastructures: A Survey*. [arXiv:2407.20018v1](https://arxiv.org/abs/2407.20018v1). — 대표 서베이·지정 읽기: §IV의 병렬화, §V의 연산, §VI의 메모리, §VII의 통신, §VIII의 reliability.
-[^zero]: Rajbhandari, S., Rasley, J., Ruwase, O., & He, Y. (2020). *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models*. SC 2020. [arXiv:1910.02054](https://arxiv.org/abs/1910.02054). — model state 메모리 분해와 세 단계 partitioning. 본문 8B·4 GPU 수치는 명시한 dtype 가정으로 별도 계산.
-[^ddp]: PyTorch Contributors. (2026). *DistributedDataParallel*. [공식 문서](https://docs.pytorch.org/docs/2.8/generated/torch.nn.parallel.DistributedDataParallel.html). — replica와 gradient 동기화, 입력 분할의 책임. 접근: 2026-09-14.
-[^deepspeed]: DeepSpeed Team. (2026). *Zero Redundancy Optimizer*. [공식 튜토리얼](https://www.deepspeed.ai/tutorials/zero/). — ZeRO stages 1–3의 상태 분산. 접근: 2026-09-14.
-[^fsdp]: PyTorch Contributors. (2026). *Getting Started with Fully Sharded Data Parallel (FSDP2)*. [공식 튜토리얼](https://docs.pytorch.org/tutorials/intermediate/FSDP_tutorial.html). — parameter all-gather와 gradient reduce-scatter, fully_shard. 접근: 2026-09-14.
-[^megatron]: Shoeybi, M., et al. (2019). *Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism*. [arXiv:1909.08053](https://arxiv.org/abs/1909.08053). — §3, Transformer 내부의 tensor model parallelism. 본문의 작은 행렬 예제는 자체 구성.
-[^gpipe]: Huang, Y., et al. (2019). *GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism*. NeurIPS 2019. [arXiv:1811.06965](https://arxiv.org/abs/1811.06965). — microbatch와 pipeline scheduling. 본문의 forward 시간표는 두 stage의 교육용 예제.
-[^parallel]: NVIDIA. (2026). *Parallelisms Guide*. [Megatron Bridge 공식 문서](https://docs.nvidia.com/nemo/megatron-bridge/latest/parallelisms.html). — SP·CP의 구분, 병렬화 조합과 DP size 계산. 접근: 2026-09-14.
-[^sp]: Korthikanti, V. A., et al. (2023). *Reducing Activation Recomputation in Large Transformer Models*. MLSys 2023. [arXiv:2205.05198](https://arxiv.org/abs/2205.05198). — sequence parallelism과 selective activation recomputation.
-[^switch]: Fedus, W., Zoph, B., & Shazeer, N. (2022). *Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity*. Journal of Machine Learning Research, 23(120), pp. 1–39. [arXiv:2101.03961](https://arxiv.org/abs/2101.03961). — token routing, expert 분산과 부하 균형.
-[^checkpoint]: PyTorch Contributors. (2026). *torch.utils.checkpoint*. [공식 문서](https://docs.pytorch.org/docs/2.8/checkpoint.html). — activation을 저장하는 대신 backward에서 재계산하는 방식. 접근: 2026-09-14.
-[^nemotron]: NVIDIA. (2026). *Nemotron Training Recipes*. [공식 문서](https://docs.nvidia.com/nemotron/latest/index.html), [Stage 0: Pretraining](https://docs.nvidia.com/nemotron/latest/nemotron/nano3/pretrain.html). — 모델·데이터·학습 recipe의 공개 범위. 접근: 2026-09-14.
+[^survey]: Duan, J., et al. (2024). *Efficient Training of Large Language Models on Distributed Infrastructures: A Survey*. [arXiv:2407.20018v1](https://arxiv.org/abs/2407.20018v1).
+[^zero]: Rajbhandari, S., Rasley, J., Ruwase, O., & He, Y. (2020). *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models*. SC 2020. [arXiv:1910.02054](https://arxiv.org/abs/1910.02054).
+[^ddp]: PyTorch Contributors. (2026). *DistributedDataParallel*. [공식 문서](https://docs.pytorch.org/docs/2.8/generated/torch.nn.parallel.DistributedDataParallel.html). 접근: 2026-09-14.
+[^deepspeed]: DeepSpeed Team. (2026). *Zero Redundancy Optimizer*. [공식 튜토리얼](https://www.deepspeed.ai/tutorials/zero/). 접근: 2026-09-14.
+[^fsdp]: PyTorch Contributors. (2026). *Getting Started with Fully Sharded Data Parallel (FSDP2)*. [공식 튜토리얼](https://docs.pytorch.org/tutorials/intermediate/FSDP_tutorial.html). 접근: 2026-09-14.
+[^megatron]: Shoeybi, M., et al. (2019). *Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism*. [arXiv:1909.08053](https://arxiv.org/abs/1909.08053).
+[^gpipe]: Huang, Y., et al. (2019). *GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism*. NeurIPS 2019. [arXiv:1811.06965](https://arxiv.org/abs/1811.06965).
+[^parallel]: NVIDIA. (2026). *Parallelisms Guide*. [Megatron Bridge 공식 문서](https://docs.nvidia.com/nemo/megatron-bridge/latest/parallelisms.html). 접근: 2026-09-14.
+[^sp]: Korthikanti, V. A., et al. (2023). *Reducing Activation Recomputation in Large Transformer Models*. MLSys 2023. [arXiv:2205.05198](https://arxiv.org/abs/2205.05198).
+[^switch]: Fedus, W., Zoph, B., & Shazeer, N. (2022). *Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity*. Journal of Machine Learning Research, 23(120), pp. 1–39. [arXiv:2101.03961](https://arxiv.org/abs/2101.03961).
+[^checkpoint]: PyTorch Contributors. (2026). *torch.utils.checkpoint*. [공식 문서](https://docs.pytorch.org/docs/2.8/checkpoint.html). 접근: 2026-09-14.
+[^nemotron]: NVIDIA. (2026). *Nemotron Training Recipes*. [공식 문서](https://docs.nvidia.com/nemotron/latest/index.html), [Stage 0: Pretraining](https://docs.nvidia.com/nemotron/latest/nemotron/nano3/pretrain.html). 접근: 2026-09-14.
 
-[^mixed]: Micikevicius, P., et al. (2018). *Mixed Precision Training*. ICLR 2018. [arXiv:1710.03740](https://arxiv.org/abs/1710.03740). — 낮은 정밀도 연산과 높은 정밀도 상태를 조합하는 학습의 기본 원리. 원논문은 fp16 중심이며 본문의 bf16 구성은 메모리 계산을 위한 별도 가정.
+[^mixed]: Micikevicius, P., et al. (2018). *Mixed Precision Training*. ICLR 2018. [arXiv:1710.03740](https://arxiv.org/abs/1710.03740).
 
-[^packing]: NVIDIA. (2026). *Packed Sequences*. [Megatron Bridge 공식 문서](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/packed-sequences.html). — What It Is, When to Use It: padding 절감, 시퀀스 경계 보존, 일반 pre-training과의 구분. 접근: 2026-09-14. 3·4토큰을 길이 8 배열에 담은 수치는 본문을 위한 교육용 계산.
+[^packing]: NVIDIA. (2026). *Packed Sequences*. [Megatron Bridge 공식 문서](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/packed-sequences.html). 접근: 2026-09-14.
 
-[^bf16]: Kalamkar, D., et al. (2019). A Study of BFLOAT16 for Deep Learning Training. [arXiv:1905.12322](https://arxiv.org/abs/1905.12322). — FP32·FP16·BF16의 비트 배분과 BF16 학습.
+[^bf16]: Kalamkar, D., et al. (2019). A Study of BFLOAT16 for Deep Learning Training. [arXiv:1905.12322](https://arxiv.org/abs/1905.12322).
 
-[^amp]: PyTorch. (2025, v2.8). [Automatic Mixed Precision](https://docs.pytorch.org/docs/2.8/amp.html). — 연산별 dtype 선택과 gradient scaling.
+[^amp]: PyTorch. (2025, v2.8). [Automatic Mixed Precision](https://docs.pytorch.org/docs/2.8/amp.html).

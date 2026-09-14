@@ -188,10 +188,10 @@ Perplexity는 평균 NTP loss를 지수화한 값이다. 위의 loss 1.040 예�
 
 데이터 구성과 검증 방법을 정해도 모델 크기와 학습 기간은 아직 선택해야 한다. 같은 계산 예산으로 큰 모델을 짧게 학습할지, 작은 모델에 더 많은 토큰을 읽힐지가 scaling의 문제다.
 
-[^survey]: Zhao, W. X., et al. (2025). *A Survey of Large Language Models*. [arXiv:2303.18223v16](https://arxiv.org/abs/2303.18223v16). — 대표 서베이·지정 읽기: §IV-A(Data Collection and Preparation), §IV-B3(Pre-training Tasks), §IV-C(Model Training), §V(Post-training).
-[^llama]: Dubey, A., et al. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783v1](https://arxiv.org/abs/2407.21783v1). — §3과 §4: pre-training과 post-training 단계. §3.1은 실제 데이터 준비 사례.
-[^dedup]: Lee, K., et al. (2022). *Deduplicating Training Data Makes Language Models Better*. ACL 2022, pp. 8424–8445. [arXiv:2107.06499v2](https://arxiv.org/abs/2107.06499v2). — 중복 제거가 암기된 텍스트 생성과 train–test overlap에 미치는 영향.
-[^fineweb]: Penedo, G., et al. (2024). *The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale*. NeurIPS 2024 Datasets and Benchmarks. [arXiv:2406.17557v2](https://arxiv.org/abs/2406.17557v2). — 웹 데이터의 필터링·중복 제거 ablation과 FineWeb-Edu.
-[^packing]: NVIDIA. (2026). *Packed Sequences*. [Megatron Bridge 공식 문서](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/packed-sequences.html). — 문서 간 attention을 구분하는 packed sequence 처리. 접근: 2026-09-14. 문서 이어붙이기를 사용하는 pre-training과, 경계를 보존하는 fine-tuning sequence packing의 구분. 본문의 문서·정답 예제는 별도 구성했다.
-[^adamw]: Loshchilov, I., & Hutter, F. (2019). *Decoupled Weight Decay Regularization*. ICLR 2019. [arXiv:1711.05101](https://arxiv.org/abs/1711.05101). — AdamW의 decoupled weight decay. 학습률·warmup 등 전체 학습 설정은 대표 서베이 §IV-C 참고.
-[^perplexity]: Hugging Face. (2026). *Perplexity of fixed-length models*. [Transformers 공식 문서](https://huggingface.co/docs/transformers/perplexity). — perplexity의 정의, tokenization과 context window에 따른 비교 조건. 접근: 2026-09-14.
+[^survey]: Zhao, W. X., et al. (2025). *A Survey of Large Language Models*. [arXiv:2303.18223v16](https://arxiv.org/abs/2303.18223v16).
+[^llama]: Dubey, A., et al. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783v1](https://arxiv.org/abs/2407.21783v1).
+[^dedup]: Lee, K., et al. (2022). *Deduplicating Training Data Makes Language Models Better*. ACL 2022, pp. 8424–8445. [arXiv:2107.06499v2](https://arxiv.org/abs/2107.06499v2).
+[^fineweb]: Penedo, G., et al. (2024). *The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale*. NeurIPS 2024 Datasets and Benchmarks. [arXiv:2406.17557v2](https://arxiv.org/abs/2406.17557v2).
+[^packing]: NVIDIA. (2026). *Packed Sequences*. [Megatron Bridge 공식 문서](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/packed-sequences.html). 접근: 2026-09-14.
+[^adamw]: Loshchilov, I., & Hutter, F. (2019). *Decoupled Weight Decay Regularization*. ICLR 2019. [arXiv:1711.05101](https://arxiv.org/abs/1711.05101).
+[^perplexity]: Hugging Face. (2026). *Perplexity of fixed-length models*. [Transformers 공식 문서](https://huggingface.co/docs/transformers/perplexity). 접근: 2026-09-14.
