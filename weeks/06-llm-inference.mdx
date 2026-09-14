@@ -4,7 +4,7 @@ week: 6
 order: 0
 ---
 
-앞 노트에서 decoder-only LLM(large language model) 의 forward 를 한 바퀴 돌았다. 이 노트는 그 모델로
+2주차에서 decoder-only LLM(large language model)의 구조와 학습 비용을 살펴봤다. Zhao 등의 서베이[^llmsurvey]를 길잡이로, 이 노트는 그 모델로
 **문장을 생성할 때 실제로 무엇이 비싼가**를 다룬다. 학습과 달리 inference 는
 autoregressive 라서, 비용 구조가 크게 다르고 하드웨어를 잘 못 쓰기 쉽다. 기준 모델은
 계속 **Llama 3 8B**($L = 32$, query head 32 / KV(key–value) head 8, $d_{\text{head}} = 128$,
@@ -68,29 +68,20 @@ $$
 여기서 $n_{\text{kv}}$ 는 **KV head 수**다(MHA(multi-head attention) 면 query head 수와
 같고, GQA(grouped-query attention)/MQA(multi-query attention) 면 더 작다 — 7절). $p$ 는 숫자 하나를 몇 바이트로 저장하느냐인데, 이것부터 정리한다.
 
-## 4. 숫자 표현 — fp32, fp16, bf16
+## 4. 정밀도와 저장 비용
 
-fp32·fp16·bf16 은 각각 32비트·16비트·16비트 **부동소수점**(floating-point) 형식이다
-(bf16 = bfloat16). 부동소수점 수 하나는 **부호 1비트 + 지수부(exponent) + 가수부(mantissa)** 로 저장된다.
-지수부는 **표현 범위**(얼마나 큰/작은 수까지), 가수부는 **정밀도**(유효 자릿수)를 정한다.
+[2주차의 부동소수점과 mixed precision](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#1-1-부동소수점과-정밀도)에서 본 FP32는 4 bytes, FP16·BF16은 2 bytes다. FP16은 범위가 좁고 BF16은 같은 크기에서 정밀도가 더 거칠다. 여기서는 그 차이가 **가중치와 KV cache의 저장·전송 비용**에 어떻게 들어가는지 보자.
 
-| 형식 | 비트 (부호/지수/가수) | 바이트 | 특징 |
-|---|---|---|---|
-| **fp32** | 1 / 8 / 23 | 4 | 전통적 학습 기본. 범위·정밀도 모두 넉넉 |
-| **fp16** | 1 / 5 / 10 | 2 | 메모리·대역폭 절반. 지수 5비트라 **범위가 좁아**(최대 약 65,504) gradient 가 쉽게 overflow/underflow → loss scaling 필요 |
-| **bf16** | 1 / 8 / 7 | 2 | 지수부는 fp32 와 **동일**(같은 범위), 가수부만 7비트로 거칠다. 범위가 넓어 학습이 안정적 |
-| **fp8** (8비트 부동소수점, E4M3 등) | 1 / 4 / 3 | 1 | H100 이후 하드웨어에서 학습·추론에 사용 |
+| 저장 형식 | 요소당 크기 | 이 노트에서의 의미 |
+|---|---|---|
+| FP32 | 4 bytes | 같은 원소 수의 FP16·BF16보다 저장량이 두 배 |
+| FP16 / BF16 | 2 bytes | 아래 메모리 계산의 기준 |
+| INT8 | 1 byte | 8-bit 정수 양자화 값 자체의 크기 |
+| INT4 | 0.5 byte | 4-bit 값을 빈틈없이 묶었을 때의 크기 |
 
-<Callout type="intuition">
-숫자를 담는 칸이 32칸(fp32)에서 16칸으로 줄었다고 하자. **fp16** 은 "큰 수 담는 칸"과
-"세밀한 자릿수 칸"을 둘 다 깎았고, **bf16** 은 큰 수 담는 칸(범위)은 fp32 그대로 두고
-세밀한 자릿수만 깎았다. 딥러닝은 값이 조금 거칠어도 견디지만 범위가 좁으면 학습이
-터지므로, **bf16 이 학습·추론의 기본**이 됐다.
-</Callout>
+앞 절의 $p$는 **KV cache 원소 하나의 bytes**다. 아래에서는 가중치와 cache가 모두 BF16이라고 가정하므로 둘 다 2 bytes로 계산한다. 하지만 둘은 별도 설정이다. 가중치만 INT4로 바꿔도 cache가 BF16이면 KV cache 공식의 $p$는 여전히 2다.
 
-앞으로 이 노트에서 "$p = 2$ bytes" 는 fp16/bf16 을, 가중치 메모리 "$8.03\text{B} \times 2$" 도
-같은 전제다. **quantization**(7·8절)은 이 $p$ 를 2 아래로 — int8 은 1 byte, int4 는
-0.5 byte — 미는 것이다.
+**양자화(quantization)**는 실숫값을 더 적은 bits의 표현값에 대응시키는 과정이다. INT8·INT4는 FP16의 소수부를 단순히 잘라내는 방식이 아니며, 값의 범위에 맞춘 scale 등의 정보가 필요하다. 따라서 실제 메모리는 양자화 값 외에 scale·정렬·관리 비용을 포함한다. Bits를 줄여 얻는 메모리·대역폭 절감과 품질 변화를 함께 평가해야 한다. FP8처럼 더 짧은 부동소수점 형식도 있지만, 여기서는 FP16·BF16을 기준으로 비용부터 계산한다.
 
 ## 5. Llama 3 8B 로 계산
 
@@ -251,18 +242,18 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
 
 ## 8. 그 밖의 inference 최적화 (한 줄씩)
 
-- **Weight quantization** — 가중치를 int8/int4/fp8 로. 읽을 바이트($p$)가 줄어 6절의
+- **Weight quantization** — 가중치를 int8/int4/fp8 로. 가중치 요소당 bytes가 줄어 6절의
   memory wall 을 직접 완화한다. 6·7주차에서 자세히.
 - **PagedAttention / continuous batching**[^vllm] — KV cache 를 OS(operating system)
   페이지처럼 고정 블록으로 관리해 단편화를 없애고, 요청이 끝나는 대로 새 요청을 배치에
   끼워 GPU 를 놀리지 않는다(vLLM).
 - **Speculative decoding**[^specdecode] — 작은 draft 모델이 여러 토큰을 미리 제안하고 큰 모델이
   한 번의 forward 로 검증·수용. decode 의 순차성을 부분적으로 병렬화.
-- **FlashAttention**[^flashattn] — attention 을 HBM 왕복 없이 SRAM(static random-access memory) 안에서 블록 단위로 계산.
+- **FlashAttention**[^flashattn] — attention을 SRAM(static random-access memory)에서 블록 단위로 계산해 HBM 왕복을 줄임.
   주로 prefill/학습의 $O(n^2)$ 상수를 줄인다.
 
 <Callout type="note">
-이 절은 전부 **같은 출력을 더 싸게** 내는 기법이다. 반대 방향 — inference 연산을 **더
+이 절은 **생성 비용을 줄이는** 기법이다. 양자화처럼 근사 오차와 품질 변화를 확인해야 하는 방법도 있다. 반대 방향 — inference 연산을 **더
 써서 더 나은 출력**을 얻는 것(test-time scaling: 여러 후보를 샘플링·검색, o1·DeepSeek-R1
 류 추론 모델) — 은 별개의 축이며 6–7주차와 기말 프로젝트에서 다룬다.[^reasoningsurvey]
 </Callout>
@@ -271,8 +262,7 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
 
 - inference 는 autoregressive → **prefill**(프롬프트 병렬, compute-bound)과
   **decode**(토큰당 1회, memory-bound)로 나뉜다.
-- 숫자 표현: **bf16**(범위는 fp32, 정밀도만 거칢)이 기본. $p = 2$ bytes. quantization 은
-  이걸 1 byte 이하로 민다.
+- 이 노트의 기준은 BF16, $p=2$ bytes다. 가중치 양자화와 KV cache 양자화는 별도로 계산한다.
 - **KV cache** 는 과거 $k, v$ 를 저장해 decode 재계산을 없앤다. 크기 =
   $2 L\, n_{\text{kv}}\, d_{\text{head}}\, s\, b\, p$. Llama 3 8B bf16 = **128 KiB/token**
   (8K·batch1 → 1 GiB, 128K → 16 GiB).
@@ -284,8 +274,6 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
   캐시한다. quantization·paged attention·speculative decoding 은 각각 요소 바이트·메모리
   단편화·순차성을 공략한다 (6·7주차).
 
-이것으로 1주차를 마친다. 2주차부터는 tokenizer 와 pre-training 을 파고든다.
-
 [^llama3]: Llama Team, AI @ Meta (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783). — 8B 아키텍처(32층, 32 query / 8 KV head, $d_{\text{head}}$ 128), context 길이(3.0: 8K, 3.1: 128K).
 
 [^mqa]: Shazeer, N. (2019). Fast Transformer Decoding: One Write-Head is All You Need. [arXiv:1911.02150](https://arxiv.org/abs/1911.02150). — Multi-Query Attention: 모든 head 가 K/V 하나를 공유해 decode 시 메모리 대역폭 병목 완화.
@@ -296,7 +284,7 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
 
 [^vllm]: Kwon, W., et al. (2023). Efficient Memory Management for Large Language Model Serving with PagedAttention. SOSP 2023. [arXiv:2309.06180](https://arxiv.org/abs/2309.06180) (vLLM). — KV cache 를 페이지 블록으로 관리 + continuous batching.
 
-[^flashattn]: Dao, T., Fu, D. Y., Ermon, S., Rudra, A., & Ré, C. (2022). FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. NeurIPS 2022. [arXiv:2205.14135](https://arxiv.org/abs/2205.14135). — attention 을 SRAM 블록 단위로 계산해 HBM 왕복을 없앤 IO-aware exact attention.
+[^flashattn]: Dao, T., Fu, D. Y., Ermon, S., Rudra, A., & Ré, C. (2022). FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. NeurIPS 2022. [arXiv:2205.14135](https://arxiv.org/abs/2205.14135). — attention 을 SRAM 블록 단위로 계산해 HBM 왕복을 줄이는 IO-aware exact attention.
 
 [^specdecode]: Leviathan, Y., Kalman, M., & Matias, Y. (2023). Fast Inference from Transformers via Speculative Decoding. ICML 2023. [arXiv:2211.17192](https://arxiv.org/abs/2211.17192). — draft 모델이 제안한 토큰을 대형 모델이 한 번의 forward 로 검증·수용.
 
@@ -304,6 +292,6 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
 
 [^kipply]: kipply (2022). [Transformer Inference Arithmetic](https://kipp.ly/transformer-inference-arithmetic/). — KV cache 크기·memory bandwidth bound 를 수식으로 유도.
 
-[^llmsurvey]: Zhao, W. X., et al. (2026). A Survey of Large Language Models. *Frontiers of Computer Science*, 20(12). [arXiv:2303.18223](https://arxiv.org/abs/2303.18223). — §5.4 가 prefill/decode·memory wall·KV cache 최적화(토큰/모델/시스템 층위)·양자화를 이 노트와 같은 틀로 정리. 이 과목의 여러 주차를 관통하는 종합 서베이.
+[^llmsurvey]: Zhao, W. X., et al. (2025, v16). A Survey of Large Language Models. [arXiv:2303.18223v16](https://arxiv.org/abs/2303.18223v16). — LLM의 아키텍처, 사전학습과 활용을 연결하는 종합 서베이.
 
 [^reasoningsurvey]: Ke, Z., et al. (2026). A Survey of Frontiers in LLM Reasoning: Inference Scaling, Learning to Reason, and Agentic Systems. [arXiv:2504.09037](https://arxiv.org/abs/2504.09037). — inference-time 연산을 추론 능력 향상에 쓰는 기법(inference scaling)과 learning-to-reason 전반.

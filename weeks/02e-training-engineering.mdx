@@ -8,7 +8,38 @@ order: 4
 
 ## 1. 학습 자원
 
-### 1-1. 메모리 구성
+### 1-1. 부동소수점과 정밀도
+
+지금까지 가중치와 activation을 실수로 썼지만, 컴퓨터는 무한한 자릿수를 저장할 수 없다. **Bit는 0 또는 1 한 자리, byte는 8 bits**다. FP32는 수 하나에 32 bits, 즉 4 bytes를 쓰는 부동소수점(floating-point) 형식이다. FP16과 BF16(bfloat16)은 각각 16 bits, 즉 2 bytes를 쓴다. Token ID라는 정수로 임베딩을 찾는 것과, 찾은 임베딩의 각 실숫값을 저장하는 것은 다른 단계다.
+
+부동소수점은 과학적 표기 $1.234 \times 10^5$처럼 **자릿수와 크기를 나누어** 담되, 이진수를 사용한다. 부호는 양수·음수를, 지수(exponent)는 표현 범위를, 유효숫자의 소수부(fraction)는 같은 크기에서 얼마나 촘촘히 값을 구분하는지를 정한다.[^bf16]
+
+| 형식 | 부호 bits | 지수 bits | 소수부 bits | 수 하나의 크기 |
+|---|---|---|---|---|
+| FP32 | 1 | 8 | 23 | 4 bytes |
+| FP16 | 1 | 5 | 10 | 2 bytes |
+| BF16 | 1 | 8 | 7 | 2 bytes |
+
+표의 소수부는 실제 저장하는 bits다. 정규화된 이진수에서는 맨 앞의 1을 생략해 저장하므로 유효숫자는 이보다 한 bit 많다. 여기서는 비트 패턴을 외우기보다 **같은 16 bits를 어디에 배분했는가**를 보자.
+
+- **FP16**은 FP32보다 지수도 소수부도 줄였다. 최대 유한값은 65,504다. 계산 결과가 범위를 넘으면 overflow가, 너무 작으면 0으로 반올림되는 underflow가 생길 수 있다.
+- **BF16**은 FP32와 지수 bits가 같아 표현 범위가 비슷하다. 대신 FP16보다 소수부가 짧아 같은 크기에서 구분할 수 있는 값의 간격이 넓다. 넓은 범위가 곧 높은 정밀도는 아니다.
+
+**작은 업데이트가 사라지는 예**를 보자. 1 이상의 가까운 수 사이 간격은 FP16에서 $2^{-10} \approx 0.000977$, BF16에서 $2^{-7}=0.0078125$다. 정확한 결과가 $1+0.001=1.001$인 덧셈을 한 번 한 뒤 가장 가까운 표현값으로 반올림하면:
+
+| 저장 형식 | 저장되는 결과 |
+|---|---|
+| FP32 | 약 1.00100005 |
+| FP16 | 1.0009765625 |
+| BF16 | 1.0 |
+
+BF16으로 가중치를 저장하면서 매번 작은 업데이트를 바로 더하면 변화가 사라질 수 있다. 그래서 **mixed precision**은 모든 값을 낮은 정밀도로 바꾸는 대신, 연산과 저장 항목에 맞게 정밀도를 섞는다. 예를 들어 행렬곱은 BF16 입력으로 수행하되 누적은 FP32로 하고, optimizer의 갱신용 가중치(master weight)와 상태를 FP32로 유지한다. 이때 작은 변화는 master weight에 누적되고, 계산에 쓸 때 낮은 정밀도로 변환한다.[^mixed]
+
+FP16 학습에서는 작은 gradient가 0이 되는 것을 줄이기 위해 **loss scaling**도 사용한다. Loss에 큰 상수를 곱해 역전파하고, optimizer 갱신 전 gradient에서 그 배율을 되돌리는 방식이다. BF16에서는 넓은 범위 덕분에 보통 필요하지 않지만, 반올림 오차나 불안정한 학습까지 없어지는 것은 아니다.[^amp]
+
+이제 “8B 모델이 몇 GB인가”는 **파라미터 수뿐 아니라 무엇을 어떤 형식으로 저장하는가**의 문제다. 낮은 정밀도는 저장·전송량을 줄이고 지원 하드웨어에서 연산을 빠르게 할 수 있지만, dtype과 실제 속도는 구현에 따라 확인해야 한다. 추론에서 가중치·KV cache를 더 적은 bits로 저장하는 양자화는 [6주차](/lecture/2026f-advanced-deep-learning/06-llm-inference/#4-정밀도와-저장-비용)에서 이어간다.
+
+### 1-2. 메모리 구성
 
 8B 파라미터를 각각 2 bytes로 저장하면 16 GB다. 이 모델을 24 GB GPU에서 학습할 수 있을까? 아직 계산에 넣지 않은 항목이 있다. Backward를 위한 activation, 가중치마다 생기는 gradient, optimizer가 유지하는 상태를 저장해야 한다.
 
@@ -26,7 +57,7 @@ Activation과 임시 통신 buffer는 아직 더하지 않았다. ZeRO(zero redu
 
 따라서 문제를 둘로 나눈다. **학습 상태가 메모리에 들어가게 하는 것**, 그리고 **주어진 시간 안에 충분한 토큰을 처리하는 것**이다. GPU를 여러 개 쓴다는 말만으로 두 문제가 모두 해결되지는 않는다.
 
-### 1-2. Sequence packing
+### 1-3. Sequence packing
 
 GPU에 모델이 들어가더라도, 계산하는 입력의 상당 부분이 빈칸이라면 자원을 낭비할 수 있다. 길이 8의 입력 배열을 사용하는 단순한 예제를 보자. 문서 A의 입력 길이는 3, B는 4다. 각각을 길이 8에 맞추면 남는 위치를 **padding**으로 채운다.
 
@@ -46,7 +77,7 @@ GPU에 모델이 들어가더라도, 계산하는 입력의 상당 부분이 빈
 
 이 예제는 padding이 많이 생기는 조건을 가정했다. Batch 안의 최대 길이까지만 채우거나 비슷한 길이를 묶는 방법도 padding을 줄일 수 있다. 이미 문서들을 이어서 고정 길이를 채우는 pre-training은 같은 낭비가 작을 수 있다. Megatron Bridge의 packed-sequence 기능은 주로 길이가 다양한 fine-tuning 예제를 위한 것으로 설명된다. 따라서 이름만 보고 모든 pre-training에 켜야 하는 옵션으로 받아들이지 않는다.[^packing]
 
-### 1-3. 장치 간 통신
+### 1-4. 장치 간 통신
 
 메모리를 나누어 저장하면 필요한 값을 주고받아야 한다. 이후 병렬화 설명에서 사용할 통신 연산을 먼저 구분하자. 다음 표에서 reduce는 합산을 뜻한다. 평균 gradient가 필요하면 합산 결과를 적절한 수로 나누는 과정도 포함한다.
 
@@ -165,7 +196,7 @@ PP(pipeline parallelism)는 층을 여러 stage로 나눈다. 32층 모델을 �
 
 ### 3-3. SP와 CP
 
-§1-2의 sequence packing은 여러 짧은 입력을 함께 담는 방법이다. 여기서 다루는 SP·CP는 시퀀스 방향의 계산이나 저장을 여러 장치에 나누는 방법이다. 모델 가중치를 나누어도 시퀀스가 길어지면 activation이 커진다. 이때 시퀀스 방향으로 나누는 방법이 필요하다. 문헌과 구현마다 용어가 다를 수 있으므로 여기서는 Megatron의 구분을 따른다.[^parallel]
+§1-3의 sequence packing은 여러 짧은 입력을 함께 담는 방법이다. 여기서 다루는 SP·CP는 시퀀스 방향의 계산이나 저장을 여러 장치에 나누는 방법이다. 모델 가중치를 나누어도 시퀀스가 길어지면 activation이 커진다. 이때 시퀀스 방향으로 나누는 방법이 필요하다. 문헌과 구현마다 용어가 다를 수 있으므로 여기서는 Megatron의 구분을 따른다.[^parallel]
 
 **SP(sequence parallelism)**는 TP와 함께 사용해, LayerNorm 같은 일부 연산에서 TP 장치마다 중복되던 activation을 시퀀스 방향으로 분할한다. 예를 들어 길이 8인 activation을 두 장치가 길이 4씩 보유하게 하는 식이다. 다음 TP 연산에 맞춰 gather 또는 scatter를 적용한다. Activation 저장량을 줄이는 것이 주요 동기다.[^sp]
 
@@ -228,8 +259,6 @@ CP까지 사용하면 이 예제의 장치 수 계산에 CP 차원도 포함한�
 
 ### 4-2. 메모리와 처리량 최적화
 
-**Mixed precision.** 모든 값을 같은 정밀도로 저장·계산할 필요는 없다. bf16 같은 낮은 정밀도는 메모리와 연산 비용을 줄일 수 있고, optimizer 상태나 일부 누적은 더 높은 정밀도를 사용할 수 있다. 실제로 어떤 tensor가 어떤 dtype인지 확인해야 §1의 메모리 계산도 정확해진다.[^mixed]
-
 **Activation checkpointing.** Backward에 필요한 중간 결과를 모두 저장하는 대신 일부만 저장하고 나머지는 재계산한다. 저장 공간과 추가 연산을 교환하는 방법이다. 장애 복구를 위해 파일에 저장하는 checkpoint와는 다른 의미다.[^checkpoint]
 
 **통신과 계산의 겹치기.** 한 층의 gradient를 전달하는 동안 앞 층의 backward를 계산할 수 있다면 대기 시간을 줄일 수 있다. 하지만 의존성이 남는 통신은 숨길 수 없고, 장치 간 연결의 속도도 중요하다.
@@ -273,3 +302,7 @@ Nemotron은 FSDP와 동일한 종류의 병렬화 API 이름이 아니다. [공�
 [^mixed]: Micikevicius, P., et al. (2018). *Mixed Precision Training*. ICLR 2018. [arXiv:1710.03740](https://arxiv.org/abs/1710.03740). — 낮은 정밀도 연산과 높은 정밀도 상태를 조합하는 학습의 기본 원리. 원논문은 fp16 중심이며 본문의 bf16 구성은 메모리 계산을 위한 별도 가정.
 
 [^packing]: NVIDIA. (2026). *Packed Sequences*. [Megatron Bridge 공식 문서](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/packed-sequences.html). — What It Is, When to Use It: padding 절감, 시퀀스 경계 보존, 일반 pre-training과의 구분. 접근: 2026-09-14. 3·4토큰을 길이 8 배열에 담은 수치는 본문을 위한 교육용 계산.
+
+[^bf16]: Kalamkar, D., et al. (2019). A Study of BFLOAT16 for Deep Learning Training. [arXiv:1905.12322](https://arxiv.org/abs/1905.12322). — FP32·FP16·BF16의 비트 배분과 BF16 학습.
+
+[^amp]: PyTorch. (2025, v2.8). [Automatic Mixed Precision](https://docs.pytorch.org/docs/2.8/amp.html). — 연산별 dtype 선택과 gradient scaling.
