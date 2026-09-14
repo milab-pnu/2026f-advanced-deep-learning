@@ -8,12 +8,12 @@ order: 0
 
 ## 1. 한 토큰의 생성 과정
 
-“오늘 부산의 날씨는” 뒤를 이어 쓰게 한다고 하자. 모델은 먼저 텍스트를 정수 ID 열로 바꾸고, 각 ID에 대응하는 벡터에 문맥을 반영한다. 마지막에는 가능한 다음 토큰마다 점수를 계산한다. **모델이 점수를 만드는 과정과, 그 점수로 토큰을 고르는 과정**을 함께 거쳐야 문장이 이어진다.
+“오늘 부산의 날씨는” 뒤를 이어 쓰게 한다고 하자. 모델은 먼저 텍스트를 정수 ID 열(sequence)로 바꾸고, 각 ID에 대응하는 벡터에 문맥을 반영한다. 마지막에는 가능한 다음 토큰마다 점수를 계산한다. **모델이 점수를 만드는 과정과, 그 점수로 토큰을 고르는 과정**을 함께 거쳐야 문장이 이어진다.
 
-아래 그림은 한 번의 생성 과정을 보여준다. 토큰 분할·ID·벡터·logits는 교육용 가상 값이며, Llama의 실제 실행 결과는 아니다. `␠`는 공백을 나타낸다.
+아래 그림은 한 번의 생성 과정을 보여준다. 토큰 분할·ID·벡터·logits는 가상 값이며, Llama의 실제 실행 결과는 아니다. `␠`는 공백을 나타낸다.
 
 <figure>
-<svg viewBox="0 0 560 850" role="img" aria-label="오늘 부산의 날씨는이라는 입력이 가상 토큰 ID 17, 42, 9, 83, 11로 변환된다. 각 ID로 임베딩 행을 조회하고 decoder 32개와 최종 RMSNorm을 통과한다. 마지막 위치의 벡터를 LM head에 넣어 logits를 얻고 softmax로 확률을 만든다. 세 후보뿐인 교육용 출력 예에서 맑을 고르면 ID 21을 기존 ID 열에 추가한다. 분할과 수치는 실제 Llama 실행 결과가 아니다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 560 850" role="img" aria-label="오늘 부산의 날씨는이라는 입력이 가상 토큰 ID 17, 42, 9, 83, 11로 변환된다. 각 ID로 임베딩 행을 조회하고 decoder 32개와 최종 RMSNorm을 통과한다. 마지막 위치의 벡터를 LM head에 넣어 logits를 얻고 softmax로 확률을 만든다. 세 후보뿐인 출력 예에서 맑을 고르면 ID 21을 기존 ID 열에 추가한다. 분할과 수치는 실제 Llama 실행 결과가 아니다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
 <rect x="24" y="8" width="512" height="59" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="40" y="30" font-size="12" text-anchor="start" fill="#0f172a" font-weight="600">입력 텍스트</text>
 <text x="280" y="53" font-size="19" text-anchor="middle" fill="#0f172a">오늘 부산의 날씨는</text>
@@ -48,7 +48,7 @@ order: 0
 <text x="294" y="482.5" font-size="11" text-anchor="start" fill="#64748b">LM head: h₅ → vocabulary 전체의 점수</text>
 <rect x="24" y="493" width="512" height="173" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="40" y="517" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">4. Logits → softmax → 다음 토큰 확률</text>
-<text x="40" y="538" font-size="11" text-anchor="start" fill="#64748b">아래 계산은 후보가 3개뿐인 별도 교육용 예제</text>
+<text x="40" y="538" font-size="11" text-anchor="start" fill="#64748b">아래 계산은 후보가 3개뿐인 예제</text>
 <text x="62" y="562" font-size="12" text-anchor="start" fill="#0f172a" font-weight="600">후보 (가상 ID)</text>
 <text x="242" y="562" font-size="12" text-anchor="start" fill="#0f172a" font-weight="600">logit</text>
 <text x="372" y="562" font-size="12" text-anchor="start" fill="#0f172a" font-weight="600">확률</text>
@@ -73,7 +73,7 @@ order: 0
 <text x="280" y="816" font-size="13" text-anchor="middle" fill="#0f172a">늘어난 ID 열을 조건으로 다음 토큰을 다시 예측</text>
 <text x="280" y="836" font-size="11" text-anchor="middle" fill="#64748b"></text>
 </svg>
-<figcaption>기존 예문으로 구성한 생성 흐름. ␠는 공백이다. 토큰 분할·ID·벡터·logits는 설명용 가상 값이며, 시작 토큰은 생략했다. 차원과 블록 수는 Llama 3 8B 기준이다. 실제 출력은 128,256개 후보에 대한 분포이며, 그림의 세 후보 확률은 실제 분포의 일부를 발췌한 값이 아니다.</figcaption>
+<figcaption>기존 예문으로 구성한 생성 흐름. ␠는 공백이다.</figcaption>
 </figure>
 
 그림의 앞부분에서는 문자열이 숫자로 바뀌고, 중간에서는 문맥을 반영한 벡터가 만들어지며, 끝에서는 다시 출력할 토큰을 고른다. 이제 이 순서대로 모델 내부를 살펴보자.
@@ -235,7 +235,7 @@ Top-k는 후보 수를 고정하지만, top-p는 그 시점의 분포에 따라 
 
 생성 API에는 이 밖에도 반복을 억제하는 penalty나 생성 길이·종료 조건을 정하는 parameter가 있다. 이번에는 **분포를 바꾸는 설정**과 **언제 생성을 멈추는지 정하는 설정**을 구분하면 된다. 지원 항목과 여러 설정을 적용하는 순서는 구현마다 다를 수 있다.
 
-### 3-3. 생성 루프
+### 3-3. 생성 루프 (Autoregressive Generation)
 
 
 선택한 token ID를 기존 ID 열 뒤에 붙이면 다음 예측의 조건이 된다. 도입 예문은 이후 다음처럼 이어질 수 있다.
@@ -245,9 +245,9 @@ Top-k는 후보 수를 고정하지만, top-p는 그 시점의 분포에 따라 
 오늘 부산의 날씨는 맑습니다 → 종료 토큰
 ```
 
-이 분할과 출력도 교육용 예시다. 실제 문자열은 ID에 대응하는 바이트 조각을 이어 붙여 복원하며, 한 토큰이 항상 한 단어나 완성된 글자인 것은 아니다.
+실제 문자열은 ID에 대응하는 바이트 조각을 이어 붙여 복원하며, 한 토큰이 항상 한 단어나 완성된 글자인 것은 아니다.
 
-정해진 종료 토큰이나 길이 제한에 도달하면 생성을 멈춘다. 효율적인 구현에서는 과거 위치의 key와 value를 KV(key–value) cache에 보관해 재사용한다. 캐시는 이전 계산을 반복하는 비용을 줄이며, 새로 선택한 토큰을 조건에 추가한다는 원리는 같다.
+정해진 종료 토큰이나 길이 제한에 도달하면 생성을 멈춘다. 효율적인 구현에서는 과거 위치의 key와 value를 KV(key–value) cache에 보관해 재사용한다. 캐시는 이전 계산을 반복하는 비용을 줄인다.
 
 ### 3-4. RL의 rollout
 
@@ -267,8 +267,7 @@ Rollout은 §3-3의 생성 루프를 학습에 사용할 경험을 모으는 데
 
 ## 4. 정리 영상
 
-[3Blue1Brown의 영상](https://www.youtube.com/watch?v=wjZofJX0v4M)으로 입력 embedding이 문맥 표현과 출력 확률로 바뀌는 흐름을 복습한다. 영상의 GPT 계열 예시와 이 노트의 Llama 수치·정규화 방식은 구분해서 보자.
-
+[3Blue1Brown의 영상](https://www.youtube.com/watch?v=wjZofJX0v4M)으로 입력 embedding이 문맥 표현과 출력 확률로 바뀌는 흐름을 복습한다.
 <Video src="https://www.youtube.com/watch?v=wjZofJX0v4M" caption="3Blue1Brown, Transformers, the tech behind LLMs (2024). 입력 벡터에서 출력 확률까지의 흐름을 복습한다." />
 
 [^survey]: Zhao, W. X., et al. (2025). *A Survey of Large Language Models*. [arXiv:2303.18223v16](https://arxiv.org/abs/2303.18223v16).
