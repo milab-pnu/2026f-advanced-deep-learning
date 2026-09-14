@@ -6,11 +6,11 @@ order: 0
 
 “오늘 부산의 날씨는”이라는 문자열이 어떻게 다음 토큰의 확률로 바뀔까? LLM(large language model)의 구조와 학습을 정리한 Zhao 등의 서베이[^survey]를 바탕으로, Llama 3 하나의 입력부터 출력까지 따라간다. 여기서 잡을 큰 흐름은 **텍스트의 수치화 → 문맥 반영 → 다음 토큰 선택**이다.
 
-## 1. 입력 표현
+## 1. 한 토큰의 생성 과정
 
-“오늘 부산의 날씨는” 뒤를 이어 쓰게 한다고 하자. 모델 내부에는 문자열을 직접 곱하는 연산이 없다. 먼저 tokenizer가 문자열을 정수 ID 열로 바꾸고, 임베딩(embedding) 테이블에서 각 ID에 해당하는 벡터를 꺼낸다. Decoder 블록들은 이 벡터를 문맥에 맞게 바꾸고, 마지막에는 어휘 집합(vocabulary)의 각 토큰에 점수를 매긴다.
+“오늘 부산의 날씨는” 뒤를 이어 쓰게 한다고 하자. 모델은 먼저 텍스트를 정수 ID 열로 바꾸고, 각 ID에 대응하는 벡터에 문맥을 반영한다. 마지막에는 가능한 다음 토큰마다 점수를 계산한다. **모델이 점수를 만드는 과정과, 그 점수로 토큰을 고르는 과정**을 함께 거쳐야 문장이 이어진다.
 
-아래 그림은 같은 예문을 끝까지 따라간다. **토큰 분할과 숫자는 교육용 가상 예시**이며, Llama의 실제 tokenizer 출력이나 예측 결과는 아니다.
+아래 그림은 한 번의 생성 과정을 보여준다. 토큰 분할·ID·벡터·logits는 교육용 가상 값이며, Llama의 실제 실행 결과는 아니다. `␠`는 공백을 나타낸다.
 
 <figure>
 <svg viewBox="0 0 560 850" role="img" aria-label="오늘 부산의 날씨는이라는 입력이 가상 토큰 ID 17, 42, 9, 83, 11로 변환된다. 각 ID로 임베딩 행을 조회하고 decoder 32개와 최종 RMSNorm을 통과한다. 마지막 위치의 벡터를 LM head에 넣어 logits를 얻고 softmax로 확률을 만든다. 세 후보뿐인 교육용 출력 예에서 맑을 고르면 ID 21을 기존 ID 열에 추가한다. 분할과 수치는 실제 Llama 실행 결과가 아니다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -41,7 +41,7 @@ order: 0
 <text x="280" y="342" font-size="12" text-anchor="middle" fill="#0f172a">5개 토큰 × 4,096개 성분 = X의 모양 5 × 4,096</text>
 <path d="M280 356 V380" fill="none" stroke="#0f172a"/><polygon points="280,385 276,378 284,378" fill="#0f172a"/>
 <rect x="24" y="385" width="512" height="79" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="40" y="409" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">3. Decoder 블록 × 32 → 최종 RMSNorm</text>
+<text x="40" y="409" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">3. Decoder 스택 → 최종 정규화</text>
 <text x="40" y="432" font-size="13" text-anchor="start" fill="#0f172a">각 토큰의 벡터에 앞선 문맥을 반영</text>
 <text x="40" y="451" font-size="12" text-anchor="start" fill="#0f172a">마지막 위치 “는”의 벡터 h₅를 사용 (4,096개 성분)</text>
 <path d="M280 464 V488" fill="none" stroke="#0f172a"/><polygon points="280,493 276,486 284,486" fill="#0f172a"/>
@@ -71,16 +71,34 @@ order: 0
 <text x="280" y="745" font-size="17" text-anchor="middle" fill="#0f172a">[17, 42, 9, 83, 11, 21]</text>
 <text x="280" y="773" font-size="13" text-anchor="middle" fill="#0f172a">문자열로 decode하면 “오늘 부산의 날씨는 맑”</text>
 <text x="280" y="816" font-size="13" text-anchor="middle" fill="#0f172a">늘어난 ID 열을 조건으로 다음 토큰을 다시 예측</text>
-<text x="280" y="836" font-size="11" text-anchor="middle" fill="#64748b">반복 시 이전 계산은 KV cache로 재사용할 수 있다</text>
+<text x="280" y="836" font-size="11" text-anchor="middle" fill="#64748b"></text>
 </svg>
 <figcaption>기존 예문으로 구성한 생성 흐름. ␠는 공백이다. 토큰 분할·ID·벡터·logits는 설명용 가상 값이며, 시작 토큰은 생략했다. 차원과 블록 수는 Llama 3 8B 기준이다. 실제 출력은 128,256개 후보에 대한 분포이며, 그림의 세 후보 확률은 실제 분포의 일부를 발췌한 값이 아니다.</figcaption>
 </figure>
 
-모델이 출력하는 것은 **가능한 다음 토큰들의 점수**다. 그중 하나를 고르는 규칙까지 적용해야 실제 생성 결과를 얻는다. 문장을 완성하려면 이 과정을 여러 번 반복한다.
+그림의 앞부분에서는 문자열이 숫자로 바뀌고, 중간에서는 문맥을 반영한 벡터가 만들어지며, 끝에서는 다시 출력할 토큰을 고른다. 이제 이 순서대로 모델 내부를 살펴보자.
 
-### 1-1. Llama 3 8B
+## 2. 모델 내부 계산
 
-기준 모델은 <strong>Llama 3 8B base(2024년 4월 공개)</strong>다. 이후 Llama 3.1과 혼동하지 않도록 이 노트의 context 길이는 8,192로 고정한다. 층 수와 차원은 보고서의 Table 3, vocabulary와 special token 처리는 공식 구현을 참고한다.[^llama][^implementation]
+### 2-1. Token ID와 embedding
+
+Tokenizer는 어휘 집합(vocabulary)과 분할 규칙을 이용해 문자열을 정수 ID 열로 바꾼다. 도입 예문에서는 `[17, 42, 9, 83, 11]`이다. 임베딩(embedding)은 그 ID에 대응하는 실수 벡터를 제공한다. ID 42는 테이블의 행 번호일 뿐, ID 17보다 의미가 크거나 강하다는 뜻이 아니다.
+
+이 노트의 기준 모델은 <strong>Llama 3 8B base(2024년 4월 공개)</strong>다. Vocabulary 크기는 $V=128{,}256$, 벡터 차원은 $d=4{,}096$이다. 모델 규모는 Llama 3 보고서의 Table 3과 공식 구현을 따른다.[^llama][^implementation]
+
+$$
+E\in\mathbb{R}^{V\times d},\qquad x_i=E_{t_i},\qquad X\in\mathbb{R}^{n\times d}
+$$
+
+$n$은 입력 토큰 수다. 예문의 다섯 ID로 다섯 행을 조회하면 $5\times4096$ 행렬 $X$가 된다. 같은 ID는 처음에 같은 embedding을 받지만, decoder를 통과한 뒤에는 앞선 문맥에 따라 다른 표현을 갖게 된다.
+
+여기서는 tokenizer가 정해져 있다고 둔다. Vocabulary와 병합 규칙의 학습, 어휘 크기의 선택, 처음 보는 문자열의 처리는 [다음 Tokenizer 노트](/lecture/2026f-advanced-deep-learning/02b-tokenizer/)에서 다룬다.
+
+이후 그림과 수식에서는 배치(batch) 차원을 생략한다. 여러 입력을 한 번에 처리할 때에는 대부분의 텐서 앞에 batch 크기 $B$가 붙는다.
+
+### 2-2. Llama 3 8B 구조
+
+임베딩 행렬은 32개의 decoder 블록을 차례로 통과한다. 각 블록의 구조는 같지만 가중치는 별개다. 블록을 지나는 동안 $n\times d$라는 모양은 유지되고, 마지막 LM(language model) head에서 각 토큰의 벡터가 vocabulary 전체의 점수로 바뀐다.
 
 <figure>
 <svg viewBox="0 0 560 574" role="img" aria-label="Llama 3 8B 전체 구조. n개의 토큰 ID를 embedding으로 n 곱하기 4096 행렬로 변환한다. 서로 다른 가중치를 가진 decoder 블록 32개와 최종 RMSNorm을 거쳐 LM head가 n 곱하기 128256 logits를 만든다. 각 블록에는 query head 32개와 key-value head 8개의 GQA, query와 key에 적용하는 RoPE, 중간 차원 14336의 SwiGLU FFN이 있다. 배치 차원은 생략했다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -126,42 +144,16 @@ order: 0
 <text x="328" y="473" font-size="12" text-anchor="start" fill="#0f172a">입력 embedding과</text>
 <text x="328" y="492" font-size="12" text-anchor="start" fill="#0f172a">출력 head는 가중치 미공유</text>
 </svg>
-<figcaption>Meta의 Llama 3 공식 구현을 바탕으로 구성한 전체 구조도. 배치 차원은 생략했다. SwiGLU의 두 입력 투영 경로는 차원 변화로 요약했으며, 블록 내부의 연산과 residual 경로는 §2에서 확대해 본다.</figcaption>
+<figcaption>Meta의 Llama 3 공식 구현을 바탕으로 구성한 전체 구조도. 배치 차원은 생략했다. SwiGLU의 두 입력 투영 경로는 차원 변화로 요약했으며, 블록 내부의 연산과 residual 경로는 §2-3에서 설명한다.</figcaption>
 </figure>
 
-| 기호 | 뜻 | 기준값 |
-|---|---|---|
-| $n$ | 현재 입력의 토큰 수 | 입력에 따라 달라짐 |
-| $V$ | special token을 포함한 vocabulary 크기 | 128,256 |
-| $d$ | hidden dimension | 4,096 |
-| $L$ | decoder 블록 수 | 32 |
-| $h_q$, $h_{kv}$ | query head 수, key–value head 수 | 32, 8 |
-| $d_h$ | head 하나의 차원 | 128 |
-| $d_{ff}$ | FFN 중간 차원 | 14,336 |
+이 노트에서 사용하는 원래 Llama 3 8B의 context 길이는 8,192토큰이다. 이후 Llama 3.1의 긴 context 설정과 구분한다.[^llama]
 
-배치(batch)는 한 번에 함께 처리하는 입력 묶음이다. 위 표에서는 배치 차원을 생략한다. 실제 학습에서는 여러 입력을 묶으므로 대부분의 텐서 앞에 batch 크기 $B$가 추가된다.
+### 2-3. 문맥과 벡터 변환
 
-### 1-2. ID와 embedding
+Decoder 블록 안에서는 attention과 FFN(feed-forward network)이 서로 다른 일을 한다. **Attention은 위치 사이의 정보를 섞고, FFN은 각 위치의 벡터를 변환한다.** Causal mask 때문에 각 위치는 자신과 앞선 위치만 참조한다. 예문의 마지막 “는”은 앞의 “오늘 부산의 날씨”를 반영할 수 있지만, 첫 “오늘”은 뒤쪽 토큰을 보지 못한다.
 
-도입의 예문 그림에서 tokenizer는 문자열을 `[17, 42, 9, 83, 11]`로 바꿨다. 이어서 embedding 테이블의 17·42·9·83·11번 행을 조회한다. **Tokenizer는 정수 ID를 정하고, embedding은 그 ID에 대응하는 실수 벡터를 제공한다.**
-
-정수 42는 의미의 크기가 아니다. ID 42가 ID 17보다 “더 부산답다”는 관계도 없다. ID는 테이블의 행 번호이고, 학습되는 값은 그 행에 저장된 실수 벡터다.
-
-$$
-E\in\mathbb{R}^{V\times d},\qquad x_i=E_{t_i},\qquad X\in\mathbb{R}^{n\times d}
-$$
-
-위 예에서는 다섯 행을 꺼내 $5\times4096$ 행렬을 만든다. 같은 토큰은 처음에 같은 embedding을 받지만, decoder를 통과한 뒤의 표현은 주변 문맥에 따라 달라진다. “은행에서 대출”의 은행과 “은행나무 잎”의 은행을 구분하는 일은 ID의 숫자 크기가 해 주지 않는다.
-
-여기서는 tokenizer가 정해져 있다고 두고 모델의 계산을 따라간다. Vocabulary와 분할 규칙을 학습하는 방법, 어휘 크기의 선택, 처음 보는 문자열의 처리는 [다음 Tokenizer 노트](/lecture/2026f-advanced-deep-learning/02b-tokenizer/)에서 다룬다.
-
-## 2. Decoder 블록
-
-### 2-1. Causal attention과 residual
-
-각 위치는 causal self-attention을 통해 자신과 앞선 위치를 참조한다. 마지막 위치 “는”의 표현에는 앞의 “오늘 부산의 날씨”가 반영될 수 있다. 반면 “오늘” 위치는 뒤의 “부산”을 보지 못한다. 이 제한 덕분에 학습 중 다음 토큰의 정답을 미리 읽지 않는다.
-
-Llama 블록은 다음 두 단계를 residual connection으로 연결한다. RMSNorm(root mean square normalization)은 벡터의 크기를 조절하고, attention은 위치 사이의 정보를 섞으며, FFN(feed-forward network)은 각 위치의 표현을 변환한다.[^llama]
+Llama는 각 연산 전에 RMSNorm(root mean square normalization)으로 벡터의 크기를 정규화한다. 연산 결과를 원래 입력에 더하는 경로가 잔차 연결(residual connection)이다. 블록 하나의 입력을 $X$, 중간 결과를 $A$, 출력을 $Y$라고 하면 다음과 같다.[^implementation]
 
 $$
 A=X+\operatorname{Attn}(\operatorname{RMSNorm}(X))
@@ -171,63 +163,17 @@ $$
 Y=A+\operatorname{FFN}(\operatorname{RMSNorm}(A))
 $$
 
-<svg viewBox="0 0 460 450" role="img" aria-label="Llama 3 디코더 블록 하나의 구조. 입력 X 가 두 하위 블록을 지난다. 첫째 하위 블록은 RMSNorm 다음 causal GQA attention, 그 출력을 입력 X 에 더한다(residual). 둘째 하위 블록은 RMSNorm 다음 SwiGLU FFN, 그 출력을 다시 더한다. 결과 Y 는 같은 구조의 블록 32개 중 다음 블록으로 들어간다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
-  <text x="230" y="20" text-anchor="middle" font-size="12" fill="#0f172a">입력  X</text>
-  <line x1="230" y1="26" x2="230" y2="44" stroke="#0f172a"/>
-  <path d="M230 34 L60 34 L60 176 L207 176" stroke="#94a3b8" fill="none"/>
-  <text x="66" y="115" font-size="10" fill="#64748b" transform="rotate(-90 66 115)" text-anchor="middle">residual</text>
-  <path d="M230 210 L40 210 L40 360 L207 360" stroke="#94a3b8" fill="none"/>
-  <rect x="130" y="44" width="200" height="32" fill="#f8fafc" stroke="#0f172a"/>
-  <text x="230" y="64" text-anchor="middle" font-size="12" fill="#0f172a">RMSNorm</text>
-  <line x1="230" y1="76" x2="230" y2="94" stroke="#0f172a"/>
-  <polygon points="230,94 226,86 234,86" fill="#0f172a"/>
-  <rect x="130" y="94" width="200" height="38" fill="#e2e8f0" stroke="#0f172a"/>
-  <text x="230" y="117" text-anchor="middle" font-size="12" fill="#0f172a">causal GQA attention</text>
-  <line x1="230" y1="132" x2="230" y2="159" stroke="#0f172a"/>
-  <polygon points="230,159 226,151 234,151" fill="#0f172a"/>
-  <circle cx="230" cy="176" r="15" fill="#f8fafc" stroke="#0f172a"/>
-  <text x="230" y="181" text-anchor="middle" font-size="15" fill="#0f172a">+</text>
-  <polygon points="215,176 207,172 207,180" fill="#94a3b8"/>
-  <line x1="230" y1="191" x2="230" y2="228" stroke="#0f172a"/>
-  <polygon points="230,228 226,220 234,220" fill="#0f172a"/>
-  <text x="246" y="213" font-size="11" fill="#64748b">A</text>
-  <rect x="130" y="228" width="200" height="32" fill="#f8fafc" stroke="#0f172a"/>
-  <text x="230" y="248" text-anchor="middle" font-size="12" fill="#0f172a">RMSNorm</text>
-  <line x1="230" y1="260" x2="230" y2="278" stroke="#0f172a"/>
-  <polygon points="230,278 226,270 234,270" fill="#0f172a"/>
-  <rect x="130" y="278" width="200" height="38" fill="#e2e8f0" stroke="#0f172a"/>
-  <text x="230" y="301" text-anchor="middle" font-size="12" fill="#0f172a">SwiGLU FFN</text>
-  <line x1="230" y1="316" x2="230" y2="343" stroke="#0f172a"/>
-  <polygon points="230,343 226,335 234,335" fill="#0f172a"/>
-  <circle cx="230" cy="360" r="15" fill="#f8fafc" stroke="#0f172a"/>
-  <text x="230" y="365" text-anchor="middle" font-size="15" fill="#0f172a">+</text>
-  <polygon points="215,360 207,356 207,364" fill="#94a3b8"/>
-  <line x1="230" y1="375" x2="230" y2="400" stroke="#0f172a"/>
-  <polygon points="230,400 226,392 234,392" fill="#0f172a"/>
-  <text x="230" y="420" text-anchor="middle" font-size="12" fill="#0f172a">출력  Y   →   다음 블록</text>
-  <text x="230" y="438" text-anchor="middle" font-size="11" fill="#64748b">같은 구조의 블록 L = 32 개</text>
-</svg>
+더하는 두 행렬의 모양이 같아야 하므로 attention과 FFN은 각각 $n\times d$ 형태로 결과를 돌려준다. 전체 구조도에 표시한 부품들은 이 두 연산을 구체화한다.
 
-*Llama 3 공식 구현을 바탕으로 이 노트에서 구성한 블록 도식. X·A·Y는 위 수식과 같은 행렬이며, 각 단계에서 모양은 n × d로 유지된다.*
+- **GQA(grouped-query attention):** 여러 query head가 key–value head를 공유한다. Llama 3 8B에서는 query head 4개가 한 쌍의 key–value head를 공유한다.
+- **RoPE(rotary position embedding):** 각 층의 query와 key에 위치에 따른 회전을 적용해 위치 관계를 반영한다.
+- **SwiGLU(Swish-gated linear unit):** FFN의 두 입력 투영 중 한 경로에 활성화 함수를 적용하고, 다른 경로와 원소별로 곱한 뒤 출력 차원으로 투영한다.
 
-그림의 각 블록이 끝나도 텐서의 모양은 $n\times d$다. 같은 모양을 유지하므로 이 구조를 여러 층 쌓을 수 있다. Llama 3 8B에서는 32번 반복한다.
+여기서는 각 부품의 역할까지 이해하면 된다. RoPE·GQA·SwiGLU의 세부 연산은 3주차에서 다룬다.
 
-### 2-2. Llama의 구성 요소
+### 2-4. Logits와 확률
 
-| 부품 | 이 노트에서 알아둘 역할 |
-|---|---|
-| RoPE(rotary position embedding) | 각 층의 query와 key에 위치에 따른 회전을 적용해 위치 관계를 반영한다. |
-| GQA(grouped-query attention) | 여러 query head가 key–value head를 공유한다. 기준 모델은 4개 query head가 한 쌍을 공유한다. |
-| SwiGLU(Swish-gated linear unit) | FFN의 한 경로가 다른 경로의 값을 곱셈으로 조절하는 gated 변환이다. |
-| Residual connection | 원래 표현에 계산한 변화를 더한다. |
-
-RoPE를 썼다고 학습한 길이 밖에서 자동으로 정확해지는 것은 아니다. 긴 context에서의 동작은 학습 데이터와 위치 처리 방식까지 함께 확인해야 한다. 각 부품의 상세 연산은 3주차의 구조 분석에서 다룬다.
-
-## 3. 다음 토큰 생성
-
-### 3-1. LM head와 확률 분포
-
-마지막 decoder 출력에 최종 RMSNorm을 적용한 결과를 $H$라고 하자. LM(language model) head는 hidden dimension을 vocabulary dimension으로 바꾼다.
+마지막 decoder 출력에 최종 RMSNorm을 적용한 결과를 $H$라고 하자. LM head는 hidden dimension $d$를 vocabulary dimension $V$로 바꾸는 선형 변환이다.
 
 $$
 H\in\mathbb{R}^{n\times d},\qquad
@@ -235,45 +181,56 @@ W_{LM}\in\mathbb{R}^{d\times V},\qquad
 Z=HW_{LM}\in\mathbb{R}^{n\times V}
 $$
 
-수식의 행·열 번호는 1부터 세며, 구현에서는 보통 0부터 센다. $Z$의 $i$번째 행은 입력의 $i$번째 토큰까지 읽었을 때 **그다음 토큰**의 점수다. 이를 logits라고 한다. 모든 위치에 점수가 있지만, 현재 입력 뒤를 잇는 데에는 마지막 행 $z=Z_n$을 사용한다.
+$Z$의 $i$번째 행은 입력의 $i$번째 토큰까지 읽었을 때 **그다음 토큰**의 점수다. 이 점수를 logits라고 한다. 현재 입력 뒤를 잇는 데에는 마지막 행 $z=Z_n$을 사용한다. 수식의 행 번호는 1부터 세며, 구현에서는 보통 0부터 센다.
+
+Softmax는 logits를 합이 1인 확률 분포로 바꾼다.
 
 $$
 p(v\mid t_{1:n})=\frac{\exp(z_v)}{\sum_{u=1}^{V}\exp(z_u)}
 $$
 
-도입 그림의 세 후보 예에서는 logits $[2,1,0]$을 softmax로 바꾸면 약 $[0.665,0.245,0.090]$이 된다. Logit은 확률이 되기 전의 점수이고, softmax 결과는 합이 1인 분포다. 실제 모델에서는 세 후보가 아니라 vocabulary 전체에 대해 계산한다.
+도입 그림의 세 후보 예에서는 $[2,1,0]$이 약 $[0.665,0.245,0.090]$이 된다. 실제 모델에서는 vocabulary 전체에 대해 계산한다. 이 분포를 얻는 것까지가 한 번의 예측이고, 어떤 토큰을 선택할지는 다음 단계에서 정한다.
 
-입력 embedding과 LM head는 모양이 전치(transpose) 관계라 가중치를 공유하는 weight tying도 가능하다. 하지만 여기서 기준으로 삼은 Llama는 별도 가중치를 쓴다. 모든 decoder-only 모델의 세부 구성이 같지는 않다.[^implementation]
+입력 embedding과 LM head는 모양이 전치(transpose) 관계여서 가중치를 공유하는 weight tying도 가능하다. 기준 모델인 Llama 3는 그림처럼 별도 가중치를 쓴다.[^implementation]
 
-### 3-2. Sampling과 생성 루프
+## 3. 토큰 선택과 반복 생성
 
-Decoding은 모델이 만든 점수를 실제 출력으로 바꾸는 절차다. 가장 높은 점수만 고르는 greedy decoding과, 확률적으로 고르는 sampling이 있다. Temperature $T>0$는 softmax 전에 logits를 나누어 분포의 집중도를 조절한다.
+### 3-1. Greedy와 sampling
+
+가장 높은 점수의 토큰을 고르는 방식이 greedy decoding이고, 확률에 따라 뽑는 방식이 sampling이다. 도입 예문에서 greedy는 `␠맑`을 고른다. Sampling은 같은 모델 출력에서도 `␠흐`나 `␠비`를 고를 수 있다.
+
+Temperature $T>0$는 softmax 전에 logits를 나누어 분포의 집중도를 조절한다.
 
 $$
 p_T(v)=\frac{\exp(z_v/T)}{\sum_u\exp(z_u/T)}
 $$
 
-$T$가 작을수록 큰 logit에 확률이 집중된다. $T=0$을 위 식에 대입하지는 않는다. 구현에서 temperature 0을 greedy 선택의 의미로 받는 경우가 있다. Top-k는 상위 $k$개, top-p는 누적 확률이 기준에 도달하는 최소 후보 집합을 남겨 확률의 합이 1이 되도록 다시 정규화(renormalization)한다.[^nucleus]
+$T$가 작을수록 큰 logit에 확률이 집중된다. $T=0$을 이 식에 대입하지는 않는다. 구현에서 temperature 0을 greedy 선택의 의미로 받는 경우가 있다. Top-k는 상위 $k$개, top-p는 누적 확률이 기준에 도달하는 최소 후보 집합을 남기고 확률의 합이 1이 되도록 다시 정규화(renormalization)한다.[^nucleus]
 
-가상 예제에서 `␠맑`을 선택했다면 입력은 다음처럼 늘어난다.
+### 3-2. 생성 루프
+
+선택한 token ID를 기존 ID 열 뒤에 붙이면 다음 예측의 조건이 된다. 도입 예문은 이후 다음처럼 이어질 수 있다.
 
 ```
-오늘 부산의 날씨는         → ␠맑
-오늘 부산의 날씨는 맑      → 습니다
+오늘 부산의 날씨는 맑       → 습니다
 오늘 부산의 날씨는 맑습니다 → 종료 토큰
 ```
 
-이 역시 계산 순서를 설명하기 위한 가상 분할이다. 실제 문자열의 띄어쓰기는 tokenizer가 표현하는 바이트열에 따라 복원된다. 한 토큰이 항상 한 단어나 완성된 글자인 것은 아니다.
+이 분할과 출력도 교육용 예시다. 실제 문자열은 ID에 대응하는 바이트 조각을 이어 붙여 복원하며, 한 토큰이 항상 한 단어나 완성된 글자인 것은 아니다.
 
-생성한 token ID를 기존 ID 열 뒤에 붙이고 다음 분포를 계산한다. 정해진 종료 토큰이나 길이 제한에 도달하면 멈춘다. 효율적인 구현에서는 과거 위치의 key와 value를 KV(key–value) cache에 보관해 재사용한다. 캐시가 바꾸는 것은 계산의 재사용 방식이며, causal LM의 예측 목표는 그대로다.
+정해진 종료 토큰이나 길이 제한에 도달하면 생성을 멈춘다. 효율적인 구현에서는 과거 위치의 key와 value를 KV(key–value) cache에 보관해 재사용한다. 캐시는 이전 계산을 반복하는 비용을 줄이며, 새로 선택한 토큰을 조건에 추가한다는 원리는 같다.
 
-### 3-3. 학습과 생성의 차이
+## 4. 학습과 생성의 차이
 
-학습 데이터에서는 뒤에 실제로 어떤 토큰이 왔는지 이미 안다. 따라서 마지막 위치만 사용하는 대신, 여러 위치의 logits를 각각 다음 토큰의 정답과 비교할 수 있다.
+생성에서는 내가 고른 토큰을 다음 입력에 추가한다. 학습 데이터에서는 실제로 뒤에 어떤 토큰이 왔는지 이미 알기 때문에, **여러 위치의 logits를 각각 다음 토큰 정답과 비교**할 수 있다.
 
-입력마다 forward를 따로 실행할 필요는 없다. Causal mask를 적용한 한 번의 forward에서 각 행이 서로 다른 prefix를 읽는다. 이렇게 실제 앞선 토큰을 조건으로 주는 학습 방식을 teacher forcing이라고 한다.
+| | 학습 | 생성 |
+|---|---|---|
+| 앞선 토큰 | 데이터에 있는 실제 토큰 | 프롬프트와 모델이 선택한 토큰 |
+| 사용하는 출력 | 정답이 있는 여러 위치의 logits | 현재 입력의 마지막 위치 logits |
+| 계산 순서 | Causal mask 아래 여러 위치를 한 forward에서 계산 | 새 토큰을 선택한 뒤 다음 단계 계산 |
 
-생성에서는 내가 고른 토큰이 다음 입력이 된다. 학습에서는 데이터의 토큰이 다음 입력이 된다. 따라서 학습은 여러 위치를 한 번에 채점할 수 있지만, 생성은 앞에서 선택한 새 토큰에 의존한다. 이 계산의 출발점인 입력 ID의 단위와 길이는 tokenizer가 결정한다.
+실제 앞선 토큰을 조건으로 주는 학습 방식을 teacher forcing이라고 한다. 같은 causal LM이지만, 학습에서는 정답 시퀀스를 알고 있고 생성에서는 새 토큰을 하나씩 결정한다는 차이다. 다음 노트는 이 계산의 출발점인 token ID가 어떻게 정해지는지 살펴본다.
 
 <Details summary="보충 영상: 입력 벡터에서 출력 확률까지">
 
