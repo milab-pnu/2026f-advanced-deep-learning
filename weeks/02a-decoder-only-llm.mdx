@@ -207,6 +207,8 @@ $$
 
 $T$가 작을수록 큰 logit에 확률이 집중된다. $T=0$을 이 식에 대입하지는 않는다. 구현에서 temperature 0을 greedy 선택의 의미로 받는 경우가 있다. Top-k는 상위 $k$개, top-p는 누적 확률이 기준에 도달하는 최소 후보 집합을 남기고 확률의 합이 1이 되도록 다시 정규화(renormalization)한다.[^nucleus]
 
+실제 생성에서는 temperature·top-k·top-p 등 여러 sampling parameter로 토큰 선택 방식을 조절한다. 여기서는 같은 모델의 출력도 선택 규칙에 따라 달라질 수 있다는 점을 이해하면 된다. 각 parameter의 구체적인 설정과 생성 결과에 미치는 영향은 6주차 inference에서 살펴본다.
+
 ### 3-2. 생성 루프
 
 선택한 token ID를 기존 ID 열 뒤에 붙이면 다음 예측의 조건이 된다. 도입 예문은 이후 다음처럼 이어질 수 있다.
