@@ -11,11 +11,11 @@ order: 2
 Transformer 블록의 self-attention 은 $Q K^\top$ 행렬의 어느 성분을 살리고 어느 성분을
 $-\infty$ 로 덮느냐에 따라 두 가지로 갈린다.
 
-- **양방향(bidirectional) attention** — mask 없음. 위치 $i$ 가 문장의 **모든** 위치를
-  본다. 전체 입력의 문맥을 활용한다. 이 상태로 바로 다음 토큰을 정답으로 삼으면 정답을 입력에서 본 셈이므로, BERT는 입력을 일부 손상시키는 별도 학습 목표를 쓴다 — **BERT 계열**.
-- **인과(causal) attention** — causal mask. 위치 $i$ 는 $j \le i$ 만 본다. 위치 $i$ 의
+- **양방향(bidirectional) attention**: mask 없음. 위치 $i$ 가 문장의 **모든** 위치를
+  본다. 전체 입력의 문맥을 활용한다. 이 상태로 바로 다음 토큰을 정답으로 삼으면 정답을 입력에서 본 셈이므로, BERT는 입력을 일부 손상시키는 별도 학습 목표를 쓴다. **BERT 계열**의 방식이다.
+- **인과(causal) attention**: causal mask. 위치 $i$ 는 $j \le i$ 만 본다. 위치 $i$ 의
   표현은 "지금까지 본 것"만 담으므로 그 자리에서 다음 토큰 $x_{i+1}$ 을 예측하는 것이
-  잘 정의된다. 생성(generation)에 유리 — **GPT 계열**.
+  잘 정의된다. **GPT 계열**이 생성(generation)에 쓰는 방식이다.
 
 <svg viewBox="0 0 460 220" role="img" aria-label="양방향 attention mask 와 causal attention mask 비교. 왼쪽은 5x5 격자가 모두 채워져 있고, 오른쪽은 하삼각만 채워져 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <text x="90" y="24" text-anchor="middle" font-size="14" fill="#0f172a">bidirectional (encoder)</text>
@@ -43,15 +43,15 @@ $-\infty$ 로 덮느냐에 따라 두 가지로 갈린다.
 행 = query 위치 $i$, 열 = key 위치 $j$. 채워진 칸이 attention 이 허용된 쌍이다.
 
 왜 한쪽은 **encoder**, 다른 쪽은 **decoder** 라 부르나. 원 Transformer(§1a)에는 스택이
-둘이었다 — 입력 문장을 양방향으로 **읽어 표현으로 바꾸는** encoder, 그 표현을 참조해
+둘이었다: 입력 문장을 양방향으로 **읽어 표현으로 바꾸는** encoder, 그 표현을 참조해
 출력을 왼쪽에서 오른쪽으로 **써 나가는** decoder. "읽기"에는 mask 가 필요 없고, "쓰기"
 에는 causal mask 가 필요하다. 두 계열은 이 스택을 하나씩 떼어 온 것이다:
 
-- **BERT = encoder-only** — §1a 의 블록(self-attention + FFN)을 mask 없이 쌓은 것. 원
+- **BERT = encoder-only**: §1a 의 블록(self-attention + FFN)을 mask 없이 쌓은 것. 원
   Transformer 의 encoder 스택 그대로다.
-- **GPT = decoder-only** — 같은 블록에 causal mask 를 건 것. 원 Transformer 의 decoder
+- **GPT = decoder-only**: 같은 블록에 causal mask 를 건 것. 원 Transformer 의 decoder
   블록에는 encoder 를 들여다보는 sub-layer(encoder–decoder attention)가 하나 더 있지만,
-  GPT는 참조할 encoder가 없으므로 cross-attention sub-layer를 뺀다 — 그러면 encoder 블록과 **causal mask
+  GPT는 참조할 encoder가 없으므로 cross-attention sub-layer를 뺀다. 그러면 encoder 블록과 **causal mask
   하나로만** 갈린다.
 
 여기서는 mask의 효과를 비교하기 위해 블록의 공통 골격을 놓고 본다. 실제 모델은 출력층 외에도 정규화(normalization) 위치, 활성화 함수(activation function), 위치 표현 등이 다를 수 있다. 그림의 잔차 연결(residual connection)은 sub-layer의 입력을 출력에 더하는 경로다. 아래 그림은 그러한 구현 차이를 생략한 비교다.
@@ -101,7 +101,7 @@ $-\infty$ 로 덮느냐에 따라 두 가지로 갈린다.
 그래서 **encoder 를 쌓는다** = 매 층에서 각 토큰이 좌·우 문맥을 함께 흡수해 표현이 점점
 정교해지고, 마지막에 그 표현 위에 분류기 같은 얇은 층을 얹는다. **decoder 를 쌓는다** =
 매 층에서 각 토큰이 왼쪽 문맥만 반영한 표현을 만들고, 마지막 위치의 표현이 곧 "다음에
-올 토큰"의 예측이 된다 — 그걸 이어 붙이면 생성이다. 층을 아무리 쌓아도 이 성격은
+올 토큰"의 예측이 된다. 그걸 이어 붙이면 생성이다. 층을 아무리 쌓아도 이 성격은
 그대로다.
 
 ## 2. BERT
@@ -109,7 +109,7 @@ $-\infty$ 로 덮느냐에 따라 두 가지로 갈린다.
 BERT(Bidirectional Encoder Representations from Transformers)[^bert] 는 §1a 의 블록을
 mask 없이 쌓은 **encoder-only** 스택이다(BERT-base: 12층, $d_{\text{model}} = 768$,
 12 head, 110M 파라미터). 각 위치가 문장 전체를 보므로 표현은 풍부하지만, 그 대가로 "다음 토큰"
-이라는 학습 목표를 쓸 수 없다 — 예측해야 할 토큰까지 이미 입력에서 봐 버리기 때문이다.
+이라는 학습 목표를 쓸 수 없다. 예측해야 할 토큰까지 이미 입력에서 봐 버리기 때문이다.
 그래서 BERT 는 다른 학습 과제를 만든다.
 
 ### 2-1. MLM
@@ -128,18 +128,18 @@ mask 없이 쌓은 **encoder-only** 스택이다(BERT-base: 12층, $d_{\text{mod
 <Figure
   src="https://jalammar.github.io/images/BERT-language-modeling-masked-lm.png"
   alt="문장의 한 토큰을 [MASK] 로 가린 뒤 BERT encoder 스택을 통과시키고, 그 자리의 최종 출력 벡터에 얇은 층(FFNN + softmax)을 얹어 vocabulary 전체에 대한 확률로 원래 토큰을 맞히는 그림."
-  caption="MLM — 가려진 자리의 최종 표현으로 vocabulary 전체에서 원래 토큰을 분류한다. 예측 대상으로 선택되지 않은 위치에는 MLM 손실을 걸지 않는다."
+  caption="MLM: 가려진 자리의 최종 표현으로 vocabulary 전체에서 원래 토큰을 분류한다. 예측 대상으로 선택되지 않은 위치에는 MLM 손실을 걸지 않는다."
   source="Jay Alammar, The Illustrated BERT, ELMo, and co. (jalammar.github.io, 2018) · CC BY-NC-SA 4.0 · 수정 없음" />
 
 가리는 방법에는 사연이 있다. 매번 특수 토큰 `[MASK]` 로만 바꾸면, 모델은 `[MASK]` 가
 보이는 자리에서만 예측을 준비하게 된다. 그런데 정작 downstream 과제(분류·태깅 등)의
-입력에는 `[MASK]` 가 없다 — 학습 때만 보던 표식이 실전에서 사라지는 불일치다. 이를
+입력에는 `[MASK]` 가 없다. 학습 때만 보던 표식이 실전에서 사라지는 불일치다. 이를
 줄이려고, 고른 15% 를 이렇게 나눠 처리한다.
 
-- **80%** — `[MASK]` 로 바꾼다. 기본 케이스.
-- **10%** — 엉뚱한 임의 토큰으로 바꾼다. 모델은 "이 자리 단어가 문맥에 안 맞는다"를
+- **80%**: `[MASK]` 로 바꾼다. 기본 케이스.
+- **10%**: 엉뚱한 임의 토큰으로 바꾼다. 모델은 "이 자리 단어가 문맥에 안 맞는다"를
   알아채고 원래 토큰을 복원해야 한다.
-- **10%** — 그대로 둔다. 겉보기엔 멀쩡한 이 자리도 모델은 (원본인지 아닌지 모른 채)
+- **10%**: 그대로 둔다. 겉보기엔 멀쩡한 이 자리도 모델은 (원본인지 아닌지 모른 채)
   예측을 내야 한다.
 
 **선택한 15%에는 세 경우 모두 loss를 건다.** 토큰을 그대로 둔 위치에도 정답이 있고, 나머지 85%는 문맥으로 쓰되 MLM loss를 걸지 않는다. 따라서 “보이는 `[MASK]` 위치”와 “채점하는 위치”는 같지 않다.
@@ -164,7 +164,7 @@ encoder가 유용한 선택지다. 생성 루프 없이 한 번의 forward로 �
 ### 3-1. Next-token prediction
 
 GPT(Generative Pre-trained Transformer)[^gpt1] 는 §1에서 봤듯 원 Transformer 의 **decoder** 블록에서
-encoder–decoder attention(cross-attention)을 뺀 스택이다(GPT-1: 12층, 117M) — 참조할
+encoder–decoder attention(cross-attention)을 뺀 스택이다(GPT-1: 12층, 117M). 참조할
 encoder 가 없으니 masked self-attention 과 FFN 만 남는다. 사전학습의 기본 목표는 causal mask 아래의 **next-token prediction**이다:
 
 $$
@@ -172,16 +172,16 @@ $$
 $$
 
 문장 하나가 학습에서는 "위치마다 다음 토큰 맞히기" 문제로, 사용에서는 "뽑은 토큰을
-도로 이어 붙이기" 절차로 쓰인다 — 같은 모델, 같은 causal mask 다.
+도로 이어 붙이기" 절차로 쓰인다. 두 경우 모두 같은 모델과 causal mask를 사용한다.
 
 ```
-학습 (teacher forcing, 앞 노트 §3-2) — "고양이가 방석 위에 앉았다" 한 문장에서:
+학습 (teacher forcing, 앞 노트 §3-2): "고양이가 방석 위에 앉았다" 한 문장에서:
   고양이가              → 방석
   고양이가 방석          → 위에
   고양이가 방석 위에      → 앉았다
   세 예측을 causal mask 덕분에 한 번의 forward 로 병렬 채점한다.
 
-생성 — 프롬프트에서 시작해 뽑은 토큰을 도로 입력에 붙인다:
+생성: 프롬프트에서 시작해 뽑은 토큰을 도로 입력에 붙인다:
   1.  고양이가            → 방석
   2.  고양이가 방석        → 위에
   3.  고양이가 방석 위에    → 앉았다
@@ -191,26 +191,26 @@ $$
 
 다음 변화는 블록보다 **모델을 과제에 적용하는 방식**에서 두드러진다.
 
-- **GPT-1**[^gpt1] (2018) — generative pre-training + 과제별 discriminative
+- **GPT-1**[^gpt1] (2018): generative pre-training + 과제별 discriminative
   fine-tuning. 아직 BERT 와 같은 "불러와서 fine-tune" 틀.
-- **GPT-2**[^gpt2] (2019, 1.5B) — 더 크게, 더 많은 데이터(WebText). fine-tuning
+- **GPT-2**[^gpt2] (2019, 1.5B): 더 크게, 더 많은 데이터(WebText). fine-tuning
   없이 **zero-shot** 으로 여러 과제를 수행. "언어모델은 비지도 멀티태스크 학습기".
-- **GPT-3**[^gpt3] (2020, 175B) — **in-context learning**. 파라미터를 안 바꾸고,
+- **GPT-3**[^gpt3] (2020, 175B): **in-context learning**. 파라미터를 안 바꾸고,
   프롬프트에 예시 몇 개를 넣는 것(few-shot)만으로 과제를 수행. 이때부터 "모델을 과제에
   맞추는" 대신 "프롬프트로 과제를 지시하는" 방식이 널리 주목받았다. Fine-tuning과 prompting은 이후에도 함께 쓰인다.
 
 같은 감성 분류 과제를 두 방식으로 구성해 보자. 아래 문구와 정답은 절차를 설명하는 예시이며, 각 모델의 실제 출력이나 성능을 재현한 것은 아니다.
 
 ```
-GPT-1 — 라벨 데이터로 fine-tune 한 뒤 사용
+GPT-1: 라벨 데이터로 fine-tune 한 뒤 사용
   [학습]  ("이 영화 최고였다", 긍정) …수천 건으로 가중치를 갱신
   [사용]  이 영화 최고였다  → 긍정
 
-GPT-2 — 가중치 고정, 자연어 지시만으로 (zero-shot)
+GPT-2: 가중치 고정, 자연어 지시만으로 (zero-shot)
   리뷰: 이 영화 최고였다
   감정(긍정/부정):        → 긍정
 
-GPT-3 — 가중치 고정, 프롬프트에 예시 몇 개를 넣어 (few-shot, in-context learning)
+GPT-3: 가중치 고정, 프롬프트에 예시 몇 개를 넣어 (few-shot, in-context learning)
   리뷰: 시간이 아까웠다   감정: 부정
   리뷰: 연기가 훌륭했다   감정: 긍정
   리뷰: 이 영화 최고였다  감정:  → 긍정
@@ -234,7 +234,7 @@ GPT-1의 과제별 fine-tuning은 가중치를 갱신하고 분류 head를 사�
 번역·요약에 잘 맞는다("이 문장(입력)을 이 문장(출력)으로 바꿔라").
 
 대표가 **T5**[^t5] 다. T5 는 모든 과제를 "문자열 하나를 받아 문자열 하나를 내놓는다"로
-통일한다 — 번역도, 감성 분류도(출력이 `"positive"` 라는 단어), 문장 유사도도(출력이
+통일한다. 번역도, 감성 분류도(출력이 `"positive"` 라는 단어), 문장 유사도도(출력이
 `"3.8"` 이라는 숫자 문자열), 요약도 같은 틀이다.
 
 <svg viewBox="0 0 620 250" role="img" aria-label="T5 의 text-to-text 틀. 왼쪽에 서로 다른 과제 네 개가 모두 '과제 접두사 + 텍스트' 한 덩어리로 입력되어 가운데 T5 모델을 거쳐 오른쪽에 모두 텍스트 한 덩어리로 출력된다. 번역은 'translate English to German: That is good.' 이 들어가 'Das ist gut.' 이, 문법성 판단은 'cola sentence: ...' 가 들어가 'not acceptable' 이, 문장 유사도는 'stsb sentence1: ... sentence2: ...' 가 들어가 '3.8' 이, 요약은 'summarize: ...' 가 들어가 요약문이 나온다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -279,16 +279,16 @@ GPT-1의 과제별 fine-tuning은 가중치를 갱신하고 분류 head를 사�
 
 T5의 사전학습은 **span corruption**이다. 원문에서 짧은 토큰 구간(span) 몇 개를 무작위로
 고르고, **고른 구간을 통째로 특수 토큰 하나로 바꾼다.** 이 특수 토큰이 **sentinel**
-(자리표시 토큰)이다 — vocabulary 에 미리 넣어 둔, 뜻은 없고 "여기에 구간 하나가 빠졌다"
+(자리표시 토큰)이다. vocabulary 에 미리 넣어 둔, 뜻은 없고 "여기에 구간 하나가 빠졌다"
 만 표시하는 토큰이다. 빠진 구간이 여럿이면 첫째는 `<X>`, 둘째는 `<Y>`, … 로 서로 다른
 sentinel 을 붙인다.
 
-직관은 **번호 매긴 빈칸**이다. 빈칸이 여러 개인 시험지를 떠올리면 —
-`The __(1)__ sat on the __(2)__ .` — 빈칸마다 번호를 매기고, 답안지는 그 번호에 답을
+직관은 **번호 매긴 빈칸**이다. `The __(1)__ sat on the __(2)__ .`처럼
+빈칸마다 번호를 매긴 시험지를 떠올려 보자. 답안지는 그 번호에 답을
 짝지어 적는다: `(1) cat  (2) mat`. `<X>`·`<Y>` 가 그 번호다. **encoder 는 시험지를,
 decoder는 학습 때 한 칸 민 답안지를** 받는다. 번호가 있으니 decoder 는 빈칸이 여럿이어도 "어느 빈칸의
 답인지" 헷갈리지 않고 한 시퀀스에 이어 쓸 수 있다. 그리고 구간이 몇 토큰이든 sentinel
-은 하나 — 빈칸은 채울 말이 몇 마디든 빈칸 하나이므로. 덕분에 모델은 **답의 길이를 미리
+은 하나다. 채울 말이 몇 마디든 빈칸 하나로 표시하기 때문이다. 덕분에 모델은 **답의 길이를 미리
 못 듣고** 스스로 정해야 한다.
 
 아래 예에서는 `for inviting`과 `last` 두 구간을 골랐다. 설명을 위해 단어를 토큰처럼 표시하고 EOS(end-of-sequence)는 생략했다. `<X>`·`<Y>`·`<Z>`는 서로 다른 sentinel의 간단한 표기다.
@@ -299,8 +299,8 @@ encoder 입력:  Thank you <X> me to your party <Y> week .
 decoder 정답:  <X> for inviting <Y> last <Z>
 ```
 
-- **encoder 입력** — 고른 구간이 통째로 `<X>` / `<Y>` **한 토큰**으로 줄었다.
-- **decoder 정답** — sentinel 을 먼저 쓰고 그 자리에 있던 원래 토큰들을 잇는다: `<X>`
+- **encoder 입력**: 고른 구간이 통째로 `<X>` / `<Y>` **한 토큰**으로 줄었다.
+- **decoder 정답**: sentinel 을 먼저 쓰고 그 자리에 있던 원래 토큰들을 잇는다: `<X>`
   다음 `for inviting`, `<Y>` 다음 `last`, 마지막에 구간 복원의 끝을 표시하는 `<Z>`. 실제 시퀀스 종료 토큰 EOS와는 구분한다. sentinel 을 앞세우는
   것은 decoder 가 "지금 어느 구간을 채우는 중"인지 스스로 표시하기 위해서다.
 
@@ -313,14 +313,14 @@ decoder 정답:  <X> for inviting <Y> last <Z>
 
 **다른 점, 그리고 T5 가 이쪽을 고른 이유**:
 
-- **가리는 단위** — MLM 은 토큰 하나씩(`[MASK]`), span corruption 은 연속 구간을 통째로.
+- **가리는 단위**: MLM 은 토큰 하나씩(`[MASK]`), span corruption 은 연속 구간을 통째로.
   구간을 sentinel 하나로 접으면 빠진 길이가 안 드러나 모델이 "몇 토큰인지"까지 배운다.
-- **출력 형태** — MLM 은 가려진 자리에서 **제자리 분류**(입력 위치 ↔ 출력 위치가 1:1).
+- **출력 형태**: MLM 은 가려진 자리에서 **제자리 분류**(입력 위치 ↔ 출력 위치가 1:1).
   span corruption 은 decoder 가 **짧은 시퀀스를 생성**한다(빠진 조각만, 순서대로). 그래서
-  번역·요약·QA 에 바로 필요한 **생성 능력**을 사전학습에서 함께 기른다 — MLM 은 encoder
+  번역·요약·QA 에 바로 필요한 **생성 능력**을 사전학습에서 함께 기른다. MLM 은 encoder
   표현만 기르고 생성은 안 배운다.
-- **비용** — T5는 보통 원문 토큰의 약 15%를 제거하고, **빠진 토큰과 sentinel·EOS**를 target으로 만든다. 원문 전체를 다시 쓰게 하는 BART보다 decoder 시퀀스가 짧다.
-- **train/test 불일치** — MLM 의 `[MASK]` 는 downstream 입력에 안 나타나 80/10/10 로
+- **비용**: T5는 보통 원문 토큰의 약 15%를 제거하고, **빠진 토큰과 sentinel·EOS**를 target으로 만든다. 원문 전체를 다시 쓰게 하는 BART보다 decoder 시퀀스가 짧다.
+- **train/test 불일치**: MLM 의 `[MASK]` 는 downstream 입력에 안 나타나 80/10/10 로
   완화한다. T5는 사전학습과 미세조정 모두 text-to-text 인터페이스를 쓰지만, sentinel을 사용하는 사전학습과 실제 과제 입력의 차이까지 사라지는 것은 아니다.
 
 이 배선(손상 문장 → encoder, 정답 조각 → decoder)은 §1a 의 번역용 encoder–decoder 와
@@ -333,23 +333,22 @@ decoder 정답:  <X> for inviting <Y> last <Z>
 
 표의 `<s>`는 decoder 시작 입력의 개념 표기이며, T5 구현은 이 자리에 pad token을 사용한다.
 
-규칙은 하나다 — encoder 는 조건이 되는 문장을 통째로 받고, decoder 는 정답을 한 칸 민
+규칙은 하나다: encoder 는 조건이 되는 문장을 통째로 받고, decoder 는 정답을 한 칸 민
 것을 받아 "그 다음 토큰"을 위치마다 맞힌다.
 
 ### 4-3. Loss와 역전파
 
 Loss는 decoder의 정답 시퀀스에 대해 계산한다. GPT의 next-token loss와 같은 형태지만, T5 decoder는 encoder 표현에도 조건을 둔다. **직접 채점하는 출력이 없다고 encoder가 학습되지 않는 것은 아니다.** 역전파(backpropagation)를 통해 loss의 gradient가 decoder와 cross-attention을 거쳐 encoder로 전달되므로 두 스택이 함께 갱신된다.
 
-헷갈리기 쉬운 점 — encoder 스택과 decoder 스택은 **위아래로 쌓이지 않는다.** 나란히 선
-두 기둥이고, decoder 의 **모든 층**이 cross-attention 으로 encoder 의 **최종 출력**을
+Encoder와 decoder는 각각 별도 스택을 이룬다. Decoder의 **모든 층**이 cross-attention 으로 encoder 의 **최종 출력**을
 읽는다. encoder 층은 전부 양방향, decoder 층은 전부 causal(+ cross-attention)이다. 층을
 encoder 2 · decoder 2 로 줄여 손실과 그래디언트가 흐르는 길을 그리면:
 
-<svg viewBox="0 0 560 300" role="img" aria-label="encoder-decoder 한 네트워크에서 손실과 그래디언트가 흐르는 경로. 왼쪽은 encoder 스택(층 2개, 양방향 self-attention), 오른쪽은 decoder 스택(층 2개, causal self-attention 과 cross-attention). 손상된 입력은 encoder 로, 정답을 한 칸 민 문자열은 decoder 로 들어간다. 손실은 decoder 꼭대기 LM head 위 한 곳에만 있다. cross-attention 은 모든 decoder 층이 encoder 최종 출력을 읽는 연결이다. 그래디언트(점선)는 손실에서 출발해 decoder 를 내려오고 cross-attention 을 거쳐 encoder 까지 역전파된다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 560 300" role="img" aria-label="encoder-decoder 한 네트워크에서 손실과 그래디언트가 흐르는 경로. 왼쪽은 encoder 스택(층 2개, 양방향 self-attention), 오른쪽은 decoder 스택(층 2개, causal self-attention 과 cross-attention). 손상된 입력은 encoder 로, 정답을 한 칸 민 문자열은 decoder 로 들어간다. 손실은 decoder 출력의 토큰별 loss를 합산하거나 평균한다. cross-attention 은 모든 decoder 층이 encoder 최종 출력을 읽는 연결이다. 그래디언트(점선)는 decoder 2층과 1층 각각의 cross-attention에서 encoder 최종 출력으로 전달된다. 이 기여를 합산한 뒤 encoder 2층과 1층으로 역전파한다. 입력 상자는 임베딩 단계를 포함해 단순화했다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <text x="145" y="16" text-anchor="middle" font-size="10" font-weight="600" fill="#0f172a">encoder 스택</text>
   <text x="415" y="16" text-anchor="middle" font-size="10" font-weight="600" fill="#0f172a">decoder 스택</text>
   <rect x="40" y="216" width="210" height="30" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
-  <text x="145" y="230" text-anchor="middle" font-size="8" fill="#64748b">손상된 입력 → encoder</text>
+  <text x="145" y="230" text-anchor="middle" font-size="8" fill="#64748b">손상된 입력 · 임베딩</text>
   <text x="145" y="241" text-anchor="middle" font-size="7.5" fill="#0f172a">Thank you &lt;X&gt; me to your party &lt;Y&gt; week .</text>
   <rect x="40" y="160" width="210" height="44" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
   <text x="145" y="178" text-anchor="middle" font-size="9" fill="#0f172a">encoder 층 1</text>
@@ -358,7 +357,7 @@ encoder 2 · decoder 2 로 줄여 손실과 그래디언트가 흐르는 길을 
   <text x="145" y="122" text-anchor="middle" font-size="9" fill="#0f172a">encoder 층 2</text>
   <text x="145" y="136" text-anchor="middle" font-size="7.5" fill="#64748b">self-attention (양방향) · FFN</text>
   <rect x="310" y="216" width="210" height="30" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
-  <text x="415" y="230" text-anchor="middle" font-size="8" fill="#64748b">정답을 한 칸 민 것 → decoder</text>
+  <text x="415" y="230" text-anchor="middle" font-size="8" fill="#64748b">정답을 한 칸 민 입력 · 임베딩</text>
   <text x="415" y="241" text-anchor="middle" font-size="7.5" fill="#0f172a">&lt;s&gt; &lt;X&gt; for inviting &lt;Y&gt; last</text>
   <rect x="310" y="160" width="210" height="44" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
   <text x="415" y="176" text-anchor="middle" font-size="9" fill="#0f172a">decoder 층 1</text>
@@ -369,7 +368,7 @@ encoder 2 · decoder 2 로 줄여 손실과 그래디언트가 흐르는 길을 
   <rect x="310" y="64" width="210" height="28" rx="4" fill="#f8fafc" stroke="#0f172a"/>
   <text x="415" y="82" text-anchor="middle" font-size="8" fill="#0f172a">LM head → 다음 토큰 확률</text>
   <rect x="342" y="30" width="146" height="24" rx="4" fill="#0f172a"/>
-  <text x="415" y="46" text-anchor="middle" font-size="8.5" font-weight="600" fill="#f8fafc">손실 · 여기 한 곳뿐</text>
+  <text x="415" y="46" text-anchor="middle" font-size="8.5" font-weight="600" fill="#f8fafc">토큰별 loss의 합 또는 평균</text>
   <g stroke="#0f172a" fill="#0f172a">
     <line x1="138" y1="216" x2="138" y2="206"/><polygon points="138,203 135,209 141,209"/>
     <line x1="138" y1="160" x2="138" y2="150"/><polygon points="138,147 135,153 141,153"/>
@@ -389,6 +388,7 @@ encoder 2 · decoder 2 로 줄여 손실과 그래디언트가 흐르는 길을 
     <line x1="424" y1="148" x2="424" y2="158"/>
     <line x1="424" y1="204" x2="424" y2="214"/>
     <line x1="307" y1="132" x2="254" y2="132"/>
+    <line x1="307" y1="193" x2="255" y2="142"/>
     <line x1="152" y1="148" x2="152" y2="158"/>
     <line x1="152" y1="204" x2="152" y2="214"/>
   </g>
@@ -398,20 +398,21 @@ encoder 2 · decoder 2 로 줄여 손실과 그래디언트가 흐르는 길을 
     <polygon points="424,160 421,153 427,153"/>
     <polygon points="424,216 421,209 427,209"/>
     <polygon points="252,132 258,129 258,135"/>
+    <polygon points="252,139 259,142 255,146"/>
     <polygon points="152,160 149,153 155,153"/>
     <polygon points="152,216 149,209 155,209"/>
   </g>
   <text x="280" y="270" text-anchor="middle" font-size="8" fill="#64748b">실선 = 순전파(데이터) · 점선 = 역전파(그래디언트)</text>
-  <text x="280" y="284" text-anchor="middle" font-size="8" fill="#64748b">손실 → decoder → cross-attention → encoder 순으로 그래디언트가 흐른다</text>
+  <text x="280" y="284" text-anchor="middle" font-size="8" fill="#64748b">각 decoder 층 → encoder 최종 출력에서 gradient 합산 → encoder 아래층</text>
 </svg>
 
-순전파(forward pass, 실선)는 두 입력이 각자 기둥을 타고 올라가고, decoder 가 cross-attention 으로
-encoder 출력을 당겨 쓴 뒤 맨 위에서 예측·손실을 낸다. 역전파(backward pass, 점선)는 그 손실 **하나**에서
-출발해 같은 배선을 거꾸로 흐른다 — decoder 를 내려오다 cross-attention 지점에서 encoder
-로 건너가고, encoder 를 마저 내려간다. encoder 가중치는 이때 받는 그래디언트로만
-갱신된다. (실제 T5-base 는 encoder 12 · decoder 12 층.)
+순전파(forward pass, 실선)에서는 각 스택이 입력을 처리하고, **decoder 1층과 2층 모두 encoder의 최종 출력을 cross-attention의 key·value로 사용한다.** 그림은 두 층으로 단순화했으며, 실제 T5-base는 encoder와 decoder가 각각 12층이다.[^t5]
 
-**BART**[^bart] 는 같은 encoder–decoder 이되 입력을 더 다양하게 망가뜨린다 — 토큰을
+역전파(backward pass, 점선)는 토큰별 loss를 합산하거나 평균한 학습 loss에서 출발한다. Decoder 2층에서 gradient는 decoder 1층으로 내려가는 경로와, 자체 cross-attention을 통해 encoder 최종 출력으로 돌아가는 경로로 나뉜다. **Decoder 1층에서도 자체 cross-attention을 통해 encoder 최종 출력으로 gradient를 전달한다.**
+
+Encoder 최종 출력에서는 모든 decoder 층에서 도착한 gradient의 기여를 더한다. 이 합이 encoder 2층, encoder 1층, 입력 임베딩으로 역전파된다. 따라서 decoder 1층이 encoder 1층에 직접 연결되는 것이 아니라, **모든 decoder 층이 공유하는 encoder 최종 출력을 통해 encoder 전체가 학습된다.** 그림은 층 사이의 경로를 강조한 것으로, 층 내부의 잔차 연결과 정규화, 임베딩·출력 가중치 공유 경로는 생략했다.
+
+**BART**[^bart] 는 같은 encoder–decoder 이되 입력을 더 다양하게 손상시킨다. 토큰을
 지우고, 문장 순서를 섞고, 구간을 마스킹한 문장을 넣어 decoder 가 **원문 전체**를
 되살리게 한다(denoising autoencoder, 잡음 섞은 입력에서 원본을 복원하는 모델).
 
@@ -421,12 +422,12 @@ encoder–decoder 의 대가는 구조가 복잡하다는 것이다(스택 둘 +
 ### 4-4. Prefix LM
 
 **Prefix LM** 은 스택을 하나만 두는 절충안이다. decoder-only 처럼 단일 스택이지만,
-attention mask 를 입력 구간과 생성 구간으로 나눈다 — 프롬프트(prefix)에 해당하는 앞부분은
+attention mask 를 입력 구간과 생성 구간으로 나눈다. 프롬프트(prefix)에 해당하는 앞부분은
 서로 앞뒤를 다 보게(양방향), 그 뒤 생성하는 부분은 왼쪽만 보게(causal). encoder–decoder
 의 “입력은 양방향으로 읽는다”는 성질을 단일 스택의 mask로 구현한다. 별도 encoder나 cross-attention이 있는 것은 아니므로 두 구조가 동등하지는 않다. mask 가 전부 causal 은
 아니라는 뜻에서 **non-causal decoder** 라고도 부른다(GLM 등이 채택).
 
-정리하면 후보는 세 형태다 — **causal decoder-only**, **prefix LM(non-causal decoder)**,
+정리하면 후보는 세 형태다: **causal decoder-only**, **prefix LM(non-causal decoder)**,
 **encoder–decoder**. §5 에서 볼 Wang 등(2022)[^wang22] 의 비교가 바로 이 셋을 같은
 조건에서 나란히 놓은 것이다. 세 구조와 각각의 attention mask 를 그림으로 보려면 T5
 논문 §3.2 의 Figure 3–4 가 깔끔하다.[^t5]
