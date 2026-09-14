@@ -101,7 +101,7 @@ $n$은 앞에서 설명한 sequence length, 즉 입력 ID 열의 토큰 수다. 
 
 ### 2-2. Llama 3 8B 구조
 
-임베딩 행렬은 32개의 decoder 블록을 차례로 통과한다. 각 블록의 구조는 같지만 가중치는 별개다. 블록을 지나는 동안 $n\times d$라는 모양은 유지되고, 마지막 LM(language model) head에서 각 토큰의 벡터가 vocabulary 전체의 점수로 바뀐다.
+임베딩 행렬은 32개의 decoder 블록을 차례로 통과한다. 각 블록의 구조는 같지만 가중치는 별개다.<Sidenote>가중치를 공유하며 같은 블록 묶음을 반복 사용하는 연구도 있다. Mixture-of-Recursions(MoR, 2025)은 여기에 토큰마다 반복 횟수를 다르게 정하는 방식을 결합한다.[^mor]</Sidenote> 블록을 지나는 동안 $n\times d$라는 모양은 유지되고, 마지막 LM(language model) head에서 각 토큰의 벡터가 vocabulary 전체의 점수로 바뀐다.
 
 <figure>
 <svg viewBox="0 0 560 574" role="img" aria-label="Llama 3 8B 전체 구조. n개의 토큰 ID를 embedding으로 n 곱하기 4096 행렬로 변환한다. 서로 다른 가중치를 가진 decoder 블록 32개와 최종 RMSNorm을 거쳐 LM head가 n 곱하기 128256 logits를 만든다. 각 블록에는 query head 32개와 key-value head 8개의 GQA, query와 key에 적용하는 RoPE, 중간 차원 14336의 SwiGLU FFN이 있다. 배치 차원은 생략했다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -279,3 +279,5 @@ Rollout은 §3-3의 생성 루프를 학습에 사용할 경험을 모으는 데
 [^nucleus]: Holtzman, A., Buys, J., Du, L., Forbes, M., & Choi, Y. (2020). *The Curious Case of Neural Text Degeneration*. ICLR 2020. [arXiv:1904.09751](https://arxiv.org/abs/1904.09751).
 
 [^instructgpt]: Ouyang, L., et al. (2022). *Training language models to follow instructions with human feedback*. NeurIPS 2022. [arXiv:2203.02155](https://arxiv.org/abs/2203.02155).
+
+[^mor]: Bae, S., et al. (2025). *Mixture-of-Recursions: Learning Dynamic Recursive Depths for Adaptive Token-Level Computation*. NeurIPS 2025. [논문](https://papers.nips.cc/paper_files/paper/2025/hash/8b08bbf8b420faa6eeb4020720582ec7-Abstract-Conference.html).
