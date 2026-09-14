@@ -1,0 +1,156 @@
+---
+title: "Scaling — 모델·데이터·계산 예산"
+week: 2
+order: 3
+---
+
+**지정 읽기 — Scaling law 서베이.** Li 등의 *(Mis)Fitting: A Survey of Scaling Laws*는 scaling law를 어떤 데이터와 함수로 추정하는지, 그 선택이 결론을 어떻게 바꾸는지 검토한다.[^survey] 이 노트에서는 LLM(large language model)의 pre-training 예산을 계획하는 문제에서 출발한다. 큰 모델의 능력을 기대하는 이유와 그 기대를 실험으로 점검하는 방법을 함께 생각한다.
+
+## 1. 한 번만 큰 학습을 할 수 있다면
+
+연구실에 계산 예산이 주어졌다고 하자. 선택지는 하나가 아니다. 작은 모델을 오래 학습할 수도 있고, 큰 모델을 짧게 학습할 수도 있다. 데이터 정제에 투자해 같은 수의 토큰에서 더 유용한 신호를 얻는 선택도 있다.
+
+문제는 큰 학습을 모두 해 본 뒤 최선의 설정을 고르기 어렵다는 점이다. **작은 실험에서 규모에 따른 경향을 추정하고, 큰 실험의 설계를 예측하는 것**이 scaling law의 실용적인 역할이다. Kaplan 등은 언어모델 loss와 모델 크기·데이터량·계산량 사이의 power-law 경향을 조사했다.[^kaplan]
+
+여기서 law는 주어진 실험 조건에서 관찰하고 맞춘 경험적 관계다. 데이터 분포와 모델 구조가 크게 바뀌어도 동일한 계수가 유지된다는 자연법칙으로 읽지 않는다.
+
+## 2. 무엇을 얼마나 키우는가
+
+기호부터 구분하자.
+
+| 기호 | 뜻 | 이 노트의 단위 |
+|---|---|---|
+| $N$ | 모델의 파라미터 수 | parameters |
+| $D$ | 학습 중 소비한 토큰 수 | tokens |
+| $C$ | 학습의 계산량 | FLOPs(floating-point operations) |
+| $\mathcal{L}$ | 평가 분포의 평균 next-token loss | nats/token |
+
+$D$는 고유한 텍스트 양과 같지 않을 수 있다. 같은 데이터를 반복해서 읽어도 소비한 토큰 수는 늘어난다. 또한 tokenizer가 바뀌면 같은 문서의 토큰 수가 달라지므로 서로 다른 실험의 $D$를 해석할 때 조건을 확인해야 한다.
+
+Dense Transformer의 학습 계산량을 거칠게 추산할 때 다음 근사를 사용한다.[^chinchilla]
+
+$$
+C\approx6ND
+$$
+
+직관은 다음과 같다. 파라미터를 사용하는 주요 행렬 연산의 forward 비용이 토큰당 대략 $2N$이고, backward까지 합치면 대략 세 배가 된다. 이는 주된 행렬곱 중심의 근사다. 긴 시퀀스의 attention 계산, embedding 취급, activation 재계산 등까지 정확히 포함한 실행 비용은 아니다. MoE(mixture of experts)에서는 전체 파라미터를 그대로 대입해서도 안 된다.
+
+### 같은 계산량의 세 후보
+
+$C=6\times10^{18}$ FLOPs를 배정한 가상 실험을 생각하자.
+
+| 후보 | 모델 크기 $N$ | 학습 토큰 수 $D$ | 근사 계산량 $6ND$ |
+|---|---|---|---|
+| A | 0.5B | 2B | $6\times10^{18}$ |
+| B | 1B | 1B | $6\times10^{18}$ |
+| C | 2B | 0.5B | $6\times10^{18}$ |
+
+계산량은 같지만 어느 후보의 loss가 낮은지는 이 표만으로 알 수 없다. 큰 모델의 표현 능력과 충분한 데이터 노출 사이에서 균형을 찾아야 한다. 이것이 isoFLOP, 즉 같은 계산량 안에서의 비교다.
+
+## 3. Loss의 감소를 식으로 표현한다
+
+Chinchilla 논문이 사용한 모형 중 하나는 다음과 같다.[^chinchilla]
+
+$$
+\widehat{\mathcal{L}}(N,D)=E+\frac{A}{N^\alpha}+\frac{B}{D^\beta}
+$$
+
+$A,B,\alpha,\beta$는 실험에 맞춰 추정하는 양수다. $E$는 이 모형이 추정하는 점근적 loss 항이다. 식을 참으로 가정하는 대신, 관측한 실험을 얼마나 잘 설명하고 새로운 실험을 얼마나 잘 예측하는지 확인한다.
+
+$N$을 늘리면 첫 번째 감소 항이 작아지고, $D$를 늘리면 두 번째 감소 항이 작아진다. 둘 중 하나만 키우면 다른 항이 남는다. 예산이 고정되어 있다면 둘을 마음대로 동시에 늘릴 수 없으므로 낮은 loss를 주는 조합을 찾아야 한다.
+
+<Callout type="example">
+교육용으로 $E=1$, $A=B=1$, $\alpha=\beta=0.5$라고 두고 $N,D$를 각각 billion 단위로 넣자. 앞 표의 A는 $1+1/\sqrt{0.5}+1/\sqrt{2}\approx3.121$, B는 3.000, C는 3.121이다. 이 가상 계수에서는 균형 잡힌 B가 낮다. 실제 모델의 loss나 최적 비율을 보고한 수치는 아니다.
+</Callout>
+
+<Details summary="고정 예산에서 최적 비율의 방향 유도">
+
+$D=C/(6N)$을 대입하면
+
+$$
+\widehat{\mathcal{L}}(N)=E+AN^{-\alpha}+B(6N/C)^\beta
+$$
+
+이다. $N$에 대해 미분해 0으로 놓으면
+
+$$
+\alpha AN^{-\alpha}=\beta B(6N/C)^\beta
+$$
+
+를 얻는다. 정리하면
+
+$$
+N_*\propto C^{\beta/(\alpha+\beta)},\qquad
+D_*\propto C^{\alpha/(\alpha+\beta)}
+$$
+
+이다. 두 지수가 비슷하면 모델 크기와 데이터량을 비슷한 비율로 늘리는 해가 나온다. 비율의 상수와 지수는 데이터와 fitting 결과에 의존한다.
+
+</Details>
+
+## 4. Chinchilla가 바꾼 질문
+
+Chinchilla는 “더 큰 모델”만 비교하는 대신, 같은 계산량에서 모델 크기와 학습 토큰 수를 함께 바꾸었다. 대표 비교에서 Gopher는 280B 파라미터와 300B 토큰, Chinchilla는 70B 파라미터와 1.4T 토큰을 사용했다. Chinchilla는 비슷한 학습 계산 예산에서 여러 평가를 개선했다.[^chinchilla]
+
+이 비교가 주는 질문은 “내 모델이 너무 작은가?”에 더해 **“내 모델 크기에 비해 충분히 학습했는가?”**다. 해당 연구의 결론을 흔히 약 20 tokens/parameter로 요약하지만, 모든 데이터·모델·예산의 보편적인 비율로 적용할 수는 없다.
+
+[원논문의 Figure 2와 §3](https://arxiv.org/html/2203.15556v1)을 보면서 같은 계산량에서 loss가 낮아지는 모델 크기가 어디인지 살펴보자. 곡선의 최솟값뿐 아니라 실제로 실험한 규모와 외삽한 규모의 차이도 확인한다.
+
+## 5. 학습 비용만 최소화할 것인가
+
+같은 품질을 가진 두 모델이 있다고 가정하자. 하나는 크고 학습을 짧게 했고, 다른 하나는 작지만 더 오래 학습했다. 작은 모델의 학습 비용이 더 들었더라도 앞으로 많은 요청을 처리한다면 배포 과정의 비용을 줄일 수 있다.
+
+$$
+C_{\text{lifetime}}=C_{\text{train}}+Q\,C_{\text{request}}
+$$
+
+$Q$는 예상 요청 수다. 이 식은 의사결정의 범위를 보여주기 위한 단순 모형이며, 실제 요청 비용은 입력·출력 길이와 batching, 하드웨어 등에 따라 달라진다. LLaMA 논문은 주어진 학습 예산에서만 최적인 모델과 추론을 고려한 모델 설계를 구분한다.[^llama1]
+
+<Callout type="example">
+같은 목표 품질에서 모델 A는 학습 비용 100, 요청당 비용 0.01이고, B는 학습 비용 150, 요청당 비용 0.005라고 가정하자. $100+0.01Q=150+0.005Q$이므로 손익분기점은 10,000회다. 금액이나 실제 모델 측정값이 아닌 가상 비용 단위이며, 장기 사용량이 학습 선택을 바꿀 수 있음을 보여준다.
+</Callout>
+
+“Compute-optimal보다 오래 학습했다”는 표현은 곧 낭비했다는 뜻이 아니다. 어떤 비용을 목적함수에 넣었는지 먼저 물어야 한다.
+
+## 6. Emergent ability — 갑자기 잘하는 것처럼 보일 때
+
+평균 loss의 감소와 특정 과제의 성공률은 같은 지표가 아니다. Wei 등은 작은 모델의 결과만으로 단순 외삽하기 어려운 능력의 출현을 emergent ability라는 관점에서 정리했다.[^emergence] 이런 관찰은 규모를 늘리는 일이 단순한 오차 감소를 넘어 사용 가능한 과제의 범위를 바꿀 수 있다는 기대와 연결된다.
+
+하지만 그래프의 급격한 변화만으로 내부 능력이 불연속적으로 생겼다고 결론 내릴 수는 없다. Schaeffer 등은 평가 지표를 바꾸면 일부 급격한 출현이 부드러운 변화로 보일 수 있음을 분석했다.[^mirage]
+
+### 같은 예측을 두 방식으로 채점해 보기
+
+가상의 5토큰 답변에서 토큰별 정답 확률이 모두 $p$이고, 성공 사건이 독립이라고 가정하자. 전체가 맞아야 1점인 exact match의 기대값은 $p^5$다.
+
+| 토큰별 정답 확률 $p$ | 전체 5토큰이 맞을 확률 $p^5$ |
+|---|---|
+| 0.4 | 1.02% |
+| 0.6 | 7.78% |
+| 0.8 | 32.77% |
+| 0.9 | 59.05% |
+
+토큰별 성능은 조금씩 좋아져도 전체 정답률은 뒤쪽에서 더 가파르게 보인다. 평가 문항이 적거나 모델 크기를 몇 개만 측정하면 낮은 구간은 모두 0점으로 관측될 수도 있다. 실제 언어의 토큰 오류는 독립이 아니므로, 이 표는 메커니즘의 가능성을 보여주는 단순 예제다.
+
+이 논쟁에서 구분할 것은 **능력의 개선**, **그 개선이 급격한가**, **작은 실험으로 예측할 수 있는가**다. 지표 효과를 지적하는 것이 모델의 유용한 능력 향상을 부정하는 것은 아니다. 반대로 성공률 곡선 하나만으로 새로운 메커니즘의 출현을 입증한 것도 아니다.
+
+## 7. 연구에서 scaling law를 사용할 때
+
+서베이 *(Mis)Fitting*은 학습 설정, 관측할 실험점, fitting 방식의 차이가 예측과 최적 비율을 바꿀 수 있음을 검토한다.[^survey] 우리 연구의 계획으로 바꾸면 다음 순서가 된다.
+
+1. **비교 조건을 고정한다.** 데이터 분포·tokenizer·평가 텍스트·모델 계열을 명시한다.
+2. **여러 크기와 학습 길이를 실험한다.** 한 모델의 중간 checkpoint만으로 모든 규모를 대표하지 않는다.
+3. **추정에 쓰지 않은 실험으로 확인한다.** 관측 범위 안에서 곡선이 잘 맞는 것과 외삽이 맞는 것은 다르다.
+4. **예측 오차를 예산에 반영한다.** 점추정 하나만 보고 큰 실행을 확정하기보다 설정 변화에 대한 민감도를 본다.
+
+<Details summary="토론 — 모델을 두 배 키우면 능력도 두 배 좋아질까?">
+
+무엇을 능력으로 측정하는지부터 정해야 한다. 파라미터 수, loss, exact match는 서로 다른 양이다. 또한 계산 예산을 고정하면 모델을 키우는 동안 학습 토큰 수는 줄어든다. 비교하려는 질문에 따라 고정해야 하는 조건도 달라진다.
+
+</Details>
+
+[^survey]: Li, M., Kudugunta, S., & Zettlemoyer, L. (2025). *(Mis)Fitting: A Survey of Scaling Laws*. [arXiv:2502.18969v1](https://arxiv.org/abs/2502.18969v1). — 대표 서베이·지정 읽기: §3의 ratio optimization·performance prediction, §4–6의 학습·실험점 수집·fitting 방법, §7의 재현 분석.
+[^kaplan]: Kaplan, J., et al. (2020). *Scaling Laws for Neural Language Models*. [arXiv:2001.08361](https://arxiv.org/abs/2001.08361). — 모델 크기·데이터량·계산량과 cross-entropy loss의 경험적 power-law 관계.
+[^chinchilla]: Hoffmann, J., et al. (2022). *Training Compute-Optimal Large Language Models*. NeurIPS 2022. [arXiv:2203.15556v1](https://arxiv.org/abs/2203.15556v1). — §3.2와 Figure 2의 isoFLOP 분석, §3.3의 loss 모형, Table 1의 Gopher·Chinchilla 규모, Appendix F의 FLOPs 계산. 가상 예산·가상 계수의 예제와 유도는 본문에서 구성했다.
+[^llama1]: Touvron, H., et al. (2023). *LLaMA: Open and Efficient Foundation Language Models*. [arXiv:2302.13971v1](https://arxiv.org/abs/2302.13971v1). — §1, 학습 최적성과 추론 비용을 고려한 모델 설계의 구분.
+[^emergence]: Wei, J., et al. (2022). *Emergent Abilities of Large Language Models*. Transactions on Machine Learning Research. [arXiv:2206.07682v2](https://arxiv.org/abs/2206.07682v2). — §2–3, emergent ability의 관점과 관측 사례.
+[^mirage]: Schaeffer, R., Miranda, B., & Koyejo, S. (2023). *Are Emergent Abilities of Large Language Models a Mirage?* NeurIPS 2023. [arXiv:2304.15004v2](https://arxiv.org/abs/2304.15004v2). — §2–4, 평가 지표와 측정 해상도의 영향. 본문의 5토큰 확률표는 이 논점을 설명하기 위해 별도로 계산한 교육용 예제.

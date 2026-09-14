@@ -1,0 +1,167 @@
+---
+title: "Tokenizer — 글자에서 정수로"
+week: 2
+order: 1
+---
+
+**지정 읽기 — Tokenization 서베이.** Mielke 등의 *Between words and characters*는 텍스트의 단위를 정하는 여러 접근을 비교한다.[^survey] 이 노트의 목표는 byte-level BPE(byte-pair encoding)가 문자열을 정수열로 바꾸는 과정을 이해하는 것이다. 형태소 분석이나 여러 tokenizer 알고리즘의 상세 비교는 심화 읽기로 남긴다.
+
+## 1. 모델이 읽을 단위를 정한다
+
+“부산대학교에서 공부합니다.”를 무엇으로 나누면 좋을까? 띄어쓰기 단위라면 “부산대학교에서”가 하나가 되지만, “부산대학교에는”은 또 다른 항목이다. 모든 조합을 vocabulary에 넣으려면 어휘가 커지고, 처음 보는 조합은 처리하기 어렵다. 글자 단위라면 새 조합을 표현하기 쉽지만 긴 문장을 읽기 위해 더 많은 위치를 계산해야 한다.
+
+Subword tokenization은 자주 쓰는 문자열 조각을 vocabulary에 넣어 이 사이의 선택지를 만든다. 단, “subword”가 항상 의미 있는 형태소라는 뜻은 아니다. 토큰 경계는 통계와 구현 규칙이 정한 경계이며, 사람이 생각하는 단어나 글자 경계와 다를 수 있다.[^survey]
+
+| 분할의 출발점 | 예제에서 생각할 질문 |
+|---|---|
+| 단어 | “학교에서”와 “학교에는”을 각각 저장해야 할까? |
+| 문자 | 자주 등장하는 긴 표현도 매번 많은 위치로 읽어야 할까? |
+| 바이트 | 모든 입력을 표현할 수 있지만 한글 한 글자가 여러 조각으로 시작하지 않을까? |
+| 학습한 조각 | 자주 쓰는 부분을 합쳐 길이를 줄일 수 있을까? |
+
+Tokenizer를 고르면 모델이 처리할 시퀀스 길이와 vocabulary 크기가 함께 정해진다. 그래서 입력 전처리의 작은 선택이 embedding 크기, context 사용량, 학습 토큰 수 계산까지 영향을 준다.
+
+## 2. 문자와 바이트는 다르다
+
+Unicode는 문자에 코드 포인트를 부여한다. UTF-8(Unicode Transformation Format의 8-bit encoding)은 이를 바이트열로 표현하는 방식이다. 바이트는 0부터 255까지의 정수이며, Unicode 문자 하나는 UTF-8에서 1–4바이트가 된다.[^unicode]
+
+다음 코드는 외부 라이브러리 없이 실행할 수 있다.
+
+```python
+for text in ["A", "가", "🙂"]:
+    raw = text.encode("utf-8")
+    print(text, list(raw), raw.decode("utf-8"))
+
+# A [65] A
+# 가 [234, 176, 128] 가
+# 🙂 [240, 159, 153, 130] 🙂
+```
+
+`가`는 Python 문자열에서 코드 포인트 하나이고, UTF-8에서는 바이트 세 개다. 화면에 보이는 한 글자가 항상 코드 포인트 하나인 것도 아니다. 결합 문자나 여러 코드 포인트를 조합한 이모지에서는 그 수가 달라진다.
+
+Byte-level BPE는 256개 바이트를 기본 vocabulary로 사용할 수 있다. 그러면 처음 보는 문자열도 일단 바이트로 풀어 표현할 수 있다. 이것이 “표현할 수 없는 새 단어” 문제를 완화하는 출발점이다. 다만 표현이 가능하다는 것과, 그 언어에 대한 모델 성능이 좋다는 것은 별개다.
+
+<Callout type="warning">
+바이트 기반 tokenizer의 토큰 하나가 유효한 UTF-8 문자 하나를 담는다는 보장은 없다. 한 글자의 바이트가 여러 토큰에 나뉠 수 있다. 각각을 따로 문자로 바꾸면 깨져 보여도, 바이트를 합친 뒤 decoding하면 원래 문자열이 복원될 수 있다.
+</Callout>
+
+## 3. BPE 학습 — 자주 붙어 있는 쌍을 합친다
+
+BPE는 인접한 기호 쌍을 반복적으로 병합하는 방법이다. Sennrich 등은 이를 기계번역의 subword 단위 학습에 적용했다.[^bpe] 여기서는 병합 규칙을 직접 계산할 수 있는 작은 예제를 만든다.
+
+말뭉치가 다음과 같다고 하자. 이 예제에서는 각 문자열을 별도 조각으로 취급하고 문자열 경계를 넘어 병합하지 않는다. 모두 ASCII 문자라 문자 하나가 바이트 하나이기도 하다.
+
+| 문자열 | 등장 횟수 | 처음의 기호열 |
+|---|---|---|
+| `banana` | 3 | `b a n a n a` |
+| `band` | 2 | `b a n d` |
+
+`banana` 안에서 `(a,n)`은 두 번 나타나고, 이 문자열은 세 번 등장하므로 기여하는 빈도는 6이다. `band`의 두 번까지 합치면 8이다.
+
+| 인접 쌍 | 초기 빈도 |
+|---|---|
+| `(a,n)` | 8 |
+| `(n,a)` | 6 |
+| `(b,a)` | 5 |
+| `(n,d)` | 2 |
+
+가장 빈도가 높은 `(a,n)`을 새 기호 `an`으로 합친다.
+
+```
+banana × 3 : b an an a
+band   × 2 : b an d
+```
+
+이제 빈도를 **다시 계산**한다. `(b,an)`은 5회, `(an,an)`과 `(an,a)`는 각각 3회, `(an,d)`는 2회다. 다음 병합은 `(b,an) → ban`이다.
+
+```
+banana × 3 : ban an a
+band   × 2 : ban d
+```
+
+원하는 어휘 크기에 도달할 때까지 이 과정을 반복한다. 예제에서는 두 번만 병합하고 멈춘다. 실제 학습에서는 동률일 때 어느 쌍을 먼저 고를지, 어떤 경계를 넘을 수 있는지 등도 구현 규칙으로 정해야 한다.
+
+<Callout type="intuition">
+병합은 새 조각을 vocabulary에 추가하는 과정이다. `an`을 만들었다고 기본 기호 `a`와 `n`을 지우는 것은 아니다. 다른 문맥에서는 여전히 작은 기호가 필요하다.
+</Callout>
+
+## 4. 학습된 규칙으로 새 문자열을 인코딩한다
+
+학습이 끝났다면 새 입력에서 병합 빈도를 다시 학습하지 않는다. 저장한 병합 순위와 vocabulary를 이용한다. 앞 예제의 규칙은 다음 두 개다.
+
+```
+1순위: a + n  → an
+2순위: b + an → ban
+```
+
+새 입력 `bandana`에 적용해 보자.
+
+```
+바이트 단위 시작 : b a n d a n a
+1순위 병합     : b an d an a
+2순위 병합     : ban d an a
+```
+
+기본 바이트의 ID를 값과 같게 놓고, `an`의 ID를 256, `ban`의 ID를 257로 지정한 **교육용 vocabulary**라면 결과는 다음과 같다.
+
+```
+[ban, d, an, a] → [257, 100, 256, 97]
+```
+
+이 번호는 Llama나 GPT의 실제 ID가 아니다. 구현마다 vocabulary 순서가 다르므로 같은 바이트 조각도 다른 ID를 받을 수 있다.
+
+Decoding은 각 ID에 대응하는 바이트 조각을 순서대로 합치는 일이다.
+
+```
+257      100   256     97
+b a n  +  d  + a n  +  a → b a n d a n a → "bandana"
+```
+
+이 예제에서는 각 병합을 학습 순서대로 적용하면 된다. 실제 BPE encoder도 적용 가능한 병합의 우선순위를 이용하며, 단순히 “vocabulary에 있는 가장 긴 문자열부터 고르기”와 같은 알고리즘으로 가정하면 안 된다. 학습과 인코딩의 차이는 Hugging Face 공식 튜토리얼에서도 단계별로 확인할 수 있다.[^hf]
+
+## 5. 실제 tokenizer에는 앞뒤 처리가 있다
+
+앞 예제는 병합 알고리즘만 떼어 본 것이다. 실제 tokenizer를 재현하려면 다음 요소까지 보아야 한다.
+
+**Pre-tokenization.** 문자열을 먼저 공백·문자·숫자·문장부호 등의 규칙으로 나눈 뒤, 조각 안에서 BPE를 적용할 수 있다. 그러면 단순히 빈도가 높다는 이유만으로 모든 경계를 넘어 병합하지 않는다. Llama 3 구현에는 이 분할을 위한 정규식과 tiktoken 기반 encoding 설정이 있다.[^llama-tokenizer]
+
+**Normalization.** 대소문자, Unicode 정규화, 공백 등을 바꾸는 tokenizer도 있다. 모든 byte-level BPE가 동일한 정규화를 수행하는 것은 아니다. 코드를 다루는데 공백을 임의로 줄이거나, 문자열의 표기를 바꾸면 원래 정보가 사라질 수 있다.
+
+**Special token.** 문서 시작·종료나 대화의 역할 구분은 별도의 ID로 표현할 수 있다. 출력 화면에 보이는 표기와 모델이 받는 special-token ID는 구분해야 한다. 일반 입력에 그 표기가 들어왔다고 항상 special token으로 해석하는 것도 아니다. 허용 여부는 tokenizer 호출 설정에 달려 있다.[^llama-tokenizer]
+
+이 때문에 학습된 모델의 tokenizer 파일과 special-token 설정은 모델 가중치와 함께 보존해야 한다. ID 순서를 바꾸면 같은 번호가 다른 조각을 가리켜 embedding과 대응하지 않게 된다.
+
+## 6. Vocabulary 크기를 키우면 무엇이 달라질까
+
+자주 쓰는 조각을 더 많이 등록하면 같은 문장이 더 적은 토큰으로 표현될 수 있다. 예를 들어 어떤 문서를 1,200토큰 대신 900토큰으로 표현한다면, 같은 토큰 길이 제한 안에 더 많은 원문을 넣을 수 있다. 이 수치는 원리를 설명하는 가정이다. 서로 다른 tokenizer의 결과가 모든 입력에서 같은 방향으로 달라진다는 보장은 없다.
+
+반대로 vocabulary가 $V$에서 $2V$로 커지고 hidden dimension $d$가 같다면, embedding의 파라미터 수 $Vd$는 두 배가 된다. 별도 LM head가 있다면 그쪽도 커진다. Vocabulary를 늘릴 때에는 줄어든 시퀀스 길이와 늘어난 출력 공간을 함께 계산해야 한다.
+
+| 확인할 항목 | 비교 방법 |
+|---|---|
+| 한국어·영어 | 의미가 대응하는 문장의 토큰 수를 각각 기록한다. |
+| 코드 | 들여쓰기·개행·변수 이름이 어떻게 나뉘는지 본다. |
+| 숫자 | 자릿수 경계와 묶음 크기를 확인한다. |
+| 복원 | 전체 ID 열을 decode한 결과가 원문과 일치하는지 본다. |
+
+Tokenizer만으로 산술·철자 세기 성능 전체를 설명할 수는 없다. 다만 글자 경계가 모델의 입력 단위와 다를 수 있다는 사실은 오류를 분석할 때 유용하다.
+
+## 7. 심화 읽기와 확인 문제
+
+더 깊은 내용은 [수업에서 지정한 tokenizer 심화 자료](https://drive.google.com/file/d/13PucjYSadngh5kPAzSN5PlWIf9nkdN_A/view?pli=1)를 참고한다. 알고리즘별 차이와 역사적 맥락은 첫 참고문헌의 §6.4, 병합 구현을 직접 따라가려면 Hugging Face의 BPE 튜토리얼을 읽으면 된다.[^survey][^hf]
+
+<Details summary="확인 문제 — 학습과 인코딩을 구분했는가?">
+
+1. 앞의 두 병합만 사용하는 tokenizer로 `ban`과 `an`을 인코딩해 보자.
+2. `banana`가 자주 등장했는데도 예제 vocabulary에 `banana` 전체가 없는 이유는 무엇인가?
+3. 처음 보는 한글 단어를 byte-level BPE로 표현할 수 있다는 것이 그 단어를 모델이 이해한다는 뜻일까?
+
+첫 문제의 결과는 각각 `[257]`, `[256]`이다. 두 번째는 병합을 두 번만 하고 멈췄기 때문이다. 세 번째는 입력 표현의 가능성과 학습한 능력이 서로 다른 문제임을 묻는다.
+
+</Details>
+
+[^survey]: Mielke, S. J., et al. (2021). *Between words and characters: A Brief History of Open-Vocabulary Modeling and Tokenization in NLP*. [arXiv:2112.10508v1](https://arxiv.org/abs/2112.10508v1). — 대표 서베이·지정 읽기: 텍스트 단위의 선택과 §6.4의 subword 알고리즘 비교.
+[^unicode]: Python Software Foundation. (2026). *Unicode HOWTO*. [공식 문서](https://docs.python.org/3/howto/unicode.html). — Unicode와 UTF-8, 문자열의 encode/decode. 접근: 2026-09-14.
+[^bpe]: Sennrich, R., Haddow, B., & Birch, A. (2016). *Neural Machine Translation of Rare Words with Subword Units*. ACL 2016, pp. 1715–1725. [arXiv:1508.07909](https://arxiv.org/abs/1508.07909). — §3, subword BPE. 본문의 banana/band 예제와 ID는 이 노트에서 구성했다.
+[^hf]: Hugging Face. (2026). *Byte-Pair Encoding tokenization*. [LLM Course, Chapter 6](https://huggingface.co/learn/llm-course/chapter6/5). — 학습된 merge rule을 이용한 tokenization과 구현 튜토리얼. 접근: 2026-09-14.
+[^llama-tokenizer]: Meta. (2024). *Llama 3 tokenizer reference implementation*. [tokenizer.py](https://github.com/meta-llama/llama3/blob/main/llama/tokenizer.py). — pat_str, special_tokens, encode의 special-token 옵션. 접근: 2026-09-14.
