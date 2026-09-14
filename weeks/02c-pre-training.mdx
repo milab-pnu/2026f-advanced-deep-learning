@@ -64,7 +64,7 @@ $m_i$는 해당 정답 위치를 loss에 포함하면 1, 제외하면 0인 mask�
 | 1 | 부산 | BOS, 부산 | 항구 |
 | 2 | 항구 | BOS, 부산, 항구 | EOS |
 
-실제 모델에는 문자열이 아닌 ID를 넣는다. 한 번의 causal forward로 세 위치의 logits를 얻고, 각 위치에서 정답 ID의 확률을 읽어 cross-entropy를 계산한다. **학습 중에는 정답을 채점하기 위해 토큰을 sampling할 필요가 없다.** 미분 가능한 loss에서 gradient를 구해 embedding·attention·FFN 등 연결된 가중치를 갱신한다. 이때 입력의 실제 앞선 토큰을 사용하는 방식이 teacher forcing이다.
+실제 모델에는 문자열이 아닌 ID를 넣는다. 한 번의 causal forward로 세 위치의 logits를 얻고, 각 위치에서 정답 ID의 확률을 읽어 cross-entropy를 계산한다. **학습 중에는 정답을 채점하기 위해 토큰을 sampling할 필요가 없다.** 미분 가능한 loss에서 gradient를 구해 embedding·attention·FFN(feed-forward network) 등 연결된 가중치를 갱신한다. 이때 입력의 실제 앞선 토큰을 사용하는 방식이 teacher forcing이다.
 
 NTP의 정답은 텍스트 자체에서 얻는다. 사람이 문장마다 별도 라벨을 붙일 필요가 적다는 점이 큰 말뭉치를 활용하는 데 유리하다. 동시에 데이터의 오류·반복·편향도 학습 신호가 될 수 있다. **정답을 자동으로 얻는 것과 데이터가 저절로 좋아지는 것은 다른 문제**다.
 
@@ -130,45 +130,28 @@ $$
 
 혼합 비율은 학습 내내 고정할 수도 있고 후반에 바꿀 수도 있다. 어느 쪽이 나은지는 목표 도메인별 검증 결과를 보아야 한다. 평균 loss가 내려가도 작은 도메인의 성능은 나빠질 수 있으므로, 일반 문서·한국어·코드 평가를 따로 유지하는 것이 이 예제에 적합하다.
 
-### 3-4. Packing과 문서 경계
+### 3-4. 학습 시퀀스와 문서 경계
 
-§2-3의 문서 A에 문서 B를 더해 보자. 두 문서는 각각 시작·종료 ID를 갖는다.
+문서의 길이는 제각각이지만 모델은 한 번에 처리할 수 있는 context 길이가 정해져 있다. 따라서 말뭉치의 문서와 학습에 넣는 시퀀스가 항상 일대일로 대응하지는 않는다. 긴 문서를 여러 구간으로 나누거나, 짧은 문서를 이어 붙여 일정 길이의 시퀀스를 만들 수 있다. Megatron 방식의 일반적인 pre-training은 문서들을 이어서 샘플을 구성한다.[^packing]
 
-```
-문서 A: [BOS, 부산, 항구, EOS]
-문서 B: [BOS, 코드, 실행, EOS]
-```
+여기서 **배열에서 이웃한 두 문서를 서로의 문맥으로 사용할 것인지**는 별도로 정해야 한다. EOS는 문서 종료를 표시하는 토큰이지 attention을 자동으로 끄는 명령이 아니다.
 
-짧은 문서마다 긴 고정 길이 배열을 할당하면 padding이 많아진다. **Packing**은 여러 문서를 하나의 배열에 넣어 빈 공간을 줄이는 방법이다. 문서 간 attention을 차단하는 packed sample을 구성해 보자.
+| 문서 경계 처리 | 뒤 문서가 읽는 문맥 | 학습 데이터의 의미 |
+|---|---|---|
+| 이어진 causal stream | 현재 배열에 있는 앞 문서까지 참조 가능 | 문서 경계를 포함한 토큰 흐름을 이어 쓰기 |
+| 문서별 attention 분리 | 자기 문서의 앞선 토큰만 참조 | 여러 문서를 같은 배열에 담아도 각 문서를 독립적으로 학습 |
 
-| 입력 위치 | 입력 ID | 예측 정답 | loss mask |
-|---|---|---|---|
-| 0 | BOS(A) | 부산 | 1 |
-| 1 | 부산 | 항구 | 1 |
-| 2 | 항구 | EOS | 1 |
-| 3 | EOS(A) | BOS(B) | 0 |
-| 4 | BOS(B) | 코드 | 1 |
-| 5 | 코드 | 실행 | 1 |
-| 6 | 실행 | EOS | 1 |
+독립적인 문서를 학습하려면 입력·정답도 문서별로 맞춘다. §2-3의 문서 A와, 한 토큰 더 긴 문서 B를 보자. 아래는 실제 tokenizer 출력이 아닌 교육용 토큰이다.
 
-입력은 이어 붙인 8개 ID의 마지막 하나를 제외한 7개이고, 정답은 첫 하나를 제외한 7개다. EOS(A) 다음에 BOS(B)를 예측하는 위치는 loss에서 제외한다. BOS(B) 위치는 문서 A를 보지 못하도록 attention도 제한한다.
+| 문서 | 입력 토큰 | 각 위치의 정답 |
+|---|---|---|
+| A | `[BOS, 부산, 항구]` | `[부산, 항구, EOS]` |
+| B | `[BOS, 코드, 실행, 완료]` | `[코드, 실행, 완료, EOS]` |
 
-```
-             참조할 수 있는 입력 위치
-             0 1 2 3 4 5 6
-query 0      ✓ · · · · · ·
-query 1      ✓ ✓ · · · · ·
-query 2      ✓ ✓ ✓ · · · ·
-query 3      ✓ ✓ ✓ ✓ · · ·
-query 4      · · · · ✓ · ·
-query 5      · · · · ✓ ✓ ·
-query 6      · · · · ✓ ✓ ✓
-```
+A의 마지막 입력 `항구`는 EOS를 예측하고, B의 첫 입력 BOS는 `코드`를 예측한다. 두 입력 배열을 붙여 저장해도 A의 마지막 정답을 B의 BOS로 바꾸지 않는다. 문서별 attention을 분리하고 position ID를 문서마다 다시 시작하도록 정하면, 두 문서를 따로 읽혔을 때의 문맥을 보존할 수 있다. 여기서는 이 독립 문서 구성을 예제로 사용하며, 모든 pre-training이 같은 처리를 한다는 뜻은 아니다.
 
-이 예제에서는 문서 B의 position ID도 다시 0부터 시작한다고 정한다. 모든 학습 파이프라인이 이렇게 처리하는 것은 아니다. EOS를 사이에 두고 전체를 하나의 causal stream으로 학습하는 선택도 가능하다. 구현할 때에는 문서 경계의 attention, position ID, loss를 함께 정해야 한다.[^packing]
-
-<Callout type="warning">
-Attention mask는 **어디를 볼 수 있는가**, loss mask는 **어디의 예측을 채점하는가**를 정한다. Loss를 0으로 만드는 것만으로 문서 간 attention이 차단되지는 않는다. EOS를 넣는 것만으로도 자동 차단되지 않는다.
+<Callout type="note">
+Attention mask는 **어디를 볼 수 있는가**, loss mask는 **어디의 예측을 채점하는가**를 정한다. 어떤 위치를 loss에서 제외하는 것만으로 서로 다른 문서의 attention이 차단되지는 않는다.
 </Callout>
 
 ## 4. 학습과 평가
@@ -203,10 +186,12 @@ Training loss가 줄어드는 것만으로는 충분하지 않다. 적어도 서
 
 Perplexity는 평균 NTP loss를 지수화한 값이다. 위의 loss 1.040 예제라면 $\exp(1.040)\approx2.83$이다. 낮을수록 정답에 더 높은 확률을 준다는 의미지만, **서로 다른 tokenizer의 토큰 단위 perplexity는 곧바로 비교하지 않는다**. 토큰 단위와 평가 텍스트, 문맥 길이, mask 조건을 맞춰야 한다.[^perplexity]
 
+데이터 구성과 검증 방법을 정해도 모델 크기와 학습 기간은 아직 선택해야 한다. 같은 계산 예산으로 큰 모델을 짧게 학습할지, 작은 모델에 더 많은 토큰을 읽힐지가 scaling의 문제다.
+
 [^survey]: Zhao, W. X., et al. (2025). *A Survey of Large Language Models*. [arXiv:2303.18223v16](https://arxiv.org/abs/2303.18223v16). — 대표 서베이·지정 읽기: §IV-A(Data Collection and Preparation), §IV-B3(Pre-training Tasks), §IV-C(Model Training), §V(Post-training).
 [^llama]: Dubey, A., et al. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783v1](https://arxiv.org/abs/2407.21783v1). — §3과 §4: pre-training과 post-training 단계. §3.1은 실제 데이터 준비 사례.
 [^dedup]: Lee, K., et al. (2022). *Deduplicating Training Data Makes Language Models Better*. ACL 2022, pp. 8424–8445. [arXiv:2107.06499v2](https://arxiv.org/abs/2107.06499v2). — 중복 제거가 암기된 텍스트 생성과 train–test overlap에 미치는 영향.
 [^fineweb]: Penedo, G., et al. (2024). *The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale*. NeurIPS 2024 Datasets and Benchmarks. [arXiv:2406.17557v2](https://arxiv.org/abs/2406.17557v2). — 웹 데이터의 필터링·중복 제거 ablation과 FineWeb-Edu.
-[^packing]: NVIDIA. (2026). *Packed Sequences*. [Megatron Bridge 공식 문서](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/packed-sequences.html). — 문서 간 attention을 구분하는 packed sequence 처리. 접근: 2026-09-14. 본문의 두 문서·ID·mask 예제는 이 노트에서 구성했다.
+[^packing]: NVIDIA. (2026). *Packed Sequences*. [Megatron Bridge 공식 문서](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/packed-sequences.html). — 문서 간 attention을 구분하는 packed sequence 처리. 접근: 2026-09-14. 문서 이어붙이기를 사용하는 pre-training과, 경계를 보존하는 fine-tuning sequence packing의 구분. 본문의 문서·정답 예제는 별도 구성했다.
 [^adamw]: Loshchilov, I., & Hutter, F. (2019). *Decoupled Weight Decay Regularization*. ICLR 2019. [arXiv:1711.05101](https://arxiv.org/abs/1711.05101). — AdamW의 decoupled weight decay. 학습률·warmup 등 전체 학습 설정은 대표 서베이 §IV-C 참고.
 [^perplexity]: Hugging Face. (2026). *Perplexity of fixed-length models*. [Transformers 공식 문서](https://huggingface.co/docs/transformers/perplexity). — perplexity의 정의, tokenization과 context window에 따른 비교 조건. 접근: 2026-09-14.

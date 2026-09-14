@@ -142,6 +142,8 @@ b a n  +  d  + a n  +  a → b a n d a n a → "bandana"
 
 Tokenizer만으로 산술·철자 세기 성능 전체를 설명할 수는 없다. 다만 글자 경계가 모델의 입력 단위와 다를 수 있다는 사실은 오류를 분석할 때 유용하다.
 
+이렇게 정한 tokenizer를 고정하면 말뭉치를 일관된 ID 열로 바꿀 수 있다. 모델 학습에서는 그 ID를 입력과 다음 토큰의 정답으로 짝지어 사용한다. 어떤 문서를 얼마나 자주 읽힐지에 따라 모델이 받는 학습 신호가 달라진다.
+
 ### 3-3. 심화 자료
 
 [Karpathy의 tokenizer 구현 영상](https://www.youtube.com/watch?v=zduSFxRajkE)은 아래에서 재생하거나 원본 페이지에서 볼 수 있다.
@@ -149,16 +151,6 @@ Tokenizer만으로 산술·철자 세기 성능 전체를 설명할 수는 없�
 <Video src="https://www.youtube.com/watch?v=zduSFxRajkE" caption="Andrej Karpathy — Let’s build the GPT Tokenizer (2024). UTF-8 바이트에서 BPE 병합 규칙을 구현하는 과정을 보여 주는 선택 실습 자료." />
 
 더 깊은 내용은 [수업에서 지정한 tokenizer 심화 자료](https://drive.google.com/file/d/13PucjYSadngh5kPAzSN5PlWIf9nkdN_A/view?pli=1)를 참고한다. 알고리즘별 차이와 역사적 맥락은 첫 참고문헌의 §6.4, 병합 구현을 직접 따라가려면 Hugging Face의 BPE 튜토리얼을 읽으면 된다.[^survey][^hf]
-
-<Details summary="확인 문제 — 학습과 인코딩을 구분했는가?">
-
-1. 앞의 두 병합만 사용하는 tokenizer로 `ban`과 `an`을 인코딩해 보자.
-2. `banana`가 자주 등장했는데도 예제 vocabulary에 `banana` 전체가 없는 이유는 무엇인가?
-3. 처음 보는 한글 단어를 byte-level BPE로 표현할 수 있다는 것이 그 단어를 모델이 이해한다는 뜻일까?
-
-첫 문제의 결과는 각각 `[257]`, `[256]`이다. 두 번째는 병합을 두 번만 하고 멈췄기 때문이다. 세 번째는 입력 표현의 가능성과 학습한 능력이 서로 다른 문제임을 묻는다.
-
-</Details>
 
 [^survey]: Mielke, S. J., et al. (2021). *Between words and characters: A Brief History of Open-Vocabulary Modeling and Tokenization in NLP*. [arXiv:2112.10508v1](https://arxiv.org/abs/2112.10508v1). — 대표 서베이·지정 읽기: 텍스트 단위의 선택과 §6.4의 subword 알고리즘 비교.
 [^unicode]: Python Software Foundation. (2026). *Unicode HOWTO*. [공식 문서](https://docs.python.org/3/howto/unicode.html). — Unicode와 UTF-8, 문자열의 encode/decode. 접근: 2026-09-14.

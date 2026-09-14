@@ -18,10 +18,6 @@ order: 0
 
 모델이 출력하는 것은 **가능한 다음 토큰들의 점수**다. 그중 하나를 고르는 규칙까지 적용해야 실제 생성 결과를 얻는다. 문장을 완성하려면 이 과정을 여러 번 반복한다.
 
-[3Blue1Brown의 영상](https://www.youtube.com/watch?v=wjZofJX0v4M)은 embedding에서 출력 확률까지의 변환을 시각적으로 설명한다. 영상의 GPT 계열 예시와 아래 Llama의 수치·정규화 방식은 구분해서 보자.
-
-<Video src="https://www.youtube.com/watch?v=wjZofJX0v4M" caption="3Blue1Brown — Transformers, the tech behind LLMs (2024). 입력 벡터가 출력 확률로 바뀌는 흐름에 주목한다." />
-
 ### 1-1. Llama 3 8B
 
 기준 모델은 **Llama 3 8B base(2024년 4월 공개)**다. 이후 Llama 3.1과 혼동하지 않도록 이 노트의 context 길이는 8,192로 고정한다. 층 수와 차원은 보고서의 Table 3, vocabulary와 special token 처리는 공식 구현을 참고한다.[^llama][^implementation]
@@ -182,7 +178,15 @@ $T$가 작을수록 큰 logit에 확률이 집중된다. $T=0$을 위 식에 대
 
 입력마다 forward를 따로 실행할 필요는 없다. Causal mask를 적용한 한 번의 forward에서 각 행이 서로 다른 prefix를 읽는다. 이렇게 실제 앞선 토큰을 조건으로 주는 학습 방식을 teacher forcing이라고 한다.
 
-생성에서는 내가 고른 토큰이 다음 입력이 된다. 학습에서는 데이터의 토큰이 다음 입력이 된다. 이 차이를 기억하면 “한 번에 모든 위치를 학습하는데 왜 생성은 순차적인가?”를 설명할 수 있다.
+생성에서는 내가 고른 토큰이 다음 입력이 된다. 학습에서는 데이터의 토큰이 다음 입력이 된다. 따라서 학습은 여러 위치를 한 번에 채점할 수 있지만, 생성은 앞에서 선택한 새 토큰에 의존한다. 이 계산의 출발점인 입력 ID의 단위와 길이는 tokenizer가 결정한다.
+
+<Details summary="보충 영상: 입력 벡터에서 출력 확률까지">
+
+[3Blue1Brown의 영상](https://www.youtube.com/watch?v=wjZofJX0v4M)은 embedding에서 출력 확률까지의 변환을 시각적으로 설명한다. 영상의 GPT 계열 예시와 아래 Llama의 수치·정규화 방식은 구분해서 보자.
+
+<Video src="https://www.youtube.com/watch?v=wjZofJX0v4M" caption="3Blue1Brown — Transformers, the tech behind LLMs (2024). 입력 벡터가 출력 확률로 바뀌는 흐름에 주목한다." />
+
+</Details>
 
 [^survey]: Zhao, W. X., et al. (2025). *A Survey of Large Language Models*. [arXiv:2303.18223v16](https://arxiv.org/abs/2303.18223v16). — 대표 서베이·지정 읽기: §IV-B의 architecture, pre-training tasks, decoding strategy. 절 번호는 v16 기준.
 [^llama]: Dubey, A., et al. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783v1](https://arxiv.org/abs/2407.21783v1). — §3.2, Table 3의 층 수·차원·head 구성. Table 1은 4월 Llama 3와 7월 Llama 3.1을 구분하며 보고서의 실험 결과는 Llama 3.1 기준이다.

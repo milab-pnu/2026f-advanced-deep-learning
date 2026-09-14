@@ -4,7 +4,7 @@ week: 2
 order: 4
 ---
 
-계산량이 같아도 학습 완료 시간은 같지 않다. GPU(graphics processing unit)의 메모리에 무엇을 저장하고, 장치 사이에 무엇을 전달하는지가 실행 가능성과 속도를 결정한다. Duan 등의 분산 LLM(large language model) 학습 서베이[^survey]를 바탕으로, 메모리 부족에서 출발해 병렬화와 실제 실행 구성을 연결한다.
+모델 크기와 학습 토큰 수를 정해 계산량을 추산했어도, 실제 학습 완료 시간은 아직 정해지지 않는다. GPU(graphics processing unit)의 메모리에 무엇을 저장하고, 장치 사이에 무엇을 전달하는지가 실행 가능성과 속도를 결정한다. Duan 등의 분산 LLM(large language model) 학습 서베이[^survey]를 바탕으로, 메모리 부족에서 출발해 병렬화와 실제 실행 구성을 연결한다.
 
 ## 1. 학습 자원
 
@@ -26,7 +26,27 @@ Activation과 임시 통신 buffer는 아직 더하지 않았다. ZeRO(zero redu
 
 따라서 문제를 둘로 나눈다. **학습 상태가 메모리에 들어가게 하는 것**, 그리고 **주어진 시간 안에 충분한 토큰을 처리하는 것**이다. GPU를 여러 개 쓴다는 말만으로 두 문제가 모두 해결되지는 않는다.
 
-### 1-2. 장치 간 통신
+### 1-2. Sequence packing
+
+GPU에 모델이 들어가더라도, 계산하는 입력의 상당 부분이 빈칸이라면 자원을 낭비할 수 있다. 길이 8의 입력 배열을 사용하는 단순한 예제를 보자. 문서 A의 입력 길이는 3, B는 4다. 각각을 길이 8에 맞추면 남는 위치를 **padding**으로 채운다.
+
+아래 A0·A1·A2는 A의 입력 토큰 위치, B0–B3는 B의 입력 토큰 위치다. `·`는 padding이며 실제 학습 텍스트가 아니다.
+
+| 구성 | 길이 8의 입력 배열 | 유효 입력 위치 |
+|---|---|---|
+| 개별 padding: A | `A0 A1 A2 ·  ·  ·  ·  ·` | 3 / 8 |
+| 개별 padding: B | `B0 B1 B2 B3 ·  ·  ·  ·` | 4 / 8 |
+| Sequence packing: A+B | `A0 A1 A2 B0 B1 B2 B3 ·` | 7 / 8 |
+
+개별 padding은 총 16칸 중 7칸(43.75%)이 유효하고, packing은 8칸 중 7칸(87.5%)이 유효하다. **Sequence packing은 여러 짧은 시퀀스를 하나의 배열에 함께 담아 padding을 줄이는 방법**이다. 단순한 dense 연산에서는 loss에서 padding을 무시해도 입력 배열의 빈 위치에 대한 연산이 남을 수 있어, 빈칸 자체를 줄이는 것이 중요하다.[^packing]
+
+함께 담는다고 두 문서가 한 문맥이 되어야 하는 것은 아니다. 독립 문서를 유지하려면 A는 A 안에서만, B는 B 안에서만 이전 위치를 참조하게 한다. 예를 들어 B0는 앞에 저장된 A0–A2를 보지 못하고, B2는 B0·B1·B2만 본다. 실제 구현은 시퀀스 경계 정보를 attention 연산에 전달한다. 입력을 단순히 이어 붙이는 것만으로 이 조건이 충족되지는 않는다.
+
+정답도 [Pre-training의 문서별 입력·정답 예제](/lecture/2026f-advanced-deep-learning/02c-pre-training/#3-4-학습-시퀀스와-문서-경계)처럼 각 문서에 맞춘 값을 유지한다. 입력 배열을 채운 정도가 두 배가 되었다고 학습 속도가 반드시 두 배가 되는 것은 아니다. Attention 구현, 배열 구성 비용, batch 설정에 따라 실제 이득이 달라진다. 같은 학습 목표와 유효 토큰 수를 기준으로 처리량을 비교해야 한다.
+
+이 예제는 padding이 많이 생기는 조건을 가정했다. Batch 안의 최대 길이까지만 채우거나 비슷한 길이를 묶는 방법도 padding을 줄일 수 있다. 이미 문서들을 이어서 고정 길이를 채우는 pre-training은 같은 낭비가 작을 수 있다. Megatron Bridge의 packed-sequence 기능은 주로 길이가 다양한 fine-tuning 예제를 위한 것으로 설명된다. 따라서 이름만 보고 모든 pre-training에 켜야 하는 옵션으로 받아들이지 않는다.[^packing]
+
+### 1-3. 장치 간 통신
 
 메모리를 나누어 저장하면 필요한 값을 주고받아야 한다. 이후 병렬화 설명에서 사용할 통신 연산을 먼저 구분하자. 다음 표에서 reduce는 합산을 뜻한다. 평균 gradient가 필요하면 합산 결과를 적절한 수로 나누는 과정도 포함한다.
 
@@ -91,8 +111,6 @@ DP에서 모든 GPU가 optimizer 상태를 똑같이 갖고 있어야 할까? �
 
 FSDP(fully sharded data parallel)도 학습 상태를 분산 저장한다. PyTorch FSDP2에서는 필요한 parameter를 연산 전에 all-gather로 모으고, backward의 gradient를 reduce-scatter로 합산·분할한다. 메모리를 줄이는 대신 필요한 시점에 통신해야 한다.[^fsdp]
 
-
-
 FSDP와 ZeRO-3는 비슷한 메모리 절감 목표를 갖지만 API와 저장·통신 단위, 지원 옵션이 같은 구현은 아니다. 실제 선택에서는 사용하려는 모델과 프레임워크의 지원 범위를 확인한다.
 
 ## 3. 모델·시퀀스 분산
@@ -114,6 +132,8 @@ $$
 
 전체 출력이 필요하면 두 조각을 이어 붙인다. 다음 연산도 분할된 형태로 수행할 수 있다면 매번 전체를 모을 필요는 없다.
 
+<Details summary="보충: 행 방향 분할의 행렬식">
+
 반대로 행 방향으로 나눈 가중치와 그에 맞춰 나눈 입력은 부분 결과를 **더해야** 한다.
 
 $$
@@ -121,6 +141,8 @@ X=[X_0\;X_1],\qquad
 W=\begin{bmatrix}W_0\\W_1\end{bmatrix},\qquad
 XW=X_0W_0+X_1W_1
 $$
+
+</Details>
 
 TP는 행렬 연산의 규모를 나누지만 층마다 필요한 통신이 생긴다. 같은 batch를 사용하므로 TP 장치를 두 배 늘린다고 서로 다른 학습 샘플을 두 배 읽는 것은 아니다. 빠른 장치 간 연결이 중요한 이유다.
 
@@ -143,7 +165,7 @@ PP(pipeline parallelism)는 층을 여러 stage로 나눈다. 32층 모델을 �
 
 ### 3-3. SP와 CP
 
-모델 가중치를 나누어도 시퀀스가 길어지면 activation이 커진다. 이때 시퀀스 방향으로 나누는 방법이 필요하다. 문헌과 구현마다 용어가 다를 수 있으므로 여기서는 Megatron의 구분을 따른다.[^parallel]
+§1-2의 sequence packing은 여러 짧은 입력을 함께 담는 방법이다. 여기서 다루는 SP·CP는 시퀀스 방향의 계산이나 저장을 여러 장치에 나누는 방법이다. 모델 가중치를 나누어도 시퀀스가 길어지면 activation이 커진다. 이때 시퀀스 방향으로 나누는 방법이 필요하다. 문헌과 구현마다 용어가 다를 수 있으므로 여기서는 Megatron의 구분을 따른다.[^parallel]
 
 **SP(sequence parallelism)**는 TP와 함께 사용해, LayerNorm 같은 일부 연산에서 TP 장치마다 중복되던 activation을 시퀀스 방향으로 분할한다. 예를 들어 길이 8인 activation을 두 장치가 길이 4씩 보유하게 하는 식이다. 다음 TP 연산에 맞춰 gather 또는 scatter를 적용한다. Activation 저장량을 줄이는 것이 주요 동기다.[^sp]
 
@@ -249,3 +271,5 @@ Nemotron은 FSDP와 동일한 종류의 병렬화 API 이름이 아니다. [공�
 [^nemotron]: NVIDIA. (2026). *Nemotron Training Recipes*. [공식 문서](https://docs.nvidia.com/nemotron/latest/index.html), [Stage 0: Pretraining](https://docs.nvidia.com/nemotron/latest/nemotron/nano3/pretrain.html). — 모델·데이터·학습 recipe의 공개 범위. 접근: 2026-09-14.
 
 [^mixed]: Micikevicius, P., et al. (2018). *Mixed Precision Training*. ICLR 2018. [arXiv:1710.03740](https://arxiv.org/abs/1710.03740). — 낮은 정밀도 연산과 높은 정밀도 상태를 조합하는 학습의 기본 원리. 원논문은 fp16 중심이며 본문의 bf16 구성은 메모리 계산을 위한 별도 가정.
+
+[^packing]: NVIDIA. (2026). *Packed Sequences*. [Megatron Bridge 공식 문서](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/packed-sequences.html). — What It Is, When to Use It: padding 절감, 시퀀스 경계 보존, 일반 pre-training과의 구분. 접근: 2026-09-14. 3·4토큰을 길이 8 배열에 담은 수치는 본문을 위한 교육용 계산.
