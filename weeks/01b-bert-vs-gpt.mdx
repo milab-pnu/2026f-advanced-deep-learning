@@ -51,10 +51,10 @@ $-\infty$ 로 덮느냐에 따라 두 가지로 갈린다.
   Transformer 의 encoder 스택 그대로다.
 - **GPT = decoder-only** — 같은 블록에 causal mask 를 건 것. 원 Transformer 의 decoder
   블록에는 encoder 를 들여다보는 sub-layer(encoder–decoder attention)가 하나 더 있지만,
-  GPT 는 참조할 encoder 가 없으니 그 겹을 뺀다 — 그러면 encoder 블록과 **causal mask
+  GPT는 참조할 encoder가 없으므로 cross-attention sub-layer를 뺀다 — 그러면 encoder 블록과 **causal mask
   하나로만** 갈린다.
 
-여기서는 mask의 효과를 비교하기 위해 블록의 공통 골격을 놓고 본다. 실제 모델은 출력층 외에도 정규화 위치, 활성화 함수, 위치 표현 등이 다를 수 있다. 아래 그림은 그러한 구현 차이를 생략한 비교다.
+여기서는 mask의 효과를 비교하기 위해 블록의 공통 골격을 놓고 본다. 실제 모델은 출력층 외에도 정규화(normalization) 위치, 활성화 함수(activation function), 위치 표현 등이 다를 수 있다. 그림의 잔차 연결(residual connection)은 sub-layer의 입력을 출력에 더하는 경로다. 아래 그림은 그러한 구현 차이를 생략한 비교다.
 
 <svg viewBox="0 0 460 316" role="img" aria-label="BERT 와 GPT 의 블록 구조 비교. 둘 다 '토큰+위치 임베딩 → self-attention → 잔차·LayerNorm → feed-forward network → 잔차·LayerNorm' 블록을 N 번 쌓는다. 이 도식에서 강조하는 차이는 self-attention의 mask다: BERT(encoder)는 각 토큰이 좌·우 모든 토큰을 참조하고, GPT(decoder-only)는 각 토큰이 자기 왼쪽까지만 참조한다. 출력도 다르다: BERT 는 위치마다 양방향 문맥 표현을 내고 그 위에 과제별 head 를 붙여 fine-tune 하며, GPT 는 위치마다 다음 토큰 확률을 내어 프롬프트에 이어 바로 생성한다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <line x1="230" y1="14" x2="230" y2="304" stroke="#94a3b8" stroke-dasharray="3 4"/>
@@ -230,7 +230,7 @@ GPT-1의 과제별 fine-tuning은 가중치를 갱신하고 분류 head를 사�
 - **decoder** 가 출력을 왼쪽에서 오른쪽으로 생성하되(GPT 처럼), 매 스텝 encoder 가 만든
   입력 표현도 함께 참조한다. 이 "출력 쪽이 입력 쪽을 들여다보는" attention 이 1a 노트 §3-2의 **encoder–decoder attention**(= cross-attention)이다.
 
-입력을 다 소화한 뒤 출력을 쓰기 시작하는 구조라, **입력과 출력이 뚜렷이 나뉘는**
+입력 전체의 표현을 계산한 뒤 출력을 쓰기 시작하는 구조라, **입력과 출력이 뚜렷이 나뉘는**
 번역·요약에 잘 맞는다("이 문장(입력)을 이 문장(출력)으로 바꿔라").
 
 대표가 **T5**[^t5] 다. T5 는 모든 과제를 "문자열 하나를 받아 문자열 하나를 내놓는다"로
@@ -338,7 +338,7 @@ decoder 정답:  <X> for inviting <Y> last <Z>
 
 ### 4-3. Loss와 역전파
 
-Loss는 decoder의 정답 시퀀스에 대해 계산한다. GPT의 next-token loss와 같은 형태지만, T5 decoder는 encoder 표현에도 조건을 둔다. **직접 채점하는 출력이 없다고 encoder가 학습되지 않는 것은 아니다.** Loss의 gradient가 decoder와 cross-attention을 거쳐 encoder로 전달되므로 두 스택이 함께 갱신된다.
+Loss는 decoder의 정답 시퀀스에 대해 계산한다. GPT의 next-token loss와 같은 형태지만, T5 decoder는 encoder 표현에도 조건을 둔다. **직접 채점하는 출력이 없다고 encoder가 학습되지 않는 것은 아니다.** 역전파(backpropagation)를 통해 loss의 gradient가 decoder와 cross-attention을 거쳐 encoder로 전달되므로 두 스택이 함께 갱신된다.
 
 헷갈리기 쉬운 점 — encoder 스택과 decoder 스택은 **위아래로 쌓이지 않는다.** 나란히 선
 두 기둥이고, decoder 의 **모든 층**이 cross-attention 으로 encoder 의 **최종 출력**을
@@ -405,8 +405,8 @@ encoder 2 · decoder 2 로 줄여 손실과 그래디언트가 흐르는 길을 
   <text x="280" y="284" text-anchor="middle" font-size="8" fill="#64748b">손실 → decoder → cross-attention → encoder 순으로 그래디언트가 흐른다</text>
 </svg>
 
-순전파(실선)는 두 입력이 각자 기둥을 타고 올라가고, decoder 가 cross-attention 으로
-encoder 출력을 당겨 쓴 뒤 맨 위에서 예측·손실을 낸다. 역전파(점선)는 그 손실 **하나**에서
+순전파(forward pass, 실선)는 두 입력이 각자 기둥을 타고 올라가고, decoder 가 cross-attention 으로
+encoder 출력을 당겨 쓴 뒤 맨 위에서 예측·손실을 낸다. 역전파(backward pass, 점선)는 그 손실 **하나**에서
 출발해 같은 배선을 거꾸로 흐른다 — decoder 를 내려오다 cross-attention 지점에서 encoder
 로 건너가고, encoder 를 마저 내려간다. encoder 가중치는 이때 받는 그래디언트로만
 갱신된다. (실제 T5-base 는 encoder 12 · decoder 12 층.)
@@ -416,7 +416,7 @@ encoder 출력을 당겨 쓴 뒤 맨 위에서 예측·손실을 낸다. 역전�
 되살리게 한다(denoising autoencoder, 잡음 섞은 입력에서 원본을 복원하는 모델).
 
 encoder–decoder 의 대가는 구조가 복잡하다는 것이다(스택 둘 + cross-attention). 또 하나의
-모델로 "프롬프트에 그냥 이어 쓰기"를 시키기에는 입력/출력 경계가 걸리적거린다.
+모델을 사용할 때 프롬프트를 encoder 입력과 decoder의 생성 부분으로 구분해 구성해야 한다.
 
 ### 4-4. Prefix LM
 

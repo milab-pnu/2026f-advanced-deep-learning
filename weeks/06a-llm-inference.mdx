@@ -22,7 +22,7 @@ $$
 
 한 번의 요청이 수십~수천 번의 순차 forward 로 쪼개진다. 이 순차성이 모든 문제의 뿌리다.
 
-## 2. 두 국면 — prefill 과 decode
+## 2. 두 단계 — prefill과 decode
 
 한 번의 생성 요청은 성격이 다른 두 단계로 나뉜다.[^pope]
 
@@ -119,7 +119,7 @@ $$
 GPU 에는 서로 다른 두 개의 속도가 있다.
 
 - **연산 속도** — 초당 할 수 있는 곱셈·덧셈 수 (FLOP/s — floating-point operations per second).
-- **메모리 대역폭** — 초당 HBM 에서 연산 유닛으로 옮길 수 있는 바이트 수 (byte/s).
+- **메모리 대역폭(memory bandwidth)** — 초당 HBM 에서 연산 유닛으로 옮길 수 있는 바이트 수 (byte/s).
 
 현대 가속기는 연산 속도가 메모리 대역폭보다 (숫자당 FLOP 기준) **수백 배** 빠르다.
 
@@ -132,7 +132,7 @@ GPU 에는 서로 다른 두 개의 속도가 있다.
 </Callout>
 
 이 균형을 재는 값이 **arithmetic intensity** = (HBM 에서 읽은 바이트당 수행하는 FLOP).
-이걸 기계의 "연산 처리량 ÷ 메모리 대역폭" 비율(**ridge point**)과 비교하는 그림이
+이걸 기계의 "연산 처리량(compute throughput) ÷ 메모리 대역폭" 비율(**ridge point**)과 비교하는 그림이
 **roofline** 이다.
 
 <svg viewBox="0 0 460 240" role="img" aria-label="Roofline 그래프. 가로축 arithmetic intensity(로그), 세로축 달성 처리량(로그). 왼쪽은 대역폭에 비례해 올라가는 사선, 오른쪽은 연산 상한 수평선. 둘이 만나는 ridge point. decode 는 ridge 왼쪽(대역폭 한계), prefill 은 오른쪽(연산 한계)." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -173,8 +173,7 @@ t_{\text{연산}} \approx \frac{16\ \text{GFLOP}}{990\ \text{TFLOP/s}} \approx 0
 $$
 
 연산 시간은 읽기 시간의 **1/300**. intensity 1 은 ridge point 300 의 한참 왼쪽 —
-GPU 의 연산 유닛은 사실상 놀고, decode 스텝 시간은 전적으로 "16 GB 를 얼마나 빨리
-읽나"로 정해진다. 이것이 **memory wall** 이다.[^llmsurvey]
+이 단순 비용 모형에서는 연산 유닛이 데이터를 기다리는 시간이 길고, 가중치를 읽는 속도가 decode 스텝의 주요 제약이 된다. 이것이 **memory wall** 이다.[^llmsurvey]
 
 **왜 batching 이 답인가.** batch $b$ 개 요청을 함께 decode 하면 가중치는 **한 번만** 읽고
 $b$ 개 토큰에 재사용한다 → intensity 가 $b$ 배(그림에서 decode 점이 오른쪽으로 이동).
@@ -182,8 +181,7 @@ $b$ 가 300 근처면 ridge point 를 넘어 compute-bound 로 바뀐다. 단 5�
 키우면 KV cache 가 선형으로 늘어 HBM 한도에 부딪힌다 — 서빙 throughput 튜닝은 이 줄다리기다.
 
 **Prefill** 은 반대다. $n$ 개 토큰을 함께 넣으므로 가중치 한 번 읽기에 연산이 $n$ 배 —
-$n$ 이 수백 넘으면 곧바로 compute-bound. 그래서 같은 요청도 prefill 은 빠르고 decode 는
-질질 끈다.
+$n$ 이 수백 넘으면 곧바로 compute-bound. 따라서 같은 요청에서도 prefill과 decode는 서로 다른 병목(bottleneck)을 보일 수 있다.
 
 ## 7. KV cache 줄이기 — 공식의 어느 항을 건드리나
 
@@ -219,7 +217,7 @@ $d_{\text{head}}$ 차원 full 이고, 그걸 여러 query head 가 공유하기 
 는 K/V 를 아예 캐시하지 않는다. 대신 토큰마다 **latent 벡터 $c_t$ 하나**만 캐시한다.
 
 1. **압축(down-projection).** 토큰의 hidden state $h_t \in \mathbb{R}^{d}$ 를 학습되는
-   $W_{DKV}$ 로 저차원 latent $c_t \in \mathbb{R}^{d_c}$ 로 사영한다 (DeepSeek-V2: $d_c = 512$).
+   $W_{DKV}$ 로 저차원 잠재 벡터(latent vector) $c_t \in \mathbb{R}^{d_c}$로 선형 사영(linear projection)한다 (DeepSeek-V2: $d_c = 512$).
    layer·토큰마다 이 $c_t$ 만 저장한다.
 2. **복원(up-projection).** attention 계산 시 $W_{UK}, W_{UV}$ 로 $c_t$ 에서 head 별
    $k^{(i)}_t, v^{(i)}_t$ 를 되살린다.
@@ -245,7 +243,7 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
 - **Weight quantization** — 가중치를 int8/int4/fp8 로. 가중치 요소당 bytes가 줄어 6절의
   memory wall 을 직접 완화한다. 6·7주차에서 자세히.
 - **PagedAttention / continuous batching**[^vllm] — KV cache 를 OS(operating system)
-  페이지처럼 고정 블록으로 관리해 단편화를 없애고, 요청이 끝나는 대로 새 요청을 배치에
+  페이지처럼 고정 블록으로 관리해 메모리 단편화(memory fragmentation)를 줄이고, 요청이 끝나는 대로 새 요청을 배치에
   끼워 GPU 를 놀리지 않는다(vLLM).
 - **Speculative decoding**[^specdecode] — 작은 draft 모델이 여러 토큰을 미리 제안하고 큰 모델이
   한 번의 forward 로 검증·수용. decode 의 순차성을 부분적으로 병렬화.
@@ -267,12 +265,12 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
   $2 L\, n_{\text{kv}}\, d_{\text{head}}\, s\, b\, p$. Llama 3 8B bf16 = **128 KiB/token**
   (8K·batch1 → 1 GiB, 128K → 16 GiB).
 - **Memory wall**: decode 스텝은 16 GB 가중치를 읽어 16 GFLOP 만 쓴다(intensity ≈ 1) →
-  ridge point(~300) 한참 왼쪽, H100 에서 연산이 300배 놀고 대역폭이 병목. **batching**
+  ridge point(~300) 한참 왼쪽, 이 단순 모형에서 가중치 읽기 시간이 연산 시간의 약 300배로, 대역폭이 병목. **batching**
   으로 가중치 읽기를 여러 요청에 분산해야 ridge 를 넘긴다 — 그런데 batch↑ 는 KV cache↑
   라 HBM 이 한계.
 - **MHA→MQA→GQA** 는 $n_{\text{kv}}$ 를 줄이고, **MLA** 는 K/V 를 latent 로 압축해
   캐시한다. quantization·paged attention·speculative decoding 은 각각 요소 바이트·메모리
-  단편화·순차성을 공략한다 (6·7주차).
+  단편화·순차적 계산의 비용을 줄인다 (6·7주차).
 
 [^llama3]: Llama Team, AI @ Meta (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783). — 8B 아키텍처(32층, 32 query / 8 KV head, $d_{\text{head}}$ 128), context 길이(3.0: 8K, 3.1: 128K).
 

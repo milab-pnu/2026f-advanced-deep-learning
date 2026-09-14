@@ -10,15 +10,15 @@ order: 1
 
 ### 1-1. 분할 단위
 
-“부산대학교에서 공부합니다.”를 무엇으로 나누면 좋을까? 띄어쓰기 단위라면 “부산대학교에서”가 하나가 되지만, “부산대학교에는”은 또 다른 항목이다. 모든 조합을 vocabulary에 넣으려면 어휘가 커지고, 처음 보는 조합은 처리하기 어렵다. 글자 단위라면 새 조합을 표현하기 쉽지만 긴 문장을 읽기 위해 더 많은 위치를 계산해야 한다.
+“부산대학교에서 공부합니다.”를 무엇으로 나누면 좋을까? 띄어쓰기 단위라면 “부산대학교에서”가 하나가 되지만, “부산대학교에는”은 또 다른 항목이다. 모든 조합을 어휘 집합(vocabulary)에 넣으려면 그 크기가 커지고, 처음 보는 조합은 처리하기 어렵다. 글자 단위라면 새 조합을 표현하기 쉽지만 긴 문장을 읽기 위해 더 많은 위치를 계산해야 한다.
 
-Subword tokenization은 자주 쓰는 문자열 조각을 vocabulary에 넣어 이 사이의 선택지를 만든다. 단, “subword”가 항상 의미 있는 형태소라는 뜻은 아니다. 토큰 경계는 통계와 구현 규칙이 정한 경계이며, 사람이 생각하는 단어나 글자 경계와 다를 수 있다.[^survey]
+Subword tokenization은 자주 쓰는 문자열 조각을 vocabulary에 넣어 이 사이의 선택지를 만든다. 단, “subword”가 항상 의미 있는 형태소(morpheme)라는 뜻은 아니다. 토큰 경계는 통계와 구현 규칙이 정한 경계이며, 사람이 생각하는 단어나 글자 경계와 다를 수 있다.[^survey]
 
 Tokenizer를 고르면 모델이 처리할 시퀀스 길이와 vocabulary 크기가 함께 정해진다. 그래서 입력 전처리의 작은 선택이 embedding 크기, context 사용량, 학습 토큰 수 계산까지 영향을 준다.
 
 ### 1-2. 문자와 바이트
 
-Unicode는 문자에 코드 포인트를 부여한다. UTF-8(Unicode Transformation Format의 8-bit encoding)은 이를 바이트열로 표현하는 방식이다. 바이트는 0부터 255까지의 정수이며, Unicode 문자 하나는 UTF-8에서 1–4바이트가 된다.[^unicode]
+Unicode는 문자에 코드 포인트(code point)를 부여한다. UTF-8(Unicode Transformation Format의 8-bit encoding)은 이를 바이트열로 표현하는 방식이다. 바이트(byte)는 8 bits로, 0부터 255까지의 정숫값을 표현하며, Unicode 문자 하나는 UTF-8에서 1–4바이트가 된다.[^unicode]
 
 다음 코드는 외부 라이브러리 없이 실행할 수 있다.
 
@@ -44,9 +44,9 @@ Byte-level BPE는 256개 바이트를 기본 vocabulary로 사용할 수 있다.
 
 ### 2-1. 병합 규칙 학습
 
-BPE는 인접한 기호 쌍을 반복적으로 병합하는 방법이다. Sennrich 등은 이를 기계번역의 subword 단위 학습에 적용했다.[^bpe] 여기서는 병합 규칙을 직접 계산할 수 있는 작은 예제를 만든다.
+BPE는 인접한 기호 쌍을 반복적으로 병합(merge)하는 방법이다. Sennrich 등은 이를 기계번역의 subword 단위 학습에 적용했다.[^bpe] 여기서는 병합 규칙을 직접 계산할 수 있는 작은 예제를 만든다.
 
-말뭉치가 다음과 같다고 하자. 이 예제에서는 각 문자열을 별도 조각으로 취급하고 문자열 경계를 넘어 병합하지 않는다. 모두 ASCII(American Standard Code for Information Interchange) 문자라 문자 하나가 바이트 하나이기도 하다.
+학습용 텍스트 모음인 말뭉치(corpus)가 다음과 같다고 하자. 이 예제에서는 각 문자열을 별도 조각으로 취급하고 문자열 경계를 넘어 병합하지 않는다. 모두 ASCII(American Standard Code for Information Interchange) 문자라 문자 하나가 바이트 하나이기도 하다.
 
 | 문자열 | 등장 횟수 | 처음의 기호열 |
 |---|---|---|
@@ -84,7 +84,7 @@ band   × 2 : ban d
 
 ### 2-2. 인코딩
 
-학습이 끝났다면 새 입력에서 병합 빈도를 다시 학습하지 않는다. 저장한 병합 순위와 vocabulary를 이용한다. 앞 예제의 규칙은 다음 두 개다.
+학습이 끝났다면 새 입력에서 병합 빈도를 다시 학습하지 않는다. 저장한 병합 순위(merge rank)와 vocabulary를 이용해 인코딩(encoding)한다. 앞 예제의 규칙은 다음 두 개다.
 
 ```
 1순위: a + n  → an
@@ -106,7 +106,7 @@ band   × 2 : ban d
 
 ### 2-3. 바이트 복원
 
-Decoding은 각 ID에 대응하는 바이트 조각을 순서대로 합치는 일이다.
+디코딩(decoding)은 각 ID에 대응하는 바이트 조각을 순서대로 합치는 일이다.
 
 ```
 257      100   256     97
@@ -119,9 +119,9 @@ b a n  +  d  + a n  +  a → b a n d a n a → "bandana"
 
 앞 예제는 병합 알고리즘만 떼어 본 것이다. 실제 tokenizer를 재현하려면 다음 요소까지 보아야 한다.
 
-**Pre-tokenization.** 문자열을 먼저 공백·문자·숫자·문장부호 등의 규칙으로 나눈 뒤, 조각 안에서 BPE를 적용할 수 있다. 그러면 단순히 빈도가 높다는 이유만으로 모든 경계를 넘어 병합하지 않는다. Llama 3 구현에는 이 분할을 위한 정규식과 tiktoken 기반 encoding 설정이 있다.[^llama-tokenizer]
+**Pre-tokenization.** 문자열을 먼저 공백·문자·숫자·문장부호 등의 규칙으로 나눈 뒤, 조각 안에서 BPE를 적용할 수 있다. 그러면 단순히 빈도가 높다는 이유만으로 모든 경계를 넘어 병합하지 않는다. Llama 3 구현에는 이 분할을 위한 정규식(regular expression)과 tiktoken 기반 encoding 설정이 있다.[^llama-tokenizer]
 
-**Normalization.** 대소문자, Unicode 정규화, 공백 등을 바꾸는 tokenizer도 있다. 모든 byte-level BPE가 동일한 정규화를 수행하는 것은 아니다. 코드를 다루는데 공백을 임의로 줄이거나, 문자열의 표기를 바꾸면 원래 정보가 사라질 수 있다.
+**Normalization.** 대소문자, Unicode 정규화(normalization), 공백 등을 바꾸는 tokenizer도 있다. 모든 byte-level BPE가 동일한 정규화를 수행하는 것은 아니다. 코드를 다루는데 공백을 임의로 줄이거나, 문자열의 표기를 바꾸면 원래 정보가 사라질 수 있다.
 
 **Special token.** 문서 시작·종료나 대화의 역할 구분은 별도의 ID로 표현할 수 있다. 출력 화면에 보이는 표기와 모델이 받는 special-token ID는 구분해야 한다. 일반 입력에 그 표기가 들어왔다고 항상 special token으로 해석하는 것도 아니다. 허용 여부는 tokenizer 호출 설정에 달려 있다.[^llama-tokenizer]
 

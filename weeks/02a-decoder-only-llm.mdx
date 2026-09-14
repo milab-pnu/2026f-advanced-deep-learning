@@ -8,7 +8,7 @@ order: 0
 
 ## 1. 입력 표현
 
-“오늘 부산의 날씨는” 뒤를 이어 쓰게 한다고 하자. 모델 내부에는 문자열을 직접 곱하는 연산이 없다. 먼저 tokenizer가 문자열을 정수 ID 열로 바꾸고, embedding 테이블에서 각 ID에 해당하는 벡터를 꺼낸다. Decoder 블록들은 이 벡터를 문맥에 맞게 바꾸고, 마지막에는 vocabulary의 각 토큰에 점수를 매긴다.
+“오늘 부산의 날씨는” 뒤를 이어 쓰게 한다고 하자. 모델 내부에는 문자열을 직접 곱하는 연산이 없다. 먼저 tokenizer가 문자열을 정수 ID 열로 바꾸고, 임베딩(embedding) 테이블에서 각 ID에 해당하는 벡터를 꺼낸다. Decoder 블록들은 이 벡터를 문맥에 맞게 바꾸고, 마지막에는 어휘 집합(vocabulary)의 각 토큰에 점수를 매긴다.
 
 ```
 텍스트 → token IDs → embedding → decoder blocks → LM head
@@ -32,7 +32,7 @@ order: 0
 | $d_h$ | head 하나의 차원 | 128 |
 | $d_{ff}$ | FFN 중간 차원 | 14,336 |
 
-배치 차원은 생략한다. 실제 학습에서는 여러 입력을 묶으므로 대부분의 텐서 앞에 batch 크기 $B$가 추가된다.
+배치(batch)는 한 번에 함께 처리하는 입력 묶음이다. 위 표에서는 배치 차원을 생략한다. 실제 학습에서는 여러 입력을 묶으므로 대부분의 텐서 앞에 batch 크기 $B$가 추가된다.
 
 ### 1-2. ID와 embedding
 
@@ -148,7 +148,7 @@ $$
 설명을 위해 후보가 `␠맑`, `␠흐`, `␠비` 세 개뿐이고 logits가 $[2,1,0]$이라고 하자. Softmax 확률은 약 $[0.665,0.245,0.090]$이다. Greedy decoding은 `␠맑`을 고르고, sampling은 이 확률에 따라 다른 토큰을 고를 수도 있다. 실제 vocabulary에는 128,256개의 후보가 있다.
 </Callout>
 
-입력 embedding과 LM head는 모양이 전치 관계라 가중치를 공유하는 weight tying도 가능하다. 하지만 여기서 기준으로 삼은 Llama는 별도 가중치를 쓴다. 모든 decoder-only 모델의 세부 구성이 같지는 않다.[^implementation]
+입력 embedding과 LM head는 모양이 전치(transpose) 관계라 가중치를 공유하는 weight tying도 가능하다. 하지만 여기서 기준으로 삼은 Llama는 별도 가중치를 쓴다. 모든 decoder-only 모델의 세부 구성이 같지는 않다.[^implementation]
 
 ### 3-2. Sampling과 생성 루프
 
@@ -158,7 +158,7 @@ $$
 p_T(v)=\frac{\exp(z_v/T)}{\sum_u\exp(z_u/T)}
 $$
 
-$T$가 작을수록 큰 logit에 확률이 집중된다. $T=0$을 위 식에 대입하지는 않는다. 구현에서 temperature 0을 greedy 선택의 의미로 받는 경우가 있다. Top-k는 상위 $k$개, top-p는 누적 확률이 기준에 도달하는 최소 후보 집합을 남겨 다시 정규화한다.[^nucleus]
+$T$가 작을수록 큰 logit에 확률이 집중된다. $T=0$을 위 식에 대입하지는 않는다. 구현에서 temperature 0을 greedy 선택의 의미로 받는 경우가 있다. Top-k는 상위 $k$개, top-p는 누적 확률이 기준에 도달하는 최소 후보 집합을 남겨 확률의 합이 1이 되도록 다시 정규화(renormalization)한다.[^nucleus]
 
 가상 예제에서 `␠맑`을 선택했다면 입력은 다음처럼 늘어난다.
 
