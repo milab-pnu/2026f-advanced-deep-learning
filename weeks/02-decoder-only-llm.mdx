@@ -4,9 +4,9 @@ week: 2
 order: 0
 ---
 
-**지정 읽기 — 종합 서베이.** *A Survey of Large Language Models*의 아키텍처·사전학습 목적함수·decoding 절을 함께 읽는다.[^survey] 이 노트에서는 LLM(large language model) 하나를 정해, 글자가 들어와서 다음 토큰이 나올 때까지의 계산을 따라간다. 각 부품의 유도보다 **입력과 출력이 무엇인지**에 집중한다.
+“오늘 부산의 날씨는”이라는 문자열이 어떻게 다음 토큰의 확률로 바뀔까? LLM(large language model)의 구조와 학습을 정리한 Zhao 등의 서베이[^survey]를 바탕으로, Llama 3 하나의 입력부터 출력까지 따라간다. 여기서 잡을 큰 흐름은 **텍스트의 수치화 → 문맥 반영 → 다음 토큰 선택**이다.
 
-## 1. 문장 하나를 모델에 넣으면
+## 1. 입력 표현
 
 “오늘 부산의 날씨는” 뒤를 이어 쓰게 한다고 하자. 모델 내부에는 문자열을 직접 곱하는 연산이 없다. 먼저 tokenizer가 문자열을 정수 ID 열로 바꾸고, embedding 테이블에서 각 ID에 해당하는 벡터를 꺼낸다. Decoder 블록들은 이 벡터를 문맥에 맞게 바꾸고, 마지막에는 vocabulary의 각 토큰에 점수를 매긴다.
 
@@ -17,6 +17,12 @@ order: 0
 ```
 
 모델이 출력하는 것은 **가능한 다음 토큰들의 점수**다. 그중 하나를 고르는 규칙까지 적용해야 실제 생성 결과를 얻는다. 문장을 완성하려면 이 과정을 여러 번 반복한다.
+
+[3Blue1Brown의 영상](https://www.youtube.com/watch?v=wjZofJX0v4M)은 embedding에서 출력 확률까지의 변환을 시각적으로 설명한다. 영상의 GPT 계열 예시와 아래 Llama의 수치·정규화 방식은 구분해서 보자.
+
+<Video src="https://www.youtube.com/watch?v=wjZofJX0v4M" caption="3Blue1Brown — Transformers, the tech behind LLMs (2024). 입력 벡터가 출력 확률로 바뀌는 흐름에 주목한다." />
+
+### 1-1. Llama 3 8B
 
 기준 모델은 **Llama 3 8B base(2024년 4월 공개)**다. 이후 Llama 3.1과 혼동하지 않도록 이 노트의 context 길이는 8,192로 고정한다. 층 수와 차원은 보고서의 Table 3, vocabulary와 special token 처리는 공식 구현을 참고한다.[^llama][^implementation]
 
@@ -32,7 +38,7 @@ order: 0
 
 배치 차원은 생략한다. 실제 학습에서는 여러 입력을 묶으므로 대부분의 텐서 앞에 batch 크기 $B$가 추가된다.
 
-## 2. 글자에서 정수로, 정수에서 벡터로
+### 1-2. ID와 embedding
 
 Tokenizer는 고정된 vocabulary와 분할 규칙으로 입력을 나눈다. 다음은 흐름을 설명하기 위한 **가상 분할과 가상 ID**이며 실제 Llama tokenizer 출력이 아니다.
 
@@ -56,7 +62,9 @@ $$
 Tokenizer 학습과 LLM 학습은 별도 과정이다. 일반적인 BPE(byte-pair encoding) 기반 학습에서는 tokenizer를 먼저 정한 뒤 고정한다. LLM의 gradient는 embedding과 decoder 가중치를 바꾸며 BPE 병합 규칙을 직접 바꾸지 않는다.
 </Callout>
 
-## 3. Decoder 블록이 문맥을 반영한다
+## 2. Decoder 블록
+
+### 2-1. Causal attention과 residual
 
 각 위치는 causal self-attention을 통해 자신과 앞선 위치를 참조한다. 마지막 위치 “는”의 표현에는 앞의 “오늘 부산의 날씨”가 반영될 수 있다. 반면 “오늘” 위치는 뒤의 “부산”을 보지 못한다. 이 제한 덕분에 학습 중 다음 토큰의 정답을 미리 읽지 않는다.
 
@@ -70,8 +78,8 @@ $$
 Y=A+\operatorname{FFN}(\operatorname{RMSNorm}(A))
 $$
 
-<svg viewBox="0 0 460 450" role="img" aria-label="Llama 3 디코더 블록 하나의 구조. 입력 x 가 두 하위 블록을 지난다. 첫째 하위 블록은 RMSNorm 다음 causal GQA attention, 그 출력을 입력 x 에 더한다(residual). 둘째 하위 블록은 RMSNorm 다음 SwiGLU FFN, 그 출력을 다시 더한다. 결과 y 는 같은 구조의 블록 32개 중 다음 블록으로 들어간다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
-  <text x="230" y="20" text-anchor="middle" font-size="12" fill="#0f172a">입력  x</text>
+<svg viewBox="0 0 460 450" role="img" aria-label="Llama 3 디코더 블록 하나의 구조. 입력 X 가 두 하위 블록을 지난다. 첫째 하위 블록은 RMSNorm 다음 causal GQA attention, 그 출력을 입력 X 에 더한다(residual). 둘째 하위 블록은 RMSNorm 다음 SwiGLU FFN, 그 출력을 다시 더한다. 결과 Y 는 같은 구조의 블록 32개 중 다음 블록으로 들어간다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <text x="230" y="20" text-anchor="middle" font-size="12" fill="#0f172a">입력  X</text>
   <line x1="230" y1="26" x2="230" y2="44" stroke="#0f172a"/>
   <path d="M230 34 L60 34 L60 176 L207 176" stroke="#94a3b8" fill="none"/>
   <text x="66" y="115" font-size="10" fill="#64748b" transform="rotate(-90 66 115)" text-anchor="middle">residual</text>
@@ -89,7 +97,7 @@ $$
   <polygon points="215,176 207,172 207,180" fill="#94a3b8"/>
   <line x1="230" y1="191" x2="230" y2="228" stroke="#0f172a"/>
   <polygon points="230,228 226,220 234,220" fill="#0f172a"/>
-  <text x="246" y="213" font-size="11" fill="#64748b">a</text>
+  <text x="246" y="213" font-size="11" fill="#64748b">A</text>
   <rect x="130" y="228" width="200" height="32" fill="#f8fafc" stroke="#0f172a"/>
   <text x="230" y="248" text-anchor="middle" font-size="12" fill="#0f172a">RMSNorm</text>
   <line x1="230" y1="260" x2="230" y2="278" stroke="#0f172a"/>
@@ -103,11 +111,15 @@ $$
   <polygon points="215,360 207,356 207,364" fill="#94a3b8"/>
   <line x1="230" y1="375" x2="230" y2="400" stroke="#0f172a"/>
   <polygon points="230,400 226,392 234,392" fill="#0f172a"/>
-  <text x="230" y="420" text-anchor="middle" font-size="12" fill="#0f172a">출력  y   →   다음 블록</text>
+  <text x="230" y="420" text-anchor="middle" font-size="12" fill="#0f172a">출력  Y   →   다음 블록</text>
   <text x="230" y="438" text-anchor="middle" font-size="11" fill="#64748b">같은 구조의 블록 L = 32 개</text>
 </svg>
 
+*Llama 3 공식 구현을 바탕으로 이 노트에서 구성한 블록 도식. X·A·Y는 위 수식과 같은 행렬이며, 각 단계에서 모양은 n × d로 유지된다.*
+
 그림의 각 블록이 끝나도 텐서의 모양은 $n\times d$다. 같은 모양을 유지하므로 이 구조를 여러 층 쌓을 수 있다. Llama 3 8B에서는 32번 반복한다.
+
+### 2-2. Llama의 구성 요소
 
 | 부품 | 이 노트에서 알아둘 역할 |
 |---|---|
@@ -116,30 +128,33 @@ $$
 | SwiGLU(Swish-gated linear unit) | FFN의 한 경로가 다른 경로의 값을 곱셈으로 조절하는 gated 변환이다. |
 | Residual connection | 원래 표현에 계산한 변화를 더한다. |
 
-RoPE를 썼다고 학습한 길이 밖에서 자동으로 정확해지는 것은 아니다. 긴 context에서의 동작은 학습 데이터와 위치 처리 방식까지 함께 확인해야 한다. 여기서는 각 부품의 위치를 익히고, 상세 구조는 3주차에서 다룬다.
+RoPE를 썼다고 학습한 길이 밖에서 자동으로 정확해지는 것은 아니다. 긴 context에서의 동작은 학습 데이터와 위치 처리 방식까지 함께 확인해야 한다. 각 부품의 상세 연산은 3주차의 구조 분석에서 다룬다.
 
-## 4. Hidden vector에서 다음 토큰의 분포로
+## 3. 다음 토큰 생성
+
+### 3-1. LM head와 확률 분포
 
 마지막 decoder 출력에 최종 RMSNorm을 적용한 결과를 $H$라고 하자. LM(language model) head는 hidden dimension을 vocabulary dimension으로 바꾼다.
 
 $$
 H\in\mathbb{R}^{n\times d},\qquad
+W_{LM}\in\mathbb{R}^{d\times V},\qquad
 Z=HW_{LM}\in\mathbb{R}^{n\times V}
 $$
 
-$Z$의 $i$번째 행은 입력의 $i$번째 토큰까지 읽었을 때 **그다음 토큰**의 점수다. 이를 logits라고 한다. 모든 위치에 점수가 있지만, 현재 입력 뒤를 잇는 데에는 마지막 행 $z=Z_n$을 사용한다.
+수식의 행·열 번호는 1부터 세며, 구현에서는 보통 0부터 센다. $Z$의 $i$번째 행은 입력의 $i$번째 토큰까지 읽었을 때 **그다음 토큰**의 점수다. 이를 logits라고 한다. 모든 위치에 점수가 있지만, 현재 입력 뒤를 잇는 데에는 마지막 행 $z=Z_n$을 사용한다.
 
 $$
 p(v\mid t_{1:n})=\frac{\exp(z_v)}{\sum_{u=1}^{V}\exp(z_u)}
 $$
 
 <Callout type="example">
-설명을 위해 후보가 `맑`, `흐`, `비` 세 개뿐이고 logits가 $[2,1,0]$이라고 하자. Softmax 확률은 약 $[0.665,0.245,0.090]$이다. Greedy decoding은 `맑`을 고르고, sampling은 이 확률에 따라 다른 토큰을 고를 수도 있다. 실제 vocabulary에는 128,256개의 후보가 있다.
+설명을 위해 후보가 `␠맑`, `␠흐`, `␠비` 세 개뿐이고 logits가 $[2,1,0]$이라고 하자. Softmax 확률은 약 $[0.665,0.245,0.090]$이다. Greedy decoding은 `␠맑`을 고르고, sampling은 이 확률에 따라 다른 토큰을 고를 수도 있다. 실제 vocabulary에는 128,256개의 후보가 있다.
 </Callout>
 
 입력 embedding과 LM head는 모양이 전치 관계라 가중치를 공유하는 weight tying도 가능하다. 하지만 여기서 기준으로 삼은 Llama는 별도 가중치를 쓴다. 모든 decoder-only 모델의 세부 구성이 같지는 않다.[^implementation]
 
-## 5. 하나를 고르고 다시 넣는다
+### 3-2. Sampling과 생성 루프
 
 Decoding은 모델이 만든 점수를 실제 출력으로 바꾸는 절차다. 가장 높은 점수만 고르는 greedy decoding과, 확률적으로 고르는 sampling이 있다. Temperature $T>0$는 softmax 전에 logits를 나누어 분포의 집중도를 조절한다.
 
@@ -149,7 +164,7 @@ $$
 
 $T$가 작을수록 큰 logit에 확률이 집중된다. $T=0$을 위 식에 대입하지는 않는다. 구현에서 temperature 0을 greedy 선택의 의미로 받는 경우가 있다. Top-k는 상위 $k$개, top-p는 누적 확률이 기준에 도달하는 최소 후보 집합을 남겨 다시 정규화한다.[^nucleus]
 
-가상 예제에서 `맑`을 선택했다면 입력은 다음처럼 늘어난다.
+가상 예제에서 `␠맑`을 선택했다면 입력은 다음처럼 늘어난다.
 
 ```
 오늘 부산의 날씨는         → ␠맑
@@ -161,41 +176,13 @@ $T$가 작을수록 큰 logit에 확률이 집중된다. $T=0$을 위 식에 대
 
 생성한 token ID를 기존 ID 열 뒤에 붙이고 다음 분포를 계산한다. 정해진 종료 토큰이나 길이 제한에 도달하면 멈춘다. 효율적인 구현에서는 과거 위치의 key와 value를 KV(key–value) cache에 보관해 재사용한다. 캐시가 바꾸는 것은 계산의 재사용 방식이며, causal LM의 예측 목표는 그대로다.
 
-## 6. 같은 forward를 학습에 사용하면
+### 3-3. 학습과 생성의 차이
 
 학습 데이터에서는 뒤에 실제로 어떤 토큰이 왔는지 이미 안다. 따라서 마지막 위치만 사용하는 대신, 여러 위치의 logits를 각각 다음 토큰의 정답과 비교할 수 있다.
-
-| 입력 위치 | 그 위치에서 예측할 정답 |
-|---|---|
-| 오늘 | ␠부산 |
-| 오늘 ␠부산 | 의 |
-| 오늘 ␠부산 의 | ␠날씨 |
-| 오늘 ␠부산 의 ␠날씨 | 는 |
 
 입력마다 forward를 따로 실행할 필요는 없다. Causal mask를 적용한 한 번의 forward에서 각 행이 서로 다른 prefix를 읽는다. 이렇게 실제 앞선 토큰을 조건으로 주는 학습 방식을 teacher forcing이라고 한다.
 
 생성에서는 내가 고른 토큰이 다음 입력이 된다. 학습에서는 데이터의 토큰이 다음 입력이 된다. 이 차이를 기억하면 “한 번에 모든 위치를 학습하는데 왜 생성은 순차적인가?”를 설명할 수 있다.
-
-## 7. 크기를 한 번 계산해 보기
-
-Vocabulary와 hidden dimension만으로도 embedding의 파라미터 수를 계산할 수 있다.
-
-$$
-128{,}256\times4{,}096=525{,}336{,}576
-$$
-
-입력 embedding 하나가 약 0.525B이고, 별도 LM head도 같은 수다. 약 8B 파라미터 가운데 두 행렬만 약 1.05B를 차지한다. Vocabulary를 늘릴 때 시퀀스가 짧아질 수 있는 이점과 이 행렬들이 커지는 비용을 함께 보아야 한다.
-
-전체 가중치 8.03B를 파라미터당 2 bytes로 저장한다면 약 16.1 GB다. 이것은 **가중치만의 저장량**이다. 학습에는 gradient·optimizer state·activation이 추가되므로 이 숫자를 GPU(graphics processing unit)의 학습 메모리 요구량으로 사용하면 안 된다.
-
-<Details summary="스스로 설명해 보기">
-
-- Token ID와 embedding vector는 무엇이 다른가?
-- 입력 길이가 5일 때 왜 logits의 모양은 $5\times V$인가? 다음 토큰 생성에는 어느 행을 쓰는가?
-- Temperature를 바꾸면 모델 가중치도 바뀌는가?
-- 학습에서 여러 위치를 병렬로 채점할 수 있는 이유는 무엇인가?
-
-</Details>
 
 [^survey]: Zhao, W. X., et al. (2025). *A Survey of Large Language Models*. [arXiv:2303.18223v16](https://arxiv.org/abs/2303.18223v16). — 대표 서베이·지정 읽기: §IV-B의 architecture, pre-training tasks, decoding strategy. 절 번호는 v16 기준.
 [^llama]: Dubey, A., et al. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783v1](https://arxiv.org/abs/2407.21783v1). — §3.2, Table 3의 층 수·차원·head 구성. Table 1은 4월 Llama 3와 7월 Llama 3.1을 구분하며 보고서의 실험 결과는 Llama 3.1 기준이다.
