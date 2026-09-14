@@ -164,6 +164,12 @@ Vocabulary size는 tokenizer가 자동으로 알아내는 정답이라기보다 
 
 반대로 vocabulary가 $V$에서 $2V$로 커지고 hidden dimension $d$가 같다면, embedding의 파라미터 수 $Vd$는 두 배가 된다. 별도 LM(language model) head가 있다면 그쪽도 커진다. Vocabulary를 늘릴 때에는 줄어든 시퀀스 길이와 늘어난 출력 공간을 함께 계산해야 한다.
 
+<Callout type="note">
+**토큰 수를 줄이면 모델도 더 잘할까?** Schmidt 등의 *Tokenization Is More Than Compression*(2024)은 이 직관을 실험했다. 연구진은 주어진 vocabulary에서 텍스트를 **가능한 최소 개수의 토큰**으로 나누는 PathPiece를 제안했다. 그런데 논문의 실험에서는 토큰 수를 더 줄이는 것이 downstream task 성능 향상으로 이어지지는 않았다.[^compression]
+
+앞의 가상 예에서 1,200토큰을 900토큰으로 줄이면 같은 길이 제한 안에 더 많은 원문을 담을 수 있다. 하지만 이것만으로 모델이 문제를 더 잘 푼다고 판단할 수는 없다. 이 논문은 pre-tokenization 같은 설계 선택도 함께 살펴본다. 여기서는 **얼마나 짧게 표현하는가와 모델이 그 표현으로 얼마나 잘 학습하는가는 구분해서 평가해야 한다**는 점만 기억하자.
+</Callout>
+
 | 확인할 항목 | 비교 방법 |
 |---|---|
 | 한국어·영어 | 의미가 대응하는 문장의 토큰 수를 각각 기록한다. |
@@ -188,3 +194,5 @@ Tokenizer만으로 산술·철자 세기 성능 전체를 설명할 수는 없�
 [^bpe]: Sennrich, R., Haddow, B., & Birch, A. (2016). *Neural Machine Translation of Rare Words with Subword Units*. ACL 2016, pp. 1715–1725. [arXiv:1508.07909](https://arxiv.org/abs/1508.07909).
 [^hf]: Hugging Face. (2026). *Byte-Pair Encoding tokenization*. [LLM Course, Chapter 6](https://huggingface.co/learn/llm-course/chapter6/5).
 [^llama-tokenizer]: Meta. (2024). *Llama 3 tokenizer reference implementation*. [tokenizer.py](https://github.com/meta-llama/llama3/blob/main/llama/tokenizer.py).
+
+[^compression]: Schmidt, C. W., et al. (2024). *Tokenization Is More Than Compression*. [arXiv:2402.18376v2](https://arxiv.org/abs/2402.18376v2).
