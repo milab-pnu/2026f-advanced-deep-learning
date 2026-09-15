@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 218" role="img" aria-labelledby="title desc" font-family="system-ui, sans-serif">
+<title id="title">같은 문장의 서로 다른 토큰 분할</title>
+<desc id="desc">가상 Tokenizer 1: 부산대학교 / 에서 / 공백과 공부 / 합니다 / 마침표, 5개 토큰. 가상 Tokenizer 2: 부산 / 대 / 학교 / 에서 / 공백 / 공부 / 합 / 니다 / 마침표, 9개 토큰. 배경색이 이어진 묶음 하나가 토큰 하나이며 공백은 ␠로 표시한다.</desc>
+<rect width="600" height="218" rx="8" fill="white"/>
+<text x="34" y="28" font-size="21" font-weight="600" fill="#0f172a">Tokenizer 1</text>
+<text x="566" y="28" text-anchor="end" font-size="19" fill="#475569">5개 토큰</text>
+<rect x="35" y="42" width="188" height="42" rx="4" fill="#dbeafe" stroke="#cbd5e1" stroke-width="0.6"/>
+<text x="53" y="72" text-anchor="middle" font-size="27" fill="#0f172a">부</text>
+<text x="91" y="72" text-anchor="middle" font-size="27" fill="#0f172a">산</text>
+<text x="129" y="72" text-anchor="middle" font-size="27" fill="#0f172a">대</text>
+<text x="167" y="72" text-anchor="middle" font-size="27" fill="#0f172a">학</text>
+<text x="205" y="72" text-anchor="middle" font-size="27" fill="#0f172a">교</text>
+<rect x="225" y="42" width="74" height="42" rx="4" fill="#fef3c7" stroke="#cbd5e1" stroke-width="0.6"/>
+<text x="243" y="72" text-anchor="middle" font-size="27" fill="#0f172a">에</text>
+<text x="281" y="72" text-anchor="middle" font-size="27" fill="#0f172a">서</text>
+<rect x="301" y="42" width="112" height="42" rx="4" fill="#dcfce7" stroke="#cbd5e1" stroke-width="0.6"/>
+<text x="319" y="72" text-anchor="middle" font-size="27" fill="#0f172a">␠</text>
+<text x="357" y="72" text-anchor="middle" font-size="27" fill="#0f172a">공</text>
+<text x="395" y="72" text-anchor="middle" font-size="27" fill="#0f172a">부</text>
+<rect x="415" y="42" width="112" height="42" rx="4" fill="#ede9fe" stroke="#cbd5e1" stroke-width="0.6"/>
+<text x="433" y="72" text-anchor="middle" font-size="27" fill="#0f172a">합</text>
+<text x="471" y="72" text-anchor="middle" font-size="27" fill="#0f172a">니</text>
+<text x="509" y="72" text-anchor="middle" font-size="27" fill="#0f172a">다</text>
+<rect x="529" y="42" width="36" height="42" rx="4" fill="#ffe4e6" stroke="#cbd5e1" stroke-width="0.6"/>
+<text x="547" y="72" text-anchor="middle" font-size="27" fill="#0f172a">.</text>
+<text x="34" y="120" font-size="21" font-weight="600" fill="#0f172a">Tokenizer 2</text>
+<text x="566" y="120" text-anchor="end" font-size="19" fill="#475569">9개 토큰</text>
+<rect x="35" y="134" width="74" height="42" rx="4" fill="#dcfce7" stroke="#cbd5e1" stroke-width="0.6"/>
+<text x="53" y="164" text-anchor="middle" font-size="27" fill="#0f172a">부</text>
+<text x="91" y="164" text-anchor="middle" font-size="27" fill="#0f172a">산</text>
+<rect x="111" y="134" width="36" height="42" rx="4" fill="#dbeafe" stroke="#cbd5e1" stroke-width="0.6"/>
+<text x="129" y="164" text-anchor="middle" font-size="27" fill="#0f172a">대</text>
+<rect x="149" y="134" width="74" height="42" rx="4" fill="#ffe4e6" stroke="#cbd5e1" stroke-width="0.6"/>
+<text x="167" y="164" text-anchor="middle" font-size="27" fill="#0f172a">학</text>
+<text x="205" y="164" text-anchor="middle" font-size="27" fill="#0f172a">교</text>
+<rect x="225" y="134" width="74" height="42" rx="4" fill="#fef3c7" stroke="#cbd5e1" stroke-width="0.6"/>
+<text x="243" y="164" text-anchor="middle" font-size="27" fill="#0f172a">에</text>
+<text x="281" y="164" text-anchor="middle" font-size="27" fill="#0f172a">서</text>
+<rect x="301" y="134" width="36" height="42" rx="4" fill="#cffafe" stroke="#cbd5e1" stroke-width="0.6"/>
+<text x="319" y="164" text-anchor="middle" font-size="27" fill="#0f172a">␠</text>
+<rect x="339" y="134" width="74" height="42" rx="4" fill="#ede9fe" stroke="#cbd5e1" stroke-width="0.6"/>
+<text x="357" y="164" text-anchor="middle" font-size="27" fill="#0f172a">공</text>
+<text x="395" y="164" text-anchor="middle" font-size="27" fill="#0f172a">부</text>
+<rect x="415" y="134" width="36" height="42" rx="4" fill="#dbeafe" stroke="#cbd5e1" stroke-width="0.6"/>
+<text x="433" y="164" text-anchor="middle" font-size="27" fill="#0f172a">합</text>
+<rect x="453" y="134" width="74" height="42" rx="4" fill="#dcfce7" stroke="#cbd5e1" stroke-width="0.6"/>
+<text x="471" y="164" text-anchor="middle" font-size="27" fill="#0f172a">니</text>
+<text x="509" y="164" text-anchor="middle" font-size="27" fill="#0f172a">다</text>
+<rect x="529" y="134" width="36" height="42" rx="4" fill="#ffe4e6" stroke="#cbd5e1" stroke-width="0.6"/>
+<text x="547" y="164" text-anchor="middle" font-size="27" fill="#0f172a">.</text>
+<text x="300" y="207" text-anchor="middle" font-size="17" fill="#64748b">색 묶음 하나 = 토큰 하나 · ␠ = 공백</text>
+</svg>
