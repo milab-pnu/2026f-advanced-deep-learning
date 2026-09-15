@@ -10,7 +10,7 @@ order: 0
 
 “오늘 부산의 날씨는” 뒤를 이어 쓰게 한다고 하자. 먼저 텍스트를 token ID 열(sequence)로 바꾸고, 각 ID에 대응하는 벡터에 문맥을 반영한다. 마지막 위치의 벡터로 다음 토큰의 점수를 계산한 뒤 토큰 하나를 선택한다.
 
-아래 토큰 분할과 ID는 설명을 위한 가상 값이다. `␠`는 공백이며, 입력 ID가 다섯 개이므로 시퀀스 길이(sequence length)는 $n=5$다. 길이는 문자 수나 단어 수와 구분한다.
+아래 토큰 분할과 ID는 설명을 위한 가상 값이다. `␠`는 공백이며, 입력 ID가 다섯 개이므로 시퀀스 길이(sequence length) $n$ 은 5이다. 시퀀스 길이는 문자 수나 단어 수와 구분한다.
 
 <figure>
 <svg viewBox="0 0 560 396" role="img" aria-label="오늘 부산의 날씨는을 가상 ID 17,42,9,83,11로 바꾼다. Embedding과 decoder를 거친 마지막 위치의 벡터로 LM head가 logits를 계산하고 softmax로 확률을 만든다. 가상 ID 21을 선택해 기존 ID 뒤에 붙이면 오늘 부산의 날씨는 맑이 된다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -20,12 +20,12 @@ order: 0
 <text x="280" y="76" font-size="14" text-anchor="middle" fill="#64748b">[17, 42, 9, 83, 11]</text>
 <path d="M280 85 V108" stroke="#0f172a"/><polygon points="280,114 276,107 284,107" fill="#0f172a"/>
 <rect x="24" y="114" width="512" height="67" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="280" y="140" font-size="17" text-anchor="middle" fill="#0f172a" font-weight="600">Embedding → Decoder 스택 → 최종 정규화</text>
+<text x="280" y="140" font-size="17" text-anchor="middle" fill="#0f172a" font-weight="600">Embedding → Decoder 스택</text>
 <text x="280" y="164" font-size="14" text-anchor="middle" fill="#64748b">토큰마다 문맥 벡터 생성 · 마지막 위치 h₅ 사용</text>
 <path d="M280 181 V204" stroke="#0f172a"/><polygon points="280,210 276,203 284,203" fill="#0f172a"/>
 <rect x="24" y="210" width="512" height="67" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="280" y="237" font-size="17" text-anchor="middle" fill="#0f172a" font-weight="600">LM head → Logits → Softmax 확률</text>
-<text x="280" y="261" font-size="14" text-anchor="middle" fill="#64748b">Vocabulary의 각 토큰에 점수 하나, 확률 하나</text>
+<text x="280" y="261" font-size="14" text-anchor="middle" fill="#64748b">Vocabulary에 있는 모든 토큰에 대하여 확률 계산</text>
 <path d="M280 277 V300" stroke="#0f172a"/><polygon points="280,306 276,299 284,299" fill="#0f172a"/>
 <rect x="24" y="306" width="512" height="77" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="280" y="331" font-size="17" text-anchor="middle" fill="#0f172a" font-weight="600">토큰 선택 → ID 21을 뒤에 추가 → 다음 예측</text>
@@ -45,7 +45,7 @@ order: 0
 
 Tokenizer는 어휘 집합(vocabulary)과 분할 규칙을 이용해 문자열을 정수 ID 열로 바꾼다. 도입 예문에서는 `[17, 42, 9, 83, 11]`이다. 임베딩(embedding)은 그 ID에 대응하는 실수 벡터를 제공한다. ID 42는 테이블의 행 번호일 뿐, ID 17보다 의미가 크거나 강하다는 뜻이 아니다.
 
-이 노트의 기준 모델은 <strong>Llama 3 8B base(2024년 4월 공개)</strong>다. Vocabulary 크기 $V=128{,}256$은 선택 가능한 전체 token ID 수이고, hidden dimension $d=4{,}096$은 토큰 벡터 하나의 성분 수다. 모델 규모는 Llama 3 보고서의 Table 3과 공식 구현을 따른다.[^llama][^implementation]
+이 노트의 기준 모델은 <strong>Llama 3 8B</strong>다.[^llama] Vocabulary 크기 $V=128{,}256$은 선택 가능한 전체 token ID 수이고, hidden dimension $d=4{,}096$은 토큰 벡터 하나의 성분 수다.
 
 $$
 E\in\mathbb{R}^{V\times d},\qquad x_i=E_{t_i},\qquad X\in\mathbb{R}^{n\times d}
@@ -110,7 +110,7 @@ $n$은 앞에서 설명한 sequence length, 즉 입력 ID 열의 토큰 수다. 
 
 ### 2-3. 문맥과 벡터 변환
 
-Decoder 블록 안에서는 attention과 FFN(feed-forward network)이 서로 다른 일을 한다. **Attention은 위치 사이의 정보를 섞고, FFN은 point-wise하게 벡터를 비선형 변환한다.** Causal mask 때문에 각 위치는 자신과 앞선 위치만 참조한다. 예문의 마지막 “는”은 앞의 “오늘 부산의 날씨”를 반영할 수 있지만, 첫 “오늘”은 뒤쪽 토큰을 보지 못한다.
+Decoder 블록 안에서는 attention과 FFN(feed-forward network)이 서로 다른 일을 한다. **Attention은 위치 사이의 정보를 섞고, FFN은 point-wise (or, token-wise)하게 벡터를 비선형 변환한다.** Causal mask 때문에 각 위치는 자신과 앞선 위치만 참조한다. 예문의 마지막 “는”은 앞의 “오늘 부산의 날씨”를 반영할 수 있지만, 첫 “오늘”은 뒤쪽 토큰을 보지 못한다.
 
 Llama는 각 연산 전에 RMSNorm(root mean square normalization)으로 벡터의 크기를 정규화한다. 연산 결과를 원래 입력에 더하는 경로가 잔차 연결(residual connection)이다. 블록 하나의 입력을 $X$, 중간 결과를 $A$, 출력을 $Y$라고 하면 다음과 같다.[^implementation]
 
@@ -148,7 +148,7 @@ $$
 =\underbrace{z_5}_{1\times128256}
 $$
 
-모든 다섯 행에 적용하면 $5\times128256$ 행렬 $Z$가 된다. 각 행은 해당 위치까지 읽었을 때 **그다음 토큰**의 점수(logits)다. 생성에서는 이 중 마지막 행 $z=z_5$가 필요하며, 앞선 네 행의 logits까지 계산할 필요는 없다. 도입 그림은 바로 이 마지막 행의 계산을 보여 준다. 수식의 행 번호는 1부터 세며, 구현에서는 보통 0부터 센다.
+모든 다섯 행에 적용하면 $5\times128256$ 행렬 $Z$가 된다. 각 행은 해당 위치까지 읽었을 때 **그다음 토큰**의 점수(logits)다. 생성에서는 이 중 마지막 행 $z=z_5$가 필요하며, 앞선 네 행의 logits까지 계산할 필요는 없다. 도입 그림은 바로 이 마지막 행의 계산을 보여 준다.
 
 Softmax는 각 행의 vocabulary 축에 적용한다. 따라서 각 행마다 합이 1인 확률 분포가 생긴다. 마지막 행에 대한 식은 다음과 같다.
 
@@ -166,7 +166,7 @@ $$
 
 세 점수 $[2,1,0]$을 softmax에 넣으면 약 $[0.665,0.245,0.090]$이 된다. LM head가 $d$개 성분을 $V$개 점수로 바꾸고, softmax는 개수를 유지하면서 합이 1인 확률로 바꾼다. 실제 모델에서는 vocabulary 전체에 대해 같은 계산을 수행한다.
 
-입력 embedding과 LM head는 모양이 전치(transpose) 관계여서 가중치를 공유하는 weight tying도 가능하다. 기준 모델인 Llama 3는 그림처럼 별도 가중치를 쓴다.[^implementation]
+입력 embedding과 LM head는 모양이 전치(transpose) 관계여서 가중치를 공유하는 weight tying도 가능하다. 주로 on-device 모델(상대적으로 작은 모델)에서 사용한다. Llama 3 8B 모델은 그림처럼 별도 가중치를 쓴다.[^implementation]
 
 ### 2-5. 다음 토큰 학습
 
@@ -180,11 +180,11 @@ $$
 | 4: `␠날씨` | `오늘 · ␠부산 · 의 · ␠날씨` | `는` (11) |
 | 5: `는` | `오늘 · ␠부산 · 의 · ␠날씨 · 는` | `␠맑` (21) |
 
-입력 ID 열은 `[17, 42, 9, 83, 11]`, 정답 ID 열은 `[42, 9, 83, 11, 21]`이다. 다섯 행은 다섯 개의 별도 문장이 아니라 **한 시퀀스의 서로 다른 예측 위치**다. Causal mask가 각 행에서 볼 수 있는 범위를 제한한다.
+입력 ID 열은 `[17, 42, 9, 83, 11]`, 정답 ID 열은 `[42, 9, 83, 11, 21]`이다. Causal mask가 각 위치에서 볼 수 있는 범위를 제한한다.
 
-이처럼 데이터에 있는 실제 앞선 토큰을 조건으로 주는 방식을 teacher forcing이라고 한다. 각 행이 한 칸 뒤의 정답에 준 확률로 cross-entropy loss를 구한다. 예를 들어 마지막 행의 정답이 `␠맑`이고 그 확률이 0.5라면, 그 위치의 loss는 $-\log0.5\approx0.693$이다. 이 값이 작아지도록 역전파하면 embedding·decoder·LM head의 가중치가 갱신된다. 정수 ID와 tokenizer의 병합 규칙은 이 gradient로 바뀌지 않는다.
+이처럼 학습하는 방식을 teacher forcing이라고 한다. 각 행이 한 칸 뒤의 정답에 준 확률로 cross-entropy loss를 구한다. 예를 들어 마지막 행의 정답이 `␠맑`이고 그 확률이 0.5라면, 그 위치의 loss는 $-\log0.5\approx0.693$이다. 이 값이 작아지도록 역전파하면 embedding·decoder·LM head의 가중치가 갱신된다. tokenizer는 이 gradient로 바뀌지 않는다.
 
-Causal mask는 뒤의 정답을 읽지 못하게 하면서 여러 위치의 예측을 한 번의 forward에서 계산하게 한다. 학습에서는 정답 시퀀스가 이미 있으므로 앞 위치의 새 토큰을 뽑을 때까지 기다릴 필요가 없다. 여러 위치의 loss를 집계하고 padding을 제외하는 방법은 Pre-training의 입력·정답과 목적함수에서 구체화한다.
+Causal mask는 뒤의 정답을 읽지 못하게 하면서 여러 위치에 대하여 **한 번의 forward로 계산**하게 한다. 학습에서는 정답 시퀀스가 이미 있으므로 자기회귀적인 방법으로 학습을 하지 않아도 된다.
 
 ## 3. 생성
 
@@ -214,12 +214,12 @@ $T$가 작을수록 큰 logit에 확률이 집중된다. $T=0$을 이 식에 대
 
 Top-k는 후보 수를 고정하지만, top-p는 그 시점의 분포에 따라 남기는 후보 수가 달라진다. Temperature를 높인다고 응답 품질이 반드시 좋아지는 것은 아니다. 더 다양한 토큰을 시도하는 효과와 낮은 확률의 부적절한 토큰을 고를 가능성을 함께 보아야 한다.
 
-생성 API에는 이 밖에도 반복을 억제하는 penalty나 생성 길이·종료 조건을 정하는 parameter가 있다. 이번에는 **분포를 바꾸는 설정**과 **언제 생성을 멈추는지 정하는 설정**을 구분하면 된다. 지원 항목과 여러 설정을 적용하는 순서는 구현마다 다를 수 있다.
+이 밖에도 반복을 억제하는 penalty나 생성 길이·종료 조건을 정하는 parameter가 있다. 지원 항목과 여러 설정을 적용하는 순서는 구현마다 다를 수 있다.
 
 ### 3-3. 생성 루프 (Autoregressive Generation)
 
 
-선택한 token ID를 기존 ID 열 뒤에 붙이면 다음 예측의 조건이 된다. 도입 예문은 이후 다음처럼 이어질 수 있다.
+선택한 token ID를 기존 ID 열 뒤에 붙이면 다음 입력이 된다. 도입 예문은 이후 다음처럼 이어질 수 있다.
 
 ```
 오늘 부산의 날씨는 맑       → 습니다
@@ -232,7 +232,6 @@ Top-k는 후보 수를 고정하지만, top-p는 그 시점의 분포에 따라 
 
 ## 4. 정리 영상
 
-[3Blue1Brown의 영상](https://www.youtube.com/watch?v=wjZofJX0v4M)으로 입력 embedding이 문맥 표현과 출력 확률로 바뀌는 흐름을 복습한다.
 <Video src="https://www.youtube.com/watch?v=wjZofJX0v4M" caption="3Blue1Brown, Transformers, the tech behind LLMs (2024). 입력 벡터에서 출력 확률까지의 흐름을 복습한다." />
 
 [^survey]: Zhao, W. X., et al. (2025). *A Survey of Large Language Models*. [arXiv:2303.18223v16](https://arxiv.org/abs/2303.18223v16).
