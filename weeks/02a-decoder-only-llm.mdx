@@ -232,15 +232,11 @@ Top-k는 후보 수를 고정하지만, top-p는 그 시점의 분포에 따라 
 
 ### 3-4. RL의 rollout
 
-이후 post-training의 강화학습(reinforcement learning, RL)에서는 모델을 <strong>다음 토큰을 선택하는 정책(policy)</strong>으로 본다. 프롬프트와 지금까지 생성한 토큰이 현재 문맥이고, 다음 토큰을 고르는 것이 행동(action)에 해당한다. 이 정책으로 토큰을 차례로 생성해 응답을 얻는 과정이 rollout이다. 여기서는 도구 호출 없이 텍스트 응답 하나를 생성하는 경우를 생각한다.
+강화학습(reinforcement learning, RL)에서 **rollout은 현재 모델로 응답을 생성해 학습에 쓸 경험을 모으는 과정**이다. 앞 절의 생성 루프를 학습용 응답 수집에 사용하는 것이다.
 
-Rollout으로 응답을 수집한 뒤, 별도의 평가와 가중치 업데이트가 이어진다. 응답 생성 자체와 가중치 갱신을 구분하면 된다.
+RLVR(reinforcement learning with verifiable rewards)은 수학 문제처럼 정답을 자동으로 검증할 수 있는 과제에서, 검증 결과를 보상(reward)으로 사용하는 방식이다.[^tulu3] 예를 들어 “$17\times23$은?”에 모델이 풀이와 답을 생성하는 단계가 rollout이다. 간단한 보상 규칙으로 최종 답이 391이면 1, 틀리면 0을 줄 수 있다. 이렇게 모은 응답과 보상으로 정답을 더 자주 생성하도록 모델의 가중치를 학습한다.
 
-<Details summary="보충: InstructGPT의 rollout과 학습">
-
-InstructGPT의 RL 단계에서는 현재 정책으로 응답을 생성하고, reward model이 보상(reward)을 부여하며, 그 신호를 이용해 정책을 업데이트한다.[^instructgpt] Sampling 설정은 수집되는 응답의 분포를 바꾸므로, 어떤 정책과 설정으로 경험을 모았는지 함께 기록해야 한다.
-
-</Details>
+흐름은 **응답 생성(rollout) → 정답 검증·보상 → 가중치 업데이트**다. Rollout 중에는 가중치를 갱신하지 않고, 현재 가중치로 토큰을 차례로 생성한다.
 
 ## 4. 정리 영상
 
@@ -252,6 +248,6 @@ InstructGPT의 RL 단계에서는 현재 정책으로 응답을 생성하고, re
 [^implementation]: Meta. (2024). *Llama 3 reference implementation*. [tokenizer.py](https://github.com/meta-llama/llama3/blob/main/llama/tokenizer.py), [model.py](https://github.com/meta-llama/llama3/blob/main/llama/model.py).
 [^nucleus]: Holtzman, A., Buys, J., Du, L., Forbes, M., & Choi, Y. (2020). *The Curious Case of Neural Text Degeneration*. ICLR 2020. [arXiv:1904.09751](https://arxiv.org/abs/1904.09751).
 
-[^instructgpt]: Ouyang, L., et al. (2022). *Training language models to follow instructions with human feedback*. NeurIPS 2022. [arXiv:2203.02155](https://arxiv.org/abs/2203.02155).
+[^tulu3]: Lambert, N., et al. (2024). *Tülu 3: Pushing Frontiers in Open Language Model Post-Training*. [arXiv:2411.15124v2](https://arxiv.org/html/2411.15124v2).
 
 [^mor]: Bae, S., et al. (2025). *Mixture-of-Recursions: Learning Dynamic Recursive Depths for Adaptive Token-Level Computation*. NeurIPS 2025. [논문](https://papers.nips.cc/paper_files/paper/2025/hash/8b08bbf8b420faa6eeb4020720582ec7-Abstract-Conference.html).
