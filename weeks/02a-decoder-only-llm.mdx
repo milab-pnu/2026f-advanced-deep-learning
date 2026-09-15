@@ -186,7 +186,7 @@ $$
 
 Causal mask는 뒤의 정답을 읽지 못하게 하면서 여러 위치의 예측을 한 번의 forward에서 계산하게 한다. 학습에서는 정답 시퀀스가 이미 있으므로 앞 위치의 새 토큰을 뽑을 때까지 기다릴 필요가 없다. 여러 위치의 loss를 집계하고 padding을 제외하는 방법은 Pre-training의 입력·정답과 목적함수에서 구체화한다.
 
-## 3. 생성과 rollout
+## 3. 생성
 
 ### 3-1. Greedy와 sampling
 
@@ -230,14 +230,6 @@ Top-k는 후보 수를 고정하지만, top-p는 그 시점의 분포에 따라 
 
 정해진 종료 토큰이나 길이 제한에 도달하면 생성을 멈춘다. 효율적인 구현에서는 과거 위치의 key와 value를 KV(key–value) cache에 보관해 재사용한다. 캐시는 이전 계산을 반복하는 비용을 줄인다.
 
-### 3-4. RL의 rollout
-
-강화학습(reinforcement learning, RL)에서 **rollout은 현재 모델로 응답을 생성해 학습에 쓸 경험을 모으는 과정**이다. 앞 절의 생성 루프를 학습용 응답 수집에 사용하는 것이다.
-
-RLVR(reinforcement learning with verifiable rewards)은 수학 문제처럼 정답을 자동으로 검증할 수 있는 과제에서, 검증 결과를 보상(reward)으로 사용하는 방식이다.[^tulu3] 예를 들어 “$17\times23$은?”에 모델이 풀이와 답을 생성하는 단계가 rollout이다. 간단한 보상 규칙으로 최종 답이 391이면 1, 틀리면 0을 줄 수 있다. 이렇게 모은 응답과 보상으로 정답을 더 자주 생성하도록 모델의 가중치를 학습한다.
-
-흐름은 **응답 생성(rollout) → 정답 검증·보상 → 가중치 업데이트**다. Rollout 중에는 가중치를 갱신하지 않고, 현재 가중치로 토큰을 차례로 생성한다.
-
 ## 4. 정리 영상
 
 [3Blue1Brown의 영상](https://www.youtube.com/watch?v=wjZofJX0v4M)으로 입력 embedding이 문맥 표현과 출력 확률로 바뀌는 흐름을 복습한다.
@@ -247,7 +239,5 @@ RLVR(reinforcement learning with verifiable rewards)은 수학 문제처럼 정�
 [^llama]: Dubey, A., et al. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783v1](https://arxiv.org/abs/2407.21783v1).
 [^implementation]: Meta. (2024). *Llama 3 reference implementation*. [tokenizer.py](https://github.com/meta-llama/llama3/blob/main/llama/tokenizer.py), [model.py](https://github.com/meta-llama/llama3/blob/main/llama/model.py).
 [^nucleus]: Holtzman, A., Buys, J., Du, L., Forbes, M., & Choi, Y. (2020). *The Curious Case of Neural Text Degeneration*. ICLR 2020. [arXiv:1904.09751](https://arxiv.org/abs/1904.09751).
-
-[^tulu3]: Lambert, N., et al. (2024). *Tülu 3: Pushing Frontiers in Open Language Model Post-Training*. [arXiv:2411.15124v2](https://arxiv.org/html/2411.15124v2).
 
 [^mor]: Bae, S., et al. (2025). *Mixture-of-Recursions: Learning Dynamic Recursive Depths for Adaptive Token-Level Computation*. NeurIPS 2025. [논문](https://papers.nips.cc/paper_files/paper/2025/hash/8b08bbf8b420faa6eeb4020720582ec7-Abstract-Conference.html).

@@ -238,13 +238,38 @@ GQA 를 그룹 2.25개로 돌린 것과 같은 크기다. 그런데 DeepSeek-V2 
 
 GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크 분해의 표현력)는 **3주차**에서 다룬다.
 
-## 8. 그 밖의 inference 최적화 (한 줄씩)
+## 8. Inference engine
+
+실제 서비스에서는 여러 요청이 서로 다른 시점에 들어오고, 입력 길이와 생성 길이도 다르다. **Inference engine은 모델 실행, 요청별 KV cache 관리, batch 구성과 실행 순서를 함께 담당하는 소프트웨어**다. vLLM과 SGLang은 이 역할을 수행하는 공개 inference·serving 프레임워크다.[^vllm-docs][^sglang-docs]
+
+### 8-1. vLLM과 SGLang
+
+| 엔진 | 이 강의의 비용 모델과 연결할 설계 |
+|---|---|
+| **vLLM** | PagedAttention으로 KV cache를 고정 크기 블록에 나누어 저장하고, 요청별 논리적 토큰 위치와 실제 메모리 블록을 연결한다. 요청마다 큰 연속 공간을 미리 확보할 때 생기는 메모리 낭비를 줄인다.[^vllm] |
+| **SGLang** | RadixAttention으로 여러 요청의 공통 시작 토큰열(prefix)을 트리 형태로 관리하고, 이미 계산된 prefix의 KV cache를 찾아 재사용한다. 반복되는 프롬프트 부분의 prefill 계산을 줄인다.[^sglang] |
+
+두 엔진 모두 여러 요청을 처리하며 cache를 관리한다. vLLM도 prefix caching을 지원한다.[^vllm-prefix] 위 표는 각 프로젝트의 대표 설계를 앞 절의 개념에 연결한 것이다. 엔진별 지원 모델·정밀도·하드웨어와 실행 옵션은 공식 문서에서 확인한다.
+
+### 8-2. 요청 처리와 cache 재사용
+
+**Continuous batching**은 요청의 완료·도착에 맞춰 실행할 batch를 계속 갱신하는 방식이다. A와 B를 생성하던 중 B가 먼저 끝났다면, A가 끝날 때까지 기다리지 않고 새 요청 C를 받아 다음 실행에 포함할 수 있다. C의 prefill과 기존 요청의 decode를 언제 배치할지는 엔진의 scheduler가 정한다. 6절의 batching 효과를 길이가 다른 요청에도 적용하는 방법이다.[^vllm-docs]
+
+**Prefix caching**은 여러 요청에서 같은 시작 토큰열의 KV cache를 재사용한다. 같은 모델과 설정에서 다음 두 요청이 동일한 지시문으로 시작한다고 하자.
+
+```
+요청 A: [공통 지시문] + [부산의 날씨를 설명해 줘]
+요청 B: [공통 지시문] + [서울의 날씨를 설명해 줘]
+```
+
+공통 지시문의 cache가 남아 있고 재사용 조건을 만족하면, B는 그 부분의 prefill 계산을 줄일 수 있다. 달라지는 질문 부분과 새로 생성할 토큰의 계산은 계속 필요하다. 재사용 여부는 실제 token prefix의 일치와 cache 보관 상태에 달려 있다.[^sglang][^vllm-prefix]
+
+엔진을 비교할 때는 같은 모델·GPU·정밀도·입출력 길이·동시 요청 수·sampling 설정을 사용하고, **TTFT·TPOT·초당 생성 토큰 수·최대 메모리**를 함께 측정한다. 공통 prefix를 재사용하는 실험에서는 cache가 비어 있는 첫 요청과 cache가 남아 있는 후속 요청을 구분해야 결과를 해석할 수 있다.
+
+## 9. 추가 inference 최적화
 
 - **Weight quantization** — 가중치를 int8/int4/fp8 로. 가중치 요소당 bytes가 줄어 6절의
   memory wall 을 직접 완화한다. 6·7주차에서 자세히.
-- **PagedAttention / continuous batching**[^vllm] — KV cache 를 OS(operating system)
-  페이지처럼 고정 블록으로 관리해 메모리 단편화(memory fragmentation)를 줄이고, 요청이 끝나는 대로 새 요청을 배치에
-  끼워 GPU 를 놀리지 않는다(vLLM).
 - **Speculative decoding**[^specdecode] — 작은 draft 모델이 여러 토큰을 미리 제안하고 큰 모델이
   한 번의 forward 로 검증·수용. decode 의 순차성을 부분적으로 병렬화.
 - **FlashAttention**[^flashattn] — attention을 SRAM(static random-access memory)에서 블록 단위로 계산해 HBM 왕복을 줄임.
@@ -256,7 +281,7 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
 류 추론 모델) — 은 별개의 축이며 6–7주차와 기말 프로젝트에서 다룬다.[^reasoningsurvey]
 </Callout>
 
-## 9. 정리 — 비용 모델
+## 10. 정리: 비용 모델
 
 - inference 는 autoregressive → **prefill**(프롬프트 병렬, compute-bound)과
   **decode**(토큰당 1회, memory-bound)로 나뉜다.
@@ -281,6 +306,14 @@ GQA·MLA 의 아키텍처 관점 세부(왜 품질이 유지되는지, 저랭크
 [^mla]: DeepSeek-AI (2024). DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model. [arXiv:2405.04434](https://arxiv.org/abs/2405.04434).
 
 [^vllm]: Kwon, W., et al. (2023). Efficient Memory Management for Large Language Model Serving with PagedAttention. SOSP 2023. [arXiv:2309.06180](https://arxiv.org/abs/2309.06180) (vLLM).
+
+[^sglang]: Zheng, L., et al. (2024). *SGLang: Efficient Execution of Structured Language Model Programs*. [arXiv:2312.07104v2](https://arxiv.org/html/2312.07104v2).
+
+[^vllm-docs]: vLLM Project. *vLLM Documentation*. [공식 문서](https://docs.vllm.ai/en/latest/).
+
+[^sglang-docs]: SGLang Team. *SGLang Documentation*. [공식 문서](https://docs.sglang.io/).
+
+[^vllm-prefix]: vLLM Project. *Automatic Prefix Caching*. [설계 문서](https://docs.vllm.ai/en/latest/design/prefix_caching/).
 
 [^flashattn]: Dao, T., Fu, D. Y., Ermon, S., Rudra, A., & Ré, C. (2022). FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. NeurIPS 2022. [arXiv:2205.14135](https://arxiv.org/abs/2205.14135).
 
