@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 380" role="img" aria-label="두 pipeline stage와 세 microbatch의 forward backward 시간표" font-family="system-ui, sans-serif">
+<title>두 pipeline stage와 세 microbatch의 forward backward 시간표</title>
+<rect width="800" height="380" fill="white"/>
+<text x="400" y="29" font-size="22" text-anchor="middle" fill="#0f172a" font-weight="600">PP=2 · microbatch A/B/C · optimizer step 1회</text>
+<text x="400" y="58" font-size="18" text-anchor="middle" fill="#0f172a">모든 forward 후 backward하는 예 · 칸 하나는 같은 계산 시간</text>
+<text x="195" y="106" font-size="18" text-anchor="middle" fill="#0f172a">1</text>
+<text x="272" y="106" font-size="18" text-anchor="middle" fill="#0f172a">2</text>
+<text x="349" y="106" font-size="18" text-anchor="middle" fill="#0f172a">3</text>
+<text x="426" y="106" font-size="18" text-anchor="middle" fill="#0f172a">4</text>
+<text x="503" y="106" font-size="18" text-anchor="middle" fill="#0f172a">5</text>
+<text x="580" y="106" font-size="18" text-anchor="middle" fill="#0f172a">6</text>
+<text x="657" y="106" font-size="18" text-anchor="middle" fill="#0f172a">7</text>
+<text x="734" y="106" font-size="18" text-anchor="middle" fill="#0f172a">8</text>
+<text x="20" y="105" font-size="18" text-anchor="start" fill="#0f172a">시간 →</text>
+<text x="20" y="154" font-size="18" text-anchor="start" fill="#0f172a" font-weight="600">N0 · TP=8</text>
+<text x="20" y="179" font-size="18" text-anchor="start" fill="#0f172a">1–16층</text>
+<rect x="160" y="128" width="70" height="65" rx="4" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="195" y="167" font-size="18" text-anchor="middle" fill="#0f172a">F A</text>
+<rect x="237" y="128" width="70" height="65" rx="4" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="272" y="167" font-size="18" text-anchor="middle" fill="#0f172a">F B</text>
+<rect x="314" y="128" width="70" height="65" rx="4" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="349" y="167" font-size="18" text-anchor="middle" fill="#0f172a">F C</text>
+<rect x="391" y="128" width="70" height="65" rx="4" fill="white" stroke="#94a3b8"/>
+<text x="426" y="167" font-size="18" text-anchor="middle" fill="#0f172a">대기</text>
+<rect x="468" y="128" width="70" height="65" rx="4" fill="white" stroke="#94a3b8"/>
+<text x="503" y="167" font-size="18" text-anchor="middle" fill="#0f172a">대기</text>
+<rect x="545" y="128" width="70" height="65" rx="4" fill="#0f172a" stroke="#94a3b8"/>
+<text x="580" y="167" font-size="18" text-anchor="middle" fill="white">B C</text>
+<rect x="622" y="128" width="70" height="65" rx="4" fill="#0f172a" stroke="#94a3b8"/>
+<text x="657" y="167" font-size="18" text-anchor="middle" fill="white">B B</text>
+<rect x="699" y="128" width="70" height="65" rx="4" fill="#0f172a" stroke="#94a3b8"/>
+<text x="734" y="167" font-size="18" text-anchor="middle" fill="white">B A</text>
+<text x="20" y="246" font-size="18" text-anchor="start" fill="#0f172a" font-weight="600">N1 · TP=8</text>
+<text x="20" y="271" font-size="18" text-anchor="start" fill="#0f172a">17–32층</text>
+<rect x="160" y="220" width="70" height="65" rx="4" fill="white" stroke="#94a3b8"/>
+<text x="195" y="259" font-size="18" text-anchor="middle" fill="#0f172a">대기</text>
+<rect x="237" y="220" width="70" height="65" rx="4" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="272" y="259" font-size="18" text-anchor="middle" fill="#0f172a">F A</text>
+<rect x="314" y="220" width="70" height="65" rx="4" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="349" y="259" font-size="18" text-anchor="middle" fill="#0f172a">F B</text>
+<rect x="391" y="220" width="70" height="65" rx="4" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="426" y="259" font-size="18" text-anchor="middle" fill="#0f172a">F C</text>
+<rect x="468" y="220" width="70" height="65" rx="4" fill="#0f172a" stroke="#94a3b8"/>
+<text x="503" y="259" font-size="18" text-anchor="middle" fill="white">B C</text>
+<rect x="545" y="220" width="70" height="65" rx="4" fill="#0f172a" stroke="#94a3b8"/>
+<text x="580" y="259" font-size="18" text-anchor="middle" fill="white">B B</text>
+<rect x="622" y="220" width="70" height="65" rx="4" fill="#0f172a" stroke="#94a3b8"/>
+<text x="657" y="259" font-size="18" text-anchor="middle" fill="white">B A</text>
+<rect x="699" y="220" width="70" height="65" rx="4" fill="white" stroke="#94a3b8"/>
+<text x="734" y="259" font-size="18" text-anchor="middle" fill="#0f172a">대기</text>
+<text x="400" y="327" font-size="18" text-anchor="middle" fill="#0f172a">F: forward (N0 → N1) · B: backward (N1 → N0)</text>
+<text x="400" y="356" font-size="18" text-anchor="middle" fill="#0f172a">빈 구간이 bubble · 모든 backward가 끝난 뒤 한 번 갱신</text>
+</svg>

@@ -8,88 +8,44 @@ order: 0
 
 ## 1. 한 토큰의 생성 과정
 
-“오늘 부산의 날씨는” 뒤를 이어 쓰게 한다고 하자. 모델은 먼저 텍스트를 정수 ID 열(sequence)로 바꾸고, 각 ID에 대응하는 벡터에 문맥을 반영한다. 이 열에 들어 있는 토큰 수를 시퀀스 길이(sequence length)라고 한다. 예문의 ID가 다섯 개라면 sequence length는 $n=5$다. 문자 수나 단어 수를 세는 것과는 다르다. 마지막에는 모든 토큰에 대응하는 점수를 계산한다. **모델이 점수를 만드는 과정과, 그 점수로 토큰을 고르는 과정**을 함께 거쳐야 문장이 이어진다.
+“오늘 부산의 날씨는” 뒤를 이어 쓰게 한다고 하자. 먼저 텍스트를 token ID 열(sequence)로 바꾸고, 각 ID에 대응하는 벡터에 문맥을 반영한다. 마지막 위치의 벡터로 다음 토큰의 점수를 계산한 뒤 토큰 하나를 선택한다.
 
-아래 그림은 한 번의 생성 과정을 보여준다. 차원은 Llama 3 8B의 실제 설정인 hidden dimension $d=4{,}096$, vocabulary size $V=128{,}256$을 사용한다. 토큰 분할·ID·벡터 값은 설명을 위한 가상 값이다. `␠`는 공백을 나타낸다.
+아래 토큰 분할과 ID는 설명을 위한 가상 값이다. `␠`는 공백이며, 입력 ID가 다섯 개이므로 시퀀스 길이(sequence length)는 $n=5$다. 길이는 문자 수나 단어 수와 구분한다.
 
 <figure>
-<svg viewBox="0 0 560 935" role="img" aria-label="오늘 부산의 날씨는이라는 입력이 가상 토큰 ID 17, 42, 9, 83, 11로 변환된다. 각 ID로 임베딩 행을 조회하고 decoder 32개와 최종 RMSNorm을 통과한다. 마지막 위치의 4096차원 벡터를 LM head에 넣어 128256개 logits를 얻고 softmax로 같은 수의 확률을 만든다. ID 21을 고르는 예에서는 이를 기존 ID 열에 추가한다. 차원은 실제 Llama 3 8B 설정이며 분할과 ID는 가상이다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
-<rect x="24" y="8" width="512" height="59" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="40" y="30" font-size="12" text-anchor="start" fill="#0f172a" font-weight="600">입력 텍스트</text>
-<text x="280" y="53" font-size="19" text-anchor="middle" fill="#0f172a">오늘 부산의 날씨는</text>
-<path d="M280 67 V94" fill="none" stroke="#0f172a"/><polygon points="280,99 276,92 284,92" fill="#0f172a"/>
-<text x="294" y="87.0" font-size="11" text-anchor="start" fill="#64748b">Tokenizer: 분할하고 ID 부여</text>
-<rect x="24" y="99" width="512" height="89" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="40" y="121" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">1. 토큰 조각과 정수 ID (sequence length n = 5)</text>
-<text x="80" y="149" font-size="15" text-anchor="middle" fill="#0f172a">오늘</text>
-<text x="80" y="175" font-size="15" text-anchor="middle" fill="#0f172a">17</text>
-<text x="180" y="149" font-size="15" text-anchor="middle" fill="#0f172a">␠부산</text>
-<text x="180" y="175" font-size="15" text-anchor="middle" fill="#0f172a">42</text>
-<text x="280" y="149" font-size="15" text-anchor="middle" fill="#0f172a">의</text>
-<text x="280" y="175" font-size="15" text-anchor="middle" fill="#0f172a">9</text>
-<text x="380" y="149" font-size="15" text-anchor="middle" fill="#0f172a">␠날씨</text>
-<text x="380" y="175" font-size="15" text-anchor="middle" fill="#0f172a">83</text>
-<text x="480" y="149" font-size="15" text-anchor="middle" fill="#0f172a">는</text>
-<text x="480" y="175" font-size="15" text-anchor="middle" fill="#0f172a">11</text>
-<path d="M280 188 V212" fill="none" stroke="#0f172a"/><polygon points="280,217 276,210 284,210" fill="#0f172a"/>
-<text x="294" y="206.5" font-size="11" text-anchor="start" fill="#64748b">Embedding lookup: E의 해당 행 조회</text>
-<rect x="24" y="217" width="512" height="139" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="40" y="240" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">2. ID 하나 → 실수 벡터 하나</text>
-<text x="65" y="264" font-size="14" text-anchor="start" fill="#0f172a">17 → E₁₇ = [ 0.2, −0.1, …,  0.5 ]</text>
-<text x="65" y="287" font-size="14" text-anchor="start" fill="#0f172a">42 → E₄₂ = [−0.3,  0.8, …,  0.1 ]</text>
-<text x="65" y="310" font-size="14" text-anchor="start" fill="#0f172a"> ⋮       나머지 ID도 같은 테이블에서 조회</text>
-<text x="40" y="331" font-size="12" text-anchor="start" fill="#0f172a">Sequence length n = 5 · Hidden dimension d = 4,096</text>
-<text x="40" y="348" font-size="12" text-anchor="start" fill="#0f172a">X의 모양: n × d = 5 × 4,096</text>
-<path d="M280 356 V380" fill="none" stroke="#0f172a"/><polygon points="280,385 276,378 284,378" fill="#0f172a"/>
-<rect x="24" y="385" width="512" height="79" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="40" y="409" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">3. Decoder 스택 → 최종 정규화</text>
-<text x="40" y="432" font-size="13" text-anchor="start" fill="#0f172a">각 토큰의 벡터에 앞선 문맥을 반영</text>
-<text x="40" y="451" font-size="12" text-anchor="start" fill="#0f172a">마지막 위치 “는”의 벡터 h₅를 사용 (4,096개 성분)</text>
-<path d="M280 464 V487" fill="none" stroke="#0f172a"/><polygon points="280,493 276,486 284,486" fill="#0f172a"/>
-<rect x="24" y="493" width="512" height="237" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="40" y="517" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">4. 벡터를 확률로 바꾸는 과정</text>
-<text x="65" y="544" font-size="14" text-anchor="start" fill="#0f172a" font-weight="600">lm_head: 4,096 → 128,256</text>
-<text x="65" y="564" font-size="12" text-anchor="start" fill="#0f172a">h₅ [1 × 4,096] × W [4,096 × 128,256]</text>
-<path d="M76 571 V584" fill="none" stroke="#0f172a"/><polygon points="76,590 72,583 80,583" fill="#0f172a"/>
-<text x="65" y="609" font-size="14" text-anchor="start" fill="#0f172a" font-weight="600">Logits z: 1 × 128,256</text>
-<text x="65" y="630" font-size="12" text-anchor="start" fill="#0f172a">Vocabulary의 각 토큰에 점수 하나씩</text>
-<path d="M76 638 V671" fill="none" stroke="#0f172a"/><polygon points="76,677 72,670 80,670" fill="#0f172a"/>
-<text x="94" y="661" font-size="12" text-anchor="start" fill="#0f172a">Softmax: 전체 128,256개 점수를 확률로 변환</text>
-<text x="65" y="697" font-size="14" text-anchor="start" fill="#0f172a" font-weight="600">확률 p: 1 × 128,256</text>
-<text x="65" y="717" font-size="12" text-anchor="start" fill="#0f172a">128,256개 확률의 합 = 1</text>
-<path d="M280 730 V768" fill="none" stroke="#0f172a"/><polygon points="280,774 276,767 284,767" fill="#0f172a"/>
-<text x="294" y="757" font-size="11" text-anchor="start" fill="#0f172a">선택 예: greedy로 ID 21</text>
-<rect x="24" y="774" width="512" height="112" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="40" y="798" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">5. 선택한 ID를 기존 ID 열 뒤에 추가</text>
-<text x="40" y="824" font-size="17" text-anchor="start" fill="#0f172a">[17, 42, 9, 83, 11, 21]</text>
-<text x="40" y="848" font-size="12" text-anchor="start" fill="#0f172a">Sequence length: 5 → 6</text>
-<text x="40" y="873" font-size="13" text-anchor="start" fill="#0f172a">문자열로 decode하면 “오늘 부산의 날씨는 맑”</text>
-<text x="40" y="916" font-size="13" text-anchor="start" fill="#0f172a">늘어난 ID 열을 조건으로 다음 토큰을 다시 예측</text>
+<svg viewBox="0 0 560 396" role="img" aria-label="오늘 부산의 날씨는을 가상 ID 17,42,9,83,11로 바꾼다. Embedding과 decoder를 거친 마지막 위치의 벡터로 LM head가 logits를 계산하고 softmax로 확률을 만든다. 가상 ID 21을 선택해 기존 ID 뒤에 붙이면 오늘 부산의 날씨는 맑이 된다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<rect x="24" y="8" width="512" height="77" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="280" y="32" font-size="17" text-anchor="middle" fill="#0f172a" font-weight="600">텍스트 → Tokenizer → ID 열</text>
+<text x="280" y="56" font-size="15" text-anchor="middle" fill="#0f172a">오늘 · ␠부산 · 의 · ␠날씨 · 는</text>
+<text x="280" y="76" font-size="14" text-anchor="middle" fill="#64748b">[17, 42, 9, 83, 11]</text>
+<path d="M280 85 V108" stroke="#0f172a"/><polygon points="280,114 276,107 284,107" fill="#0f172a"/>
+<rect x="24" y="114" width="512" height="67" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="280" y="140" font-size="17" text-anchor="middle" fill="#0f172a" font-weight="600">Embedding → Decoder 스택 → 최종 정규화</text>
+<text x="280" y="164" font-size="14" text-anchor="middle" fill="#64748b">토큰마다 문맥 벡터 생성 · 마지막 위치 h₅ 사용</text>
+<path d="M280 181 V204" stroke="#0f172a"/><polygon points="280,210 276,203 284,203" fill="#0f172a"/>
+<rect x="24" y="210" width="512" height="67" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="280" y="237" font-size="17" text-anchor="middle" fill="#0f172a" font-weight="600">LM head → Logits → Softmax 확률</text>
+<text x="280" y="261" font-size="14" text-anchor="middle" fill="#64748b">Vocabulary의 각 토큰에 점수 하나, 확률 하나</text>
+<path d="M280 277 V300" stroke="#0f172a"/><polygon points="280,306 276,299 284,299" fill="#0f172a"/>
+<rect x="24" y="306" width="512" height="77" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="280" y="331" font-size="17" text-anchor="middle" fill="#0f172a" font-weight="600">토큰 선택 → ID 21을 뒤에 추가 → 다음 예측</text>
+<text x="280" y="354" font-size="14" text-anchor="middle" fill="#64748b">[17, 42, 9, 83, 11, 21] · 길이 5 → 6</text>
+<text x="280" y="376" font-size="15" text-anchor="middle" fill="#0f172a">Decode 결과: 오늘 부산의 날씨는 맑</text>
 </svg>
-<figcaption>Llama 3 8B의 차원을 적용한 생성 흐름. 배치 차원은 생략했다. ␠는 공백이다.</figcaption>
+<figcaption>가상 한국어 예문으로 직접 구성한 생성 흐름. 선택한 ID를 입력 뒤에 붙여 이 과정을 반복한다.</figcaption>
 </figure>
 
-여기서 $d$는 **토큰 하나를 표현하는 벡터의 성분 수**, $V$는 **모델이 다음 토큰으로 선택할 수 있는 전체 ID 수**다. LM head가 4,096개 성분을 128,256개 점수로 변환하고, softmax는 그 점수들의 개수를 유지하면서 확률로 바꾼다.
-
-확률 계산만 작게 살펴보기 위해, 다음 표에서는 vocabulary가 세 후보뿐이라고 가정한다. 그림의 실제 차원과 구분한 별도 계산 예제이며, 실제 Llama 출력에서 세 토큰만 발췌한 확률은 아니다.
-
-| 후보 (가상 ID) | Logit | Softmax 확률 |
-|---|---|---|
-| `␠맑` (21) | 2 | 66.5% |
-| `␠흐` (35) | 1 | 24.5% |
-| `␠비` (64) | 0 | 9.0% |
-
-이 예에서 greedy로 가장 높은 확률의 ID 21을 고르면 그림처럼 입력 뒤에 추가한다. 이제 텍스트가 벡터와 점수로 바뀌는 순서대로 모델 내부를 살펴보자.
+**모델의 점수 계산과 토큰 선택 규칙**을 구분해 두자. 모델이 같은 점수를 출력해도 가장 높은 후보를 고를지, 확률에 따라 뽑을지에 따라 이어지는 문장이 달라질 수 있다.
 
 ## 2. 모델 계산과 학습
 
-도입 그림은 **현재 입력 뒤에 토큰 하나를 생성하는 상황**에 초점을 맞췄다. 입력 다섯 토큰을 처리한 뒤, 마지막 위치 “는”의 벡터만 LM head에 넣어 다음 토큰을 고른 것이다. 이제는 시야를 넓혀 **각 위치의 벡터를 행으로 모은 행렬**로 같은 계산을 살펴본다. 행 하나는 토큰 위치 하나에 대응한다. 이 표현을 이해하면, 생성에서 마지막 행을 사용하는 것과 학습에서 여러 행을 함께 사용하는 것이 자연스럽게 연결된다.
+도입 그림의 계산을 **각 위치의 벡터를 행으로 모은 행렬**로 살펴보자. 행 하나는 토큰 위치 하나에 대응한다. 생성에서는 마지막 행으로 다음 토큰을 고르고, 학습에서는 여러 행의 예측을 함께 채점한다.
 
 ### 2-1. Token ID와 embedding
 
 Tokenizer는 어휘 집합(vocabulary)과 분할 규칙을 이용해 문자열을 정수 ID 열로 바꾼다. 도입 예문에서는 `[17, 42, 9, 83, 11]`이다. 임베딩(embedding)은 그 ID에 대응하는 실수 벡터를 제공한다. ID 42는 테이블의 행 번호일 뿐, ID 17보다 의미가 크거나 강하다는 뜻이 아니다.
 
-이 노트의 기준 모델은 <strong>Llama 3 8B base(2024년 4월 공개)</strong>다. Vocabulary 크기는 $V=128{,}256$, 벡터 차원은 $d=4{,}096$이다. 모델 규모는 Llama 3 보고서의 Table 3과 공식 구현을 따른다.[^llama][^implementation]
+이 노트의 기준 모델은 <strong>Llama 3 8B base(2024년 4월 공개)</strong>다. Vocabulary 크기 $V=128{,}256$은 선택 가능한 전체 token ID 수이고, hidden dimension $d=4{,}096$은 토큰 벡터 하나의 성분 수다. 모델 규모는 Llama 3 보고서의 Table 3과 공식 구현을 따른다.[^llama][^implementation]
 
 $$
 E\in\mathbb{R}^{V\times d},\qquad x_i=E_{t_i},\qquad X\in\mathbb{R}^{n\times d}
@@ -103,7 +59,7 @@ $n$은 앞에서 설명한 sequence length, 즉 입력 ID 열의 토큰 수다. 
 
 ### 2-2. Llama 3 8B 구조
 
-임베딩 행렬은 32개의 decoder 블록을 차례로 통과한다. 각 블록의 구조는 같지만 가중치는 별개다.<Sidenote>가중치를 공유하며 같은 블록 묶음을 반복 사용하는 연구도 있다. Mixture-of-Recursions(MoR, 2025)은 여기에 토큰마다 반복 횟수를 다르게 정하는 방식을 결합한다.[^mor]</Sidenote> 블록을 지나는 동안 $n\times d$라는 모양은 유지되고, 마지막 LM(language model) head에서 각 토큰의 벡터가 vocabulary 전체의 점수로 바뀐다.
+임베딩 행렬은 32개의 decoder 블록을 차례로 통과한다. 각 블록의 구조는 같지만 가중치는 별개다.<Sidenote>Mixture-of-Recursions(MoR)은 블록 가중치 공유와 토큰별 반복 횟수 선택을 결합한 변형이다.[^mor]</Sidenote> 블록을 지나는 동안 $n\times d$라는 모양은 유지되고, 마지막 LM(language model) head에서 각 토큰의 벡터가 vocabulary 전체의 점수로 바뀐다.
 
 <figure>
 <svg viewBox="0 0 560 574" role="img" aria-label="Llama 3 8B 전체 구조. n개의 토큰 ID를 embedding으로 n 곱하기 4096 행렬로 변환한다. 서로 다른 가중치를 가진 decoder 블록 32개와 최종 RMSNorm을 거쳐 LM head가 n 곱하기 128256 logits를 만든다. 각 블록에는 query head 32개와 key-value head 8개의 GQA, query와 key에 적용하는 RoPE, 중간 차원 14336의 SwiGLU FFN이 있다. 배치 차원은 생략했다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -200,7 +156,15 @@ $$
 p(v\mid t_{1:n})=\frac{\exp(z_v)}{\sum_{u=1}^{V}\exp(z_u)}
 $$
 
-§1의 세 후보 계산 예제에서는 $[2,1,0]$이 약 $[0.665,0.245,0.090]$이 된다. 실제 모델에서는 vocabulary 전체에 대해 계산한다. 이 분포를 얻는 것까지가 한 번의 예측이고, 어떤 토큰을 선택할지는 다음 단계에서 정한다.
+계산을 작게 보기 위해 vocabulary가 세 후보뿐이라고 가정하자. 실제 Llama 출력에서 일부만 발췌한 값이 아닌, 별도의 가상 예제다.
+
+| 후보 (가상 ID) | Logit | Softmax 확률 |
+|---|---|---|
+| `␠맑` (21) | 2 | 66.5% |
+| `␠흐` (35) | 1 | 24.5% |
+| `␠비` (64) | 0 | 9.0% |
+
+세 점수 $[2,1,0]$을 softmax에 넣으면 약 $[0.665,0.245,0.090]$이 된다. LM head가 $d$개 성분을 $V$개 점수로 바꾸고, softmax는 개수를 유지하면서 합이 1인 확률로 바꾼다. 실제 모델에서는 vocabulary 전체에 대해 같은 계산을 수행한다.
 
 입력 embedding과 LM head는 모양이 전치(transpose) 관계여서 가중치를 공유하는 weight tying도 가능하다. 기준 모델인 Llama 3는 그림처럼 별도 가중치를 쓴다.[^implementation]
 
@@ -218,15 +182,9 @@ $$
 
 입력 ID 열은 `[17, 42, 9, 83, 11]`, 정답 ID 열은 `[42, 9, 83, 11, 21]`이다. 다섯 행은 다섯 개의 별도 문장이 아니라 **한 시퀀스의 서로 다른 예측 위치**다. Causal mask가 각 행에서 볼 수 있는 범위를 제한한다.
 
-이처럼 데이터에 있는 실제 앞선 토큰을 조건으로 주는 방식을 teacher forcing이라고 한다. §2-4의 $5\times128256$ logits에서 각 행의 정답 토큰에 대한 cross-entropy loss를 구하고, 유효한 위치에 대해 평균한다.
+이처럼 데이터에 있는 실제 앞선 토큰을 조건으로 주는 방식을 teacher forcing이라고 한다. 각 행이 한 칸 뒤의 정답에 준 확률로 cross-entropy loss를 구한다. 예를 들어 마지막 행의 정답이 `␠맑`이고 그 확률이 0.5라면, 그 위치의 loss는 $-\log0.5\approx0.693$이다. 이 값이 작아지도록 역전파하면 embedding·decoder·LM head의 가중치가 갱신된다. 정수 ID와 tokenizer의 병합 규칙은 이 gradient로 바뀌지 않는다.
 
-$$
-\mathcal{L}_{\mathrm{NTP}}=-\frac{1}{N}\sum_{i=1}^{N}\log p_\theta(t_{i+1}\mid t_{1:i})
-$$
-
-여기서 $N$은 채점하는 위치 수이며 padding 등 제외할 위치는 세지 않는다. 예를 들어 정답 토큰이 `␠맑`이라면, 그 토큰에 준 확률이 높을수록 해당 위치의 loss는 작아진다. Loss를 역전파하면 embedding·decoder·LM head의 가중치가 갱신된다. 정수 ID와 tokenizer의 병합 규칙을 이 gradient로 바꾸는 것은 아니다.
-
-Causal mask 덕분에 여러 위치를 한 번의 forward에서 계산하면서도 각 위치는 뒤의 정답을 미리 볼 수 없다. 학습 시에는 정답 시퀀스가 이미 있으므로, 앞 위치에서 새 토큰을 뽑을 때까지 기다릴 필요가 없다. 학습 데이터의 구성과 pre-training 절차는 이번 주의 pre-training 노트에서 이어간다.
+Causal mask는 뒤의 정답을 읽지 못하게 하면서 여러 위치의 예측을 한 번의 forward에서 계산하게 한다. 학습에서는 정답 시퀀스가 이미 있으므로 앞 위치의 새 토큰을 뽑을 때까지 기다릴 필요가 없다. 여러 위치의 loss를 집계하고 padding을 제외하는 방법은 Pre-training의 입력·정답과 목적함수에서 구체화한다.
 
 ## 3. 생성과 rollout
 
@@ -244,7 +202,7 @@ $$
 
 $T$가 작을수록 큰 logit에 확률이 집중된다. $T=0$을 이 식에 대입하지는 않는다. 구현에서 temperature 0을 greedy 선택의 의미로 받는 경우가 있다. Top-k는 상위 $k$개, top-p는 누적 확률이 기준에 도달하는 최소 후보 집합을 남기고 확률의 합이 1이 되도록 다시 정규화(renormalization)한다.[^nucleus]
 
-같은 logits $[2,1,0]$에서도 설정에 따라 실제로 뽑는 분포가 달라진다. 아래 값은 §1의 세 후보만 놓고 계산한 예다. 각 행은 별도 설정이며, top-k와 top-p 예시는 $T=1$을 사용한다.
+같은 logits $[2,1,0]$에서도 설정에 따라 실제로 뽑는 분포가 달라진다. 아래 값은 §2-4의 세 후보만 놓고 계산한 예다. 각 행은 별도 설정이며, top-k와 top-p 예시는 $T=1$을 사용한다.
 
 | 설정 | `␠맑` | `␠흐` | `␠비` | 효과 |
 |---|---|---|---|---|
@@ -276,17 +234,13 @@ Top-k는 후보 수를 고정하지만, top-p는 그 시점의 분포에 따라 
 
 이후 post-training의 강화학습(reinforcement learning, RL)에서는 모델을 <strong>다음 토큰을 선택하는 정책(policy)</strong>으로 본다. 프롬프트와 지금까지 생성한 토큰이 현재 문맥이고, 다음 토큰을 고르는 것이 행동(action)에 해당한다. 이 정책으로 토큰을 차례로 생성해 응답을 얻는 과정이 rollout이다. 여기서는 도구 호출 없이 텍스트 응답 하나를 생성하는 경우를 생각한다.
 
-Rollout은 §3-3의 생성 루프를 학습에 사용할 경험을 모으는 데 쓰는 것이다. 예를 들어 InstructGPT의 RL 단계에서는 현재 정책으로 응답을 생성하고, reward model이 응답을 평가하며, 그 신호를 이용해 정책을 업데이트한다.[^instructgpt]
+Rollout으로 응답을 수집한 뒤, 별도의 평가와 가중치 업데이트가 이어진다. 응답 생성 자체와 가중치 갱신을 구분하면 된다.
 
-| 단계 | 하는 일 |
-|---|---|
-| Rollout | 현재 정책으로 프롬프트에 대한 응답 생성 |
-| 평가 | 생성한 응답에 보상(reward) 부여 |
-| 업데이트 | 수집한 응답과 보상으로 정책의 가중치 학습 |
+<Details summary="보충: InstructGPT의 rollout과 학습">
 
-**응답을 생성하는 것 자체가 가중치 업데이트는 아니다.** Sampling 설정을 바꾸면 수집되는 응답의 분포가 달라지므로 RL이 학습할 경험도 달라진다. 따라서 rollout에서는 어떤 정책과 sampling 설정으로 데이터를 생성했는지가 중요하다. 보상을 정의하고 업데이트하는 구체적인 방법은 post-training에서 다룬다.
+InstructGPT의 RL 단계에서는 현재 정책으로 응답을 생성하고, reward model이 보상(reward)을 부여하며, 그 신호를 이용해 정책을 업데이트한다.[^instructgpt] Sampling 설정은 수집되는 응답의 분포를 바꾸므로, 어떤 정책과 설정으로 경험을 모았는지 함께 기록해야 한다.
 
-6주차 inference에서는 이 생성 루프를 바탕으로 KV cache·메모리·처리량 등 실행 효율을 살펴본다.
+</Details>
 
 ## 4. 정리 영상
 

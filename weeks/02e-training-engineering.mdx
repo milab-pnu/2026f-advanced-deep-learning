@@ -4,6 +4,10 @@ week: 2
 order: 4
 ---
 
+import parallelLayout from "./assets/week02-parallel-layout.svg";
+import zeroShards from "./assets/week02-zero-shards.svg";
+import pipelineTimeline from "./assets/week02-pipeline-timeline.svg";
+
 모델 크기와 학습 토큰 수를 정해 계산량을 추산했어도, 실제 학습 완료 시간은 아직 정해지지 않는다. GPU(graphics processing unit)의 메모리에 무엇을 저장하고, 장치 사이에 무엇을 전달하는지가 실행 가능성과 속도를 결정한다. Duan 등의 분산 LLM(large language model) 학습 서베이[^survey]를 바탕으로, 8개 노드에 GPU가 8개씩 있는 환경에서 출발해, 같은 64개 GPU에 데이터와 모델을 어떻게 배치할지 살펴본다.
 
 ## 1. 노드와 GPU
@@ -106,29 +110,17 @@ FP16 학습에서는 작은 gradient가 0이 되는 것을 줄이기 위해 **lo
 
 Activation과 임시 통신 buffer는 아직 더하지 않았다. ZeRO(zero redundancy optimizer) 논문은 이러한 model state의 중복을 메모리 문제의 주요 원인으로 분석한다.[^zero]
 
-따라서 문제를 둘로 나눈다. **학습 상태가 메모리에 들어가게 하는 것**, 그리고 **주어진 시간 안에 충분한 토큰을 처리하는 것**이다. GPU를 여러 개 쓴다는 말만으로 두 문제가 모두 해결되지는 않는다.
+Activation은 입력의 크기와도 함께 늘어난다. 한 GPU가 한 번에 처리하는 작은 배치(microbatch)에 시퀀스 $b$개를 넣고 길이가 $n$, hidden dimension이 $d$라면, 모양이 $[b,n,d]$인 BF16 텐서 **하나**의 저장량은 다음과 같다.
 
-### 2-3. Sequence packing
+$$
+M_{\text{tensor}}=bnd\times2\ \text{bytes}
+$$
 
-GPU에 모델이 들어가더라도, 계산하는 입력의 상당 부분이 빈칸이라면 자원을 낭비할 수 있다. 길이 8의 입력 배열을 사용하는 단순한 예제를 보자. 문서 A의 입력 길이는 3, B는 4다. 각각을 길이 8에 맞추면 남는 위치를 **padding**으로 채운다.
+$b=2$, $n=2{,}048$, $d=4{,}096$이면 $33{,}554{,}432$ bytes, 즉 32 MiB다. MiB(mebibyte)는 $2^{20}$ bytes다. 길이를 8,192로 늘리면 같은 텐서는 128 MiB가 된다. 실제 backward에는 여러 층의 내부 중간값도 필요하므로, 이 값을 전체 activation 메모리로 사용하지 않는다. Attention 구현과 어떤 중간값을 저장·재계산하는지에 따라 최대 사용량이 달라진다.[^sp]
 
-아래 A0·A1·A2는 A의 입력 토큰 위치, B0–B3는 B의 입력 토큰 위치다. `·`는 padding이며 실제 학습 텍스트가 아니다.
+파라미터 수가 같아도 microbatch나 context를 키우면 메모리가 부족해질 수 있다. 따라서 **학습 상태가 메모리에 들어가는가**와 **처리량(throughput), 즉 초당 처리하는 유효 토큰 수가 충분한가**를 함께 확인한다.
 
-| 구성 | 길이 8의 입력 배열 | 유효 입력 위치 |
-|---|---|---|
-| 개별 padding: A | `A0 A1 A2 ·  ·  ·  ·  ·` | 3 / 8 |
-| 개별 padding: B | `B0 B1 B2 B3 ·  ·  ·  ·` | 4 / 8 |
-| Sequence packing: A+B | `A0 A1 A2 B0 B1 B2 B3 ·` | 7 / 8 |
-
-개별 padding은 총 16칸 중 7칸(43.75%)이 유효하고, packing은 8칸 중 7칸(87.5%)이 유효하다. **Sequence packing은 여러 짧은 시퀀스를 하나의 배열에 함께 담아 padding을 줄이는 방법**이다. 단순한 dense 연산에서는 loss에서 padding을 무시해도 입력 배열의 빈 위치에 대한 연산이 남을 수 있어, 빈칸 자체를 줄이는 것이 중요하다.[^packing]
-
-함께 담는다고 두 문서가 한 문맥이 되어야 하는 것은 아니다. 독립 문서를 유지하려면 A는 A 안에서만, B는 B 안에서만 이전 위치를 참조하게 한다. 예를 들어 B0는 앞에 저장된 A0–A2를 보지 못하고, B2는 B0·B1·B2만 본다. 실제 구현은 시퀀스 경계 정보를 attention 연산에 전달한다. 입력을 단순히 이어 붙이는 것만으로 이 조건이 충족되지는 않는다.
-
-정답도 [Pre-training의 문서별 입력·정답 예제](/lecture/2026f-advanced-deep-learning/02c-pre-training/#3-4-학습-시퀀스와-문서-경계)처럼 각 문서에 맞춘 값을 유지한다. 입력 배열을 채운 정도가 두 배가 되었다고 학습 속도가 반드시 두 배가 되는 것은 아니다. Attention 구현, 배열 구성 비용, batch 설정에 따라 실제 이득이 달라진다. 같은 학습 목표와 유효 토큰 수를 기준으로 처리량(throughput), 즉 단위 시간에 처리한 유효 토큰 수를 비교해야 한다.
-
-이 예제는 padding이 많이 생기는 조건을 가정했다. Batch 안의 최대 길이까지만 채우거나 비슷한 길이를 묶는 방법도 padding을 줄일 수 있다. 이미 문서들을 이어서 고정 길이를 채우는 pre-training은 같은 낭비가 작을 수 있다. Megatron Bridge의 packed-sequence 기능은 주로 길이가 다양한 fine-tuning 예제를 위한 것으로 설명된다. 따라서 이름만 보고 모든 pre-training에 켜야 하는 옵션으로 받아들이지 않는다.[^packing]
-
-### 2-4. 장치 간 통신
+### 2-3. 장치 간 통신
 
 메모리를 나누어 저장하면 필요한 값을 주고받아야 한다. 이후 병렬화 설명에서 사용할 통신 연산을 먼저 구분하자. 다음 표에서 reduce는 합산을 뜻한다. 평균 gradient가 필요하면 합산 결과를 적절한 수로 나누는 과정도 포함한다.
 
@@ -202,6 +194,8 @@ DP에서 모든 GPU가 optimizer 상태를 똑같이 갖고 있어야 할까? �
 | ZeRO-3 | optimizer state + gradient + parameter |
 
 앞의 128 GB 예제에서 fp32 master weight와 두 모멘트 96 GB를 optimizer 쪽 상태로 묶자. N0의 GPU 8개에 나눈 model state의 이상적인 저장량은 다음과 같다.
+
+<Figure src={zeroShards.src} alt="N0의 GPU 8개 중 G0와 G1의 저장 상태 비교. DP는 W·G·O 전체를 복제하고, ZeRO-1은 O, ZeRO-2는 O와 G, ZeRO-3는 W·G·O 모두를 여덟 조각으로 나눈다. 각 GPU는 자기 번호의 조각을 보관한다." caption="GPU 두 개를 확대해 본 저장 배치. O에는 FP32 master weight와 Adam의 두 모멘트를 함께 포함한다. 나머지 GPU도 자기 파라미터 구간을 담당한다." source="본문의 8B·8GPU 예제를 독립적으로 도식화. 개념: Rajbhandari et al. (2020), ZeRO." hero />
 
 | 방식 | GPU당 계산 | GPU당 크기 |
 |---|---|---|
@@ -279,15 +273,19 @@ PP(pipeline parallelism)는 층을 여러 stage로 나눈다. 32층 모델을 �
 
 처음과 마지막의 빈 구간이 pipeline bubble이다. 실제 학습에서는 backward를 언제 배치하는지, activation을 얼마나 보관하는지까지 scheduling해야 한다. Stage마다 층 수가 같아도 embedding·출력 head 등의 비용으로 실행 시간이 다를 수 있다.
 
+<Figure src={pipelineTimeline.src} alt="PP=2에서 세 microbatch를 학습하는 8칸 시간표. N0는 1–3칸에 A·B·C forward, 6–8칸에 C·B·A backward를 계산한다. N1은 2–4칸에 forward, 5–7칸에 backward를 계산한다. 8칸 뒤 optimizer를 한 번 갱신한다." caption="모든 forward를 마친 뒤 backward를 진행하는 교육용 시간표. 각 stage의 forward와 backward 시간이 같고 통신 시간은 생략한다고 가정했다. 실제 backward 비용과 스케줄은 달라질 수 있다." source="본문의 2-stage·3-microbatch 예제를 독립적으로 도식화. 개념: Huang et al. (2019), GPipe." hero />
+
+N0에서 A의 forward가 끝나도 A의 backward는 마지막까지 기다린다. 그 사이에는 backward에 필요한 값을 보관하거나, checkpointing으로 나중에 복원할 수 있도록 해야 한다. Microbatch를 더 많이 흘리면 bubble의 상대적 비중을 줄일 수 있지만, 이 시간표에서는 먼저 처리한 microbatch의 activation을 더 오래 유지한다. A·B·C의 gradient를 누적하고 모든 backward가 끝난 뒤 가중치를 한 번 갱신하므로 §3-2의 gradient accumulation과도 연결된다. Forward와 backward를 번갈아 배치하는 스케줄은 이 보관 패턴을 바꾼다.[^gpipe]
+
 이 배치에서 층 내부의 TP 통신은 노드 안에 있고, stage 경계의 activation과 그 gradient는 노드 사이로 이동한다. PP도 microbatch마다 경계 통신이 필요하므로 노드 간 통신 비용이 사라지는 것은 아니다. N2·N3, N4·N5, N6·N7에도 같은 두 노드 묶음을 만들면 모델 복제본은 4개, 즉 DP=4가 된다.
 
 따라서 PP에서는 “나누었는가?”와 함께 <strong>stage 사이의 작업량이 균형적인가?</strong>를 확인한다.
 
 ### 4-3. SP와 CP
 
-§2-3의 sequence packing은 여러 짧은 입력을 함께 담는 방법이다. 여기서 다루는 SP·CP는 시퀀스 방향의 계산이나 저장을 여러 장치에 나누는 방법이다. 모델 가중치를 나누어도 시퀀스가 길어지면 activation이 커진다. 이때 시퀀스 방향으로 나누는 방법이 필요하다. 문헌과 구현마다 용어가 다를 수 있으므로 여기서는 Megatron의 구분을 따른다.[^parallel]
+SP·CP는 시퀀스 방향의 계산이나 저장을 여러 장치에 나누는 방법이다. 모델 가중치를 나누어도 시퀀스가 길어지면 activation이 커진다. 이때 시퀀스 방향으로 나누는 방법이 필요하다. 문헌과 구현마다 용어가 다를 수 있으므로 여기서는 Megatron의 구분을 따른다.[^parallel]
 
-<strong>SP(sequence parallelism)</strong>는 TP와 함께 사용해, LayerNorm 같은 일부 연산에서 TP 장치마다 중복되던 activation을 시퀀스 방향으로 분할한다. 예를 들어 N0의 TP=8 그룹에서 길이 8,192인 activation을 GPU마다 길이 1,024씩 보유하게 하는 식이다. 다음 TP 연산에 맞춰 조각을 모으는 all-gather나 결과를 합산·분할하는 reduce-scatter 등을 사용한다. 여기서 gather와 scatter는 각각 조각을 모으고 나누는 동작을 뜻하며, 장치 간 집단 통신은 §2-4의 연산으로 구체화한다. Activation 저장량을 줄이는 것이 주요 동기다.[^sp]
+<strong>SP(sequence parallelism)</strong>는 TP와 함께 사용해, LayerNorm 같은 일부 연산에서 TP 장치마다 중복되던 activation을 시퀀스 방향으로 분할한다. 예를 들어 N0의 TP=8 그룹에서 길이 8,192인 activation을 GPU마다 길이 1,024씩 보유하게 하는 식이다. 다음 TP 연산에 맞춰 조각을 모으는 all-gather나 결과를 합산·분할하는 reduce-scatter 등을 사용한다. 여기서 gather와 scatter는 각각 조각을 모으고 나누는 동작을 뜻하며, 장치 간 집단 통신은 §2-3의 연산으로 구체화한다. Activation 저장량을 줄이는 것이 주요 동기다.[^sp]
 
 <strong>CP(context parallelism)</strong>는 입력 시퀀스를 나누어 attention을 포함한 층 전반에서 처리한다. 예를 들어 N0와 N1이 각각 앞 4,096토큰과 뒤 4,096토큰을 맡고, 노드 내부에서는 TP=8을 사용한다고 하자. 이는 TP=8, CP=2의 16 GPU 묶음이다. 뒤쪽 query는 causal mask상 앞쪽 key/value도 참조해야 하므로 장치 사이에 필요한 정보를 전달해야 한다.[^parallel]
 
@@ -315,9 +313,11 @@ MoE(mixture of experts)는 여러 expert 중 토큰별로 일부를 선택해 �
 
 이 노트에서 본 DP·TP·PP·SP·CP·EP는 여섯 개의 독립적인 스위치를 모두 켜라는 목록이 아니다. 예를 들어 Megatron의 SP는 TP 그룹과 함께 사용하고 EP는 MoE가 있을 때 의미가 있다.[^parallel]
 
-<Figure src="https://arxiv.org/html/2407.20018v1/fig_3d_parallelism.svg" alt="Data parallelism, tensor parallelism, pipeline parallelism을 함께 구성한 Duan 등의 3D parallelism 도식." caption="DP는 데이터 배치, TP는 층 내부 계산, PP는 층의 구간을 나눈다. 같은 GPU에 세 역할이 함께 지정될 수 있다." source="Duan et al. (2024), Efficient Training of Large Language Models on Distributed Infrastructures: A Survey, Figure 8. CC BY 4.0, 원본 변경 없음." hero />
+처음의 8개 노드에 두 가지 구성을 대입하자. 두 그림에서 노드의 물리적 위치는 같고, 같은 모델을 계산하는 묶음과 통신 상대가 달라진다.
 
-[원본 Figure 8](https://arxiv.org/html/2407.20018v1#S4.F8)의 각 축을 데이터·층 내부·층 구간으로 읽으면 병렬화의 조합을 이해하기 쉽다. 그림은 논문에 명시된 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)으로 재사용한다. 원도식의 Sequence Parallel 표기는 §4-3에서 설명한 Megatron SP와 동일한 구현으로 읽지 않는다. 문헌에 따라 시퀀스 분할의 명칭과 범위가 다르다. 이제 처음의 8개 노드 표에 두 가지 구성을 대입하자.
+<Figure src={parallelLayout.src} alt="동일한 64GPU의 두 구성. A에서는 각 노드의 GPU 8개가 모든 층을 TP로 계산하고 같은 G 번호끼리 8노드 DP 그룹을 만든다. B에서는 N0–N3과 N4–N7이 각각 4-stage 모델 복제본이며, 노드 내부 TP=8, 열 방향 PP=4, 같은 행의 대응 GPU 사이 DP=2다." caption="박스 하나는 노드, 작은 칸 하나는 GPU다. 점선은 DP gradient 동기화 그룹의 연결을 요약한다. B의 아래쪽 실선은 PP forward 전달이고, backward의 gradient는 반대 방향으로 흐른다. 각 박스 안의 GPU 8개는 TP 통신을 한다. 선은 논리적 통신 관계이며 실제 네트워크 배선도가 아니다." source="본문의 8노드 × 8GPU 배치를 독립적으로 도식화. 개념: Duan et al. (2024), 분산 학습 서베이; Megatron Bridge Parallelisms Guide." hero />
+
+논문의 일반적인 결합 도식은 [서베이 Figure 8](https://arxiv.org/html/2407.20018v1#S4.F8)에서 비교할 수 있다. 그 그림의 Sequence Parallel은 §4-3의 Megatron SP와 범위가 다르므로, 여기서는 본문의 DP·TP·PP 그룹을 기준으로 읽는다.
 
 **구성 A: TP=8, DP=8.** 노드 하나의 GPU 8개가 모델의 모든 층을 함께 계산한다. 각 노드가 서로 다른 배치를 읽으므로 복제본은 8개다. N0:G0, N1:G0, …, N7:G0은 같은 파라미터 조각을 맡는 DP 그룹이다. 같은 방식으로 G1–G7에도 각각 DP 그룹이 있다.
 
@@ -362,7 +362,27 @@ CP까지 사용하면 이 예제의 장치 수 계산에 CP 차원도 포함한�
 
 이 표는 출발점이다. 최종 구성은 하드웨어 연결, 시퀀스 길이, 모델 구조와 실제 profiling으로 결정한다.
 
-### 5-2. 메모리와 처리량 최적화
+### 5-2. Sequence packing
+
+GPU에 모델이 들어가더라도, 계산하는 입력의 상당 부분이 빈칸이라면 자원을 낭비할 수 있다. 길이 8의 입력 배열을 사용하는 단순한 예제를 보자. 문서 A의 입력 길이는 3, B는 4다. 각각을 길이 8에 맞추면 남는 위치를 **padding**으로 채운다.
+
+아래 A0·A1·A2는 A의 입력 토큰 위치, B0–B3는 B의 입력 토큰 위치다. `·`는 padding이며 실제 학습 텍스트가 아니다.
+
+| 구성 | 길이 8의 입력 배열 | 유효 입력 위치 |
+|---|---|---|
+| 개별 padding: A | `A0 A1 A2 ·  ·  ·  ·  ·` | 3 / 8 |
+| 개별 padding: B | `B0 B1 B2 B3 ·  ·  ·  ·` | 4 / 8 |
+| Sequence packing: A+B | `A0 A1 A2 B0 B1 B2 B3 ·` | 7 / 8 |
+
+개별 padding은 총 16칸 중 7칸(43.75%)이 유효하고, packing은 8칸 중 7칸(87.5%)이 유효하다. **Sequence packing은 여러 짧은 시퀀스를 하나의 배열에 함께 담아 padding을 줄이는 방법**이다. 단순한 dense 연산에서는 loss에서 padding을 무시해도 입력 배열의 빈 위치에 대한 연산이 남을 수 있어, 빈칸 자체를 줄이는 것이 중요하다.[^packing]
+
+함께 담는다고 두 문서가 한 문맥이 되어야 하는 것은 아니다. 독립 문서를 유지하려면 A는 A 안에서만, B는 B 안에서만 이전 위치를 참조하게 한다. 예를 들어 B0는 앞에 저장된 A0–A2를 보지 못하고, B2는 B0·B1·B2만 본다. 실제 구현은 시퀀스 경계 정보를 attention 연산에 전달한다. 입력을 단순히 이어 붙이는 것만으로 이 조건이 충족되지는 않는다.
+
+정답도 [Pre-training의 문서별 입력·정답 예제](/lecture/2026f-advanced-deep-learning/02c-pre-training/#3-4-학습-시퀀스와-문서-경계)처럼 각 문서에 맞춘 값을 유지한다. 입력 배열을 채운 정도가 두 배가 되었다고 학습 속도가 반드시 두 배가 되는 것은 아니다. Attention 구현, 배열 구성 비용, batch 설정에 따라 실제 이득이 달라진다. 같은 학습 목표와 유효 토큰 수를 기준으로 처리량을 비교해야 한다.
+
+이 예제는 padding이 많이 생기는 조건을 가정했다. Batch 안의 최대 길이까지만 채우거나 비슷한 길이를 묶는 방법도 padding을 줄일 수 있다. 이미 문서들을 이어서 고정 길이를 채우는 pre-training은 같은 낭비가 작을 수 있다. Megatron Bridge의 packed-sequence 기능은 주로 길이가 다양한 fine-tuning 예제를 위한 것으로 설명된다. 따라서 이름만 보고 모든 pre-training에 켜야 하는 옵션으로 받아들이지 않는다.[^packing]
+
+### 5-3. 메모리와 처리량 최적화
 
 **Activation checkpointing.** Backward에 필요한 중간 결과를 모두 저장하는 대신 일부만 저장하고 나머지는 재계산한다. 저장 공간과 추가 연산을 교환하는 방법이다. 장애 복구를 위해 파일에 저장하는 checkpoint와는 다른 의미다.[^checkpoint]
 
@@ -390,7 +410,7 @@ $$
 
 예를 들어 노드 하나(8 GPUs)에서 10,000 tokens/s, 두 노드(16 GPUs)에서 17,000 tokens/s라면 처리량은 1.7배이고 효율은 85%다. 총 $10^9$개 유효 토큰을 읽는 순수 학습 시간은 각각 약 27.8시간과 16.3시간이다. 반면 GPU 사용 시간의 합은 약 222.2 GPU-hours와 261.4 GPU-hours로 늘어난다. 빠른 완료와 적은 자원 소비는 서로 다른 비교다. 수치는 교육용이며 평가·저장·장애 시간은 제외했다.
 
-### 5-3. 도구와 recipe
+### 5-4. 도구와 recipe
 
 | 도구·프로젝트 | 읽을 때 확인할 역할 |
 |---|---|
@@ -405,7 +425,7 @@ FSDP2의 예제는 [공식 튜토리얼](https://docs.pytorch.org/tutorials/inte
 
 Nemotron은 FSDP와 동일한 종류의 병렬화 API 이름이 아니다. [공개 training recipe](https://docs.nvidia.com/nemotron/latest/index.html)를 이용하면 모델 구성·데이터·학습 단계가 실제 실행 설정으로 연결되는 모습을 볼 수 있다.[^nemotron] 공개 recipe의 데이터와 전체 공개 모델을 학습한 데이터가 완전히 같은지도 별도로 확인한다.
 
-### 5-4. 측정과 장애 복구
+### 5-5. 측정과 장애 복구
 
 빠른 한 step만으로 며칠짜리 학습의 완료 시간을 설명할 수는 없다. 데이터 로딩 대기, 평가, checkpoint 저장, 장치 장애와 재시작이 포함된다. 서베이는 분산 학습의 reliability도 별도의 주제로 다룬다.[^survey]
 

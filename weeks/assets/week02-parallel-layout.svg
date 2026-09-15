@@ -1,0 +1,358 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 560" role="img" aria-label="64 GPU의 두 배치: TP 8 DP 8과 TP 8 PP 4 DP 2" font-family="system-ui, sans-serif">
+<title>64 GPU의 두 배치: TP 8 DP 8과 TP 8 PP 4 DP 2</title>
+<rect width="800" height="560" fill="white"/>
+<text x="200" y="27" font-size="22" text-anchor="middle" fill="#0f172a" font-weight="600">구성 A</text>
+<text x="200" y="55" font-size="18" text-anchor="middle" fill="#0f172a">TP=8 · PP=1 · DP=8</text>
+<rect x="20" y="85" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="95" y="108" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N0 · 전체 층</text>
+<rect x="28" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="35.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="45" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="52.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="62" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="69.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="79" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="86.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="96" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="103.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="113" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="120.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="130" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="137.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="147" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="154.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<rect x="230" y="85" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="305" y="108" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N4 · 전체 층</text>
+<rect x="238" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="245.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="255" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="262.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="272" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="279.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="289" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="296.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="306" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="313.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="323" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="330.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="340" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="347.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="357" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="364.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<path d="M177 116 L223 116" fill="none" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="5 4"/>
+<polygon points="223,116 216.69687028353127,119.04475873877861 216.69687028353127,112.95524126122139" fill="#0f172a"/>
+<polygon points="177,116 183.30312971646873,112.95524126122139 183.30312971646873,119.04475873877861" fill="#0f172a"/>
+<path d="M95 153 L95 171" fill="none" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="5 4"/>
+<polygon points="95,171 91.95524126122139,164.69687028353127 98.04475873877861,164.69687028353127" fill="#0f172a"/>
+<polygon points="95,153 98.04475873877861,159.30312971646873 91.95524126122139,159.30312971646873" fill="#0f172a"/>
+<path d="M305 153 L305 171" fill="none" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="5 4"/>
+<polygon points="305,171 301.9552412612214,164.69687028353127 308.0447587387786,164.69687028353127" fill="#0f172a"/>
+<polygon points="305,153 308.0447587387786,159.30312971646873 301.9552412612214,159.30312971646873" fill="#0f172a"/>
+<rect x="20" y="177" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="95" y="200" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N1 · 전체 층</text>
+<rect x="28" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="35.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="45" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="52.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="62" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="69.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="79" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="86.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="96" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="103.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="113" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="120.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="130" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="137.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="147" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="154.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<rect x="230" y="177" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="305" y="200" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N5 · 전체 층</text>
+<rect x="238" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="245.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="255" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="262.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="272" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="279.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="289" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="296.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="306" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="313.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="323" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="330.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="340" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="347.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="357" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="364.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<path d="M177 208 L223 208" fill="none" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="5 4"/>
+<polygon points="223,208 216.69687028353127,211.04475873877863 216.69687028353127,204.95524126122137" fill="#0f172a"/>
+<polygon points="177,208 183.30312971646873,204.95524126122137 183.30312971646873,211.04475873877863" fill="#0f172a"/>
+<path d="M95 245 L95 263" fill="none" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="5 4"/>
+<polygon points="95,263 91.95524126122139,256.69687028353127 98.04475873877861,256.69687028353127" fill="#0f172a"/>
+<polygon points="95,245 98.04475873877861,251.30312971646873 91.95524126122139,251.30312971646873" fill="#0f172a"/>
+<path d="M305 245 L305 263" fill="none" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="5 4"/>
+<polygon points="305,263 301.9552412612214,256.69687028353127 308.0447587387786,256.69687028353127" fill="#0f172a"/>
+<polygon points="305,245 308.0447587387786,251.30312971646873 301.9552412612214,251.30312971646873" fill="#0f172a"/>
+<rect x="20" y="269" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="95" y="292" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N2 · 전체 층</text>
+<rect x="28" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="35.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="45" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="52.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="62" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="69.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="79" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="86.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="96" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="103.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="113" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="120.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="130" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="137.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="147" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="154.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<rect x="230" y="269" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="305" y="292" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N6 · 전체 층</text>
+<rect x="238" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="245.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="255" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="262.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="272" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="279.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="289" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="296.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="306" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="313.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="323" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="330.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="340" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="347.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="357" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="364.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<path d="M177 300 L223 300" fill="none" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="5 4"/>
+<polygon points="223,300 216.69687028353127,303.0447587387786 216.69687028353127,296.9552412612214" fill="#0f172a"/>
+<polygon points="177,300 183.30312971646873,296.9552412612214 183.30312971646873,303.0447587387786" fill="#0f172a"/>
+<path d="M95 337 L95 355" fill="none" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="5 4"/>
+<polygon points="95,355 91.95524126122139,348.69687028353127 98.04475873877861,348.69687028353127" fill="#0f172a"/>
+<polygon points="95,337 98.04475873877861,343.30312971646873 91.95524126122139,343.30312971646873" fill="#0f172a"/>
+<path d="M305 337 L305 355" fill="none" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="5 4"/>
+<polygon points="305,355 301.9552412612214,348.69687028353127 308.0447587387786,348.69687028353127" fill="#0f172a"/>
+<polygon points="305,337 308.0447587387786,343.30312971646873 301.9552412612214,343.30312971646873" fill="#0f172a"/>
+<rect x="20" y="361" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="95" y="384" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N3 · 전체 층</text>
+<rect x="28" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="35.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="45" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="52.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="62" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="69.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="79" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="86.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="96" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="103.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="113" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="120.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="130" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="137.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="147" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="154.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<rect x="230" y="361" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="305" y="384" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N7 · 전체 층</text>
+<rect x="238" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="245.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="255" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="262.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="272" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="279.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="289" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="296.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="306" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="313.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="323" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="330.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="340" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="347.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="357" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="364.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<path d="M177 392 L223 392" fill="none" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="5 4"/>
+<polygon points="223,392 216.69687028353127,395.0447587387786 216.69687028353127,388.9552412612214" fill="#0f172a"/>
+<polygon points="177,392 183.30312971646873,388.9552412612214 183.30312971646873,395.0447587387786" fill="#0f172a"/>
+<text x="200" y="460" font-size="18" text-anchor="middle" fill="#0f172a" font-weight="600">8개 노드가 서로 다른 배치</text>
+<text x="200" y="487" font-size="17" text-anchor="middle" fill="#0f172a">DP: 같은 G 번호의 8개 GPU</text>
+<text x="200" y="512" font-size="17" text-anchor="middle" fill="#0f172a">각 노드 안에서 모든 층을 TP로 계산</text>
+<text x="600" y="27" font-size="22" text-anchor="middle" fill="#0f172a" font-weight="600">구성 B</text>
+<text x="600" y="55" font-size="18" text-anchor="middle" fill="#0f172a">TP=8 · PP=4 · DP=2</text>
+<rect x="420" y="85" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="495" y="108" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N0 · 1–8층</text>
+<rect x="428" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="435.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="445" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="452.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="462" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="469.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="479" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="486.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="496" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="503.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="513" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="520.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="530" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="537.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="547" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="554.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<rect x="630" y="85" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="705" y="108" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N4 · 1–8층</text>
+<rect x="638" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="645.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="655" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="662.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="672" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="679.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="689" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="696.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="706" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="713.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="723" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="730.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="740" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="747.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="757" y="119" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="764.5" y="134" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<path d="M577 116 L623 116" fill="none" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="5 4"/>
+<polygon points="623,116 616.6968702835312,119.04475873877861 616.6968702835312,112.95524126122139" fill="#0f172a"/>
+<polygon points="577,116 583.3031297164688,112.95524126122139 583.3031297164688,119.04475873877861" fill="#0f172a"/>
+<path d="M495 153 L495 171" fill="none" stroke="#0f172a" stroke-width="1.5"/>
+<polygon points="495,171 491.9552412612214,164.69687028353127 498.0447587387786,164.69687028353127" fill="#0f172a"/>
+<path d="M705 153 L705 171" fill="none" stroke="#0f172a" stroke-width="1.5"/>
+<polygon points="705,171 701.9552412612214,164.69687028353127 708.0447587387786,164.69687028353127" fill="#0f172a"/>
+<rect x="420" y="177" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="495" y="200" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N1 · 9–16층</text>
+<rect x="428" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="435.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="445" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="452.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="462" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="469.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="479" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="486.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="496" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="503.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="513" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="520.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="530" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="537.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="547" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="554.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<rect x="630" y="177" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="705" y="200" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N5 · 9–16층</text>
+<rect x="638" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="645.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="655" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="662.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="672" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="679.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="689" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="696.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="706" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="713.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="723" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="730.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="740" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="747.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="757" y="211" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="764.5" y="226" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<path d="M577 208 L623 208" fill="none" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="5 4"/>
+<polygon points="623,208 616.6968702835312,211.04475873877863 616.6968702835312,204.95524126122137" fill="#0f172a"/>
+<polygon points="577,208 583.3031297164688,204.95524126122137 583.3031297164688,211.04475873877863" fill="#0f172a"/>
+<path d="M495 245 L495 263" fill="none" stroke="#0f172a" stroke-width="1.5"/>
+<polygon points="495,263 491.9552412612214,256.69687028353127 498.0447587387786,256.69687028353127" fill="#0f172a"/>
+<path d="M705 245 L705 263" fill="none" stroke="#0f172a" stroke-width="1.5"/>
+<polygon points="705,263 701.9552412612214,256.69687028353127 708.0447587387786,256.69687028353127" fill="#0f172a"/>
+<rect x="420" y="269" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="495" y="292" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N2 · 17–24층</text>
+<rect x="428" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="435.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="445" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="452.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="462" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="469.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="479" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="486.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="496" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="503.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="513" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="520.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="530" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="537.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="547" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="554.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<rect x="630" y="269" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="705" y="292" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N6 · 17–24층</text>
+<rect x="638" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="645.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="655" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="662.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="672" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="679.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="689" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="696.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="706" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="713.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="723" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="730.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="740" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="747.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="757" y="303" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="764.5" y="318" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<path d="M577 300 L623 300" fill="none" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="5 4"/>
+<polygon points="623,300 616.6968702835312,303.0447587387786 616.6968702835312,296.9552412612214" fill="#0f172a"/>
+<polygon points="577,300 583.3031297164688,296.9552412612214 583.3031297164688,303.0447587387786" fill="#0f172a"/>
+<path d="M495 337 L495 355" fill="none" stroke="#0f172a" stroke-width="1.5"/>
+<polygon points="495,355 491.9552412612214,348.69687028353127 498.0447587387786,348.69687028353127" fill="#0f172a"/>
+<path d="M705 337 L705 355" fill="none" stroke="#0f172a" stroke-width="1.5"/>
+<polygon points="705,355 701.9552412612214,348.69687028353127 708.0447587387786,348.69687028353127" fill="#0f172a"/>
+<rect x="420" y="361" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="495" y="384" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N3 · 25–32층</text>
+<rect x="428" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="435.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="445" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="452.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="462" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="469.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="479" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="486.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="496" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="503.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="513" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="520.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="530" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="537.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="547" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="554.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<rect x="630" y="361" width="150" height="64" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="705" y="384" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">N7 · 25–32층</text>
+<rect x="638" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="645.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="655" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="662.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="672" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="679.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="689" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="696.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="706" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="713.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">4</text>
+<rect x="723" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="730.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">5</text>
+<rect x="740" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="747.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">6</text>
+<rect x="757" y="395" width="15" height="21" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="764.5" y="410" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<path d="M577 392 L623 392" fill="none" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="5 4"/>
+<polygon points="623,392 616.6968702835312,395.0447587387786 616.6968702835312,388.9552412612214" fill="#0f172a"/>
+<polygon points="577,392 583.3031297164688,388.9552412612214 583.3031297164688,395.0447587387786" fill="#0f172a"/>
+<text x="600" y="460" font-size="18" text-anchor="middle" fill="#0f172a" font-weight="600">열 하나가 모델 복제본 하나</text>
+<text x="600" y="487" font-size="17" text-anchor="middle" fill="#0f172a">점선 DP: 같은 행·같은 G 번호</text>
+<text x="600" y="512" font-size="17" text-anchor="middle" fill="#0f172a">실선 PP: 아래로 activation 전달</text>
+<path d="M400 15 V522" stroke="#94a3b8"/>
+<text x="400" y="546" font-size="18" text-anchor="middle" fill="#0f172a">작은 칸 = GPU G0–G7 · 각 노드 안의 8개 GPU가 TP 통신</text>
+</svg>
