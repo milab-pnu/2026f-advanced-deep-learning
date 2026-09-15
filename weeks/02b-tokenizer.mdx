@@ -27,21 +27,41 @@ Tokenizer를 고르면 모델이 처리할 시퀀스 길이와 vocabulary 크기
 
 앞 예시는 눈에 보이는 글자 경계에서 토큰을 나눴다. 그런데 byte-level BPE는 텍스트를 **바이트열로 바꾼 뒤 그 바이트들을 묶어 토큰을 만든다.** 따라서 한글 한 글자의 바이트도 여러 토큰으로 나뉠 수 있다. 이 과정을 이해하려면 문자가 컴퓨터에서 어떻게 표현되는지 알아야 하므로, 먼저 Unicode와 UTF-8을 살펴보자.
 
-Unicode는 문자에 코드 포인트(code point)를 부여한다. UTF-8(Unicode Transformation Format의 8-bit encoding)은 이를 바이트열로 표현하는 방식이다. 바이트(byte)는 8 bits로, 0부터 255까지의 정숫값을 표현하며, Unicode 문자 하나는 UTF-8에서 1–4바이트가 된다.[^unicode]
+**Unicode: 문자에 번호를 부여하는 표준**
+
+Unicode는 세계 여러 언어의 문자와 기호를 일관되게 표현하기 위한 표준이다. 여기서는 먼저 **문자와 고유한 번호를 연결한 거대한 코드표**로 이해하자. 이 번호를 코드 포인트(code point)라고 하며, `A`에는 `U+0041`, `가`에는 `U+AC00`이 부여되어 있다. `U+` 뒤의 값은 16진수로 적은 번호다.[^unicode]
+
+하지만 “`가`의 번호는 `U+AC00`이다”라는 정보만으로는 파일에 어떤 바이트를 기록할지 정해지지 않는다. **그 번호를 실제 바이트열로 바꾸는 규칙**, 즉 인코딩(encoding)이 필요하다.
+
+**UTF-8: 문자 번호를 저장·전송할 바이트열로 바꾸는 방식**
+
+UTF-8(Unicode Transformation Format의 8-bit encoding)은 이런 인코딩 방식 중 하나다. 바이트(byte)는 8 bits로, 0부터 255까지의 정숫값을 표현한다. UTF-8은 문자에 해당하는 코드 포인트 하나를 **1–4개의 바이트**로 표현한다. 바이트 자체의 크기가 바뀌는 것이 아니라, 사용하는 바이트의 개수가 달라지는 가변 길이 인코딩이다.[^unicode-utf]
+
+| 문자 | Unicode 코드 포인트 | UTF-8 바이트열 (16진수) | 바이트 수 |
+|---|---|---|---|
+| `A` | `U+0041` | `41` | 1 |
+| `é` | `U+00E9` | `C3 A9` | 2 |
+| `가` | `U+AC00` | `EA B0 80` | 3 |
+| `🙂` | `U+1F642` | `F0 9F 99 82` | 4 |
+
+즉, `가 → U+AC00 → EA B0 80`은 **문자 → 문자 번호 → 저장할 바이트열**의 관계다. 이 문자 번호는 tokenizer가 vocabulary의 토큰에 부여하는 token ID와는 별개다.
+
+영문 기본 알파벳·숫자·기본 기호는 ASCII(American Standard Code for Information Interchange)와 같은 1바이트로 표현된다. 한글 완성형 음절과 자주 쓰는 한자는 보통 3바이트지만, 일부 한자는 4바이트다. 특수문자도 모두 4바이트인 것은 아니다. 또한 화면에 보이는 한 글자가 여러 코드 포인트로 구성될 수 있으므로, 조합된 이모지 하나는 4바이트를 넘을 수 있다.[^unicode-utf]
 
 다음 코드는 외부 라이브러리 없이 실행할 수 있다.
 
 ```python
-for text in ["A", "가", "🙂"]:
+for text in ["A", "é", "가", "🙂"]:
     raw = text.encode("utf-8")
     print(text, list(raw), raw.decode("utf-8"))
 
 # A [65] A
+# é [195, 169] é
 # 가 [234, 176, 128] 가
 # 🙂 [240, 159, 153, 130] 🙂
 ```
 
-`가`는 Python 문자열에서 코드 포인트 하나이고, UTF-8에서는 바이트 세 개다. 화면에 보이는 한 글자가 항상 코드 포인트 하나인 것도 아니다. 결합 문자나 여러 코드 포인트를 조합한 이모지에서는 그 수가 달라진다.
+출력의 바이트 값은 10진수다. 예를 들어 `[234, 176, 128]`은 표의 `EA B0 80`과 같은 바이트열이다. `encode`는 문자열을 바이트열로, `decode`는 바이트열을 다시 문자열로 바꾼다.
 
 Byte-level BPE는 256개 바이트를 기본 vocabulary로 사용할 수 있다. 그러면 처음 보는 문자열도 일단 바이트로 풀어 표현할 수 있다. 이것이 “표현할 수 없는 새 단어” 문제를 완화하는 출발점이다. 다만 표현이 가능하다는 것과, 그 언어에 대한 모델 성능이 좋다는 것은 별개다.
 
@@ -69,7 +89,7 @@ Tokenizer도 <strong>학습(training)</strong>한다. BPE에서는 말뭉치의 
 
 BPE는 인접한 기호 쌍을 반복적으로 병합(merge)하는 방법이다. Sennrich 등은 이를 기계번역의 subword 단위 학습에 적용했다.[^bpe] 여기서는 병합 규칙을 직접 계산할 수 있는 작은 예제를 만든다.
 
-학습용 텍스트 모음인 말뭉치(corpus)가 다음과 같다고 하자. 이 예제에서는 각 문자열을 별도 조각으로 취급하고 문자열 경계를 넘어 병합하지 않는다. 모두 ASCII(American Standard Code for Information Interchange) 문자라 문자 하나가 바이트 하나이기도 하다.
+학습용 텍스트 모음인 말뭉치(corpus)가 다음과 같다고 하자. 이 예제에서는 각 문자열을 별도 조각으로 취급하고 문자열 경계를 넘어 병합하지 않는다. 모두 ASCII 문자라 문자 하나가 바이트 하나이기도 하다.
 
 | 문자열 | 등장 횟수 | 처음의 기호열 |
 |---|---|---|
@@ -254,6 +274,7 @@ print(b"".join(parts).decode("utf-8"))
 
 [^survey]: Mielke, S. J., et al. (2021). *Between words and characters: A Brief History of Open-Vocabulary Modeling and Tokenization in NLP*. [arXiv:2112.10508v1](https://arxiv.org/abs/2112.10508v1).
 [^unicode]: Python Software Foundation. *Unicode HOWTO*. [공식 문서](https://docs.python.org/3/howto/unicode.html).
+[^unicode-utf]: Unicode Consortium. *FAQ: UTF-8, UTF-16, UTF-32 & BOM*. [공식 문서](https://www.unicode.org/faq/utf_bom.html).
 [^bpe]: Sennrich, R., Haddow, B., & Birch, A. (2016). *Neural Machine Translation of Rare Words with Subword Units*. ACL 2016, pp. 1715–1725. [arXiv:1508.07909](https://arxiv.org/abs/1508.07909).
 [^hf]: Hugging Face. *Byte-Pair Encoding tokenization*. [LLM Course, Chapter 6](https://huggingface.co/learn/llm-course/chapter6/5).
 [^llama-tokenizer]: Meta. (2024). *Llama 3 tokenizer reference implementation*. [tokenizer.py](https://github.com/meta-llama/llama3/blob/main/llama/tokenizer.py).
