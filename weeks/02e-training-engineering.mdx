@@ -117,7 +117,22 @@ $$
 
 $G_{\text{DP}}$는 DP replica 수, $A$는 accumulation 횟수다. 각 microbatch가 같은 길이와 유효 토큰 수를 갖는다고 가정한다. GPU당 2개 시퀀스, DP 4개, accumulation 8회라면 한 번의 갱신에 64개 시퀀스를 사용한다. 길이가 2,048이면 입력 위치는 총 131,072개이며, loss에서 제외한 위치가 있다면 유효 정답 토큰 수는 더 작다.
 
-TP나 PP로 같은 모델 계산을 나누는 GPU 수까지 DP 수에 곱하면 batch를 과대 계산한다. Gradient accumulation은 batch를 나누어 처리하는 방법이며, 큰 batch 자체가 항상 더 좋은 학습을 보장하는 것도 아니다.
+뒤에서 다룰 tensor parallelism(TP)이나 pipeline parallelism(PP)처럼 같은 모델 계산을 나누는 GPU 수까지 DP 수에 곱하면 batch를 과대 계산한다. Gradient accumulation은 batch를 나누어 처리하는 방법이며, 큰 batch 자체가 항상 더 좋은 학습을 보장하는 것도 아니다.
+
+Optimizer step 하나를 microbatch 두 개로 나누는 과정을 보자. 두 microbatch의 유효 정답 수가 같고 평균 loss가 각각 $L_1,L_2$이면 목표는 $(L_1+L_2)/2$다. 다음은 실행 순서를 보여주는 의사코드다.[^accumulation]
+
+```text
+gradient를 0으로 초기화
+microbatch 1: forward → L₁/2를 backward → gradient 보관
+microbatch 2: forward → L₂/2를 backward → 기존 gradient에 더함
+필요하면 누적 gradient를 clipping
+optimizer.step() 한 번
+다음 갱신을 위해 gradient 초기화
+```
+
+두 backward 사이에 가중치는 바꾸지 않는다. $L_1,L_2$를 나누지 않고 그대로 누적하면 목표 평균 gradient의 두 배가 된다. 유효 정답 수가 각각 2개와 6개라면 평균 loss의 가중치는 $1/2,1/2$가 아니라 $2/8,6/8$이다. 여러 GPU에서도 전역 유효 정답 수와 통신 연산의 합산·평균 규칙을 함께 맞춘다.
+
+각 microbatch의 backward가 끝나면 그 계산 그래프의 activation은 보통 해제할 수 있지만, 누적 gradient는 optimizer step까지 보관한다. 따라서 누적 횟수가 늘어난다고 모든 microbatch의 activation을 동시에 보관할 필요는 없다. Mixed precision에서 loss scaling을 사용한다면 누적 도중 scale을 바꾸지 않고, 최종 clipping과 step 전에 배율을 되돌린다.[^accumulation]
 
 ### 2-3. ZeRO와 FSDP
 
@@ -141,6 +156,19 @@ DP에서 모든 GPU가 optimizer 상태를 똑같이 갖고 있어야 할까? �
 이것은 상시 저장하는 model state의 단순 모형이다. 실제 peak memory에는 연산 직전에 모으는 parameter, activation, 통신 buffer, allocator 여유 공간 등이 추가된다. ZeRO-3를 사용한다고 32 GB GPU에 반드시 들어간다는 계산은 아니다.
 
 FSDP(fully sharded data parallel)도 학습 상태를 분산 저장한다. PyTorch FSDP2에서는 필요한 parameter를 연산 전에 all-gather로 모으고, backward의 gradient를 reduce-scatter로 합산·분할한다. 메모리를 줄이는 대신 필요한 시점에 통신해야 한다.[^fsdp]
+
+작은 층 하나의 파라미터가 네 조각 $W_0,W_1,W_2,W_3$으로 나뉘어 있다고 하자. GPU 0은 평소 $W_0$만 저장하지만, 자기 입력 배치로 이 층을 계산할 때는 전체 $W$가 필요하다. Forward 후 다시 분할하는 FSDP 구성을 단순화하면 다음과 같다.[^fsdp]
+
+| 시점 | GPU 0에서 하는 일 | 필요한 통신 |
+|---|---|---|
+| 층 실행 전 | 네 조각을 모아 전체 $W$ 확보 | All-gather |
+| Forward | 전체 $W$로 자기 배치 계산 | 해당 층의 계산 |
+| Forward 후 | 임시 전체 가중치를 해제하고 자기 조각 유지 | 다음 실행 준비 |
+| 해당 층 backward 전 | 전체 $W$를 다시 확보 | All-gather |
+| Backward 후 | 각 replica의 gradient를 합치고 자기 구간만 받음 | Reduce-scatter |
+| Optimizer step | 자기 구간의 상태로 $W_0$ 갱신 | 다른 GPU도 각자 담당 구간 갱신 |
+
+Gradient의 평균을 맞추는 배율도 적용한다. 다음 forward에서 갱신된 조각들을 다시 모은다. 실제 구현은 여러 층의 통신을 미리 요청하거나 전체 가중치를 더 오래 유지할 수 있다. 따라서 **상시 저장량과 계산 중 최대 사용량은 다르며**, sharding 단위가 너무 크면 잠깐 모으는 가중치도 커진다.
 
 FSDP와 ZeRO-3는 비슷한 메모리 절감 목표를 갖지만 API와 저장·통신 단위, 지원 옵션이 같은 구현은 아니다. 실제 선택에서는 사용하려는 모델과 프레임워크의 지원 범위를 확인한다.
 
@@ -198,7 +226,7 @@ PP(pipeline parallelism)는 층을 여러 stage로 나눈다. 32층 모델을 �
 
 §1-3의 sequence packing은 여러 짧은 입력을 함께 담는 방법이다. 여기서 다루는 SP·CP는 시퀀스 방향의 계산이나 저장을 여러 장치에 나누는 방법이다. 모델 가중치를 나누어도 시퀀스가 길어지면 activation이 커진다. 이때 시퀀스 방향으로 나누는 방법이 필요하다. 문헌과 구현마다 용어가 다를 수 있으므로 여기서는 Megatron의 구분을 따른다.[^parallel]
 
-<strong>SP(sequence parallelism)</strong>는 TP와 함께 사용해, LayerNorm 같은 일부 연산에서 TP 장치마다 중복되던 activation을 시퀀스 방향으로 분할한다. 예를 들어 길이 8인 activation을 두 장치가 길이 4씩 보유하게 하는 식이다. 다음 TP 연산에 맞춰 gather 또는 scatter를 적용한다. Activation 저장량을 줄이는 것이 주요 동기다.[^sp]
+<strong>SP(sequence parallelism)</strong>는 TP와 함께 사용해, LayerNorm 같은 일부 연산에서 TP 장치마다 중복되던 activation을 시퀀스 방향으로 분할한다. 예를 들어 길이 8인 activation을 두 장치가 길이 4씩 보유하게 하는 식이다. 다음 TP 연산에 맞춰 조각을 모으는 all-gather나 결과를 합산·분할하는 reduce-scatter 등을 사용한다. 여기서 gather와 scatter는 각각 조각을 모으고 나누는 동작을 뜻하며, 장치 간 집단 통신은 §1-4의 연산으로 구체화한다. Activation 저장량을 줄이는 것이 주요 동기다.[^sp]
 
 <strong>CP(context parallelism)</strong>는 입력 시퀀스를 나누어 attention을 포함한 층 전반에서 처리한다. 예를 들어 앞 4토큰과 뒤 4토큰을 나누어 맡는다. 뒤쪽 query는 causal mask상 앞쪽 key/value도 참조해야 하므로 장치 사이에 필요한 정보를 전달해야 한다.[^parallel]
 
@@ -261,9 +289,29 @@ CP까지 사용하면 이 예제의 장치 수 계산에 CP 차원도 포함한�
 
 **Activation checkpointing.** Backward에 필요한 중간 결과를 모두 저장하는 대신 일부만 저장하고 나머지는 재계산한다. 저장 공간과 추가 연산을 교환하는 방법이다. 장애 복구를 위해 파일에 저장하는 checkpoint와는 다른 의미다.[^checkpoint]
 
+네 블록을 통과하는 계산을 `x → h₁ → h₂ → h₃ → h₄`라고 하자. 실제 backward에는 블록 내부 중간값도 필요하다. 블록 두 개씩 checkpoint 구간으로 묶으면 구간 입력인 `x`와 `h₂`를 보관하고 내부 중간값을 필요할 때 다시 만들 수 있다.
+
+| 시점 | 일반적인 저장 방식 | 두 블록씩 checkpoint하는 예 |
+|---|---|---|
+| Forward | 각 블록의 backward에 필요한 중간값 저장 | 구간 입력을 저장하고 내부 값은 보관을 줄임 |
+| 뒤 두 블록 backward | 저장된 중간값 사용 | `h₂`에서 뒤 구간을 재실행해 필요한 값 복원 |
+| 앞 두 블록 backward | 저장된 중간값 사용 | `x`에서 앞 구간을 재실행해 필요한 값 복원 |
+
+줄어드는 것은 주로 activation이며 가중치나 Adam 상태가 자동으로 줄어드는 것은 아니다. 전체 구간을 재실행할지 필요한 연산까지만 재실행할지는 구현에 달려 있다. Dropout 같은 난수 연산도 재실행에서 일관되게 처리해야 하므로 프레임워크의 checkpoint 기능을 사용한다.[^checkpoint]
+
+이 방법은 ZeRO/FSDP와 함께 쓸 수 있다. 하나는 학습 상태의 중복 저장을 줄이고 다른 하나는 중간값 저장을 줄이기 때문이다. 다만 재계산 시 가중치를 다시 모으는 통신이 추가될 수도 있어 두 기능을 함께 켠 실행에서 메모리와 시간을 측정해야 한다.
+
 **통신과 계산의 겹치기.** 한 층의 gradient를 전달하는 동안 앞 층의 backward를 계산할 수 있다면 대기 시간을 줄일 수 있다. 하지만 의존성이 남는 통신은 숨길 수 없고, 장치 간 연결의 속도도 중요하다.
 
 GPU 수 $G$에서 처리량을 $T_G$라고 하면 scaling efficiency를 $T_G/(G T_1)$로 살펴볼 수 있다. 단, 한 GPU에서도 같은 모델이 실행되어야 이 기준이 의미가 있다. 그렇지 않으면 실행 가능한 최소 장치 수를 기준으로 비교한다. 모델·시퀀스 길이·정밀도 등 비교 조건을 함께 기록한다.
+
+실행 가능한 최소 구성이 GPU 4개라면 기준을 다음처럼 바꾼다.
+
+$$
+\text{상대 scaling efficiency}=\frac{T_G}{(G/4)T_4}
+$$
+
+예를 들어 4개에서 10,000 tokens/s, 8개에서 17,000 tokens/s라면 처리량은 1.7배이고 효율은 85%다. 총 $10^9$개 유효 토큰을 읽는 순수 학습 시간은 각각 약 27.8시간과 16.3시간이다. 반면 GPU 사용 시간의 합은 약 111.1 GPU-hours와 130.7 GPU-hours로 늘어난다. 빠른 완료와 적은 자원 소비는 서로 다른 비교다. 수치는 교육용이며 평가·저장·장애 시간은 제외했다.
 
 ### 4-3. 도구와 recipe
 
@@ -288,21 +336,23 @@ Nemotron은 FSDP와 동일한 종류의 병렬화 API 이름이 아니다. [공�
 
 [^survey]: Duan, J., et al. (2024). *Efficient Training of Large Language Models on Distributed Infrastructures: A Survey*. [arXiv:2407.20018v1](https://arxiv.org/abs/2407.20018v1).
 [^zero]: Rajbhandari, S., Rasley, J., Ruwase, O., & He, Y. (2020). *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models*. SC 2020. [arXiv:1910.02054](https://arxiv.org/abs/1910.02054).
-[^ddp]: PyTorch Contributors. (2026). *DistributedDataParallel*. [공식 문서](https://docs.pytorch.org/docs/2.8/generated/torch.nn.parallel.DistributedDataParallel.html).
-[^deepspeed]: DeepSpeed Team. (2026). *Zero Redundancy Optimizer*. [공식 튜토리얼](https://www.deepspeed.ai/tutorials/zero/).
-[^fsdp]: PyTorch Contributors. (2026). *Getting Started with Fully Sharded Data Parallel (FSDP2)*. [공식 튜토리얼](https://docs.pytorch.org/tutorials/intermediate/FSDP_tutorial.html).
+[^ddp]: PyTorch Contributors. *DistributedDataParallel*. [공식 문서](https://docs.pytorch.org/docs/2.8/generated/torch.nn.parallel.DistributedDataParallel.html).
+[^deepspeed]: DeepSpeed Team. *Zero Redundancy Optimizer*. [공식 튜토리얼](https://www.deepspeed.ai/tutorials/zero/).
+[^fsdp]: PyTorch Contributors. *Getting Started with Fully Sharded Data Parallel (FSDP2)*. [공식 튜토리얼](https://docs.pytorch.org/tutorials/intermediate/FSDP_tutorial.html).
 [^megatron]: Shoeybi, M., et al. (2019). *Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism*. [arXiv:1909.08053](https://arxiv.org/abs/1909.08053).
 [^gpipe]: Huang, Y., et al. (2019). *GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism*. NeurIPS 2019. [arXiv:1811.06965](https://arxiv.org/abs/1811.06965).
-[^parallel]: NVIDIA. (2026). *Parallelisms Guide*. [Megatron Bridge 공식 문서](https://docs.nvidia.com/nemo/megatron-bridge/latest/parallelisms.html).
+[^parallel]: NVIDIA. *Parallelisms Guide*. [Megatron Bridge 공식 문서](https://docs.nvidia.com/nemo/megatron-bridge/latest/parallelisms.html).
 [^sp]: Korthikanti, V. A., et al. (2023). *Reducing Activation Recomputation in Large Transformer Models*. MLSys 2023. [arXiv:2205.05198](https://arxiv.org/abs/2205.05198).
 [^switch]: Fedus, W., Zoph, B., & Shazeer, N. (2022). *Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity*. Journal of Machine Learning Research, 23(120), pp. 1–39. [arXiv:2101.03961](https://arxiv.org/abs/2101.03961).
-[^checkpoint]: PyTorch Contributors. (2026). *torch.utils.checkpoint*. [공식 문서](https://docs.pytorch.org/docs/2.8/checkpoint.html).
-[^nemotron]: NVIDIA. (2026). *Nemotron Training Recipes*. [공식 문서](https://docs.nvidia.com/nemotron/latest/index.html), [Stage 0: Pretraining](https://docs.nvidia.com/nemotron/latest/nemotron/nano3/pretrain.html).
+[^checkpoint]: PyTorch Contributors. *torch.utils.checkpoint*. [공식 문서](https://docs.pytorch.org/docs/2.8/checkpoint.html).
+[^nemotron]: NVIDIA. *Nemotron Training Recipes*. [공식 문서](https://docs.nvidia.com/nemotron/latest/index.html), [Stage 0: Pretraining](https://docs.nvidia.com/nemotron/latest/nemotron/nano3/pretrain.html).
 
 [^mixed]: Micikevicius, P., et al. (2018). *Mixed Precision Training*. ICLR 2018. [arXiv:1710.03740](https://arxiv.org/abs/1710.03740).
 
-[^packing]: NVIDIA. (2026). *Packed Sequences*. [Megatron Bridge 공식 문서](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/packed-sequences.html).
+[^packing]: NVIDIA. *Packed Sequences*. [Megatron Bridge 공식 문서](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/packed-sequences.html).
 
 [^bf16]: Kalamkar, D., et al. (2019). A Study of BFLOAT16 for Deep Learning Training. [arXiv:1905.12322](https://arxiv.org/abs/1905.12322).
 
 [^amp]: PyTorch. (2025, v2.8). [Automatic Mixed Precision](https://docs.pytorch.org/docs/2.8/amp.html).
+
+[^accumulation]: PyTorch Contributors. (2025, v2.8). *Automatic Mixed Precision examples*. [공식 문서](https://docs.pytorch.org/docs/2.8/notes/amp_examples.html#gradient-accumulation).

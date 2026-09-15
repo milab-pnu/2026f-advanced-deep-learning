@@ -42,6 +42,18 @@ Byte-level BPE는 256개 바이트를 기본 vocabulary로 사용할 수 있다.
 바이트 기반 tokenizer의 토큰 하나가 유효한 UTF-8 문자 하나를 담는다는 보장은 없다. 한 글자의 바이트가 여러 토큰에 나뉠 수 있다. 각각을 따로 문자로 바꾸면 깨져 보여도, 바이트를 합친 뒤 decoding하면 원래 문자열이 복원될 수 있다.
 </Callout>
 
+예를 들어 교육용 tokenizer가 `가`의 바이트를 `[234, 176]`과 `[128]` 두 토큰으로 나누었다고 하자. 두 조각 모두 단독으로는 완성된 UTF-8 문자가 아니다. 다음 코드는 tokenizer 구현 없이 이 복원 단계만 확인한다.[^unicode]
+
+```python
+parts = [bytes([234, 176]), bytes([128])]
+print([part.decode("utf-8", errors="replace") for part in parts])
+# ['�', '�']
+print(b"".join(parts).decode("utf-8"))
+# 가
+```
+
+`errors="replace"`는 해석할 수 없는 바이트를 대체 문자 `�`로 표시하라는 설정이다. 이 표시 문자열 둘을 합치면 `��`가 되므로 원문을 되찾을 수 없다. **문자로 바꾸기 전에 원래 바이트를 합쳐야** 한다. 생성 결과를 조금씩 표시하는 프로그램도 아직 완성되지 않은 문자의 바이트를 보관했다가 뒤 조각과 함께 처리할 수 있다.
+
 ## 2. Byte-level BPE
 
 ### 2-1. 병합 규칙 학습
@@ -150,13 +162,24 @@ b a n  +  d  + a n  +  a → b a n d a n a → "bandana"
 
 **Special token.** 문서 시작·종료나 대화의 역할 구분은 별도의 ID로 표현할 수 있다. 출력 화면에 보이는 표기와 모델이 받는 special-token ID는 구분해야 한다. 일반 입력에 그 표기가 들어왔다고 항상 special token으로 해석하는 것도 아니다. 허용 여부는 tokenizer 호출 설정에 달려 있다.[^llama-tokenizer]
 
+아래는 각 단계의 역할을 구분하는 교육용 예제다. 특정 모델의 실제 출력은 아니며, normalization과 pre-tokenization의 적용 여부·순서는 tokenizer 설정에 따른다.
+
+| 설정 | 입력 → 처리 결과 | BPE에 미치는 영향 |
+|---|---|---|
+| 소문자 normalization | `Busan` → `busan` | 대문자 정보가 사라진 입력에서 병합 |
+| 공백 경계 pre-tokenization | `busan port` → `busan`과 ` port` | 두 조각의 경계를 넘는 병합을 금지 |
+| 일반 문자열로 처리 | `문서 끝: <END>` → 일반 문자 조각들 | `<END>`도 여러 일반 토큰일 수 있음 |
+| 등록·허용된 special token 처리 | `<END>` → 예약된 ID 하나 | 해당 표기를 별도 제어 토큰으로 인식 |
+
+Unicode normalization은 같은 글자의 서로 다른 코드 포인트 표현을 맞추기도 한다. Python에서 `"가"`와 `"\u1100\u1161"`은 각각 코드 포인트 1개와 2개이지만, NFC(normalization form C) 방식의 `unicodedata.normalize("NFC", text)`를 적용하면 같은 `"가"`가 된다. 이런 처리를 한 tokenizer의 decode 결과는 정규화된 텍스트일 수 있다. **바이트 기반이라는 사실만으로 전처리 전 원문까지 항상 복원되는 것은 아니다.**[^unicode]
+
 이 때문에 학습된 모델의 tokenizer 파일과 special-token 설정은 모델 가중치와 함께 보존해야 한다. ID 순서를 바꾸면 같은 번호가 다른 조각을 가리켜 embedding과 대응하지 않게 된다.
 
 ### 3-2. 어휘 크기와 길이
 
 Vocabulary size는 tokenizer가 자동으로 알아내는 정답이라기보다 **설계자가 정하는 목표 크기**다. 기본 기호와 special token이 차지할 자리를 고려한 뒤, 자주 나타나는 쌍을 병합해 새 토큰을 추가한다. 목표 크기에 도달하거나 더 병합할 쌍이 없으면 멈춘다. 데이터 양·최소 빈도 같은 조건 때문에 실제 크기가 목표보다 작을 수도 있다.[^hf]
 
-§2의 예제는 기본 바이트 256개에 `an`과 `ban` 두 토큰을 추가했으므로 vocabulary가 258개다. Special token은 세지 않은 값이다. `bandana`를 입력했다고 259개가 되는 것이 아니며, `[257, 100, 256, 97]`처럼 기존 항목 네 개를 사용한다.
+§2의 예제는 기본 바이트 256개에 `an`과 `ban` 두 토큰을 추가했으므로 vocabulary가 258개다. Special token은 세지 않은 값이다.
 
 앞 노트의 Llama 3는 일반 텍스트용 토큰 128,000개와 예약 항목을 포함한 special token 256개로 총 128,256개를 사용한다. 따라서 embedding 테이블과 LM head의 vocabulary 축도 128,256이다. Vocabulary 크기는 “모델이 아는 단어 수”가 아니라 **ID를 부여한 토큰 항목 수**다.[^llama-tokenizer]
 
@@ -167,7 +190,7 @@ Vocabulary size는 tokenizer가 자동으로 알아내는 정답이라기보다 
 <Callout type="note">
 **토큰 수를 줄이면 모델도 더 잘할까?** Schmidt 등의 *Tokenization Is More Than Compression*(2024)은 이 직관을 실험했다. 연구진은 주어진 vocabulary에서 텍스트를 **가능한 최소 개수의 토큰**으로 나누는 PathPiece를 제안했다. 그런데 논문의 실험에서는 토큰 수를 더 줄이는 것이 downstream task 성능 향상으로 이어지지는 않았다.[^compression]
 
-앞의 가상 예에서 1,200토큰을 900토큰으로 줄이면 같은 길이 제한 안에 더 많은 원문을 담을 수 있다. 하지만 이것만으로 모델이 문제를 더 잘 푼다고 판단할 수는 없다. 이 논문은 pre-tokenization 같은 설계 선택도 함께 살펴본다. 여기서는 **얼마나 짧게 표현하는가와 모델이 그 표현으로 얼마나 잘 학습하는가는 구분해서 평가해야 한다**는 점만 기억하자.
+이 논문은 pre-tokenization 같은 설계 선택도 함께 살펴본다. 여기서는 **얼마나 짧게 표현하는가와 모델이 그 표현으로 얼마나 잘 학습하는가는 구분해서 평가해야 한다**는 점만 기억하자.
 </Callout>
 
 | 확인할 항목 | 비교 방법 |
@@ -190,9 +213,9 @@ Tokenizer만으로 산술·철자 세기 성능 전체를 설명할 수는 없�
 더 깊은 내용은 [수업에서 지정한 tokenizer 심화 자료](https://drive.google.com/file/d/13PucjYSadngh5kPAzSN5PlWIf9nkdN_A/view?pli=1)를 참고한다. 알고리즘별 차이와 역사적 맥락은 첫 참고문헌의 §6.4, 병합 구현을 직접 따라가려면 Hugging Face의 BPE 튜토리얼을 읽으면 된다.[^survey][^hf]
 
 [^survey]: Mielke, S. J., et al. (2021). *Between words and characters: A Brief History of Open-Vocabulary Modeling and Tokenization in NLP*. [arXiv:2112.10508v1](https://arxiv.org/abs/2112.10508v1).
-[^unicode]: Python Software Foundation. (2026). *Unicode HOWTO*. [공식 문서](https://docs.python.org/3/howto/unicode.html).
+[^unicode]: Python Software Foundation. *Unicode HOWTO*. [공식 문서](https://docs.python.org/3/howto/unicode.html).
 [^bpe]: Sennrich, R., Haddow, B., & Birch, A. (2016). *Neural Machine Translation of Rare Words with Subword Units*. ACL 2016, pp. 1715–1725. [arXiv:1508.07909](https://arxiv.org/abs/1508.07909).
-[^hf]: Hugging Face. (2026). *Byte-Pair Encoding tokenization*. [LLM Course, Chapter 6](https://huggingface.co/learn/llm-course/chapter6/5).
+[^hf]: Hugging Face. *Byte-Pair Encoding tokenization*. [LLM Course, Chapter 6](https://huggingface.co/learn/llm-course/chapter6/5).
 [^llama-tokenizer]: Meta. (2024). *Llama 3 tokenizer reference implementation*. [tokenizer.py](https://github.com/meta-llama/llama3/blob/main/llama/tokenizer.py).
 
 [^compression]: Schmidt, C. W., et al. (2024). *Tokenization Is More Than Compression*. [arXiv:2402.18376v2](https://arxiv.org/abs/2402.18376v2).
