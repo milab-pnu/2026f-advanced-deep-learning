@@ -70,7 +70,7 @@ $$
 
 ## 4. 정밀도와 저장 비용
 
-[2주차의 부동소수점과 mixed precision](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#1-1-부동소수점과-정밀도)에서 본 FP32는 4 bytes, FP16·BF16은 2 bytes다. FP16은 범위가 좁고 BF16은 같은 크기에서 정밀도가 더 거칠다. 여기서는 그 차이가 **가중치와 KV cache의 저장·전송 비용**에 어떻게 들어가는지 보자.
+[2주차의 부동소수점과 mixed precision](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#2-1-부동소수점과-정밀도)에서 본 FP32는 4 bytes, FP16·BF16은 2 bytes다. FP16은 범위가 좁고 BF16은 같은 크기에서 정밀도가 더 거칠다. 여기서는 그 차이가 **가중치와 KV cache의 저장·전송 비용**에 어떻게 들어가는지 보자.
 
 | 저장 형식 | 요소당 크기 | 이 노트에서의 의미 |
 |---|---|---|
