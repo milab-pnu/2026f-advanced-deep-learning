@@ -8,31 +8,27 @@ import packedDocuments from "./assets/week02-packed-documents.svg";
 import learningRate from "./assets/week02-learning-rate.png";
 import qwenTraining from "./assets/week02-qwen3-training.svg";
 
-LLM(large language model)은 문서의 앞부분을 보고 다음 토큰을 예측하는 방식으로 학습할 수 있다. 그렇다면 **모델을 처음 학습시킬 때 어떤 문서를 사용해야 할까?** 웹 문서·책·코드 중 무엇을 얼마나 섞을지, 문서를 어떤 길이의 학습 샘플로 만들지에 따라 모델이 접하는 문맥이 달라진다. 이 노트에서는 Zhao 등의 LLM 서베이[^survey]를 참고해 pre-training의 데이터 구성과 학습 목표, 학습 설정을 살펴본다.
+Decoder-only LLM은 앞부분을 보고 다음 토큰을 예측하는 방식으로 학습할 수 있다. 그렇다면 **모델을 학습시킬 때 어떤 문서를 사용해야 할까?** 웹 문서·책·코드 중 무엇을 얼마나 섞을지, 문서를 어떤 길이의 학습 샘플로 만들지에 따라 모델이 접하는 문맥이 달라진다. 이 노트에서는 Zhao 등의 LLM 서베이[^survey]를 참고해 pre-training의 데이터 구성과 학습 목표, 학습 설정을 살펴본다.
 
 ## 1. LLM 학습 과정
 
-우리가 사용하는 대화 모델은 대규모 텍스트 모음인 말뭉치(corpus)로 학습한 직후의 모델과 구분할 필요가 있다. 대표적인 개발 흐름은 다음과 같다. 모든 모델이 같은 단계나 순서를 따르는 것은 아니며, 데이터를 보강하고 평가하면서 여러 번 반복하기도 한다.
+우리가 사용하는 대화 모델(chat model)은 대규모 텍스트 모음인 말뭉치로 학습한 직후의 기본 모델(base model)과 구분할 필요가 있다. 대표적인 개발 흐름은 다음과 같다. **모든 모델이 같은 단계나 순서를 따르는 것은 아니며**, 데이터를 보강하고 평가하면서 여러 번 반복하기도 한다.
 
 | 구분 | 대표적인 데이터 | 학습에서 바꾸려는 것 |
 |---|---|---|
 | Pre-training | 문서·코드 등 대규모 말뭉치 | 다양한 문맥의 다음 토큰을 예측하는 기반 능력 |
 | Post-training: SFT(supervised fine-tuning) | 지시와 응답, 대화 예시 | 원하는 입력 형식에서 적절한 응답을 생성하는 행동 |
-| Post-training: 선호도 학습(preference learning)·RL(reinforcement learning) | 응답 선호도, 검증 가능한 보상, 상호작용 결과 | 여러 가능한 응답 중 목적에 더 맞는 행동을 강화 |
+| Post-training: 선호도 학습(preference learning) | 응답 선호도, 검증 가능한 보상, 상호작용 결과 | 여러 가능한 응답 중 목적에 더 맞는 행동을 강화 |
 
-필요하면 base model에 특정 언어·도메인 데이터를 더 학습하는 **continued pre-training**을 수행한다. 모든 모델에 필수인 별도 단계는 아니다. Post-training 안에서도 SFT와 선호도 학습·RL을 어떤 순서와 조합으로 사용할지는 달라진다.
+위 표는 목적에 따른 큰 구분이다. 실제 개발에서는 각 구간을 더 잘게 나누고, 모델 크기에 따라 서로 다른 경로를 사용하기도 한다. **Qwen3**는 pre-training에서 일반적인 지식을 익힌 뒤 수학·코드 등의 데이터 비중을 높이고, 마지막으로 긴 문맥을 다루도록 학습한다. Post-training에서는 대형 모델을 여러 단계로 개선하고, 그 모델을 teacher로 활용해 소형 student 모델에 능력을 전달한다. 이를 <strong>distillation(지식 증류)</strong>이라고 한다.[^qwen3]
 
-Pre-training을 마친 **base model**은 텍스트를 이어 쓰는 모델이다. 질문 뒤에 답변을 쓸 수도 있지만, 질문을 반복하거나 시험지의 다음 문제를 이어 쓸 수도 있다. SFT는 원하는 응답 예시를 학습에 사용한다. 둘 다 next-token loss를 사용할 수 있으나 데이터 분포와 loss를 적용하는 구간이 다르다.
+<Figure hero src={qwenTraining.src} alt="Qwen3의 전체 학습 흐름. 일반 지식, 추론 중심 데이터, 긴 문맥의 세 단계로 pre-training한 base model에서 출발한다. 대형 모델은 추론 예시 학습, reasoning RL, thinking mode fusion, general RL을 거친다. 소형 모델은 대형 teacher의 응답을 사용하는 off-policy distillation과 student 자신의 생성 결과를 사용하는 on-policy distillation을 거친다." caption="Qwen3의 학습 과정. Pre-training으로 만든 base model에서 모델 규모에 따라 post-training 경로가 갈라진다. 화살표는 단계 진행과 teacher의 지도 신호를 구분한다." source="Qwen Team (2025), Qwen3 Technical Report." />
 
-위 표는 목적에 따른 큰 구분이다. 실제 개발에서는 각 구간을 더 잘게 나누고, 모델 크기에 따라 서로 다른 경로를 사용한다. **Qwen3**는 pre-training에서 일반적인 지식을 익힌 뒤 수학·코드 등의 데이터 비중을 높이고, 마지막으로 긴 문맥을 다루도록 학습한다. Post-training에서는 대형 모델을 여러 단계로 개선하고, 그 모델을 teacher로 활용해 소형 student 모델에 능력을 전달한다. 이를 **distillation(지식 증류)**이라고 한다.[^qwen3]
+그림의 위쪽이 이 노트에서 살펴볼 **pre-training**이다. 아래쪽의 RL과 distillation은 post-training의 세부 방법이다. 특히 **on-policy distillation**에서는 student가 직접 생성한 응답의 각 문맥에서 teacher의 다음 토큰 확률 분포를 따라가도록 학습한다. Teacher가 만들어 둔 응답을 학습하는 off-policy 단계와, **누가 학습에 사용할 응답을 생성하는가**에서 차이가 난다.<Sidenote>후속 연구인 *MOPD*는 영역별로 강화학습한 여러 teacher의 능력을 하나의 student에 모으는 multi-teacher on-policy distillation을 다룬다.[^mopd]</Sidenote>
 
-<Figure hero src={qwenTraining.src} alt="Qwen3의 전체 학습 흐름. 일반 지식, 추론 중심 데이터, 긴 문맥의 세 단계로 pre-training한 base model에서 출발한다. 대형 모델은 추론 예시 학습, reasoning RL, thinking mode fusion, general RL을 거친다. 소형 모델은 대형 teacher의 응답을 사용하는 off-policy distillation과 student 자신의 생성 결과를 사용하는 on-policy distillation을 거친다." caption="Qwen3의 학습 과정. Pre-training으로 만든 base model에서 모델 규모에 따라 post-training 경로가 갈라진다. 화살표는 단계 진행과 teacher의 지도 신호를 구분한다." source="Qwen Team (2025), Qwen3 Technical Report §3.2·§4·Figure 1의 방법을 바탕으로 독립 구성한 강의용 도식. 원문 그림의 복제·수정본이 아님." />
+지금은 각 방법을 모두 이해하기보다, **pre-training과 post-training 각각에 여러 단계와 데이터 선택이 들어간다**는 점을 보자.
 
-그림의 위쪽이 이 노트에서 살펴볼 **pre-training**이다. 아래쪽의 RL과 distillation은 post-training의 세부 방법이다. 특히 **on-policy distillation**에서는 student가 직접 생성한 응답의 각 문맥에서 teacher의 다음 토큰 확률 분포를 따라가도록 학습한다. Teacher가 만들어 둔 응답을 학습하는 off-policy 단계와, **누가 학습에 사용할 응답을 생성하는가**에서 차이가 난다.<Sidenote>후속 연구인 *MOPD*는 영역별로 강화학습한 여러 teacher의 능력을 하나의 student에 모으는 multi-teacher on-policy distillation을 다룬다. Qwen3 보고서의 distillation과 구분되는 확장 사례다.[^mopd]</Sidenote>
-
-지금은 각 방법을 모두 이해하기보다, **pre-training과 post-training 각각에 여러 단계와 데이터 선택이 들어간다**는 점을 보자. Qwen3의 원래 post-training 그림은 [보고서 Figure 1](https://arxiv.org/html/2505.09388v1#S4.F1)에서 확인할 수 있다.
-
-## 2. 학습 목표
+## 2. Objective function
 
 ### 2-1. 세 구조의 사전학습
 
@@ -40,13 +36,13 @@ Pre-training을 마친 **base model**은 텍스트를 이어 쓰는 모델이다
 
 | 구조 | 문맥을 읽는 방식 | 대표적인 사전학습 목표 |
 |---|---|---|
-| Encoder-only | 입력 내부에서 양방향으로 참조 | 가린 토큰 복원: BERT의 MLM(masked language modeling) |
-| Decoder-only | 현재 위치와 이전 위치 참조 | 다음 토큰 예측: causal language modeling |
-| Encoder–decoder | 입력을 양방향으로 읽고 출력은 순차 생성 | 손상된 입력에서 빠진 부분이나 원문 복원: T5 계열 |
+| Encoder-only | 양방향으로 참조 | BERT의 MLM(masked language modeling) |
+| Decoder-only | 현재 위치와 이전 위치 참조 | GPT의 NTP(next token prediction) |
+| Encoder-decoder | 입력을 양방향으로 읽고 출력은 순차 생성 | T5의 span corruption |
 
 ### 2-2. 입력과 정답
 
-가상 토큰열 `[BOS, 부산, 항구, EOS]`를 보자. BOS(beginning of sequence)와 EOS(end of sequence)는 문서 시작·종료를 표시하는 special token이다. 입력을 한 칸 오른쪽의 정답과 짝지으면 다음과 같다.
+이제 decoder-only의 NTP(next-token prediction)에 집중한다. 가상 토큰열 (학습 문서) `[BOS, 부산, 항구, EOS]`를 보자. BOS(beginning of sequence)와 EOS(end of sequence)는 문서 시작·종료를 표시하는 special token이다. 입력을 한 칸 오른쪽의 정답과 짝지으면 다음과 같다.
 
 | 위치 | 입력 토큰 | 참조 가능한 문맥 | 정답 |
 |---|---|---|---|
@@ -54,17 +50,32 @@ Pre-training을 마친 **base model**은 텍스트를 이어 쓰는 모델이다
 | 1 | 부산 | BOS, 부산 | 항구 |
 | 2 | 항구 | BOS, 부산, 항구 | EOS |
 
-Teacher forcing으로 세 위치를 함께 계산한 뒤에는 **어느 정답을 채점하고, 몇 개의 정답으로 평균할 것인가**를 정한다. 위 예제에서 세 정답을 모두 채점한다면, 세 위치의 loss를 더해 3으로 나눈다. Padding이나 학습에서 제외할 구간이 있을 때의 집계 방법을 수식으로 살펴보자.
+Teacher forcing으로 세 위치를 함께 계산한 뒤에는 **어느 정답을 채점하고, 몇 개의 정답으로 평균할 것인가**를 정한다. 위 예제에서 세 정답을 모두 채점한다면, 세 위치의 loss를 더해 3으로 나눈다.
 
 ### 2-3. NTP 목적함수
 
-이제 decoder-only의 NTP(next-token prediction)에 집중한다. 데이터의 토큰열을 $t_1,\ldots,t_T$라고 하면 각 위치에서 앞선 토큰들을 조건으로 다음 토큰에 확률을 준다.
+데이터의 토큰열을 $t_1,\ldots,t_T$라고 하면 각 위치에서 앞선 토큰들을 조건으로 다음 토큰에 확률을 준다.
 
 $$
 p_\theta(t_{1:T})=\prod_{i=1}^{T}p_\theta(t_i\mid t_{<i})
 $$
 
-첫 토큰의 조건은 문서 시작 토큰 등으로 구현할 수 있다. 최대우도 학습(maximum likelihood estimation)은 관측된 토큰열에 높은 확률을 주는 방향으로 가중치 $\theta$를 바꾼다. 음의 로그를 취하면 곱이 합으로 바뀌어 각 위치를 따로 채점할 수 있다.
+이 식은 **결합확률(joint probability)을 조건부 확률의 곱으로 표현하는 확률의 연쇄법칙(chain rule)**이다. 각 토큰을 따로 본 주변확률(marginal probability)의 곱으로 쓰려면 토큰들이 서로 독립이라는 가정이 필요하다. 여기서는 앞선 토큰에 따라 다음 토큰의 확률이 달라지므로 문맥을 조건으로 남겨 둔다.
+
+위의 `[BOS, 부산, 항구, EOS]` 예시에 적용해 보자. BOS는 주어진 시작 조건으로 두고, 그 뒤에 `부산 → 항구 → EOS`가 이어질 확률을 계산한다.
+
+$$
+\begin{aligned}
+&p_\theta(\text{부산},\text{항구},\mathrm{EOS}\mid\mathrm{BOS})\\
+&=p_\theta(\text{부산}\mid\mathrm{BOS})\\
+&\quad\times p_\theta(\text{항구}\mid\mathrm{BOS},\text{부산})\\
+&\quad\times p_\theta(\mathrm{EOS}\mid\mathrm{BOS},\text{부산},\text{항구})
+\end{aligned}
+$$
+
+세 항은 앞 표의 각 위치에서 모델이 **정답 토큰에 부여한 확률**에 해당한다. 예를 들어 각각 0.5, 0.25, 0.5라면, BOS 뒤에 이 토큰열이 순서대로 이어지고 종료될 확률은 $0.5\times0.25\times0.5=0.0625$다. 두 번째 항의 0.25는 아무 문맥에서나 `항구`가 나올 확률이 아니라, **`BOS, 부산` 다음에 `항구`가 나올 확률**이다.
+
+최대우도 학습(maximum likelihood estimation)은 관측된 토큰열에 높은 확률을 주는 방향으로 가중치 $\theta$를 바꾼다. 음의 로그를 취하면 곱이 합으로 바뀌어 각 위치를 따로 채점할 수 있다.
 
 $$
 \mathcal{L}=-\frac{1}{\sum_i m_i}\sum_i m_i\log p_\theta(t_i\mid t_{<i})
