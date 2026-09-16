@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 320" role="img" aria-labelledby="title desc" font-family="system-ui, sans-serif">
+  <title id="title">bandana의 BPE 병합 과정</title>
+  <desc id="desc">아래의 b a n d a n a에서 시작한다. 1순위 규칙으로 두 a n 쌍을 각각 an으로 합친다. 2순위 규칙으로 첫 b와 an을 ban으로 합친다. 최종 토큰은 ban, d, an, a이며 하나의 루트로 합치지 않는다.</desc>
+  <rect width="720" height="320" rx="8" fill="white"/>
+  <g fill="#475569" font-size="16">
+    <text x="24" y="38">최종 토큰</text>
+    <text x="24" y="277">입력 바이트</text>
+    <text x="696" y="306" text-anchor="end" font-size="14">아래에서 위로: 기본 기호 → 병합된 조각</text>
+  </g>
+  <g fill="none" stroke="#64748b" stroke-width="2">
+    <path d="M170 248 L235 79 M250 248 L290 174 M330 248 L290 174 M290 136 L235 79"/>
+    <path d="M420 248 L420 79 M500 248 L540 174 M580 248 L540 174 M540 136 L540 79 M660 248 L660 79"/>
+  </g>
+  <g fill="#f1f5f9" stroke="#334155" stroke-width="1.5">
+    <rect x="200" y="41" width="70" height="38" rx="6"/>
+    <rect x="394" y="41" width="52" height="38" rx="6"/>
+    <rect x="510" y="41" width="60" height="38" rx="6"/>
+    <rect x="634" y="41" width="52" height="38" rx="6"/>
+    <rect x="260" y="136" width="60" height="38" rx="6"/>
+    <rect x="510" y="136" width="60" height="38" rx="6"/>
+  </g>
+  <g fill="#0f172a" font-size="23" text-anchor="middle" font-family="ui-monospace, monospace">
+    <text x="235" y="67">ban</text><text x="420" y="67">d</text><text x="540" y="67">an</text><text x="660" y="67">a</text>
+    <text x="290" y="162">an</text><text x="540" y="162">an</text>
+    <text x="170" y="272">b</text><text x="250" y="272">a</text><text x="330" y="272">n</text><text x="420" y="272">d</text><text x="500" y="272">a</text><text x="580" y="272">n</text><text x="660" y="272">a</text>
+  </g>
+  <g fill="#475569" font-size="14">
+    <text x="279" y="64">② 병합</text>
+    <text x="332" y="160">① 병합</text>
+    <text x="582" y="160">① 병합</text>
+  </g>
+</svg>
