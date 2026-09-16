@@ -9,7 +9,7 @@ import isoFlop from "./assets/week02-isoflop.png";
 import emergenceMetric from "./assets/week02-emergence-metric.png";
 import emergenceObserved from "./assets/week02-emergence-observed.png";
 
-Pre-training에서는 문서를 고르고 학습 시퀀스를 만든 뒤, 정답 토큰의 평균 음의 로그 확률을 줄이도록 모델을 학습했다. 그렇다면 **모델을 더 크게 만들고, 더 많은 데이터와 계산량을 사용하면 성능도 계속 좋아질까? 얼마나 더 좋아질지 미리 알 수 있을까?** Li 등의 *(Mis)Fitting: A Survey of Scaling Laws*를 바탕으로, 규모와 성능 사이의 관계를 살펴본다.[^survey] 먼저 규모를 키울 때 loss가 줄어드는 경향을 보고, 그 관계를 이용한 계산 예산 배분으로 넘어간다. 마지막에는 평균 loss의 개선이 개별 과제의 능력 향상으로 어떻게 나타나는지 구분한다.
+**모델을 더 크게 만들고, 더 많은 데이터와 계산량을 사용하면 성능도 계속 좋아질까? 얼마나 더 좋아질지 미리 알 수 있을까?** 규모와 성능 사이의 관계를 살펴본다.[^survey] 먼저 규모를 키울 때 loss가 줄어드는 경향을 보고, 그 관계를 이용한 계산 예산 배분으로 넘어간다.
 
 ## 1. Scaling laws
 
@@ -32,7 +32,7 @@ Scaling law는 이런 질문에 답하기 위해 **모델·데이터·계산 규
 
 $D$는 고유한 텍스트 양과 같지 않을 수 있다. 같은 데이터를 반복해서 읽어도 소비한 토큰 수는 늘어난다. 또한 tokenizer가 바뀌면 같은 문서의 토큰 수가 달라지므로 서로 다른 실험의 $D$를 해석할 때 조건을 확인해야 한다.
 
-$\mathcal L$은 Pre-training에서 본 평균 NTP(next-token prediction) loss를 평가 데이터에서 계산한 값이다. 자연로그를 사용하므로 단위가 nats/token이며, perplexity는 $\exp(\mathcal L)$이다. 모델끼리 비교할 때는 tokenizer·평가 텍스트·제공 문맥·채점 위치를 맞춘다. 아래에서는 이러한 조건과 모델 계열을 고정하고 $N,D$를 바꾼다고 생각하자.
+$\mathcal L$은 Pre-training에서 본 평균 NTP(next-token prediction) loss를 평가 데이터에서 계산한 값이다. 자연로그를 사용하므로 단위가 nats/token이다.<Sidenote>nat은 자연로그(밑 $e$)로 계산한 정보량의 단위다. 밑이 2인 로그를 쓰면 단위는 bit가 된다. 정답 토큰에 준 확률이 $p$일 때 loss는 $-\ln p$이므로, $p=1$이면 0 nat, $p=1/e\approx0.37$이면 1 nat이다. 정답에 낮은 확률을 줄수록 loss가 커진다. nats/token은 이 값을 평가 대상 토큰들에 걸쳐 평균낸다는 뜻이다.</Sidenote> Perplexity는 $\exp(\mathcal L)$이다. 모델끼리 비교할 때는 tokenizer·평가 텍스트·제공 문맥·채점 위치를 맞춘다. 아래에서는 이러한 조건과 모델 계열을 고정하고 $N,D$를 바꾼다고 생각하자.
 
 Dense Transformer의 학습 계산량을 거칠게 추산할 때 다음 근사(approximation)를 사용한다.[^chinchilla]
 
