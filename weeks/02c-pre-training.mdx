@@ -8,7 +8,7 @@ import packedDocuments from "./assets/week02-packed-documents.svg";
 import learningRate from "./assets/week02-learning-rate.png";
 import qwenTraining from "./assets/week02-qwen3-training.svg";
 
-다음 토큰의 정답은 문서 자체에서 얻을 수 있다. 그렇다면 문서를 많이 모으기만 하면 좋은 모델이 될까? Zhao 등의 LLM(large language model) 서베이가 구분하는 데이터 준비·목적함수(objective function)·학습 설정[^survey]을 따라 이 질문을 살펴본다. 중심은 **어떤 텍스트를 어떤 비율로 어떤 학습 샘플에 담는가**다.
+LLM(large language model)은 문서의 앞부분을 보고 다음 토큰을 예측하는 방식으로 학습할 수 있다. 그렇다면 **모델을 처음 학습시킬 때 어떤 문서를 사용해야 할까?** 웹 문서·책·코드 중 무엇을 얼마나 섞을지, 문서를 어떤 길이의 학습 샘플로 만들지에 따라 모델이 접하는 문맥이 달라진다. 이 노트에서는 Zhao 등의 LLM 서베이[^survey]를 참고해 pre-training의 데이터 구성과 학습 목표, 학습 설정을 살펴본다.
 
 ## 1. LLM 학습 과정
 
