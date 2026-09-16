@@ -6,6 +6,7 @@ order: 2
 
 import packedDocuments from "./assets/week02-packed-documents.svg";
 import learningRate from "./assets/week02-learning-rate.png";
+import qwenTraining from "./assets/week02-qwen3-training.svg";
 
 다음 토큰의 정답은 문서 자체에서 얻을 수 있다. 그렇다면 문서를 많이 모으기만 하면 좋은 모델이 될까? Zhao 등의 LLM(large language model) 서베이가 구분하는 데이터 준비·목적함수(objective function)·학습 설정[^survey]을 따라 이 질문을 살펴본다. 중심은 **어떤 텍스트를 어떤 비율로 어떤 학습 샘플에 담는가**다.
 
@@ -23,7 +24,13 @@ import learningRate from "./assets/week02-learning-rate.png";
 
 Pre-training을 마친 **base model**은 텍스트를 이어 쓰는 모델이다. 질문 뒤에 답변을 쓸 수도 있지만, 질문을 반복하거나 시험지의 다음 문제를 이어 쓸 수도 있다. SFT는 원하는 응답 예시를 학습에 사용한다. 둘 다 next-token loss를 사용할 수 있으나 데이터 분포와 loss를 적용하는 구간이 다르다.
 
-Llama 3 보고서는 pre-training과 post-training을 각각 §3과 §4에서 다룬다. 이처럼 하나의 모델 보고서를 단계별로 읽으면 최종 성능의 변화가 어느 학습 단계에서 나온 것인지 구분하기 쉽다.[^llama]
+위 표는 목적에 따른 큰 구분이다. 실제 개발에서는 각 구간을 더 잘게 나누고, 모델 크기에 따라 서로 다른 경로를 사용한다. **Qwen3**는 pre-training에서 일반적인 지식을 익힌 뒤 수학·코드 등의 데이터 비중을 높이고, 마지막으로 긴 문맥을 다루도록 학습한다. Post-training에서는 대형 모델을 여러 단계로 개선하고, 그 모델을 teacher로 활용해 소형 student 모델에 능력을 전달한다. 이를 **distillation(지식 증류)**이라고 한다.[^qwen3]
+
+<Figure src={qwenTraining.src} alt="Qwen3의 전체 학습 흐름. 일반 지식, 추론 중심 데이터, 긴 문맥의 세 단계로 pre-training한 base model에서 출발한다. 대형 모델은 추론 예시 학습, reasoning RL, thinking mode fusion, general RL을 거친다. 소형 모델은 대형 teacher의 응답을 사용하는 off-policy distillation과 student 자신의 생성 결과를 사용하는 on-policy distillation을 거친다." caption="Qwen3의 학습 과정. Pre-training으로 만든 base model에서 모델 규모에 따라 post-training 경로가 갈라진다. 화살표는 단계 진행과 teacher의 지도 신호를 구분한다." source="Qwen Team (2025), Qwen3 Technical Report §3.2·§4·Figure 1의 방법을 바탕으로 독립 구성한 강의용 도식. 원문 그림의 복제·수정본이 아님." />
+
+그림의 위쪽이 이 노트에서 살펴볼 **pre-training**이다. 아래쪽의 RL과 distillation은 post-training의 세부 방법이다. 특히 **on-policy distillation**에서는 student가 직접 생성한 응답의 각 문맥에서 teacher의 다음 토큰 확률 분포를 따라가도록 학습한다. Teacher가 만들어 둔 응답을 학습하는 off-policy 단계와, **누가 학습에 사용할 응답을 생성하는가**에서 차이가 난다.<Sidenote>후속 연구인 *MOPD*는 영역별로 강화학습한 여러 teacher의 능력을 하나의 student에 모으는 multi-teacher on-policy distillation을 다룬다. Qwen3 보고서의 distillation과 구분되는 확장 사례다.[^mopd]</Sidenote>
+
+지금은 각 방법을 모두 이해하기보다, **pre-training과 post-training 각각에 여러 단계와 데이터 선택이 들어간다**는 점을 보자. Qwen3의 원래 post-training 그림은 [보고서 Figure 1](https://arxiv.org/html/2505.09388v1#S4.F1)에서 확인할 수 있다.
 
 ## 2. 학습 목표
 
@@ -236,6 +243,8 @@ Perplexity는 평균 NTP loss를 지수화한 값이다. 위의 loss 1.040 예�
 데이터 구성과 검증 방법을 정해도 모델 크기와 학습 기간은 아직 선택해야 한다. 같은 계산 예산으로 큰 모델을 짧게 학습할지, 작은 모델에 더 많은 토큰을 읽힐지가 scaling의 문제다.
 
 [^survey]: Zhao, W. X., et al. (2025). *A Survey of Large Language Models*. [arXiv:2303.18223v16](https://arxiv.org/abs/2303.18223v16).
+[^qwen3]: Qwen Team. (2025). *Qwen3 Technical Report*. [arXiv:2505.09388v1](https://arxiv.org/abs/2505.09388v1).
+[^mopd]: Ma, W., et al. (2026). *MOPD: Multi-Teacher On-Policy Distillation for Capability Integration in LLM Post-Training*. [arXiv:2606.30406](https://arxiv.org/abs/2606.30406).
 [^llama]: Dubey, A., et al. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783v1](https://arxiv.org/abs/2407.21783v1).
 [^dedup]: Lee, K., et al. (2022). *Deduplicating Training Data Makes Language Models Better*. ACL 2022, pp. 8424–8445. [arXiv:2107.06499v2](https://arxiv.org/abs/2107.06499v2).
 [^fineweb]: Penedo, G., et al. (2024). *The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale*. NeurIPS 2024 Datasets and Benchmarks. [arXiv:2406.17557v2](https://arxiv.org/abs/2406.17557v2).

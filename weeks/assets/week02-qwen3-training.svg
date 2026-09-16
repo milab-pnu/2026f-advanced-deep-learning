@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="780" viewBox="0 0 960 780" role="img" aria-labelledby="title desc">
+  <title id="title">Qwen3: pre-training에서 post-training까지</title>
+  <desc id="desc">세 단계의 pre-training 이후 대형 모델의 네 단계 post-training과 소형 모델의 두 단계 distillation을 구분한다. 점선은 대형 teacher가 소형 student에 제공하는 지도 신호다.</desc>
+  <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="#555" stroke-width="1.3"/></marker></defs>
+  <rect width="960" height="780" fill="white"/>
+  <g font-family="Arial, 'Malgun Gothic', sans-serif" fill="#222">
+    <text x="30" y="36" font-size="23" font-weight="700">Qwen3의 학습 과정</text>
+    <rect x="24" y="56" width="912" height="214" rx="12" fill="#f3f3f3" stroke="#aaa"/>
+    <text x="44" y="89" font-size="19" font-weight="700">1. Pre-training · 이 노트의 범위</text>
+    <g fill="white" stroke="#777"><rect x="44" y="107" width="260" height="106" rx="7"/><rect x="350" y="107" width="260" height="106" rx="7"/><rect x="656" y="107" width="260" height="106" rx="7"/></g>
+    <g text-anchor="middle"><g font-size="18" font-weight="700"><text x="174" y="138">일반 지식</text><text x="480" y="138">추론 중심 데이터</text><text x="786" y="138">긴 문맥</text></g>
+    <g font-size="16"><text x="174" y="166">다양한 문서·언어</text><text x="174" y="192">기반 능력 형성</text><text x="480" y="166">수학·코드 등 비중 확대</text><text x="480" y="192">데이터 구성 변경</text><text x="786" y="166">문맥 길이 확장</text><text x="786" y="192">4,096 → 32,768 tokens</text></g></g>
+    <g stroke="#555" stroke-width="2" fill="none" marker-end="url(#arrow)"><path d="M307 160 H343"/><path d="M613 160 H649"/></g>
+    <text x="480" y="248" text-anchor="middle" font-size="17">결과: 각 규모의 base model</text>
+    <path d="M480 271 V302" stroke="#555" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="30" y="335" font-size="19" font-weight="700">2. Post-training · 모델 규모에 따라 다른 경로</text>
+    <rect x="24" y="353" width="912" height="163" rx="12" fill="#fafafa" stroke="#aaa"/>
+    <text x="44" y="382" font-size="17" font-weight="700">대형 base model → 대형 teacher</text>
+    <text x="913" y="382" text-anchor="end" font-size="14" fill="#555">235B-A22B / 32B</text>
+    <g fill="white" stroke="#777"><rect x="44" y="398" width="192" height="96" rx="7"/><rect x="270" y="398" width="192" height="96" rx="7"/><rect x="496" y="398" width="192" height="96" rx="7"/><rect x="722" y="398" width="192" height="96" rx="7"/></g>
+    <g text-anchor="middle"><g font-size="16" font-weight="700"><text x="140" y="424">① 추론 예시 학습</text><text x="366" y="424">② Reasoning RL</text><text x="592" y="424">③ 사고 모드 통합</text><text x="818" y="424">④ General RL</text></g>
+    <g font-size="14"><text x="140" y="451">Long-CoT cold start</text><text x="140" y="477">긴 사고 과정 예시</text><text x="366" y="451">수학·코드 중심</text><text x="366" y="477">강화학습</text><text x="592" y="451">Thinking mode fusion</text><text x="592" y="477">사고 / 즉시 응답 통합</text><text x="818" y="451">다양한 영역의</text><text x="818" y="477">강화학습</text></g></g>
+    <g stroke="#555" stroke-width="2" fill="none" marker-end="url(#arrow)"><path d="M239 446 H263"/><path d="M465 446 H489"/><path d="M691 446 H715"/></g>
+    <path d="M818 516 V552 H286 V568" fill="none" stroke="#555" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow)"/>
+    <path d="M674 552 V568" fill="none" stroke="#555" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow)"/>
+    <rect x="333" y="535" width="291" height="26" fill="white"/>
+    <text x="480" y="554" text-anchor="middle" font-size="15">teacher가 제공하는 지도 신호</text>
+    <rect x="24" y="573" width="912" height="174" rx="12" fill="#fafafa" stroke="#aaa"/>
+    <text x="44" y="604" font-size="17" font-weight="700">소형 base model → 소형 student</text>
+    <text x="913" y="604" text-anchor="end" font-size="14" fill="#555">30B-A3B / 14B / 8B / 4B / 1.7B / 0.6B</text>
+    <g fill="white" stroke="#777"><rect x="80" y="622" width="352" height="102" rx="7"/><rect x="528" y="622" width="352" height="102" rx="7"/></g>
+    <g text-anchor="middle"><g font-size="18" font-weight="700"><text x="256" y="651">① Off-policy distillation</text><text x="704" y="651">② On-policy distillation</text></g><g font-size="16"><text x="256" y="680">teacher가 생성한 응답으로 학습</text><text x="704" y="680">student가 직접 응답 생성</text><text x="704" y="707">그 문맥에서 teacher의 분포를 따름</text></g></g>
+    <path d="M436 673 H520" fill="none" stroke="#555" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="30" y="773" font-size="13" fill="#555">CoT = chain of thought (사고 과정) · RL = reinforcement learning (강화학습) · Qwen3 보고서의 방법을 강의용으로 독립 구성</text>
+  </g>
+</svg>
