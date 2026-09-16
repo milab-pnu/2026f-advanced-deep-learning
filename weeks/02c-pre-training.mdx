@@ -164,6 +164,16 @@ A의 마지막 입력 `항구`는 EOS를 예측하고, B의 첫 입력 BOS는 `�
 
 **Optimizer**는 gradient를 이용해 가중치를 어떻게 갱신할지 정한다. LLM pre-training에서는 **AdamW**가 널리 사용되며, gradient의 과거 정보를 활용해 갱신을 조절한다.[^adamw] 최근에는 **Muon**도 사용된다. 예를 들어 Moonlight는 Muon을 적용해 학습한 모델이다.[^muon-scale] Muon은 주로 은닉층의 행렬 가중치에 적용하고, embedding이나 다른 파라미터에는 AdamW 등을 함께 사용할 수 있다.[^muon]
 
+<Details summary="Adam · AdamW · Muon 간단 비교">
+
+| Optimizer | 갱신 방식의 핵심 | 구분할 점 |
+|---|---|---|
+| **Adam** | Gradient와 gradient 제곱의 이동평균을 이용해 파라미터별 갱신을 조절 | Loss에 L2 정규화를 더하면 그 항도 gradient 통계에 포함됨[^adam] |
+| **AdamW** | Adam의 적응적 갱신과 weight decay를 분리 | 가중치를 줄이는 처리를 gradient 통계와 별도로 적용[^adamw] |
+| **Muon** | Momentum으로 만든 행렬 갱신 방향을 근사적으로 직교화 | 주로 은닉층의 행렬에 적용하며, embedding·벡터 등에는 AdamW 등을 함께 사용[^muon] |
+
+</Details>
+
 Optimizer를 선택한 뒤에는 다음 설정을 함께 정한다.
 
 | 기법 | 역할 | 주요 설정 |
@@ -205,6 +215,7 @@ Pre-training을 마친 **base model**은 텍스트를 이어 쓰도록 학습한
 [^dedup]: Lee, K., et al. (2022). *Deduplicating Training Data Makes Language Models Better*. ACL 2022, pp. 8424–8445. [arXiv:2107.06499v2](https://arxiv.org/abs/2107.06499v2).
 [^fineweb]: Penedo, G., et al. (2024). *The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale*. NeurIPS 2024 Datasets and Benchmarks. [arXiv:2406.17557v2](https://arxiv.org/abs/2406.17557v2).
 [^adamw]: Loshchilov, I., & Hutter, F. (2019). *Decoupled Weight Decay Regularization*. ICLR 2019. [arXiv:1711.05101](https://arxiv.org/abs/1711.05101).
+[^adam]: Kingma, D. P., & Ba, J. (2015). *Adam: A Method for Stochastic Optimization*. ICLR 2015. [arXiv:1412.6980](https://arxiv.org/abs/1412.6980).
 [^perplexity]: Hugging Face. *Perplexity of fixed-length models*. [Transformers 공식 문서](https://huggingface.co/docs/transformers/perplexity).
 [^muon]: Jordan, K. (2024). *Muon: An optimizer for hidden layers in neural networks*. [저자 설명](https://kellerjordan.github.io/posts/muon/).
 [^muon-scale]: Liu, J., et al. (2025). *Muon is Scalable for LLM Training*. [arXiv:2502.16982v1](https://arxiv.org/abs/2502.16982v1).
