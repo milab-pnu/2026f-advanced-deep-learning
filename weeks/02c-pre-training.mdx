@@ -158,7 +158,7 @@ Packing을 할 때는 **함께 담은 문서 사이의 attention을 허용할지
 
 독립적인 문서를 학습하려면 입력·정답도 문서별로 맞춘다. 위쪽 네 행은 같은 위치의 입력·정답·위치 번호·loss mask이고, 아래 행렬은 그 입력 위치들 사이의 attention 허용 범위다.
 
-<Figure src={packedDocuments.src} alt="문서 A 입력은 BOS·부산·항구, 정답은 부산·항구·EOS다. 문서 B 입력은 BOS·코드·실행·완료, 정답은 코드·실행·완료·EOS다. 위치 번호는 0,1,2,0,1,2,3이고 loss mask는 모두 1이다. Attention은 각 문서 안에서만 현재·이전 위치를 허용하는 두 삼각형으로 나뉜다." caption="두 문서의 모든 정답을 채점하므로 loss mask는 모두 1이지만, B가 A를 읽는 것은 차단한다." source="문서 A·B의 학습 예제를 직접 도식화." hero />
+<Figure src={packedDocuments.src} alt="문서 A 입력은 BOS·부산·항구, 정답은 부산·항구·EOS다. 문서 B 입력은 BOS·코드·실행·완료, 정답은 코드·실행·완료·EOS다. 위치 번호는 0,1,2,0,1,2,3이고 loss mask는 모두 1이다. Attention은 각 문서 안에서만 현재·이전 위치를 허용하는 두 삼각형으로 나뉜다." caption="두 문서의 모든 정답을 채점하므로 loss mask는 모두 1이지만, B가 A를 읽는 것은 차단한다." hero />
 
 A의 마지막 입력 `항구`는 EOS를 예측하고, B의 첫 입력 BOS는 `코드`를 예측한다. 배열을 붙여 저장해도 A의 마지막 정답은 그대로 EOS다. **문서별 attention을 분리하고 위치 번호도 문서마다 다시 시작**하는 구성을 택했다.<Sidenote>Packing은 padding에 쓰이는 불필요한 계산을 줄여 같은 시간에 더 많은 유효 토큰을 학습하도록 도울 수 있다. 이 효율을 얻으면서 의도한 학습 방식을 유지하려면, position ID(위치 번호)와 attention mask 등을 정확히 구성하는 engineering 역량이 중요하다.</Sidenote>
 
@@ -210,10 +210,10 @@ Andrej Karpathy의 영상은 데이터에서 base model까지의 흐름을 화�
 
 <Video src="https://www.youtube.com/watch?v=7xTGNNLPyMI" caption="Andrej Karpathy (2025), Deep Dive into LLMs like ChatGPT." />
 
-- [01:00 데이터 수집](https://www.youtube.com/watch?v=7xTGNNLPyMI&t=60s)
-- [14:27 모델 입력과 출력](https://www.youtube.com/watch?v=7xTGNNLPyMI&t=867s)
-- [31:09 GPT-2 학습과 추론](https://www.youtube.com/watch?v=7xTGNNLPyMI&t=1869s)
-- [42:52 base model 생성 시연](https://www.youtube.com/watch?v=7xTGNNLPyMI&t=2572s)
+- 01:00 : 데이터 수집
+- 14:27 : 모델 입력과 출력
+- 31:09 : GPT-2 학습과 추론
+- 42:52 : base model 생성 시연
 
 이 노트에 해당하는 pre-training 설명은 59:23까지이며, 이후에는 post-training으로 넘어간다.
 
