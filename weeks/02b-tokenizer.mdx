@@ -102,7 +102,7 @@ Unicode는 세계 여러 언어의 문자와 기호를 일관되게 표현하기
 
 **UTF-8: 코드 포인트를 저장·전송할 바이트열로 바꾸는 방식**
 
-UTF-8(Unicode Transformation Format의 8-bit encoding)은 이런 인코딩 방식 중 하나다. 바이트(byte)는 8 bits로, 0부터 255까지의 정숫값을 표현한다. UTF-8은 문자에 해당하는 **코드 포인트 하나를 1-4개의 바이트**로 표현한다. 바이트 자체의 크기가 바뀌는 것이 아니라, 사용하는 바이트의 개수가 달라지는 가변 길이 인코딩이다.[^unicode-utf]
+UTF-8(Unicode Transformation Format의 8-bit encoding)은 이런 인코딩 방식 중 하나다. 바이트(byte)는 8 bits이다. UTF-8은 문자에 해당하는 **코드 포인트 하나를 1-4개의 바이트**로 표현한다. 바이트 자체의 크기가 바뀌는 것이 아니라, 사용하는 바이트의 개수가 달라지는 가변 길이 인코딩이다.[^unicode-utf]
 
 | 문자 | Unicode 코드 포인트 | UTF-8 바이트열 (16진수) | 바이트 수 |
 |---|---|---|---|
@@ -215,6 +215,8 @@ print(b"".join(parts).decode("utf-8"))
 예를 들어 `가`라는 토큰이 없어도 UTF-8 바이트 `[234, 176, 128]`로 표현할 수 있다. §3-3의 교육용 ID 규칙을 쓰고 적용할 병합이 없다고 하면 ID도 `[234, 176, 128]`이다. 실제 tokenizer에서는 바이트 값과 token ID가 같다는 보장은 없다.
 
 이 처리는 읽는 도중 vocabulary를 늘리는 것이 아니다. 이미 가진 작은 토큰을 더 많이 사용하는 것이다. 따라서 표현은 가능해도 토큰 수가 길어질 수 있으며, 모델이 그 문자열의 뜻을 이해한다는 보장도 없다. 모든 BPE tokenizer가 바이트 기반인 것도 아니므로, “BPE이면 OOV가 없다”로 일반화하지 않는다.
+
+같은 의미의 내용을 표현해도 **언어와 tokenizer에 따라 토큰 수가 달라진다.** 영어 표현이 vocabulary에 더 큰 조각으로 등록된 tokenizer에서는 한국어가 더 잘게 나뉘어, 대응하는 영어 표현보다 많은 토큰을 사용할 수 있다. 다만 한글의 UTF-8 바이트 수만으로 최종 토큰 수를 정할 수는 없으며, 영어가 항상 더 적은 토큰을 사용하는 것도 아니다. LLM의 context 길이나 토큰 사용량을 계산할 때는 실제 tokenizer의 결과를 확인해야 한다.<Sidenote><a href="https://huggingface.co/spaces/Xenova/the-tokenizer-playground">The Tokenizer Playground</a>에서 tokenizer를 선택하고 문장을 입력하면 토큰 수와 분할 결과, token ID를 확인할 수 있다. 같은 tokenizer에서 “오늘 부산의 날씨는 맑습니다.”와 “The weather in Busan is clear today.”를 각각 넣어 비교한 뒤, tokenizer를 바꾸어 차이를 살펴보자.</Sidenote>
 
 ## 4. Tokenizer 설계
 
