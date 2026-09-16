@@ -7,14 +7,15 @@ order: 3
 import powerLaw from "./assets/week02-power-law.png";
 import isoFlop from "./assets/week02-isoflop.png";
 import emergenceMetric from "./assets/week02-emergence-metric.png";
+import emergenceObserved from "./assets/week02-emergence-observed.png";
 
-Pre-training의 계산 예산을 모델 크기와 데이터량에 어떻게 나눌까? Li 등의 *(Mis)Fitting: A Survey of Scaling Laws*는 작은 실험으로 큰 학습의 성능을 추정하는 방법과 그 한계를 검토한다.[^survey] 예산 배분을 먼저 살펴본 뒤, 평균 loss의 개선이 개별 과제의 능력 향상으로 나타나는 방식까지 구분해 본다.
+Pre-training에서는 문서를 고르고 학습 시퀀스를 만든 뒤, 정답 토큰의 평균 음의 로그 확률을 줄이도록 모델을 학습했다. 이제 **같은 계산 예산에서 더 낮은 평가 loss를 얻으려면 모델을 얼마나 크게, 얼마나 오래 학습해야 할까?** Li 등의 *(Mis)Fitting: A Survey of Scaling Laws*를 바탕으로, 작은 실험에서 규모에 따른 경향을 찾아 큰 학습을 설계하는 방법을 살펴본다.[^survey] 마지막에는 평균 loss의 개선이 개별 과제의 능력 향상으로 나타나는 방식까지 구분한다.
 
 ## 1. Scaling laws
 
 연구실에 계산 예산이 주어졌다고 하자. 선택지는 하나가 아니다. 작은 모델을 오래 학습할 수도 있고, 큰 모델을 짧게 학습할 수도 있다. 데이터 정제(data cleaning)에 투자해 같은 수의 토큰에서 더 유용한 신호를 얻는 선택도 있다.
 
-문제는 큰 학습을 모두 해 본 뒤 최선의 설정을 고르기 어렵다는 점이다. **작은 실험에서 규모에 따른 경향을 추정하고, 큰 실험의 설계를 예측하는 것**이 scaling law의 실용적인 역할이다. Kaplan 등은 언어모델 loss와 모델 크기·데이터량·계산량 사이의 power-law 경향을 조사했다.[^kaplan]
+문제는 큰 학습을 모두 해 본 뒤 최선의 설정을 고르기 어렵다는 점이다. **작은 실험에서 규모에 따른 경향을 추정하고, 큰 실험의 설계를 예측하는 것**이 scaling law의 실용적인 역할이다.
 
 여기서 law는 주어진 실험 조건에서 관찰하고 맞춘 경험적 관계다. 데이터 분포와 모델 구조가 크게 바뀌어도 동일한 계수가 유지된다는 자연법칙으로 읽지 않는다.
 
@@ -31,13 +32,30 @@ Pre-training의 계산 예산을 모델 크기와 데이터량에 어떻게 나�
 
 $D$는 고유한 텍스트 양과 같지 않을 수 있다. 같은 데이터를 반복해서 읽어도 소비한 토큰 수는 늘어난다. 또한 tokenizer가 바뀌면 같은 문서의 토큰 수가 달라지므로 서로 다른 실험의 $D$를 해석할 때 조건을 확인해야 한다.
 
+$\mathcal L$은 Pre-training에서 본 평균 NTP(next-token prediction) loss를 평가 데이터에서 계산한 값이다. 자연로그를 사용하므로 단위가 nats/token이며, perplexity는 $\exp(\mathcal L)$이다. 모델끼리 비교할 때는 tokenizer·평가 텍스트·제공 문맥·채점 위치를 맞춘다. 아래에서는 이러한 조건과 모델 계열을 고정하고 $N,D$를 바꾼다고 생각하자.
+
 Dense Transformer의 학습 계산량을 거칠게 추산할 때 다음 근사(approximation)를 사용한다.[^chinchilla]
 
 $$
 C\approx6ND
 $$
 
-직관은 다음과 같다. 파라미터를 사용하는 주요 행렬 연산의 forward 비용이 토큰당 대략 $2N$이고, backward까지 합치면 대략 세 배가 된다. 이는 주된 행렬곱 중심의 근사다. 긴 시퀀스의 attention 계산, embedding 취급, activation 재계산 등까지 정확히 포함한 실행 비용은 아니다. MoE(mixture of experts)에서는 전체 파라미터를 그대로 대입해서도 안 된다.
+계수 6은 앞에서 본 **행렬곱의 forward와 backward 비용**에서 출발한다. 토큰 벡터 $x\in\mathbb R^{1\times d_{\mathrm{in}}}$에 가중치 $W\in\mathbb R^{d_{\mathrm{in}}\times d_{\mathrm{out}}}$를 곱해 $y=xW$를 만든다고 하자. 이 행렬의 파라미터 수는 $N_W=d_{\mathrm{in}}d_{\mathrm{out}}$다.
+
+출력 성분 하나는 $d_{\mathrm{in}}$번 곱하고 그 결과를 더한다. 곱셈과 덧셈을 각각 한 연산으로 세면, forward 비용은 대략 $2d_{\mathrm{in}}d_{\mathrm{out}}=2N_W$다. Backward에서는 출력 gradient $g_y$로부터 입력 gradient $g_x=g_yW^\top$와 가중치 gradient에 대한 기여 $x^\top g_y$를 계산한다. 가중치 gradient는 여러 토큰의 기여를 더하므로 곱셈과 누적 덧셈을 함께 센다. 두 backward 계산을 각각 토큰당 약 $2N_W$로 세어, forward까지 총 $6N_W$로 근사한다.
+
+| 계산 | 행렬곱 중심의 근사 비용 |
+|---|---|
+| Forward: 출력 계산 | $2N_W$ |
+| Backward: 입력 gradient | $2N_W$ |
+| Backward: 가중치 gradient | $2N_W$ |
+| 합계 | $6N_W$ |
+
+<Callout type="example">
+입력 4차원, 출력 3차원의 작은 선형층은 가중치가 12개다. 출력 세 개를 구할 때 각각 4번 곱하고 3번 더하므로 정확한 forward 연산 수는 21회다. 큰 행렬에서는 덧셈 횟수를 곱셈 횟수와 같게 근사해 $2\times12=24$회로 센다. 같은 방식으로 backward까지 약 72회로 잡는다. 이 계산을 모델의 주요 가중치 행렬에 합산하고, 소비한 $D$개 토큰에 걸쳐 누적한 값이 $6ND$다.
+</Callout>
+
+이는 주된 행렬곱 중심의 근사다. 긴 시퀀스의 attention 계산, embedding 취급, activation 재계산 등까지 정확히 포함한 실행 비용은 아니다. MoE(mixture of experts)에서는 전체 파라미터를 그대로 대입해서도 안 된다. 또한 **FLOPs는 연산 횟수**이고 FLOP/s는 초당 연산 처리량이다. 같은 연산량도 하드웨어·통신·활용률에 따라 걸리는 시간이 달라진다.
 
 **같은 계산량의 세 후보.**
 
@@ -53,7 +71,9 @@ $C=6\times10^{18}$ FLOPs를 배정한 가상 실험을 생각하자.
 
 ### 1-2. Power law와 loss
 
-Chinchilla 논문이 사용한 모형 중 하나는 다음과 같다.[^chinchilla]
+먼저 여러 크기의 모델을 여러 학습 토큰 수로 훈련하고, 각 실험의 $(N,D,\mathcal L)$을 기록한다. 이 점들에서 규모가 커질수록 loss가 어떻게 줄어드는지 관찰한 뒤, 그 경향을 설명할 수식을 정하고 계수를 추정한다. 이렇게 관측값에 수식을 맞추는 과정을 **fitting**이라고 한다. 추정에 사용하지 않은 실험에서도 맞는지 확인해야 큰 규모의 예측에 쓸 근거가 생긴다.
+
+Kaplan 등은 언어모델의 loss가 규모에 따라 power-law 경향을 보임을 조사했다.[^kaplan] Chinchilla 논문은 모델 크기와 학습 토큰 수의 영향을 함께 표현하기 위해 다음 모형을 사용했다.[^chinchilla]
 
 $$
 \widehat{\mathcal{L}}(N,D)=E+\frac{A}{N^\alpha}+\frac{B}{D^\beta}
@@ -114,13 +134,34 @@ Chinchilla는 “더 큰 모델”만 비교하는 대신, 같은 계산량에�
 
 이 비교가 주는 질문은 “내 모델이 너무 작은가?”에 더해 <strong>“내 모델 크기에 비해 충분히 학습했는가?”</strong>다. 해당 연구의 결론을 흔히 약 20 tokens/parameter로 요약하지만, 모든 데이터·모델·예산의 보편적인 비율로 적용할 수는 없다.
 
-실제 연구에서는 위 가상 예제처럼 계수를 먼저 정하지 않는다. **계산 예산 하나를 고정하고 모델 크기와 학습 토큰 수를 바꾼 여러 학습 결과**를 비교한다. 각 결과를 모델 크기와 최종 loss의 점으로 찍고 곡선을 맞추면, 그 예산에서 가장 낮은 지점의 모델 크기를 추정할 수 있다. 여러 계산 예산에서 이 절차를 반복하면 최적 모델 크기가 예산에 따라 어떻게 변하는지 추정한다. 이것이 논문의 isoFLOP 접근을 읽는 순서다.[^chinchilla]
+실제 연구에서는 위 가상 예제처럼 계수를 먼저 정하지 않는다. **같은 계산 예산으로 실제 학습한 결과들을 비교**하는 isoFLOP 접근을 사용했다.[^chinchilla]
 
 앞 절의 두 변수 loss 식을 직접 fitting하는 방법은 논문이 사용한 또 다른 접근이다. 접근별 추정 지수와 상수는 완전히 같지 않다. **약 20 tokens/parameter는 앞 수식에서 자동으로 나오는 상수가 아니다.** $N$과 $D$의 최적 scaling 지수가 같을 때에도 비율은 fitting 계수에 의존하며, 지수가 다르면 최적 비율 자체가 예산에 따라 달라진다.
 
-[원논문의 Figure 3와 §3.2](https://arxiv.org/html/2203.15556v1#S3.SS2)에서 왼쪽 패널의 가로축은 모델 크기, 세로축은 최종 loss다. 곡선 하나가 계산 예산 하나에 대응하므로, 같은 곡선 위에서 오른쪽으로 갈수록 더 큰 모델을 더 적은 토큰으로 학습한다. 각 곡선의 최저점이 해당 예산에서 추정한 최적 모델 크기다. 가운데와 오른쪽 패널은 이 최저점들로부터 예산에 따른 최적 모델 크기와 토큰 수의 관계를 추정한다. 관측 범위 밖으로 예측을 확장하는 외삽(extrapolation)은 실제로 측정한 점과 구분해서 읽는다.
+[원논문의 Figure 3와 §3.2](https://arxiv.org/html/2203.15556v1#S3.SS2)를 열고 가상 U자 곡선과 비교해 보자. 논문은 이 접근에서 9개 계산 예산을 정하고, 각 예산마다 여러 모델 크기를 학습했다. 그림은 다음 순서로 읽으면 된다.
 
-### 2-2. 추론을 포함한 비용
+1. **왼쪽 패널의 곡선 하나를 고른다.** 가로축은 모델 파라미터 수, 세로축은 최종 학습 loss다. 같은 곡선 위에서는 계산량이 고정되어 있으므로 오른쪽으로 갈수록 $N$은 늘고 $D$는 줄어든다. 각 점은 서로 다른 학습 실행의 결과이며, 한 모델이 학습 중 커지는 과정이 아니다.
+2. **곡선의 최저점을 찾는다.** 측정한 점들에 곡선을 맞춰 그 예산에서 loss가 가장 낮아지는 모델 크기 $N_*$를 추정한다. 너무 작은 모델과, 주어진 예산으로 충분히 학습하지 못한 큰 모델 사이에 최적점이 나타난다.
+3. **다른 예산의 최저점과 비교한다.** 예산이 커질 때 최적 모델 크기와 학습 토큰 수도 어떻게 커지는지 본다. 가운데·오른쪽 패널은 이 최저점들을 모아 $C$에 따른 $N_*,D_*$의 관계를 추정한 것이다.
+
+이 그림의 세로축은 논문에서 사용한 최종 학습 loss다. 앞에서 정의한 평가 loss와 측정 대상이 같다고 넘겨짚지 말고, 실제 모델의 검증 데이터·downstream 결과도 함께 읽는다. 관측 범위 밖으로 예측을 확장하는 **외삽**(extrapolation)은 실제로 측정한 점과 구분한다. Chinchilla는 작은 실험에서 얻은 예측을 더 큰 모델의 학습과 평가로 확인한 사례다.[^chinchilla]
+
+### 2-2. 데이터 반복과 제약
+
+Pre-training에서 데이터 풀의 크기와 학습에서 소비한 토큰 수를 구분했다. 예를 들어 다음 두 실행은 같은 모델을 학습한다면 $6ND$로 계산한 연산량이 같다.
+
+| 구성 | 고유 데이터량 | 평균 반복 횟수 | 소비 토큰 수 $D$ |
+|---|---|---|---|
+| 새로운 문서를 한 번씩 읽기 | 100B | 1회 | 100B |
+| 같은 문서를 반복해서 읽기 | 10B | 10회 | 100B |
+
+그렇다고 두 실행의 최종 loss까지 같다고 예측할 수는 없다. 반복해서 읽으면 이미 본 문맥을 더 학습할 수 있지만, 새로운 문맥의 다양성이 같은 속도로 늘지는 않는다. **연산량을 세는 $D$와 성능을 예측할 때의 데이터 조건을 함께 봐야 한다.**
+
+Muennighoff 등의 *Scaling Data-Constrained Language Models*는 고유 데이터량과 반복 횟수를 구분해 실험했다. 해당 실험에서는 몇 차례 반복이 유용했지만, 반복을 계속 늘릴 때 추가 계산의 이득은 줄었다. 따라서 새로운 데이터로 얻은 scaling 관계에 반복 토큰 수만 대입해 같은 개선을 기대하기는 어렵다.[^data-constrained] [원논문의 Figure 1](https://arxiv.org/html/2305.16264v3#S0.F1)은 반복에 따른 loss 감소와 자원 배분을 함께 보여준다.
+
+한국어·전문 영역처럼 확보할 수 있는 문서가 제한적이라면, 모델 크기와 총 학습 토큰 수에 더해 고유 데이터량·반복 노출·혼합 비율을 기록한다. 데이터 품질이나 혼합을 바꾸었을 때에도 기존 fitting 계수가 그대로 적용되는지는 작은 비교 실험으로 확인해야 한다.
+
+### 2-3. 추론을 포함한 비용
 
 같은 품질을 가진 두 모델이 있다고 가정하자. 하나는 크고 학습을 짧게 했고, 다른 하나는 작지만 더 오래 학습했다. 작은 모델의 학습 비용이 더 들었더라도 앞으로 많은 요청을 처리한다면 배포 과정의 비용을 줄일 수 있다.
 
@@ -136,7 +177,7 @@ $Q$는 예상 요청 수다. 이 식은 의사결정의 범위를 보여주기 �
 
 “Compute-optimal보다 오래 학습했다”는 표현은 곧 낭비했다는 뜻이 아니다. 어떤 비용을 목적함수에 넣었는지 먼저 물어야 한다.
 
-### 2-3. 예측의 검증
+### 2-4. 예측의 검증
 
 서베이 *(Mis)Fitting*은 학습 설정, 관측할 실험점, fitting 방식의 차이가 예측과 최적 비율을 바꿀 수 있음을 검토한다.[^survey] 우리 연구의 계획으로 바꾸면 다음 순서가 된다.
 
@@ -145,11 +186,27 @@ $Q$는 예상 요청 수다. 이 식은 의사결정의 범위를 보여주기 �
 3. **추정에 쓰지 않은 실험으로 확인한다.** 관측 범위 안에서 곡선이 잘 맞는 것과 외삽이 맞는 것은 다르다.
 4. **예측 오차를 예산에 반영한다.** 점추정(point estimate) 하나만 보고 대규모 학습을 결정하기보다 설정 변화에 대한 민감도를 본다.
 
+Pre-training에서 본 learning rate schedule도 이 비교에 영향을 준다. 긴 학습용 schedule의 중간 checkpoint는, 그 시점에 학습을 마치도록 learning rate를 낮춘 별도 실행과 다르다. Chinchilla는 학습 토큰 수에 맞춰 cosine schedule의 길이를 정했다. 같은 $(N,D)$라도 최적화 설정이 다르면 loss와 추정한 최적점이 달라질 수 있다.[^chinchilla]
+
+### 2-5. 영상으로 복습하기
+
+[Stanford CS336의 Scaling laws 강의](https://www.youtube.com/watch?v=6Q-ESEmDf4Q)는 scaling 관계를 실험에 맞추고 계산 예산을 배분하는 과정을 설명한다. 특히 Chinchilla의 세 접근인 학습 곡선의 최저 경계, isoFLOP 비교, 두 변수 loss fitting이 어떻게 다른지 살펴보자. [공식 강의 자료](https://cs336.stanford.edu/spring2025-lectures/nonexecutable/2025%20Lecture%209%20-%20Scaling%20laws%20basics.pdf)의 45–50쪽은 이 세 방법과 추론을 고려한 학습량 선택에 해당한다.
+
+<Video src="https://www.youtube.com/watch?v=6Q-ESEmDf4Q" caption="Tatsunori Hashimoto, Stanford CS336 (2025), Lecture 9: Scaling laws 1. 작은 실험을 통한 예측과 Chinchilla의 계산 예산 배분을 설명하는 선택 심화 영상." />
+
 ## 3. Emergent abilities
 
 ### 3-1. 관측된 능력의 출현
 
-평균 loss의 감소와 특정 과제의 성공률은 같은 지표가 아니다. Wei 등은 작은 모델의 결과만으로 단순 외삽하기 어려운 능력의 출현을 emergent ability라는 관점에서 정리했다.[^emergence] 이런 관찰은 규모를 늘리는 일이 단순한 오차 감소를 넘어 사용 가능한 과제의 범위를 바꿀 수 있다는 기대와 연결된다.
+Pre-training에서 평균 NTP loss와 downstream 과제 정확도를 함께 보았다. 여기서도 두 지표를 구분한다. **평균 loss가 조금씩 낮아질 때, 특정 문제를 푸는 성공률도 같은 모양으로 좋아질까?** Wei 등은 작은 모델의 결과만으로 단순 외삽하기 어려운 능력의 출현을 emergent ability라는 관점에서 정리했다.[^emergence]
+
+<Figure hero src={emergenceObserved.src} alt="Wei 등의 Figure 2. 가로축은 학습 FLOPs의 로그 척도, 세로축은 여덟 과제 각각의 평가 점수다. 산술과 MMLU 등에서 작은 모델들의 점수는 낮거나 무작위 기준선 부근에 머물다가 큰 모델에서 높아진다. 색과 기호는 서로 다른 모델 계열을 구분한다." caption="실제 모델 평가에서 관측한 few-shot 과제 성능. 점 하나는 모델 하나이고, 분홍색 점선은 무작위 응답의 기준선이다. (A) 산술과 (G) MMLU 패널을 중심으로 읽는다." source="Wei et al. (2022), Emergent Abilities of Large Language Models, Figure 2 · CC BY 4.0 · PDF에서 그림 영역 발췌, PNG 변환. 그림 내용 수정 없음." />
+
+[그림 원문과 캡션](https://arxiv.org/html/2206.07682v2#S3.F2) · [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+
+먼저 **(A) 산술**을 보자. 작은 모델들의 정확도는 0에 가깝고, 더 큰 학습 계산량을 쓴 모델에서 높아진다. **(G) Multi-task NLU**는 MMLU(massive multitask language understanding) 평가다. 작은 모델들의 점수가 무작위 선택 기준선 부근에 모여 있다가 큰 모델에서 상승한다. 두 경우 모두 작은 모델 몇 개만 봤다면 이후의 개선 폭을 예상하기 어려웠을 것이다.
+
+1주차에서 본 **few-shot prompting**으로 평가한 결과이므로, 점수 상승은 평가 예시로 가중치를 갱신한 효과와 구분한다. 또 가로축은 파라미터 수 자체가 아닌 **학습 FLOPs**다. 곡선의 색·기호마다 모델 계열이 다르고 학습 데이터와 설정도 다를 수 있으므로, 하나의 보편적인 임계 모델 크기를 읽어 내는 그림으로 쓰지는 않는다.
 
 하지만 그래프의 급격한 변화만으로 내부 능력이 불연속적으로 생겼다고 결론 내릴 수는 없다. Schaeffer 등은 평가 지표를 바꾸면 일부 급격한 출현이 부드러운 변화로 보일 수 있음을 분석했다.[^mirage]
 
@@ -174,9 +231,14 @@ $Q$는 예상 요청 수다. 이 식은 의사결정의 범위를 보여주기 �
 
 이 논쟁에서 구분할 것은 **능력의 개선**, **그 개선이 급격한가**, **작은 실험으로 예측할 수 있는가**다. 지표 효과를 지적하는 것이 모델의 유용한 능력 향상을 부정하는 것은 아니다. 반대로 성공률 곡선 하나만으로 새로운 메커니즘의 출현을 입증한 것도 아니다.
 
+실제 지표 비교는 [Schaeffer 등의 Figure 3](https://arxiv.org/html/2304.15004v2#S3.F3)에서 볼 수 있다. 위쪽은 산술 응답 전체의 정답 여부를 평가하고, 아래쪽은 정답에 도달하기 위해 토큰을 얼마나 고쳐야 하는지 보는 token edit distance로 평가한다. 같은 모델 계열의 출력도 채점 방식에 따라 개선 곡선이 달라진다.[^mirage] 앞의 $p^5$는 이 가능성을 이해하는 작은 예제이며, 모든 과제의 emergence를 설명했다는 뜻은 아니다.
+
+계산 예산과 목표 품질을 바탕으로 $N,D$를 정했다면, 다음 문제는 그 학습을 실제 GPU에서 수행하는 것이다. Training engineering에서는 가중치·gradient·optimizer 상태를 저장하고 계산과 통신을 분산하는 방법을 살펴본다. 여기서 센 연산량이 학습 시간으로 어떻게 이어지는지도 그 실행 방식에 달려 있다.
+
 [^survey]: Li, M., Kudugunta, S., & Zettlemoyer, L. (2025). *(Mis)Fitting: A Survey of Scaling Laws*. [arXiv:2502.18969v1](https://arxiv.org/abs/2502.18969v1).
 [^kaplan]: Kaplan, J., et al. (2020). *Scaling Laws for Neural Language Models*. [arXiv:2001.08361](https://arxiv.org/abs/2001.08361).
 [^chinchilla]: Hoffmann, J., et al. (2022). *Training Compute-Optimal Large Language Models*. NeurIPS 2022. [arXiv:2203.15556v1](https://arxiv.org/abs/2203.15556v1).
 [^llama1]: Touvron, H., et al. (2023). *LLaMA: Open and Efficient Foundation Language Models*. [arXiv:2302.13971v1](https://arxiv.org/abs/2302.13971v1).
 [^emergence]: Wei, J., et al. (2022). *Emergent Abilities of Large Language Models*. Transactions on Machine Learning Research. [arXiv:2206.07682v2](https://arxiv.org/abs/2206.07682v2).
 [^mirage]: Schaeffer, R., Miranda, B., & Koyejo, S. (2023). *Are Emergent Abilities of Large Language Models a Mirage?* NeurIPS 2023. [arXiv:2304.15004v2](https://arxiv.org/abs/2304.15004v2).
+[^data-constrained]: Muennighoff, N., et al. (2023). *Scaling Data-Constrained Language Models*. [arXiv:2305.16264v3](https://arxiv.org/abs/2305.16264v3).
