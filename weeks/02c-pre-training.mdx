@@ -158,52 +158,25 @@ A의 마지막 입력 `항구`는 EOS를 예측하고, B의 첫 입력 BOS는 `�
 
 ## 4. 학습과 평가
 
-### 4-1. 가중치 갱신
+### 4-1. 최적화와 학습 안정화
 
-한 배치를 학습하는 순서는 다음과 같다.
+입력과 정답이 준비되면 forward로 loss를 계산하고, backward로 gradient를 구한 뒤 optimizer로 가중치를 갱신한다. 이 과정에서 사용하는 다음 기법들은 딥러닝 전반에 공통으로 쓰이며, 대규모 LLM 학습에서도 수렴과 안정성에 영향을 준다.
 
-```
-입력·정답·mask 준비
-  → forward로 위치별 logits 계산
-  → 유효한 정답 위치의 cross-entropy 평균
-  → backward로 gradient 계산
-  → optimizer가 가중치 갱신
-  → 다음 배치
-```
+**Optimizer**는 gradient를 이용해 가중치를 어떻게 갱신할지 정한다. LLM pre-training에서는 **AdamW**가 널리 사용되며, gradient의 과거 정보를 활용해 갱신을 조절한다.[^adamw] 최근에는 **Muon**도 사용된다. 예를 들어 Moonlight는 Muon을 적용해 학습한 모델이다.[^muon-scale] Muon은 주로 은닉층의 행렬 가중치에 적용하고, embedding이나 다른 파라미터에는 AdamW 등을 함께 사용할 수 있다.[^muon]
 
-Learning rate는 가중치 갱신의 크기를 조절한다. 가장 단순한 SGD(stochastic gradient descent)는 $\theta\leftarrow\theta-\eta g$로 쓸 수 있다. 가중치 하나가 1.0, gradient가 0.2, learning rate $\eta$가 0.1이라면 새 값은 0.98이다. 실제 모델에서는 이 계산을 수많은 파라미터에 적용한다.
+Optimizer를 선택한 뒤에는 다음 설정을 함께 정한다.
 
-대표적인 optimizer인 AdamW는 현재 gradient 하나만 사용하는 대신, 각 파라미터에 두 상태를 유지한다. 학습 step을 $s$, 그 step의 gradient를 $g_s$라고 하자.[^adamw]
+| 기법 | 역할 | 주요 설정 |
+|---|---|---|
+| **Weight decay** | 가중치를 0 방향으로 줄이는 정규화로, 크기가 과도하게 커지는 것을 억제 | Decay 계수, 적용할 파라미터 |
+| **Learning rate scheduler** | 학습 진행에 따라 learning rate를 바꾸어 갱신 크기를 조절 | 최대 learning rate, warmup 길이, 이후 감소 방식 |
+| **Gradient clipping** | Gradient norm이 임계값을 넘으면 같은 방향으로 축소해 큰 gradient로 인한 불안정을 완화 | Clipping 임계값 |
 
-$$
-m_s=\beta_1m_{s-1}+(1-\beta_1)g_s,\qquad
-v_s=\beta_2v_{s-1}+(1-\beta_2)g_s^2
-$$
+**Warmup**은 학습 초기에 learning rate를 낮게 시작해 점차 높이는 구간이다. 초기부터 큰 갱신이 일어나는 것을 완화하며, 이후에는 일정하게 유지하거나 학습 후반에 낮추는 등의 schedule을 사용한다. 여기서 learning rate를 낮추는 **학습률 decay**와, 가중치 자체를 줄이는 **weight decay**는 서로 다른 설정이다.
 
-$\beta_1,\beta_2$는 0 이상 1 미만의 계수로, 클수록 과거 상태를 오래 반영한다. $m_s$는 gradient의 지수이동평균(exponential moving average)이고, $v_s$는 제곱 gradient의 지수이동평균이다. 첫째는 최근 갱신 방향을, 둘째는 최근 gradient 크기의 척도를 담는다. $v_s$는 평균을 뺀 분산 자체는 아니다. 두 상태는 가중치 하나마다 하나씩 있으므로, 파라미터가 8B개면 상태 값은 총 16B개다.
+Gradient clipping은 학습 진행 단계가 아니라 **현재 gradient의 크기**를 기준으로 적용한다. AdamW처럼 과거 상태를 이용하는 optimizer에서는 clipping 임계값이 최종 가중치 변화량의 직접적인 상한을 뜻하지는 않는다.
 
-초깃값 0의 영향을 보정한 값을 $\hat m_s,\hat v_s$라고 하면 AdamW의 갱신은 다음처럼 쓸 수 있다. 제곱·나눗셈·제곱근은 원소별 연산이다.
-
-$$
-\theta_s=(1-\eta_s\lambda)\theta_{s-1}
--\eta_s\frac{\hat m_s}{\sqrt{\hat v_s}+\epsilon}
-$$
-
-$\lambda$는 weight decay 계수, $\epsilon$은 분모의 수치 안정화를 위한 작은 양수다. Weight decay는 가중치를 줄이는 항이고, gradient 기반 항과 분리해 적용한다. 어떤 파라미터에 decay를 적용할지도 설정한다.
-
-<Details summary="Adam의 초기 상태 보정과 숫자 예제">
-
-상태를 0으로 시작하면 초기 평균이 작아지는 효과가 있어 $\hat m_s=m_s/(1-\beta_1^s)$, $\hat v_s=v_s/(1-\beta_2^s)$로 보정한다. 교육용으로 $g_1=0.2$, $\beta_1=0.9$, $\beta_2=0.99$라면 $m_1=0.02$, $v_1=0.0004$, 보정 후에는 $\hat m_1=0.2$, $\hat v_1=0.04$다. $\epsilon$과 weight decay를 생략하면 비율은 $0.2/\sqrt{0.04}=1$이다. Learning rate가 0.01이면 가중치 1.0은 약 0.99가 된다. 이는 계산을 보여주는 예이며 권장 hyperparameter가 아니다.
-
-</Details>
-
-학습 초기에는 learning rate를 낮게 시작해 점차 높이는 **warmup**을 사용하기도 한다. 학습 후반의 **decay**는 갱신 폭을 줄인다. **Gradient clipping**은 gradient norm이 임계값을 넘으면 gradient를 같은 방향으로 축소한다. AdamW처럼 상태를 이용하는 optimizer에서는 이것을 최종 가중치 변화량의 직접적인 상한으로 해석하지 않는다. 세 방법은 역할이 다르므로 하나가 다른 하나를 대신하지 않는다. 실제 recipe를 읽을 때에는 learning rate뿐 아니라 전체 학습 길이, batch 크기, warmup 길이를 함께 확인한다.
-
-예를 들어 gradient가 $(3,4)$라면 norm은 5다. 임계값을 1로 정한 norm clipping은 두 성분에 $1/5$를 곱해 $(0.6,0.8)$로 만든다. Warmup·decay가 **step에 따라 learning rate를 바꾸는 것**이라면, clipping은 **현재 gradient의 크기에 따라 적용하는 것**이다.
-
-학습률 곡선도 숫자로 읽어 보자. 교육용으로 총 1,000번 갱신하고, 처음 100 step에서 0부터 최대 학습률까지 선형으로 올린 뒤 마지막까지 선형으로 내린다고 정할 수 있다. 50 step에서는 최대값의 절반, 100 step에서는 최대값, 550 step에서는 다시 절반이다. 실제 recipe는 cosine decay나 최솟값을 두는 방식도 사용한다. 같은 토큰 수라도 batch 크기가 바뀌면 optimizer step 수가 바뀌므로, warmup을 step과 token 중 어느 단위로 지정했는지 확인한다.
-
-<Figure src={learningRate.src} alt="교육용 학습률 곡선. 0에서 시작해 100 step에 최대값에 도달한 뒤 1000 step에서 0으로 선형 감소한다. 50과 550 step의 값은 최대값의 절반이다." caption="본문의 1,000-step 예제를 최대 학습률로 나누어 표시했다. 점선 위치가 warmup 종료 시점이며 실제 모델의 권장 schedule은 아니다." source="본문에 명시한 선형 warmup·decay 설정으로 직접 계산." />
+실제 DeepSeek-V3는 AdamW, weight decay, learning rate warmup과 후반 감소, gradient clipping을 함께 사용한다.[^deepseek3] 기술 보고서를 읽을 때에는 개별 기법의 이름뿐 아니라 **전체 학습량과 batch 크기에 맞춰 어떤 값을 사용했는지**도 함께 살펴보면 된다.
 
 ### 4-2. 검증 지표
 
@@ -240,3 +213,5 @@ Perplexity는 평균 NTP loss를 지수화한 값이다. 위의 loss 1.040 예�
 [^fineweb]: Penedo, G., et al. (2024). *The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale*. NeurIPS 2024 Datasets and Benchmarks. [arXiv:2406.17557v2](https://arxiv.org/abs/2406.17557v2).
 [^adamw]: Loshchilov, I., & Hutter, F. (2019). *Decoupled Weight Decay Regularization*. ICLR 2019. [arXiv:1711.05101](https://arxiv.org/abs/1711.05101).
 [^perplexity]: Hugging Face. *Perplexity of fixed-length models*. [Transformers 공식 문서](https://huggingface.co/docs/transformers/perplexity).
+[^muon]: Jordan, K. (2024). *Muon: An optimizer for hidden layers in neural networks*. [저자 설명](https://kellerjordan.github.io/posts/muon/).
+[^muon-scale]: Liu, J., et al. (2025). *Muon is Scalable for LLM Training*. [arXiv:2502.16982v1](https://arxiv.org/abs/2502.16982v1).
