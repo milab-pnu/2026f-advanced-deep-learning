@@ -73,13 +73,27 @@ $C=6\times10^{18}$ FLOPs를 배정한 가상 실험을 생각하자.
 
 먼저 여러 크기의 모델을 여러 학습 토큰 수로 훈련하고, 각 실험의 $(N,D,\mathcal L)$을 기록한다. 이 점들에서 규모가 커질수록 loss가 어떻게 줄어드는지 관찰한 뒤, 그 경향을 설명할 수식을 정하고 계수를 추정한다. 이렇게 관측값에 수식을 맞추는 과정을 **fitting**이라고 한다. 추정에 사용하지 않은 실험에서도 맞는지 확인해야 큰 규모의 예측에 쓸 근거가 생긴다.
 
-Kaplan 등은 언어모델의 loss가 규모에 따라 power-law 경향을 보임을 조사했다.[^kaplan] Chinchilla 논문은 모델 크기와 학습 토큰 수의 영향을 함께 표현하기 위해 다음 모형을 사용했다.[^chinchilla]
+**Kaplan et al. (2020).** 충분한 데이터로 수렴시킨 모델에서는 $\mathcal L(N)\propto N^{-\alpha_N}$, 충분히 큰 모델을 제한된 데이터로 학습하고 평가 loss에 따라 조기 종료한 경우에는 $\mathcal L(D)\propto D^{-\alpha_D}$를 관찰했다. 한 자원의 영향을 볼 때 다른 자원이 병목이 되지 않도록 한 실험이다.[^kaplan]
+
+두 제약을 함께 표현한 원논문의 식 (1.5)는 다음과 같다. 여기서만 $D_{\mathrm{set}}$으로 표기를 바꾸어 **데이터셋 크기**임을 드러낸다.
+
+$$
+\widehat{\mathcal L}_{\mathrm K}(N,D_{\mathrm{set}})
+=\left[\left(\frac{N_c}{N}\right)^{\alpha_N/\alpha_D}
++\frac{D_c}{D_{\mathrm{set}}}\right]^{\alpha_D}
+$$
+
+$N_c,D_c$는 척도 상수다. $D_{\mathrm{set}}$이 충분히 크면 $(N_c/N)^{\alpha_N}$, $N$이 충분히 크면 $(D_c/D_{\mathrm{set}})^{\alpha_D}$에 접근한다. Kaplan의 $N$은 embedding을 제외한 파라미터 수이며, 이 식의 데이터셋 크기는 반복 학습까지 센 소비 토큰 수와 구별한다. 원논문 Table 2의 **공동 fitting**은 $\alpha_N=0.076$, $\alpha_D=0.103$을 보고한다. 별도 단일 변수 실험의 $\alpha_D\approx0.095$를 이 계수와 섞어 쓰지 않는다.[^kaplan]
+
+### 1-3. Hoffmann의 loss 모형
+
+**Hoffmann et al. (2022), Chinchilla.** 모델 크기와 **학습 토큰 수**를 함께 바꾼 실험에 다음 가산 모형을 맞춘다. 이는 Kaplan의 괄호 전체에 지수를 취한 식과 다른 함수다.[^chinchilla]
 
 $$
 \widehat{\mathcal{L}}(N,D)=E+\frac{A}{N^\alpha}+\frac{B}{D^\beta}
 $$
 
-$A,B,\alpha,\beta$는 실험에 맞춰 추정하는 양수다. $E$는 이 모형이 추정하는 점근적 loss 항이다. 식을 참으로 가정하는 대신, 관측한 실험을 얼마나 잘 설명하고 새로운 실험을 얼마나 잘 예측하는지 확인한다.
+$A,B,\alpha,\beta$는 실험에 맞춰 추정하는 양수다. $E$는 이 모형이 추정하는 점근적 loss 항이다. **아래 그림과 미분 유도는 이 Hoffmann 모형을 기준으로 한다.** 식을 참으로 가정하는 대신, 관측한 실험을 얼마나 잘 설명하고 새로운 실험을 얼마나 잘 예측하는지 확인한다.
 
 Power law는 규모를 일정 배수로 늘릴 때 감소 항이 일정 비율로 줄어드는 관계다. 예를 들어 $N^{-0.5}$는 $N$을 네 배로 늘릴 때 절반이 된다. 같은 양의 파라미터를 더했을 때 얻는 절대 loss 감소는 점점 작아진다. 고정된 데이터 조건에서는 다른 항이 남으므로, 전체 loss 자체가 무한히 0으로 향한다고 읽어서는 안 된다.
 
@@ -101,9 +115,9 @@ $N$을 늘리면 첫 번째 감소 항이 작아지고, $D$를 늘리면 두 번
 
 <Figure src={isoFlop.src} alt="고정 예산에서 가상 loss가 모델 크기 1B에서 최소가 되는 U자 곡선. 모델이 작으면 모델 항이, 크면 부족한 데이터 항이 loss를 높인다." caption="같은 계산량의 A·B·C를 곡선 위에서 비교한다. 가로축은 로그 척도이고, 오른쪽으로 갈수록 데이터량은 줄어든다." source="이 노트의 가상 수식으로 직접 계산. N과 D는 billion 단위, ND=1." />
 
-<Details summary="고정 예산에서 최적 비율의 방향 유도">
+<Details summary="Hoffmann 모형에서 고정 예산의 최적 N과 D 유도">
 
-$D=C/(6N)$을 대입하면
+여기서는 $C\approx6ND$를 제약식 $C=6ND$로 놓는다. $N,D$는 실제 개수 단위다. 그림처럼 billion 단위를 쓰면 $C=6\times10^{18}N_{\mathrm B}D_{\mathrm B}$로 바꾸고, loss 식의 계수도 그 단위에 맞춰야 한다. $D=C/(6N)$을 대입하면
 
 $$
 \widehat{\mathcal{L}}(N)=E+AN^{-\alpha}+B(6N/C)^\beta
@@ -115,14 +129,18 @@ $$
 \alpha AN^{-\alpha}=\beta B(6N/C)^\beta
 $$
 
-를 얻는다. 정리하면
+를 얻는다. 따라서 최적점은 두 loss 항이 같은 곳이 아니라 **지수를 곱한 두 항이 같은 곳**이다. $\alpha=\beta$일 때에만 두 항이 같다. 정리하면
 
 $$
-N_*\propto C^{\beta/(\alpha+\beta)},\qquad
-D_*\propto C^{\alpha/(\alpha+\beta)}
+N_*=G(C/6)^a,\qquad D_*=G^{-1}(C/6)^b
 $$
 
-이다. 두 지수가 비슷하면 모델 크기와 데이터량을 비슷한 비율로 늘리는 해가 나온다. 비율의 상수와 지수는 데이터와 fitting 결과에 의존한다.
+$$
+G=\left(\frac{\alpha A}{\beta B}\right)^{1/(\alpha+\beta)},\qquad
+a=\frac{\beta}{\alpha+\beta},\qquad b=\frac{\alpha}{\alpha+\beta}
+$$
+
+이다. $a+b=1$이므로 $6N_*D_*=C$를 만족한다. **Loss 감소 지수 $\alpha,\beta$와 예산 배분 지수 $a,b$는 다르다.** 모델 크기의 배분 지수 $a$에는 분자로 $\beta$가 들어간다. 두 감소 지수가 같으면 $a=b=1/2$가 되어, 예산을 네 배 늘릴 때 모델 크기와 토큰 수를 각각 두 배 늘린다. 양수인 두 항이 $\log N$에 대해 엄밀히 볼록하므로 위 정지점은 유일한 최솟값이다.
 
 </Details>
 
@@ -134,9 +152,20 @@ Chinchilla는 “더 큰 모델”만 비교하는 대신, 같은 계산량에�
 
 이 비교가 주는 질문은 “내 모델이 너무 작은가?”에 더해 <strong>“내 모델 크기에 비해 충분히 학습했는가?”</strong>다. 해당 연구의 결론을 흔히 약 20 tokens/parameter로 요약하지만, 모든 데이터·모델·예산의 보편적인 비율로 적용할 수는 없다.
 
-실제 연구에서는 위 가상 예제처럼 계수를 먼저 정하지 않는다. **같은 계산 예산으로 실제 학습한 결과들을 비교**하는 isoFLOP 접근을 사용했다.[^chinchilla]
+먼저 두 논문의 예산 배분 결과를 구별하자. 아래는 Hoffmann 논문의 Table 2에 정리된 $N_*\propto C^a$, $D_*\propto C^b$의 지수다.[^chinchilla]
 
-앞 절의 두 변수 loss 식을 직접 fitting하는 방법은 논문이 사용한 또 다른 접근이다. 접근별 추정 지수와 상수는 완전히 같지 않다. **약 20 tokens/parameter는 앞 수식에서 자동으로 나오는 상수가 아니다.** $N$과 $D$의 최적 scaling 지수가 같을 때에도 비율은 fitting 계수에 의존하며, 지수가 다르면 최적 비율 자체가 예산에 따라 달라진다.
+| 연구·추정 방법 | 모델 크기 지수 $a$ | 토큰 수 지수 $b$ |
+|---|---|---|
+| Kaplan (2020): 계산 효율적인 학습 경계 | 0.73 | 0.27 |
+| Hoffmann (2022): 학습 곡선들의 최저 경계 | 0.50 | 0.50 |
+| Hoffmann (2022): isoFLOP 곡선의 최저점 | 0.49 | 0.51 |
+| Hoffmann (2022): 가산 loss 모형 fitting | 0.46 | 0.54 |
+
+Kaplan의 결과는 학습 도중의 loss와 batch size·학습 step을 함께 분석한 계산 효율적 경계에서 나온다. 원논문의 계산 축은 batch size 효율을 보정한 $C_{\min}$이다. **앞의 데이터셋 크기 식에 단순히 $D=C/(6N)$을 대입해 0.73과 0.27을 얻은 것이 아니다.**[^kaplan]
+
+Hoffmann의 첫 방법은 여러 학습 곡선에서 예산별 최저 loss를 찾고, 둘째는 계산 예산을 고정한 별도 실행들을 비교한다. 셋째만 앞 절의 가산 모형을 직접 맞춘다. 따라서 셋째 방법의 유도로 모든 방법이 정확히 $a=b=0.5$라고 결론 내릴 수 없다. 예산이 10배가 될 때 Kaplan의 보고값은 $N$ 약 5.4배·$D$ 약 1.9배, Hoffmann의 첫 방법은 각각 약 3.2배를 제안한다.
+
+**약 20 tokens/parameter는 앞 수식에서 자동으로 나오는 상수가 아니다.** 실제 Chinchilla의 $1.4\mathrm T/70\mathrm B=20$과, 가산 모형을 fitting해 얻은 최적 비율을 구별한다. 위 해에서는 $D_*/N_*=G^{-2}(C/6)^{b-a}$이므로, $a=b$일 때도 비율은 계수에 의존하고 $a\ne b$이면 예산에 따라서도 달라진다.
 
 [원논문의 Figure 3와 §3.2](https://arxiv.org/html/2203.15556v1#S3.SS2)를 열고 가상 U자 곡선과 비교해 보자. 논문은 이 접근에서 9개 계산 예산을 정하고, 각 예산마다 여러 모델 크기를 학습했다. 그림은 다음 순서로 읽으면 된다.
 
@@ -188,11 +217,14 @@ $Q$는 예상 요청 수다. 이 식은 의사결정의 범위를 보여주기 �
 
 Pre-training에서 본 learning rate schedule도 이 비교에 영향을 준다. 긴 학습용 schedule의 중간 checkpoint는, 그 시점에 학습을 마치도록 learning rate를 낮춘 별도 실행과 다르다. Chinchilla는 학습 토큰 수에 맞춰 cosine schedule의 길이를 정했다. 같은 $(N,D)$라도 최적화 설정이 다르면 loss와 추정한 최적점이 달라질 수 있다.[^chinchilla]
 
-### 2-5. 영상으로 복습하기
+### 2-5. CS336 보충 자료
 
-[Stanford CS336의 Scaling laws 강의](https://www.youtube.com/watch?v=6Q-ESEmDf4Q)는 scaling 관계를 실험에 맞추고 계산 예산을 배분하는 과정을 설명한다. 특히 Chinchilla의 세 접근인 학습 곡선의 최저 경계, isoFLOP 비교, 두 변수 loss fitting이 어떻게 다른지 살펴보자. [공식 강의 자료](https://cs336.stanford.edu/spring2025-lectures/nonexecutable/2025%20Lecture%209%20-%20Scaling%20laws%20basics.pdf)의 45–50쪽은 이 세 방법과 추론을 고려한 학습량 선택에 해당한다.
+Stanford CS336의 2026년 두 Scaling 강의는 논문의 식과 실제 실험 설계를 연결하는 보충 자료다.<Sidenote>Stanford의 [CS336: Language Modeling from Scratch](https://cs336.stanford.edu/)는 데이터 준비부터 언어모델 구현·학습·평가까지 다루는 수업이다. 공식 홈페이지에서 연도별 강의 자료와 과제를 확인할 수 있다.</Sidenote>
 
-<Video src="https://www.youtube.com/watch?v=6Q-ESEmDf4Q" caption="Tatsunori Hashimoto, Stanford CS336 (2025), Lecture 9: Scaling laws 1. 작은 실험을 통한 예측과 Chinchilla의 계산 예산 배분을 설명하는 선택 심화 영상." />
+- [Lecture 9 영상](https://www.youtube.com/watch?v=Q15rhEWZPQ4): [공식 슬라이드](https://github.com/stanford-cs336/lectures/blob/main/lecture_09.pdf) 43–54쪽에서 두 논문의 공동 scaling 식, Chinchilla의 세 방법, 결과 차이와 추론 비용을 비교한다. 식을 볼 때 괄호의 범위와 파라미터 집계 기준에 주목한다.
+- [Lecture 11 영상](https://www.youtube.com/watch?v=vTfEyOyzV9E): [공식 슬라이드](https://github.com/stanford-cs336/lectures/blob/main/lecture_11.pdf) 9–24쪽은 MiniCPM·DeepSeek의 학습률·batch size·학습 길이 설정 사례다. 이 노트에서는 **loss fitting 전에 학습 설정도 맞춰야 한다**는 점을 연결해 읽는다.
+
+Lecture 9는 파라미터 집계와 작은 예산에서의 warmup 문제, Chinchilla의 세 번째 fitting 방법에 대한 후속 재검토도 소개한다. 위 표는 **각 원논문의 보고값**이며, 두 연구의 차이를 수식 하나의 대수 오류나 schedule 하나만의 문제로 해석하지 않는다.
 
 ## 3. Emergent abilities
 
