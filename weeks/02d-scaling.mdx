@@ -5,18 +5,15 @@ order: 3
 ---
 
 import linearLayer from "./assets/week02-linear-layer.svg";
-import powerLaw from "./assets/week02-power-law.png";
 import isoFlop from "./assets/week02-isoflop.png";
 import emergenceMetric from "./assets/week02-emergence-metric.png";
 import emergenceObserved from "./assets/week02-emergence-observed.png";
 
-**모델을 더 크게 만들고, 더 많은 데이터와 계산량을 사용하면 성능도 계속 좋아질까? 얼마나 더 좋아질지 미리 알 수 있을까?** 규모와 성능 사이의 관계를 살펴본다.[^survey] 먼저 규모를 키울 때 loss가 줄어드는 경향을 보고, 그 관계를 이용한 계산 예산 배분으로 넘어간다.
+**같은 계산 예산이라면, 모델을 더 크게 만드는 게 좋을까, 더 많은 토큰으로 학습하는 게 좋을까? 학습을 시작하기 전에 어느 쪽의 성능이 더 좋을지 예측할 수 있을까?** 먼저 모델 크기와 학습 토큰 수에 따라 loss가 어떻게 달라지는지 살펴보고, 이 관계를 이용해 주어진 계산 예산 안에서 두 자원을 배분하는 방법을 알아본다.[^survey]
 
 ## 1. Scaling laws
 
-어떤 모델을 학습해 성능을 측정했다고 하자. 모델 크기를 두 배로 늘리면 얼마나 나아질까? 학습 데이터를 두 배로 늘리면 어떨까? 계산량을 열 배 투입할 가치가 있을까? 작은 규모에서 얻은 개선이 더 큰 규모에서도 이어지는지, 아니면 어느 지점부터 다른 제약에 막히는지가 궁금해진다.
-
-Scaling law는 이런 질문에 답하기 위해 **모델·데이터·계산 규모와 성능 사이의 관계를 실험으로 측정하고 수식으로 표현**한다. 이 노트에서는 먼저 성능을 평가 데이터의 평균 next-token prediction loss로 측정한다. Loss가 얼마나 줄어드는지와, 질의응답·추론 같은 개별 과제의 점수가 얼마나 오르는지는 구분해서 살펴봐야 한다.
+Scaling law는 **규모와 성능 사이에서 관찰되는 규칙적인 관계**를 수식으로 표현한다. 이 노트에서는 모델 크기 $N$과 학습 토큰 수 $D$로 loss를 예측하는 모형을 살펴본다. 두 값을 선택하면 필요한 계산량 $C$도 대략 정해지므로, 계산 예산은 선택 가능한 조합을 제한한다. 성능은 먼저 평가 데이터의 평균 next-token prediction loss로 측정한다. Loss가 얼마나 줄어드는지와, 질의응답·추론 같은 개별 과제(downstream task)의 점수가 얼마나 오르는지는 구분해서 살펴봐야 한다.
 
 작은 실험에서 얻은 관계가 더 큰 실험에서도 맞는다면, 아직 실행하지 않은 규모의 성능을 예측할 근거가 생긴다. 여기서 law는 주어진 실험 조건에서 관찰하고 맞춘 경험적 관계다. 규모를 무한히 키우면 성능도 계속 좋아진다는 보장이나, 데이터 분포와 모델 구조가 바뀌어도 같은 계수가 유지된다는 자연법칙은 아니다.
 
@@ -25,53 +22,75 @@ Scaling law는 이런 질문에 답하기 위해 **모델·데이터·계산 규
 | 기호 | 뜻 |
 |---|---|
 | $N$ | 모델의 파라미터 수 |
-| $D$ | 학습 중 소비한 토큰 수 |
+| $D$ | 학습에 소비한 토큰 수 |
 | $C$ | 학습에 사용한 총 계산량 |
 | $\mathcal{L}$ | 평가 데이터에서 계산한 평균 next-token prediction loss |
 
-$N$은 가중치 행렬의 각 원소처럼 학습으로 조정하는 수의 개수다. 예를 들어 $4\times3$ 가중치 행렬에는 파라미터가 12개 있다. 모델 전체에서 이런 파라미터를 합한 값으로 모델 크기를 나타낸다.
-
 $D$는 고유한 텍스트 양과 같지 않을 수 있다. 같은 데이터를 반복해서 읽어도 소비한 토큰 수는 늘어난다. 또한 tokenizer가 바뀌면 같은 문서의 토큰 수가 달라지므로 서로 다른 실험의 $D$를 해석할 때 조건을 확인해야 한다.
 
-$C$는 학습 중 수행하는 부동소수점 덧셈·곱셈 등의 연산을 세어 나타낸다. 이 연산 횟수를 FLOPs(floating-point operations)라고 하며, 곱셈 한 번과 덧셈 한 번을 수행하면 2 FLOPs로 센다.<Sidenote>FLOP/s 또는 FLOPS(floating-point operations per second)는 초당 연산 처리량이다. 같은 연산량도 하드웨어·통신·활용률에 따라 걸리는 시간이 달라진다.</Sidenote>
+$C$는 학습 중 수행하는 부동소수점 연산을 세어 나타낸다. 이 연산 횟수를 FLOPs(floating-point operations)라고 하며, 곱셈 한 번과 덧셈 한 번을 수행하면 2 FLOPs로 센다.<Sidenote>FLOP/s 또는 FLOPS(floating-point operations per second)는 초당 연산 처리량이다. 같은 연산량도 하드웨어·통신·활용률에 따라 걸리는 시간이 달라진다.</Sidenote>
 
-Loss를 비교할 때는 tokenizer·평가 텍스트·제공 문맥·채점 위치를 맞춘다. 아래에서는 이러한 조건과 모델 계열을 고정하고 $N,D$를 바꾼다고 생각하자.
+$\mathcal{L}$를 비교할 때는 tokenizer·평가 텍스트를 맞춘다.
 
-선형층은 입력 $x$에 가중치 $W$를 곱해 출력 $y=xW$를 만든다. Forward에서는 출력을 계산하고, backward에서는 입력과 가중치에 대한 gradient를 계산한다.
+학습 연산의 기본 단위인 선형층을 보자. 입력 $x$에 가중치 $W$를 곱해 출력 $y=xW$를 만든다. Forward에서는 출력을 계산하고, backward에서는 입력과 가중치에 대한 gradient를 계산한다.
 
-<Figure src={linearLayer.src} alt="왼쪽 입력 x의 성분 4개와 오른쪽 출력 y의 성분 3개를 가중치 12개가 모두 연결한다. 강조된 w21은 x2와 y1을 잇는다. Forward는 오른쪽으로 계산하고, 입력 gradient는 출력 gradient로부터 왼쪽으로 전달한다." caption="각 원은 입력/출력의 성분이고, 연결선 하나는 가중치의 원소 하나다. ℓ은 학습 loss다." source="선형층 y=xW를 직접 도식화. 입력 4차원, 출력 3차원, bias 생략." />
+<Figure src={linearLayer.src} alt="왼쪽 입력 x의 성분 4개와 오른쪽 출력 y의 성분 3개를 가중치 12개가 모두 연결한다. 강조된 w21은 x2와 y1을 잇는다. Forward는 오른쪽으로 계산하고, 입력 gradient는 출력 gradient로부터 왼쪽으로 전달한다." caption="각 원은 입력/출력의 성분이고, 연결선 하나는 가중치의 원소 하나다. ℓ은 학습 loss다." />
 
 Dense Transformer의 학습 FLOPs를 대략적으로 추산할 때, Kaplan et al. (2020)은 embedding을 제외한 파라미터 수를 $N$으로 두고 forward 비용을 토큰당 약 $2N$, backward 비용을 그 두 배인 약 $4N$으로 잡는다. 따라서 학습에 소비한 토큰 수가 $D$이면 총계산량은 다음과 같다.[^kaplan]
+
+<Details summary="Forward 연산량 상세: Kaplan et al. (2020), Table 1">
+
+아래는 Kaplan et al. (2020)의 Table 1에 제시된 파라미터 수와 **forward의 토큰당 FLOPs**다. 층 수를 $n_{\mathrm{layer}}$, 문맥 길이를 $n_{\mathrm{ctx}}$, 어휘 크기를 $n_{\mathrm{vocab}}$으로 쓴다. $d_{\mathrm{model}}$은 모델의 은닉 차원, $d_{\mathrm{attn}}$은 여러 head를 합친 attention 출력 차원, $d_{\mathrm{ff}}$는 feedforward 중간 차원이다.[^kaplan]
+
+| Operation | Parameters | FLOPs per Token |
+|---|---|---|
+| Embed | $(n_{\mathrm{vocab}}+n_{\mathrm{ctx}})d_{\mathrm{model}}$ | $4d_{\mathrm{model}}$ |
+| Attention: QKV | $n_{\mathrm{layer}}d_{\mathrm{model}}3d_{\mathrm{attn}}$ | $2n_{\mathrm{layer}}d_{\mathrm{model}}3d_{\mathrm{attn}}$ |
+| Attention: Mask | — | $2n_{\mathrm{layer}}n_{\mathrm{ctx}}d_{\mathrm{attn}}$ |
+| Attention: Project | $n_{\mathrm{layer}}d_{\mathrm{attn}}d_{\mathrm{model}}$ | $2n_{\mathrm{layer}}d_{\mathrm{attn}}d_{\mathrm{embd}}$ |
+| Feedforward | $n_{\mathrm{layer}}2d_{\mathrm{model}}d_{\mathrm{ff}}$ | $2n_{\mathrm{layer}}2d_{\mathrm{model}}d_{\mathrm{ff}}$ |
+| De-embed | — | $2d_{\mathrm{model}}n_{\mathrm{vocab}}$ |
+| Total (Non-Embedding) | $N=2d_{\mathrm{model}}n_{\mathrm{layer}}(2d_{\mathrm{attn}}+d_{\mathrm{ff}})$ | $C_{\mathrm{forward}}=2N+2n_{\mathrm{layer}}n_{\mathrm{ctx}}d_{\mathrm{attn}}$ |
+
+출처: Kaplan et al. (2020), *Scaling Laws for Neural Language Models*, [Table 1](https://arxiv.org/pdf/2001.08361#page=7).
+
+표는 비선형 함수·bias·layer normalization 등의 작은 항을 생략한 근사다. 마지막 행은 embedding 관련 연산을 제외한 합계이며, 문맥 길이에 따른 두 번째 항이 상대적으로 작을 때 forward 비용을 약 $2N$으로 본다.
+
+</Details>
 
 $$
 C\approx(2N+4N)D=6ND
 $$
 
-이 식은 주요 행렬곱을 중심으로 한 근사로, 긴 시퀀스의 attention 비용이나 embedding·activation 등의 비용까지 정확히 포함하지는 않는다. 여기서 dense는 각 토큰이 각 층의 주요 가중치 행렬을 모두 사용하는 구조를 뜻한다. MoE(mixture of experts)처럼 토큰마다 일부 expert만 선택하는 구조에서는 전체 파라미터 수를 그대로 $N$에 넣을 수 없다.
+이 식은 주요 행렬곱(곱셈과 덧셈)을 중심으로 한 근사로, 긴 시퀀스의 attention 비용이나 embedding, activation 등의 비용까지 정확히 포함하지는 않는다. Dense Transformer의 Dense는 각 토큰이 각 층의 주요 가중치를 모두 사용하는 구조를 뜻한다. MoE(mixture of experts)처럼 토큰마다 일부 expert만 선택하는 구조에서는 전체 파라미터 수를 그대로 $N$에 넣을 수 없다.
 
-### 1-2. Power law와 loss
+### 1-2. Power law와 loss modeling
 
-Power law는 규모를 일정 배수로 늘릴 때 어떤 양이 일정 비율로 변하는 관계다. 예를 들어 모델 크기 $N$에 따른 loss 감소 항이 $N^{-0.5}$에 비례한다면, $N$을 네 배로 늘릴 때 그 항은 절반이 된다.
+Power law는 한 양이 다른 양의 거듭제곱에 비례하는 관계다. 기본 형태는 다음과 같다.
 
-학습 데이터 조건을 고정하고, 모델 크기만 늘리는 교육용 모형을 생각하자. $N_{\mathrm B}$는 billion 단위의 파라미터 수다.
+$$
+f(x)=Ax^\alpha\qquad(x>0,\;\alpha\in\mathbb R)
+$$
+
+$A$는 비례상수이고 $\alpha$는 실수 지수다.<Sidenote>실수 지수를 일반적으로 다루기 위해 정의역을 $x>0$으로 두었다. 특정 지수에서는 음수나 0까지 정의역을 확장할 수 있다.</Sidenote> $A>0$일 때, $\alpha>0$이면 $x$가 커질수록 함수값이 증가하고, $\alpha<0$이면 감소한다.[^power-law] 예를 들어 $f(x)=Ax^{-0.5}=A/\sqrt{x}$에서 입력을 $k$에서 $4k$로 늘리면($k>0$),
+
+$$
+f(k)=\frac{A}{\sqrt{k}}
+\quad\longrightarrow\quad
+f(4k)=\frac{A}{\sqrt{4k}}=\frac12 f(k)
+$$
+
+로 함수값이 절반이 된다.
+
+이 관계를 모델 크기와 loss에 적용해 보자. 학습 데이터 조건을 고정하고, 모델 크기를 늘릴수록 loss가 2에 가까워지는 예시를 생각하자. $N_{\mathrm B}$는 billion 단위의 파라미터 수이고, $\widehat{\mathcal L}$는 모형이 예측한 loss다.
 
 $$
 \widehat{\mathcal L}=2+N_{\mathrm B}^{-0.5}
 $$
 
-모델을 1B→4B→16B로 키우면 loss는 3→2.5→2.25가 된다. 바닥 2를 뺀 감소 항은 1→0.5→0.25로 줄어든다. 규모를 같은 배수로 늘려도 얻는 절대 loss 감소는 점점 작아진다.
+모델을 1B→4B→16B로 키우면 loss는 3→2.5→2.25가 되므로 전체 loss의 감소량은 점점 작아진다. 여기서 power law를 따르는 것은 $\widehat{\mathcal L}-2$다. 이를 일반화하면 $\widehat{\mathcal L}=F+AN^{-\alpha}$로 쓸 수 있다. $F$는 상수이고, 감소하는 관계를 나타내기 위해 $A>0$, $\alpha>0$으로 두고 지수에 음수를 붙였다. 실제 실험에서는 이런 모형이 관측된 loss를 잘 설명하는지 확인하고 계수를 추정해야 한다.
 
-이 관계는 로그 축에서 읽기 쉽다. 일반적으로 $\widehat{\mathcal L}=F+AN^{-\alpha}$라면
-
-$$
-\log(\widehat{\mathcal L}-F)=\log A-\alpha\log N
-$$
-
-이다. 가로축과 세로축을 각각 $\log N$, $\log(\widehat{\mathcal L}-F)$로 놓으면 기울기 $-\alpha$의 직선이 된다. 전체 loss에는 바닥 항 $F$가 남으므로, 직선 관계를 보려면 이 항을 빼고 읽는다.
-
-<Figure src={powerLaw.src} alt="왼쪽 일반 축에서는 모델 크기 N이 1B, 4B, 16B일 때 전체 loss가 3, 2.5, 2.25로 바닥 2에 접근한다. 오른쪽 log–log 축에서는 바닥을 뺀 값 1, 0.5, 0.25가 기울기 -0.5의 직선 위에 놓인다." caption="교육용 power law를 일반 축과 로그 축으로 비교한다. 모델 크기를 네 배로 늘릴 때마다 바닥을 뺀 감소 항은 절반이 된다." source="가상 수식 L=2+N_B^(-0.5)로 직접 계산. N_B는 billion 단위의 파라미터 수." hero />
-
-### 1-3. 실험에 맞춘 loss 모형
+### 1-3. 실험에 의한 loss modeling
 
 먼저 여러 크기의 모델을 여러 학습 토큰 수로 훈련하고, 각 실험의 $(N,D,\mathcal L)$을 기록한다. 이 점들에서 규모가 커질수록 loss가 어떻게 줄어드는지 관찰한 뒤, 그 경향을 설명할 수식을 정하고 계수를 추정한다. 이렇게 관측값에 수식을 맞추는 과정을 **fitting**이라고 한다. 추정에 사용하지 않은 실험에서도 맞는지 확인해야 큰 규모의 예측에 쓸 근거가 생긴다.
 
@@ -93,7 +112,7 @@ $$
 \widehat{\mathcal{L}}(N,D)=E+\frac{A}{N^\alpha}+\frac{B}{D^\beta}
 $$
 
-$A,B,\alpha,\beta$는 실험에 맞춰 추정하는 양수다. $E$는 모델과 데이터를 함께 늘릴 때 이 모형이 예측하는 점근적 loss다. $D$를 고정하면 $F=E+B/D^\beta$가 되어 앞 절의 power law와 연결된다. 앞 그림은 $N,D$를 billion 단위로 넣고 $E=A=B=1$, $\alpha=\beta=0.5$, $D=1$로 놓은 예제에 해당한다.
+$A,B,\alpha,\beta$는 실험에 맞춰 추정하는 양수다. $E$는 **irreducible loss term**으로, 모델과 데이터를 함께 늘릴 때 이 모형이 예측하는 점근적 loss다. $D$를 고정하면 $F=E+B/D^\beta$가 되어 앞 절의 power law와 연결된다. 앞 절의 예시는 $N,D$를 billion 단위로 넣고 $E=A=B=1$, $\alpha=\beta=0.5$, $D=1$로 놓은 예제에 해당한다.
 
 $N$을 늘리면 첫 번째 감소 항이 작아지고, $D$를 늘리면 두 번째 감소 항이 작아진다. 둘 중 하나만 키우면 다른 항이 남는다. 예산이 고정되어 있다면 둘을 마음대로 동시에 늘릴 수 없으므로 낮은 loss를 주는 조합을 찾아야 한다.
 
@@ -114,7 +133,7 @@ $C=6\times10^{18}$ FLOPs를 배정한 가상 실험을 생각하자.
 계산량은 같지만 어느 후보의 loss가 낮은지는 이 표만으로 알 수 없다. 앞에서 얻은 loss 모형을 이용해 후보를 비교해 보자. 이것이 isoFLOP, 즉 같은 계산량 안에서의 비교다.
 
 <Callout type="example">
-교육용으로 $E=1$, $A=B=1$, $\alpha=\beta=0.5$라고 두고 $N,D$를 각각 billion 단위로 넣자. 앞 표의 A는 $1+1/\sqrt{0.5}+1/\sqrt{2}\approx3.121$, B는 3.000, C는 3.121이다. 이 가상 계수에서는 균형 잡힌 B가 낮다. 실제 모델의 loss나 최적 비율을 보고한 수치는 아니다.
+$E=1$, $A=B=1$, $\alpha=\beta=0.5$라고 두고 $N,D$를 각각 billion 단위로 넣자. 앞 표의 A는 $1+1/\sqrt{0.5}+1/\sqrt{2}\approx3.121$, B는 3.000, C는 3.121이다. 이 가상 계수에서는 균형 잡힌 B가 낮다. 실제 모델의 loss나 최적 비율을 보고한 수치는 아니다.
 </Callout>
 
 <Figure src={isoFlop.src} alt="고정 예산에서 가상 loss가 모델 크기 1B에서 최소가 되는 U자 곡선. 모델이 작으면 모델 항이, 크면 부족한 데이터 항이 loss를 높인다." caption="같은 계산량의 A·B·C를 곡선 위에서 비교한다. 가로축은 로그 척도이고, 오른쪽으로 갈수록 데이터량은 줄어든다." source="이 노트의 가상 수식으로 직접 계산. N과 D는 billion 단위, ND=1." />
@@ -250,7 +269,7 @@ Pre-training에서 평균 NTP loss와 downstream 과제 정확도를 함께 보�
 | 0.8 | 32.77% |
 | 0.9 | 59.05% |
 
-<Figure src={emergenceMetric.src} alt="동일한 예측을 평가할 때 토큰별 성공률 p는 직선이고 전체 정답률 p의 5제곱은 후반에서 가파르게 증가하는 연속 곡선이다." caption="두 곡선 모두 연속이다. 이 그림은 불연속적인 능력 출현의 증거가 아니라, 채점 방식이 곡선 모양을 바꾸는 예제다. 가로축은 모델 크기가 아닌 토큰별 성공 확률이다." source="본문의 독립적인 5토큰 성공 가정으로 직접 계산한 교육용 예제." />
+<Figure src={emergenceMetric.src} alt="동일한 예측을 평가할 때 토큰별 성공률 p는 직선이고 전체 정답률 p의 5제곱은 후반에서 가파르게 증가하는 연속 곡선이다." caption="두 곡선 모두 연속이다. 이 그림은 불연속적인 능력 출현의 증거가 아니라, 채점 방식이 곡선 모양을 바꾸는 예제다. 가로축은 모델 크기가 아닌 토큰별 성공 확률이다." source="본문의 독립적인 5토큰 성공 가정으로 직접 계산한 예제." />
 
 토큰별 성능은 조금씩 좋아져도 전체 정답률은 뒤쪽에서 더 가파르게 보인다. 평가 문항이 적거나 모델 크기를 몇 개만 측정하면 낮은 구간은 모두 0점으로 관측될 수도 있다. 실제 언어의 토큰 오류는 독립이 아니므로, 이 표는 메커니즘의 가능성을 보여주는 단순 예제다.
 
@@ -264,6 +283,7 @@ Pre-training에서 평균 NTP loss와 downstream 과제 정확도를 함께 보�
 
 [^survey]: Li, M., Kudugunta, S., & Zettlemoyer, L. (2025). *(Mis)Fitting: A Survey of Scaling Laws*. [arXiv:2502.18969v1](https://arxiv.org/abs/2502.18969v1).
 [^kaplan]: Kaplan, J., et al. (2020). *Scaling Laws for Neural Language Models*. [arXiv:2001.08361](https://arxiv.org/abs/2001.08361).
+[^power-law]: Newman, M. E. J. (2005). *Power laws, Pareto distributions and Zipf’s law*. Contemporary Physics, 46, 323–351. [arXiv:cond-mat/0412004v3](https://arxiv.org/abs/cond-mat/0412004v3).
 [^chinchilla]: Hoffmann, J., et al. (2022). *Training Compute-Optimal Large Language Models*. NeurIPS 2022. [arXiv:2203.15556v1](https://arxiv.org/abs/2203.15556v1).
 [^llama1]: Touvron, H., et al. (2023). *LLaMA: Open and Efficient Foundation Language Models*. [arXiv:2302.13971v1](https://arxiv.org/abs/2302.13971v1).
 [^emergence]: Wei, J., et al. (2022). *Emergent Abilities of Large Language Models*. Transactions on Machine Learning Research. [arXiv:2206.07682v2](https://arxiv.org/abs/2206.07682v2).
