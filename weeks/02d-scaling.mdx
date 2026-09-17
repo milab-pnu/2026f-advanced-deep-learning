@@ -4,6 +4,7 @@ week: 2
 order: 3
 ---
 
+import chainRule from "./assets/week02-cs231n-chain-rule.svg";
 import linearLayer from "./assets/week02-linear-layer.svg";
 import powerLaw from "./assets/week02-power-law.png";
 import isoFlop from "./assets/week02-isoflop.png";
@@ -50,6 +51,12 @@ $$
 <Figure src={linearLayer.src} alt="왼쪽 입력 x의 성분 4개와 오른쪽 출력 y의 성분 3개를 가중치 12개가 모두 연결한다. 강조된 w21은 x2와 y1을 잇는다. Forward는 오른쪽으로 계산하고, 입력 gradient는 출력 gradient로부터 왼쪽으로 전달한다." caption="각 원은 한 토큰 벡터의 성분이고, 연결선 하나는 W의 원소 하나다. ℓ은 학습 loss다. 강조한 연결의 gradient 기여는 입력 x₂와 출력 y₁에 대한 loss의 편미분을 곱해 구한다." source="본문의 선형층 y=xW를 직접 도식화. 입력 4차원, 출력 3차원, bias 생략." />
 
 출력 성분 하나를 계산하려면 곱셈 $d_{\mathrm{in}}$번과 덧셈 $d_{\mathrm{in}}-1$번이 필요하다. 따라서 bias를 더하지 않는 $y=xW$에서는 출력 성분 하나당 정확히 $2d_{\mathrm{in}}-1$ FLOPs이고, 전체 출력의 forward 비용은 $d_{\mathrm{out}}(2d_{\mathrm{in}}-1)$ FLOPs다. $d_{\mathrm{in}}$이 크면 $2d_{\mathrm{in}}$에 비해 1이 작으므로, 이를 $2d_{\mathrm{in}}d_{\mathrm{out}}=2N_W$로 근사한다.
+
+<Figure src={chainRule.src} alt="CS231n의 f=(x+y)z 계산 그래프. 덧셈 노드와 곱셈 노드에 초록색 forward 값과 빨간색 gradient가 표시되어 있다." caption="초록색은 forward 값, 빨간색은 최종 출력 f에 대한 각 변수의 gradient다. 이 예제의 x, y, z는 모두 스칼라다." source="Andrej Karpathy · Stanford CS231n, Backpropagation · MIT License · 원본 SVG 발췌, 배경·여백 조정. 숫자·색상·연결 구조 유지." />
+
+[그림 원문](https://cs231n.github.io/optimization-2/#backprop) · [MIT 라이선스](https://github.com/cs231n/cs231n.github.io/blob/master/LICENSE)
+
+그림에서는 $q=x+y$, $f=qz$다. 오른쪽에서 $\frac{\partial f}{\partial q}=z=-4$를 구한 뒤, 덧셈 노드의 $\frac{\partial q}{\partial x}=1$을 곱하면 $\frac{\partial f}{\partial x}=-4$가 된다. 각 연산에서 전달받은 gradient에 그 연산의 미분을 곱하는 것이 chain rule이다. 같은 원리를 선형층의 입력과 가중치에 적용해 보자.
 
 Backward에서는 **출력 $y$가 loss에 미치는 영향**을 출발점으로, **입력 $x$와 가중치 $W$가 loss에 미치는 영향**을 각각 계산한다. 학습 loss를 $\ell$이라고 쓰면, 이후 층에서 전달받는 값은 $\frac{\partial\ell}{\partial y}$다. 출력 $y$의 각 성분이 조금 바뀔 때 loss가 어느 방향으로 얼마나 변하는지를 나타낸다.
 
