@@ -46,7 +46,9 @@ $$
 
 **한 토큰에 대해 계산해 보자.** 계수 6은 행렬곱의 forward와 backward 비용에서 나온다. 한 선형층에서 토큰 벡터 $x\in\mathbb R^{1\times d_{\mathrm{in}}}$에 가중치 $W\in\mathbb R^{d_{\mathrm{in}}\times d_{\mathrm{out}}}$를 곱해 $y=xW$를 만든다고 하자. 이 행렬의 파라미터 수는 $N_W=d_{\mathrm{in}}d_{\mathrm{out}}$다.
 
-출력 성분 하나는 $d_{\mathrm{in}}$번 곱하고 그 결과를 더한다. 곱셈과 덧셈을 각각 한 연산으로 세면, forward 비용은 대략 $2d_{\mathrm{in}}d_{\mathrm{out}}=2N_W$다. Backward에서는 이후 층에서 전달된 출력 gradient $g_y$, 즉 학습 loss를 이 층의 출력 $y$로 미분한 값으로부터 입력 gradient $g_x=g_yW^\top$와 가중치 gradient에 대한 기여 $x^\top g_y$를 계산한다. 가중치 gradient는 여러 토큰의 기여를 더하므로 곱셈과 누적 덧셈을 함께 센다. 두 backward 계산을 각각 토큰당 약 $2N_W$로 세어, forward까지 총 $6N_W$로 근사한다.
+출력 성분 하나를 계산하려면 곱셈 $d_{\mathrm{in}}$번과 덧셈 $d_{\mathrm{in}}-1$번이 필요하다. 따라서 bias를 더하지 않는 $y=xW$에서는 출력 성분 하나당 정확히 $2d_{\mathrm{in}}-1$ FLOPs이고, 전체 출력의 forward 비용은 $d_{\mathrm{out}}(2d_{\mathrm{in}}-1)$ FLOPs다. $d_{\mathrm{in}}$이 크면 $2d_{\mathrm{in}}$에 비해 1이 작으므로, 이를 $2d_{\mathrm{in}}d_{\mathrm{out}}=2N_W$로 근사한다.
+
+Backward에서는 이후 층에서 전달된 출력 gradient $g_y$, 즉 학습 loss를 이 층의 출력 $y$로 미분한 값으로부터 입력 gradient $g_x=g_yW^\top$와 가중치 gradient에 대한 기여 $x^\top g_y$를 계산한다. 가중치 gradient는 여러 토큰의 기여를 더하므로 곱셈과 누적 덧셈을 함께 센다. 두 backward 계산을 각각 토큰당 약 $2N_W$로 세어, forward까지 총 $6N_W$로 근사한다.
 
 | 계산 | 의미 | 토큰당 근사 FLOPs |
 |---|---|---|
