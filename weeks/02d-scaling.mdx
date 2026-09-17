@@ -5,7 +5,6 @@ order: 3
 ---
 
 import linearLayer from "./assets/week02-linear-layer.svg";
-import isoFlop from "./assets/week02-isoflop.png";
 import emergenceMetric from "./assets/week02-emergence-metric.png";
 import emergenceObserved from "./assets/week02-emergence-observed.png";
 
@@ -100,28 +99,84 @@ $$
 
 <Figure src="https://arxiv.org/html/2001.08361v1/DatasetModelSizevsPerformance.svg" alt="Kaplan 논문 Figure 9 왼쪽. 여러 데이터셋 크기에서 모델 파라미터 수에 따른 조기 종료 test loss의 측정점과 fitting 곡선을 비교한다." caption="데이터셋/모델 크기별 test loss 및 modeling." source="Kaplan et al. (2020), Scaling Laws for Neural Language Models" />
 
-모델 크기와 데이터셋 크기의 영향을 함께 표현한 식은 아래와 같다.
+모델 크기와 데이터셋 크기에 따른 조기 종료(early stopping) 시점의 test loss를 함께 표현한 식은 아래와 같다.
 
 $$
 \widehat{\mathcal L}_{\mathrm K}(N,D_{\mathrm{set}})
-=\left[\left(\frac{N_c}{N}\right)^{\frac{\alpha_N}{\alpha_D}}
-+\frac{D_c}{D_{\mathrm{set}}}\right]^{\alpha_D}
+=\left[\left(\frac{N_c}{N}\right)^{\frac{\alpha}{\beta}}
++\frac{D_c}{D_{\mathrm{set}}}\right]^{\beta}
 $$
 
-$N_c,D_c$는 실험 데이터에 맞춰 추정하는 상수이고, $\alpha_N,\alpha_D$는 각 자원에 따른 loss 감소율을 결정한다. 데이터셋이 충분히 커서 두 번째 항을 무시할 수 있으면 $(N_c/N)^{\alpha_N}$이 남는다. 이는 모델 크기 $N$에 대해 지수가 $-\alpha_N$인 power law다. 반대로 모델이 충분히 커서 첫 번째 항을 무시할 수 있으면 $(D_c/D_{\mathrm{set}})^{\alpha_D}$이 남는다. 이는 데이터셋 크기 $D_{\mathrm{set}}$에 대해 지수가 $-\alpha_D$인 power law다. $\alpha_N=0.076$, $\alpha_D=0.103$으로 보고한다.[^kaplan]
+$N_c,D_c$는 실험 데이터에 맞춰 추정하는 상수이고, $\alpha,\beta$는 각 자원에 따른 loss 감소율을 결정한다. 데이터셋이 충분히 커서 두 번째 항을 무시할 수 있으면 $(N_c/N)^{\alpha}$이 남는다. 이는 모델 크기 $N$에 대해 지수가 $-\alpha$인 power law다. 반대로 모델이 충분히 커서 첫 번째 항을 무시할 수 있으면 $(D_c/D_{\mathrm{set}})^{\beta}$이 남는다. 이는 데이터셋 크기 $D_{\mathrm{set}}$에 대해 지수가 $-\beta$인 power law다.[^kaplan]
 
-또한 제한된 계산 예산(computation budget) 하에 효율적인 배분도 연구하여, 예산이 늘어날 때 모델 크기를 학습 토큰 수보다 더 빠르게 늘리는 방향을 제시했다. 다만, 고정된 학습 길이와 learning rate schedule의 중간 loss를 활용했다. epoch으로 비유하면, 100 epoch에 맞춘 schedule로 학습하다가 50 epoch 시점의 loss로 분석하는 셈이다.[^kaplan][^chinchilla]
+계산 예산의 최적 배분도 분석하여, **예산이 늘어날 때 모델 크기를 학습 토큰 수보다 더 빠르게 늘리는 것이 유리하다**는 결론을 제시했다. 다만, 이 계산량 분석에서는 고정된 학습 길이와 learning rate schedule의 중간 loss를 활용했다. epoch으로 비유하면, 100 epoch에 맞춘 schedule로 학습하다가 50 epoch 시점의 loss로 분석하는 셈이다.[^kaplan][^chinchilla]
 
 **Hoffmann et al. (2022), Chinchilla.** 기존의 배분이 최적인지 다시 검증하면서, 짧게 학습하는 모델에는 schedule도 그 길이에 맞춰야 한다고 지적했다. 위 비유에서는 처음부터 50 epoch에 맞춘 schedule로 learning rate를 낮추며 학습을 마친 뒤 loss를 비교하는 것이다. 같은 학습량이라도 긴 schedule의 중간 loss로 비교하면 짧은 학습의 성능을 실제보다 낮게 평가할 수 있기 때문이다. 논문에서는 이 길이를 epoch 대신 학습 토큰 수로 정한다. 또한 더 큰 모델까지 실험 범위를 넓혀 기존 결론이 유지되는지 확인했다.[^chinchilla]
 
 모델 크기 약 70M부터 16B 이상, 학습 토큰 수 5B부터 500B에 걸쳐 400회가 넘는 학습 실험을 수행했다. 같은 모델 크기도 학습 길이와 그에 맞춘 schedule을 바꾸어 여러 번 훈련했다.
-이 실행들의 최종 loss에 맞춘 모형은 다음과 같다.[^chinchilla]
+이 실행들의 최종 loss에 맞춘 모형은 다음과 같다. 이때 논문은 데이터를 한 번 미만 사용하는 조건에서, 평활화한 training loss를 test loss의 추정값으로 사용했다.[^chinchilla]
 
 $$
 \widehat{\mathcal{L}}(N,D)=E+\frac{A}{N^\alpha}+\frac{B}{D^\beta}
 $$
 
-$A,B,\alpha,\beta$는 실험에 맞춰 추정하는 양수다. $E$는 **irreducible loss term**으로, 모델과 데이터를 함께 늘릴 때 이 모형이 예측하는 점근적 loss다. $D$를 고정하면 $F=E+B/D^\beta$가 되어 앞 절의 power law와 연결된다.
+$A,B,\alpha,\beta$는 실험에 맞춰 추정하는 양수다. $E$는 **irreducible loss term**으로, 모델과 데이터를 함께 늘릴 때 이 모형이 예측하는 점근적 loss다. $D$를 고정하면 $\widehat{\mathcal L}-(E+B/D^\beta)$가 $N$에 대해 지수 $-\alpha$인 power law를 따른다. 마찬가지로 $N$을 고정하면 $\widehat{\mathcal L}-(E+A/N^\alpha)$가 $D$에 대해 지수 $-\beta$인 power law를 따른다.
+
+계산 예산의 최적 배분도 분석하여, **예산이 늘어날 때 모델 크기와 학습 토큰 수를 비슷한 배율로 늘리는 것이 유리하다**는 결론을 제시했다.[^chinchilla]
+
+<Details summary="Hoffmann 모형에서 고정 예산의 최적 N과 D 유도">
+
+원래 loss 모형은 $N,D$ 두 변수의 함수다. 여기서는 계산 예산을 고정하고 $C\approx6ND$를 제약식 $C=6ND$로 놓는다. 그러면 $N$을 정할 때 $D=C/(6N)$도 정해지므로, 이를 대입해 $N$만의 함수로 쓸 수 있다. $N,D$는 실제 개수 단위다.
+
+$$
+\widehat{\mathcal{L}}(N)=E+AN^{-\alpha}+B(6N/C)^\beta
+$$
+
+모델이 아주 작을 때는 학습 토큰이 많아도 모델 크기가 성능을 제한한다. 이 상태에서 $N$을 키우면 예측 loss가 감소하지만, 고정된 예산에서는 그만큼 $D$가 줄어든다. 모델을 계속 키우면 부족한 학습량의 영향이 더 커져 예측 loss가 다시 증가한다. 우리가 찾으려는 것은 이 모형에서 loss가 감소하다가 증가로 돌아서는 최솟값이다. 그 지점에서는 $N$에 대한 loss의 기울기가 0이므로, 위 식을 $N$에 대해 미분해 0으로 놓으면
+
+$$
+\alpha AN^{-\alpha}=\beta B(6N/C)^\beta
+$$
+
+를 얻는다. 양변에 $N^\alpha$를 곱하고 정리하면
+
+$$
+\begin{aligned}
+N^{\alpha+\beta}
+&=\frac{\alpha A}{\beta B}\left(\frac C6\right)^\beta.
+\end{aligned}
+$$
+
+양변을 $1/(\alpha+\beta)$제곱하면
+
+$$
+N_*=
+\left(\frac{\alpha A}{\beta B}\right)^{\frac1{\alpha+\beta}}
+\left(\frac C6\right)^{\frac\beta{\alpha+\beta}}.
+$$
+
+이를 $D_*=C/(6N_*)$에 대입하면
+
+$$
+D_*=
+\left(\frac{\alpha A}{\beta B}\right)^{-\frac1{\alpha+\beta}}
+\left(\frac C6\right)^{\frac\alpha{\alpha+\beta}}.
+$$
+
+다음과 같이 상수와 지수를 묶으면
+
+$$
+G=\left(\frac{\alpha A}{\beta B}\right)^{\frac1{\alpha+\beta}},\qquad
+a=\frac{\beta}{\alpha+\beta},\qquad b=\frac{\alpha}{\alpha+\beta},
+$$
+
+원논문의 식 (4)와 같은 형태가 된다.[^chinchilla]
+
+$$
+N_*=G(C/6)^a,\qquad D_*=G^{-1}(C/6)^b.
+$$
+
+</Details>
 
 ## 2. Compute-optimal training
 
@@ -140,74 +195,26 @@ $C=6\times10^{18}$ FLOPs를 배정한 가상 실험을 생각하자.
 계산량은 같지만 어느 후보의 loss가 낮은지는 이 표만으로 알 수 없다. 앞에서 얻은 loss 모형을 이용해 후보를 비교해 보자. 이것이 isoFLOP, 즉 같은 계산량 안에서의 비교다.
 
 <Callout type="example">
-$E=1$, $A=B=1$, $\alpha=\beta=0.5$라고 두고 $N,D$를 각각 billion 단위로 넣자. 앞 표의 A는 $1+1/\sqrt{0.5}+1/\sqrt{2}\approx3.121$, B는 3.000, C는 3.121이다. 이 가상 계수에서는 균형 잡힌 B가 낮다. 실제 모델의 loss나 최적 비율을 보고한 수치는 아니다.
+$E=1$, $A=B=1$, $\alpha=\beta=0.5$라고 두고 $N,D$를 각각 billion ($10^{9}$) 단위로 넣자. 앞 표의 A는 $1+1/\sqrt{0.5}+1/\sqrt{2}\approx3.121$, B는 3.000, C는 3.121이다. 이 예시에서는 B로 배분하는 것이 가장 좋다.
 </Callout>
-
-<Figure src={isoFlop.src} alt="고정 예산에서 가상 loss가 모델 크기 1B에서 최소가 되는 U자 곡선. 모델이 작으면 모델 항이, 크면 부족한 데이터 항이 loss를 높인다." caption="같은 계산량의 A·B·C를 곡선 위에서 비교한다. 가로축은 로그 척도이고, 오른쪽으로 갈수록 데이터량은 줄어든다." source="이 노트의 가상 수식으로 직접 계산. N과 D는 billion 단위, ND=1." />
-
-<Details summary="Hoffmann 모형에서 고정 예산의 최적 N과 D 유도">
-
-여기서는 $C\approx6ND$를 제약식 $C=6ND$로 놓는다. $N,D$는 실제 개수 단위다. 그림처럼 billion 단위를 쓰면 $C=6\times10^{18}N_{\mathrm B}D_{\mathrm B}$로 바꾸고, loss 식의 계수도 그 단위에 맞춰야 한다. $D=C/(6N)$을 대입하면
-
-$$
-\widehat{\mathcal{L}}(N)=E+AN^{-\alpha}+B(6N/C)^\beta
-$$
-
-이다. $N$에 대해 미분해 0으로 놓으면
-
-$$
-\alpha AN^{-\alpha}=\beta B(6N/C)^\beta
-$$
-
-를 얻는다. 따라서 최적점은 두 loss 항이 같은 곳이 아니라 **지수를 곱한 두 항이 같은 곳**이다. $\alpha=\beta$일 때에만 두 항이 같다. 정리하면
-
-$$
-N_*=G(C/6)^a,\qquad D_*=G^{-1}(C/6)^b
-$$
-
-$$
-G=\left(\frac{\alpha A}{\beta B}\right)^{1/(\alpha+\beta)},\qquad
-a=\frac{\beta}{\alpha+\beta},\qquad b=\frac{\alpha}{\alpha+\beta}
-$$
-
-이다. $a+b=1$이므로 $6N_*D_*=C$를 만족한다. 두 감소 지수가 같으면 $a=b=1/2$가 되어, 예산을 네 배 늘릴 때 모델 크기와 토큰 수를 각각 두 배 늘린다. 양수인 두 항이 $\log N$에 대해 엄밀히 볼록하므로 위 정지점은 유일한 최솟값이다.
-
-</Details>
 
 ### 2-2. Chinchilla
 
-**실제 학습 실험에서도 같은 계산 예산 안에 최적 모델 크기가 나타날까?** Hoffmann은 $6\times10^{18}$부터 $3\times10^{21}$ FLOPs까지 9개 계산 예산을 정하고, 각 예산에서 모델 크기와 학습 토큰 수의 조합을 바꾸었다. Figure 3는 그 결과다.[^chinchilla]
+**실제 실험에서도 같은 계산 예산 안에 최적의 데이터/모델 사이즈 조합이 나타날까?** Hoffmann은 $6\times10^{18}$부터 $3\times10^{21}$ FLOPs까지 9개 계산 예산을 정하고, 각 예산에서 모델 크기와 학습 토큰 수의 조합을 바꾸었다. Figure 3는 그 결과다.[^chinchilla]
 
-<Figure src="https://arxiv.org/html/2203.15556v1/isoflop_7.svg" alt="Chinchilla 논문 Figure 3. 왼쪽은 9개 계산 예산에서 모델 크기에 따른 최종 loss의 측정점과 U자형 fitting 곡선이다. 가운데와 오른쪽은 계산 예산별 최적 모델 크기와 학습 토큰 수를 추정한다." caption="같은 계산량에서도 모델 크기에 따라 최종 loss가 달라진다. 왼쪽 곡선의 최저점들을 모아 가운데·오른쪽에서 계산 예산에 따른 최적 배분을 추정한다. 초록색 표시는 Gopher의 계산 예산에 대한 예측이다." source="Hoffmann et al. (2022), Training Compute-Optimal Large Language Models, Figure 3 · 원문 그림 인용 · 수정 없음" hero />
+<Figure src="https://arxiv.org/html/2203.15556v1/isoflop_7.svg" alt="Chinchilla 논문 Figure 3. 왼쪽은 9개 계산 예산에서 모델 크기에 따른 최종 loss의 측정점과 U자형 fitting 곡선이다. 가운데와 오른쪽은 계산 예산별 최적 모델 크기와 학습 토큰 수를 추정한다." caption="같은 계산량에서도 모델/데이터 크기에 따라 최종 loss가 달라진다. isoFLOP 곡선의 최저점들을 모아 계산 예산(FLOPs)에 따른 최적 배분(Parameters and Tokens)을 추정한다." source="Hoffmann et al. (2022), Training Compute-Optimal Large Language Models" hero />
 
-1. **왼쪽 패널의 곡선 하나를 고른다.** 가로축은 모델 파라미터 수, 세로축은 최종 학습 loss다. 같은 곡선 위에서는 계산량이 고정되어 있으므로 오른쪽으로 갈수록 $N$은 늘고 $D$는 줄어든다. 각 점은 서로 다른 학습 실행의 결과이며, 한 모델이 학습 중 커지는 과정이 아니다.
-2. **곡선의 최저점을 찾는다.** 측정한 점들에 곡선을 맞춰 그 예산에서 loss가 가장 낮아지는 모델 크기 $N_*$를 추정한다. 너무 작은 모델과, 주어진 예산으로 충분히 학습하지 못한 큰 모델 사이에 최적점이 나타난다.
-3. **다른 예산의 최저점과 비교한다.** 예산이 커질 때 최적 모델 크기와 학습 토큰 수도 어떻게 커지는지 본다. 가운데·오른쪽 패널은 이 최저점들을 모아 $C$에 따른 $N_*,D_*$의 관계를 추정한 것이다.
+왼쪽 그림에서 같은 곡선 위에서는 계산량이 고정되어 있으므로 오른쪽으로 갈수록 $N$은 늘고 $D$는 줄어든다. 각 곡선의 최저점이 해당 예산에서의 최적 조합이다. 가운데와 오른쪽 그림은 이 최적점들을 모아 계산 예산에 따른 최적 모델 크기와 학습 토큰 수를 각각 추정한다. 두 축을 로그 척도로 그렸을 때 대략 직선으로 나타나는 관계를 power law로 맞춘 것이다.
 
-논문은 전체 말뭉치보다 적은 토큰으로 학습하는 조건에서, 평활화한 학습 loss를 test loss의 불편 추정값으로 사용한다. 이것이 앞서 정의한 평가 loss와 그림의 학습 loss를 연결하는 가정이다. 학습 데이터를 여러 번 반복하는 경우에는 별도의 검증 데이터로 일반화 성능을 확인해야 한다.[^chinchilla]
+**이 예측을 훨씬 큰 모델에서도 확인한 실험이 Chinchilla다.** Gopher는 280B 파라미터를 300B 토큰으로 학습한 모델이다.[^gopher] 그림의 초록색 선은 Gopher의 학습 계산 예산에서 예측한 최적 모델 크기와 학습 토큰 수를 표시한다. Chinchilla는 이 분석을 바탕으로 70B 파라미터와 1.4T 학습 토큰을 사용해 학습했다. $6ND$로 근사한 계산량은 Gopher가 약 $5.04\times10^{23}$, Chinchilla가 약 $5.88\times10^{23}$ FLOPs로, 두 모델은 비슷한 계산 예산을 사용했다. Chinchilla는 더 작은 모델을 더 많은 토큰으로 학습해 아래 평가에서 더 높은 정확도를 얻었다.[^chinchilla]
 
-이렇게 얻은 최적 배분을 Kaplan의 결과와 비교해 보자. 아래는 Hoffmann 논문의 Table 2에 정리된 $N_*\propto C^a$, $D_*\propto C^b$의 지수다.[^chinchilla]
-
-| 연구·추정 방법 | 모델 크기 지수 $a$ | 토큰 수 지수 $b$ |
+| 평가 · 정확도(%) | Gopher ($N$=280B, $D$=300B) | Chinchilla ($N$=70B, $D$=1.4T) |
 |---|---|---|
-| Kaplan (2020): 계산 효율적인 학습 경계 | 0.73 | 0.27 |
-| Hoffmann (2022): 학습 곡선들의 최저 경계 | 0.50 | 0.50 |
-| Hoffmann (2022): isoFLOP 곡선의 최저점 | 0.49 | 0.51 |
-| Hoffmann (2022): 가산 loss 모형 fitting | 0.46 | 0.54 |
+| MMLU · 5-shot | 60.0 | **67.6** |
+| LAMBADA · zero-shot | 74.5 | **77.4** |
+| RACE-h · few-shot | 71.6 | **82.3** |
 
-Kaplan은 학습 도중의 loss와 batch size·학습 step을 함께 분석하고, batch size 효율을 보정한 계산량 $C_{\min}$으로 예산 배분을 추정했다.[^kaplan]
-
-Hoffmann의 첫 방법은 여러 학습 곡선에서 예산별 최저 loss를 찾고, 둘째는 계산 예산을 고정한 별도 실행들을 비교한다. 셋째는 앞 절의 가산 모형을 직접 맞춘다. 세 방법은 모두 모델과 데이터를 비슷한 비율로 늘리는 방향을 제안한다. 예산이 10배가 될 때 Kaplan의 보고값은 $N$ 약 5.4배·$D$ 약 1.9배, Hoffmann의 첫 방법은 각각 약 3.2배에 해당한다.
-
-**이 예측을 훨씬 큰 모델에서도 확인한 실험이 Chinchilla다.** Gopher는 280B 파라미터를 300B 토큰으로 학습한 모델이다.[^gopher] Chinchilla는 70B 파라미터와 1.4T 학습 토큰을 사용했다. Chinchilla는 비슷한 학습 계산 예산에서 여러 평가를 개선했다.[^chinchilla]
-
-이 수치에 $6ND$를 적용하면 각각 약 $5.04\times10^{23}$, $5.88\times10^{23}$ FLOPs다. 논문은 attention 등 모델 구조에 따른 연산을 포함한 Appendix F의 계산법을 사용한다. $6ND$는 규모별 비용을 빠르게 비교하는 근사이므로, 이 값만으로 두 실행의 정확한 계산량을 맞추지는 않는다.[^chinchilla]
-
-이 비교가 주는 질문은 “내 모델이 너무 작은가?”에 더해 <strong>“내 모델 크기에 비해 충분히 학습했는가?”</strong>다. 해당 연구의 결론을 흔히 약 20 tokens/parameter로 요약하지만, 모든 데이터·모델·예산의 보편적인 비율로 적용할 수는 없다.
-
-실제 Chinchilla의 비율은 $1.4\mathrm T/70\mathrm B=20$이다. 가산 모형의 최적 비율은 $D_*/N_*=G^{-2}(C/6)^{b-a}$로, fitting 계수와 계산 예산에 따라 정해진다.
-
-관측 범위 밖으로 예측을 확장하는 것을 **외삽**(extrapolation)이라고 한다. Chinchilla는 작은 실험에서 얻은 예측을 더 큰 모델의 학습과 downstream 평가로 확인한 사례다.
+출처: Hoffmann et al. (2022), *Training Compute-Optimal Large Language Models*, Tables 6–7에서 발췌.
 
 ### 2-3. 데이터 반복과 제약
 
@@ -218,38 +225,15 @@ Pre-training에서 데이터 풀의 크기와 학습에서 소비한 토큰 수�
 | 새로운 문서를 한 번씩 읽기 | 100B | 1회 | 100B |
 | 같은 문서를 반복해서 읽기 | 10B | 10회 | 100B |
 
-그렇다고 두 실행의 최종 loss까지 같다고 예측할 수는 없다. 반복해서 읽으면 이미 본 문맥을 더 학습할 수 있지만, 새로운 문맥의 다양성이 같은 속도로 늘지는 않는다. **연산량을 세는 $D$와 성능을 예측할 때의 데이터 조건을 함께 봐야 한다.**
+그렇다고 두 실행의 최종 loss까지 같다고 예측할 수는 없다. 반복해서 읽으면 이미 본 문맥을 더 학습할 수 있지만, 새로운 문맥의 다양성이 같은 속도로 늘지는 않는다.
 
-Muennighoff 등의 *Scaling Data-Constrained Language Models*는 고유 데이터량과 반복 횟수를 구분해 실험했다. 해당 실험에서는 몇 차례 반복이 유용했지만, 반복을 계속 늘릴 때 추가 계산의 이득은 줄었다. 따라서 새로운 데이터로 얻은 scaling 관계에 반복 토큰 수만 대입해 같은 개선을 기대하기는 어렵다.[^data-constrained] [원논문의 Figure 1](https://arxiv.org/html/2305.16264v3#S0.F1)은 반복에 따른 loss 감소와 자원 배분을 함께 보여준다.
+Muennighoff 등의 *Scaling Data-Constrained Language Models*는 고유 데이터량과 반복 횟수를 구분해 실험했다. 해당 실험에서는 몇 차례 반복이 유용했지만, 반복을 계속 늘릴 때 추가 계산의 이득은 줄었다. 따라서 새로운 데이터로 얻은 scaling 관계에 반복 토큰 수만 대입해 같은 개선을 기대하기는 어렵다.[^data-constrained]
 
-한국어·전문 영역처럼 확보할 수 있는 문서가 제한적이라면, 모델 크기와 총 학습 토큰 수에 더해 고유 데이터량·반복 노출·혼합 비율을 기록한다. 데이터 품질이나 혼합을 바꾸었을 때에도 기존 fitting 계수가 그대로 적용되는지는 작은 비교 실험으로 확인해야 한다.
+<Figure src="https://arxiv.org/html/2305.16264v3/return_alloc.svg" alt="Scaling Data-Constrained Language Models의 Figure 1. 왼쪽은 4.2B 모델에서 데이터를 반복할 때의 loss 변화, 오른쪽은 데이터가 제한된 조건에서 모델 크기와 반복 학습에 대한 자원 배분을 비교한다." caption="왼쪽은 데이터 반복에 따른 loss 감소를 보여준다. 오른쪽은 반복 데이터에도 Chinchilla 관계가 그대로 성립한다고 가정한 배분과 비교해, 더 작은 모델을 더 많은 epoch 동안 학습하는 방향을 제안한다." source="Muennighoff et al. (2023), Scaling Data-Constrained Language Models" hero />
 
-### 2-4. 추론을 포함한 비용
+**왼쪽 그래프**는 모델 크기를 4.2B로 고정하고 같은 데이터를 반복해서 학습할 때의 test loss를 보여준다. 가로축은 총 학습 토큰 수이고 괄호는 epoch 수, 세로축은 test loss다. 주황색 점선은 반복 토큰도 새로운 토큰과 같은 가치가 있다고 가정해 Chinchilla 모형을 적용한 예측이고, 주황색 실선은 반복할수록 추가 효과가 줄어드는 것을 반영한 이 논문의 예측이다. 원으로 표시된 실제 학습 결과를 보면, 약 4 epochs까지는 두 예측의 차이가 작지만, 반복이 늘면 실제 결과는 점선보다 실선에 가깝다. 즉, 반복 학습으로 loss를 더 낮출 수는 있지만, 새로운 데이터를 계속 추가할 때와 같은 개선이 이어지지는 않는다.
 
-같은 품질을 가진 두 모델이 있다고 가정하자. 하나는 크고 학습을 짧게 했고, 다른 하나는 작지만 더 오래 학습했다. 작은 모델의 학습 비용이 더 들었더라도 앞으로 많은 요청을 처리한다면 배포 과정의 비용을 줄일 수 있다.
-
-$$
-C_{\text{lifetime}}=C_{\text{train}}+Q\,C_{\text{request}}
-$$
-
-$Q$는 예상 요청 수다. 이 식은 의사결정의 범위를 보여주기 위한 단순 모형이며, 실제 요청 비용은 입력·출력 길이와 batching, 하드웨어 등에 따라 달라진다. LLaMA 논문은 주어진 학습 예산에서만 최적인 모델과 추론을 고려한 모델 설계를 구분한다.[^llama1]
-
-<Callout type="example">
-같은 목표 품질에서 모델 A는 학습 비용 100, 요청당 비용 0.01이고, B는 학습 비용 150, 요청당 비용 0.005라고 가정하자. $100+0.01Q=150+0.005Q$이므로 손익분기점(break-even point)은 10,000회다. 금액이나 실제 모델 측정값이 아닌 가상 비용 단위이며, 장기 사용량이 학습 선택을 바꿀 수 있음을 보여준다.
-</Callout>
-
-“Compute-optimal보다 오래 학습했다”는 표현은 곧 낭비했다는 뜻이 아니다. 어떤 비용을 목적함수에 넣었는지 먼저 물어야 한다.
-
-### 2-5. 예측의 검증
-
-서베이 *(Mis)Fitting*은 학습 설정, 관측할 실험점, fitting 방식의 차이가 예측과 최적 비율을 바꿀 수 있음을 검토한다.[^survey] 우리 연구의 계획으로 바꾸면 다음 순서가 된다.
-
-1. **비교 조건을 고정한다.** 데이터 분포·tokenizer·평가 텍스트·모델 계열을 명시한다.
-2. **여러 크기와 학습 길이를 실험한다.** 한 모델의 중간 checkpoint만으로 모든 규모를 대표하지 않는다.
-3. **추정에 쓰지 않은 실험으로 확인한다.** 관측 범위 안에서 곡선이 잘 맞는 것과 외삽이 맞는 것은 다르다.
-4. **예측 오차를 예산에 반영한다.** 점추정(point estimate) 하나만 보고 대규모 학습을 결정하기보다 설정 변화에 대한 민감도를 본다.
-
-Pre-training에서 본 learning rate schedule도 이 비교에 영향을 준다. 긴 학습용 schedule의 중간 checkpoint는, 그 시점에 학습을 마치도록 learning rate를 낮춘 별도 실행과 다르다. Chinchilla는 학습 토큰 수에 맞춰 cosine schedule의 길이를 정했다. 같은 $(N,D)$라도 최적화 설정이 다르면 loss와 추정한 최적점이 달라질 수 있다.[^chinchilla]
+**오른쪽 그래프**는 고유 데이터가 25B 토큰으로 제한될 때 같은 계산 예산을 어떻게 배분할지 비교한다. 가로축은 총 학습 토큰 수이고 괄호는 epoch 수, 세로축은 모델 파라미터 수다. 검은 실선은 반복 데이터에도 Chinchilla 모형을 그대로 적용하여, 반복 토큰을 새 토큰처럼 취급했을 때의 최적 배분이고, 붉은색에서 주황색으로 이어지는 선은 이 논문이 예측한 최적 배분이다. 파란 점선은 계산량이 같은 조합들이므로, 그 위에서는 모델을 줄일수록 더 오래 학습할 수 있다. 각 배분선과 파란 점선이 만나는 별표를 실제로 비교하면, 모델을 줄이고 반복을 늘린 빨간 별이 노란 별보다 낮은 loss를 얻었다. 이 결과를 이해하려면 **데이터가 부족하면 반복 학습뿐 아니라 모델을 더 키우는 효과도 줄어든다**는 점을 함께 보아야 한다. 이 논문의 실험에서는 추가 파라미터의 효과가 반복 학습의 효과보다 더 빠르게 감소했기 때문에, 같은 계산 예산에서 모델을 조금 줄이고 반복을 늘리는 배분이 유리했다.[^data-constrained]
 
 ## 3. Emergent abilities
 
