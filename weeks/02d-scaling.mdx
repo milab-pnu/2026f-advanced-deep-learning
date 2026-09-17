@@ -4,7 +4,6 @@ week: 2
 order: 3
 ---
 
-import chainRule from "./assets/week02-cs231n-chain-rule.svg";
 import linearLayer from "./assets/week02-linear-layer.svg";
 import powerLaw from "./assets/week02-power-law.png";
 import isoFlop from "./assets/week02-isoflop.png";
@@ -38,79 +37,17 @@ $C$는 학습 중 수행하는 부동소수점 덧셈·곱셈 등의 연산을 �
 
 Loss를 비교할 때는 tokenizer·평가 텍스트·제공 문맥·채점 위치를 맞춘다. 아래에서는 이러한 조건과 모델 계열을 고정하고 $N,D$를 바꾼다고 생각하자.
 
-Dense Transformer의 학습 FLOPs를 대략적으로 추산할 때 다음 근사(approximation)를 사용한다. Kaplan et al. (2020)의 §2.1에서는 embedding을 제외한 파라미터 수를 $N$으로 두고, forward를 토큰당 약 $2N$, backward를 forward의 약 두 배로 추산한다.[^kaplan]
+선형층은 입력 $x$에 가중치 $W$를 곱해 출력 $y=xW$를 만든다. Forward에서는 출력을 계산하고, backward에서는 입력과 가중치에 대한 gradient를 계산한다.
+
+<Figure src={linearLayer.src} alt="왼쪽 입력 x의 성분 4개와 오른쪽 출력 y의 성분 3개를 가중치 12개가 모두 연결한다. 강조된 w21은 x2와 y1을 잇는다. Forward는 오른쪽으로 계산하고, 입력 gradient는 출력 gradient로부터 왼쪽으로 전달한다." caption="각 원은 입력/출력의 성분이고, 연결선 하나는 가중치의 원소 하나다. ℓ은 학습 loss다." source="선형층 y=xW를 직접 도식화. 입력 4차원, 출력 3차원, bias 생략." />
+
+Dense Transformer의 학습 FLOPs를 대략적으로 추산할 때, Kaplan et al. (2020)은 embedding을 제외한 파라미터 수를 $N$으로 두고 forward 비용을 토큰당 약 $2N$, backward 비용을 그 두 배인 약 $4N$으로 잡는다. 따라서 학습에 소비한 토큰 수가 $D$이면 총계산량은 다음과 같다.[^kaplan]
 
 $$
-C\approx6ND
+C\approx(2N+4N)D=6ND
 $$
 
-이 식은 주요 가중치 행렬의 곱셈을 중심으로 한 근사다. 긴 시퀀스의 attention 계산, embedding 취급, activation 재계산 등까지 정확히 포함한 실행 비용은 아니다. 여기서 dense는 각 토큰이 각 층의 주요 가중치 행렬을 모두 사용하는 구조를 뜻한다. MoE(mixture of experts)처럼 토큰마다 일부 expert만 선택하는 구조에서는 전체 파라미터 수를 그대로 $N$에 넣을 수 없다.
-
-**한 토큰에 대해 계산해 보자.** 계수 6은 행렬곱의 forward와 backward 비용에서 나온다. 한 선형층에서 토큰 벡터 $x\in\mathbb R^{1\times d_{\mathrm{in}}}$에 가중치 $W\in\mathbb R^{d_{\mathrm{in}}\times d_{\mathrm{out}}}$를 곱해 $y=xW$를 만든다고 하자. 이 행렬의 파라미터 수는 $N_W=d_{\mathrm{in}}d_{\mathrm{out}}$다.
-
-<Figure src={linearLayer.src} alt="왼쪽 입력 x의 성분 4개와 오른쪽 출력 y의 성분 3개를 가중치 12개가 모두 연결한다. 강조된 w21은 x2와 y1을 잇는다. Forward는 오른쪽으로 계산하고, 입력 gradient는 출력 gradient로부터 왼쪽으로 전달한다." caption="각 원은 한 토큰 벡터의 성분이고, 연결선 하나는 W의 원소 하나다. ℓ은 학습 loss다. 강조한 연결의 gradient 기여는 입력 x₂와 출력 y₁에 대한 loss의 편미분을 곱해 구한다." source="본문의 선형층 y=xW를 직접 도식화. 입력 4차원, 출력 3차원, bias 생략." />
-
-출력 성분 하나를 계산하려면 곱셈 $d_{\mathrm{in}}$번과 덧셈 $d_{\mathrm{in}}-1$번이 필요하다. 따라서 bias를 더하지 않는 $y=xW$에서는 출력 성분 하나당 정확히 $2d_{\mathrm{in}}-1$ FLOPs이고, 전체 출력의 forward 비용은 $d_{\mathrm{out}}(2d_{\mathrm{in}}-1)$ FLOPs다. $d_{\mathrm{in}}$이 크면 $2d_{\mathrm{in}}$에 비해 1이 작으므로, 이를 $2d_{\mathrm{in}}d_{\mathrm{out}}=2N_W$로 근사한다.
-
-<Figure src={chainRule.src} alt="CS231n의 f=(x+y)z 계산 그래프. 덧셈 노드와 곱셈 노드에 초록색 forward 값과 빨간색 gradient가 표시되어 있다." caption="초록색은 forward 값, 빨간색은 최종 출력 f에 대한 각 변수의 gradient다. 이 예제의 x, y, z는 모두 스칼라다." source="Andrej Karpathy · Stanford CS231n, Backpropagation · MIT License · 원본 SVG 발췌, 배경·여백 조정. 숫자·색상·연결 구조 유지." />
-
-[그림 원문](https://cs231n.github.io/optimization-2/#backprop) · [MIT 라이선스](https://github.com/cs231n/cs231n.github.io/blob/master/LICENSE)
-
-그림에서는 $q=x+y$, $f=qz$다. 오른쪽에서 $\frac{\partial f}{\partial q}=z=-4$를 구한 뒤, 덧셈 노드의 $\frac{\partial q}{\partial x}=1$을 곱하면 $\frac{\partial f}{\partial x}=-4$가 된다. 각 연산에서 전달받은 gradient에 그 연산의 미분을 곱하는 것이 chain rule이다. 같은 원리를 선형층의 입력과 가중치에 적용해 보자.
-
-Backward에서는 **출력 $y$가 loss에 미치는 영향**을 출발점으로, **입력 $x$와 가중치 $W$가 loss에 미치는 영향**을 각각 계산한다. 학습 loss를 $\ell$이라고 쓰면, 이후 층에서 전달받는 값은 $\frac{\partial\ell}{\partial y}$다. 출력 $y$의 각 성분이 조금 바뀔 때 loss가 어느 방향으로 얼마나 변하는지를 나타낸다.
-
-한 토큰의 계산을 성분별로 쓰면 다음과 같다.
-
-$$
-\frac{\partial\ell}{\partial x_i}
-=\sum_j\frac{\partial\ell}{\partial y_j}\frac{\partial y_j}{\partial x_i}
-=\sum_j\frac{\partial\ell}{\partial y_j}W_{ij}
-$$
-
-$$
-\frac{\partial\ell}{\partial W_{ij}}
-=\frac{\partial\ell}{\partial y_j}\frac{\partial y_j}{\partial W_{ij}}
-=\frac{\partial\ell}{\partial y_j}x_i
-$$
-
-여기서 $i$는 입력 성분, $j$는 출력 성분의 인덱스다.
-
-입력 성분 $x_i$ 하나의 gradient를 계산할 때는 출력 성분 $d_{\mathrm{out}}$개에 대해 곱한 뒤 더하므로, 곱셈 $d_{\mathrm{out}}$번과 덧셈 $d_{\mathrm{out}}-1$번이 필요하다. 이를 약 $2d_{\mathrm{out}}$ FLOPs로 근사하고, 입력 성분 $d_{\mathrm{in}}$개 전체에 대해 계산하면 $2d_{\mathrm{out}}\times d_{\mathrm{in}}=2N_W$ FLOPs다.
-
-위의 가중치 gradient 식은 한 토큰이 기여하는 값을 나타내며, $W_{ij}$ 하나당 곱셈 한 번이다. 이 식만으로 가중치 gradient 비용을 $2N_W$라고 도출할 수는 없다. Kaplan 논문은 입력·가중치 gradient 비용을 별도로 유도하지 않고, 학습에서 backward 전체를 forward의 약 두 배로 근사한다.[^kaplan]
-
-먼저 입력 $x$에 대한 gradient $\frac{\partial\ell}{\partial x}$를 구한다. 출력은 $y=xW$이므로, 입력 $x$의 변화가 출력 $y$에 미치는 영향은 가중치 $W$로 정해진다. 여기에 출력 $y$가 loss에 미치는 영향을 chain rule로 연결하면 다음과 같다.
-
-$$
-\frac{\partial\ell}{\partial x}
-=\frac{\partial\ell}{\partial y}W^\top
-$$
-
-이 값은 앞선 층으로 전달해 역전파를 이어 가는 데 사용한다. $\frac{\partial\ell}{\partial y}$와 $W^\top$의 행렬곱 비용은 forward와 마찬가지로 약 $2N_W$ FLOPs다.
-
-다음으로 가중치 $W$에 대한 gradient $\frac{\partial\ell}{\partial W}$를 구한다. 가중치 $W$의 변화가 출력 $y$에 미치는 영향은 입력 $x$로 정해지므로, 입력 $x$와 출력에 대한 gradient $\frac{\partial\ell}{\partial y}$를 이용한다. 이 토큰이 가중치 gradient에 기여하는 값은 다음과 같다.
-
-$$
-x^\top\frac{\partial\ell}{\partial y}
-$$
-
-각 가중치마다 입력 성분과 출력에 대한 편미분 값을 한 번 곱하고, 여러 토큰에서 얻은 기여를 누적해 $\frac{\partial\ell}{\partial W}$를 구한다. 곱셈과 누적 덧셈을 함께 세면 토큰당 약 $2N_W$ FLOPs다. 이렇게 모은 가중치 gradient는 $W$를 업데이트하는 데 사용한다.
-
-따라서 논문의 계산 방식에서는 모델 전체의 토큰당 forward 비용 약 $2N$에 backward 비용 약 $4N$을 더해 약 $6N$으로 잡는다. 학습 중 소비한 전체 토큰 수를 이 노트의 $D$로 쓰면 $C\approx6ND$가 된다. 원논문 §3.3의 표기는 $C\approx6NBS$이며, $B$는 한 step에서 처리하는 토큰 수, $S$는 학습 step 수다. 이 노트의 소비 토큰 수는 $D=BS$에 해당한다.[^kaplan]
-
-| 계산 | 의미 | 토큰당 근사 FLOPs |
-|---|---|---|
-| Forward: 출력 계산 | 입력 $x$에 가중치 $W$를 곱해 출력 $y$ 계산 | $2N_W$ |
-| Backward: 입력 gradient | 학습 loss를 이 층의 입력 $x$로 미분한 값. 앞선 층으로 전달해 역전파를 이어 간다. | $2N_W$ |
-| Backward: 가중치 gradient | 학습 loss를 가중치 $W$로 미분한 값. 가중치 업데이트에 사용한다. | $2N_W$ |
-| 합계 | 한 토큰의 forward와 backward | $6N_W$ |
-
-여기서 입력 $x$는 embedding이나 앞선 층에서 전달받은 연속적인 벡터다.
-
-<Callout type="example">
-입력 4차원, 출력 3차원의 작은 선형층은 가중치가 12개다. 출력 세 개를 구할 때 각각 4번 곱하고 3번 더하므로 정확한 forward 연산 수는 21회다. 큰 행렬에서는 덧셈 횟수를 곱셈 횟수와 같게 근사해 $2\times12=24$회로 센다. 같은 방식으로 backward까지 약 72회로 잡는다. 이 계산을 모델의 주요 가중치 행렬에 합산하고, 소비한 $D$개 토큰에 걸쳐 누적한 값이 $6ND$다.
-</Callout>
+이 식은 주요 행렬곱을 중심으로 한 근사로, 긴 시퀀스의 attention 비용이나 embedding·activation 등의 비용까지 정확히 포함하지는 않는다. 여기서 dense는 각 토큰이 각 층의 주요 가중치 행렬을 모두 사용하는 구조를 뜻한다. MoE(mixture of experts)처럼 토큰마다 일부 expert만 선택하는 구조에서는 전체 파라미터 수를 그대로 $N$에 넣을 수 없다.
 
 ### 1-2. Power law와 loss
 
