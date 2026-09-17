@@ -38,7 +38,7 @@ $C$는 학습 중 수행하는 부동소수점 덧셈·곱셈 등의 연산을 �
 
 Loss를 비교할 때는 tokenizer·평가 텍스트·제공 문맥·채점 위치를 맞춘다. 아래에서는 이러한 조건과 모델 계열을 고정하고 $N,D$를 바꾼다고 생각하자.
 
-Dense Transformer의 학습 FLOPs를 대략적으로 추산할 때 다음 근사(approximation)를 사용한다.[^chinchilla]
+Dense Transformer의 학습 FLOPs를 대략적으로 추산할 때 다음 근사(approximation)를 사용한다. Kaplan et al. (2020)의 §2.1에서는 embedding을 제외한 파라미터 수를 $N$으로 두고, forward를 토큰당 약 $2N$, backward를 forward의 약 두 배로 추산한다.[^kaplan]
 
 $$
 C\approx6ND
@@ -78,7 +78,7 @@ $$
 
 입력 성분 $x_i$ 하나의 gradient를 계산할 때는 출력 성분 $d_{\mathrm{out}}$개에 대해 곱한 뒤 더하므로, 곱셈 $d_{\mathrm{out}}$번과 덧셈 $d_{\mathrm{out}}-1$번이 필요하다. 이를 약 $2d_{\mathrm{out}}$ FLOPs로 근사하고, 입력 성분 $d_{\mathrm{in}}$개 전체에 대해 계산하면 $2d_{\mathrm{out}}\times d_{\mathrm{in}}=2N_W$ FLOPs다.
 
-가중치 $W_{ij}$ 하나의 gradient는 토큰마다 $\frac{\partial\ell}{\partial y_j}x_i$를 계산하는 곱셈 한 번과, 그 값을 누적하는 덧셈 한 번으로 약 2 FLOPs를 센다. 가중치는 $d_{\mathrm{in}}\times d_{\mathrm{out}}$개이므로, 전체 가중치의 gradient 계산과 누적 비용은 토큰당 $2\times d_{\mathrm{in}}\times d_{\mathrm{out}}=2N_W$ FLOPs다. 가중치 gradient는 각 토큰의 기여를 누적한다.
+위의 가중치 gradient 식은 한 토큰이 기여하는 값을 나타내며, $W_{ij}$ 하나당 곱셈 한 번이다. 이 식만으로 가중치 gradient 비용을 $2N_W$라고 도출할 수는 없다. Kaplan 논문은 입력·가중치 gradient 비용을 별도로 유도하지 않고, 학습에서 backward 전체를 forward의 약 두 배로 근사한다.[^kaplan]
 
 먼저 입력 $x$에 대한 gradient $\frac{\partial\ell}{\partial x}$를 구한다. 출력은 $y=xW$이므로, 입력 $x$의 변화가 출력 $y$에 미치는 영향은 가중치 $W$로 정해진다. 여기에 출력 $y$가 loss에 미치는 영향을 chain rule로 연결하면 다음과 같다.
 
@@ -97,7 +97,7 @@ $$
 
 각 가중치마다 입력 성분과 출력에 대한 편미분 값을 한 번 곱하고, 여러 토큰에서 얻은 기여를 누적해 $\frac{\partial\ell}{\partial W}$를 구한다. 곱셈과 누적 덧셈을 함께 세면 토큰당 약 $2N_W$ FLOPs다. 이렇게 모은 가중치 gradient는 $W$를 업데이트하는 데 사용한다.
 
-따라서 한 토큰에 대한 이 층의 비용은 forward $2N_W$, 입력 $x$의 gradient 계산 $2N_W$, 가중치 $W$의 gradient 계산과 누적 $2N_W$를 합쳐 약 $6N_W$다. 이를 모델의 주요 가중치 행렬 전체에 합하면 토큰당 약 $6N$이고, 학습 중 소비하는 전체 $D$개 토큰에 걸쳐 합산하면 **학습 FLOPs는 $C\approx6ND$**가 된다.
+따라서 논문의 계산 방식에서는 모델 전체의 토큰당 forward 비용 약 $2N$에 backward 비용 약 $4N$을 더해 약 $6N$으로 잡는다. 학습 중 소비한 전체 토큰 수를 이 노트의 $D$로 쓰면 $C\approx6ND$가 된다. 원논문 §3.3의 표기는 $C\approx6NBS$이며, $B$는 한 step에서 처리하는 토큰 수, $S$는 학습 step 수다. 이 노트의 소비 토큰 수는 $D=BS$에 해당한다.[^kaplan]
 
 | 계산 | 의미 | 토큰당 근사 FLOPs |
 |---|---|---|
