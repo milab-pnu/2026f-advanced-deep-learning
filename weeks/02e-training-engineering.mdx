@@ -149,6 +149,25 @@ $b=2$, $h=32$에서 길이 2,048이면 512 MiB, 길이 8,192이면 8 GiB다. GiB
 
 그림 왼쪽의 HBM(high-bandwidth memory)은 GPU의 큰 저장 공간이고, SRAM(static random-access memory)은 칩 내부의 작고 빠른 공간이다. FlashAttention 1은 가운데 그림처럼 K·V 블록을 SRAM에 올린 뒤 여러 Q 블록에 재사용하며, softmax 통계와 출력을 조금씩 갱신한다. 이 과정에서 큰 attention 행렬 전체를 HBM에 저장하지 않아 **메모리 사용량과 데이터 이동을 줄인다.** Attention의 계산 결과는 반올림 오차 범위에서 유지되며, 오른쪽 그래프는 이러한 방식으로 attention 연산 시간이 줄어든 실험을 보여준다.[^flash]
 
+<Details summary="심화: Kernel fusion은 왜 빨라지는가?">
+
+GPU에서 **kernel**은 많은 데이터를 병렬로 처리하도록 실행하는 프로그램이다. 덧셈·곱셈 같은 연산을 각각 별도 kernel로 실행하면, 앞 연산의 결과를 GPU 메모리에 쓴 뒤 다음 kernel이 다시 읽는다. **Kernel fusion**은 이어지는 연산을 하나의 kernel 안에서 처리해 중간값의 저장·읽기와 kernel 실행 요청(launch) 횟수를 줄이는 방법이다.[^fusion]
+
+예를 들어 각 원소에 대해 $y=\max(2x+1,0)$을 계산한다고 하자. 곱셈·덧셈·최댓값 연산을 각각 실행하는 경우와 하나로 묶는 경우를 비교할 수 있다.
+
+| 실행 방식 | 데이터 흐름 | Kernel 실행 횟수 |
+|---|---|---|
+| 분리 | $x$ 읽기 → $u=2x$ 저장 → $u$ 읽기 → $v=u+1$ 저장 → $v$ 읽기 → $y=\max(v,0)$ 저장 | 3회 |
+| Fusion | $x$ 읽기 → 칩 내부에서 곱셈·덧셈·최댓값 계산 → $y$ 저장 | 1회 |
+
+$x$가 FP32 원소 100만 개라면 배열 하나는 4 MB다. 중간 배열을 매번 GPU의 전역 메모리에 쓰고 다시 읽는 단순 계산에서는 분리 실행이 배열 6개분인 24 MB, fusion이 2개분인 8 MB를 읽고 쓴다. 여기서는 캐시 효과·스칼라 상수·backward용 저장을 제외했다. 실제 HBM 전송량이나 실행 시간이 정확히 3분의 1이 된다는 뜻은 아니다. **원소별 산술 연산은 같아도 데이터를 옮기는 비용은 줄일 수 있다**는 예다. Fusion에서는 중간값을 레지스터 같은 칩 내부 저장 공간에 잠시 두고 다음 계산에 바로 사용한다.
+
+FlashAttention 그림 오른쪽의 **Fused Kernel**도 이 원리와 연결된다. 행렬곱·mask·softmax·dropout·다음 행렬곱을 단계마다 큰 행렬로 저장하는 대신, 블록 안에서 이어서 처리한다. 다만 attention의 softmax는 여러 key의 score를 함께 정규화해야 한다. FlashAttention은 **블록 분할과 정규화 통계 갱신을 fusion과 결합**해 전체 attention 행렬을 저장하지 않고도 계산을 이어 간다. Backward에서 필요한 값의 재계산까지 포함한 설계다.[^flash]
+
+PyTorch의 `torch.compile`은 결합 가능한 연산을 찾아 이런 최적화를 적용할 수 있다. Python 코드를 한 줄로 쓰는 것만으로 kernel이 하나가 되는 것은 아니며, 모든 연산이 자동으로 합쳐지는 것도 아니다. 적용할 때는 첫 컴파일 시간을 구분하고, 준비 실행 이후 같은 입력·정밀도에서 출력과 gradient가 허용 오차 안에서 일치하는지, 학습 step 시간과 메모리 사용량이 개선되는지 비교한다.[^compile]
+
+</Details>
+
 ## 3. 통신과 데이터·상태 분산
 
 ### 3-1. 장치 간 통신
@@ -567,9 +586,9 @@ FSDP2의 예제는 [공식 튜토리얼](https://docs.pytorch.org/tutorials/inte
 
 Nemotron의 [공개 training recipe](https://docs.nvidia.com/nemotron/latest/index.html)는 모델 구성·데이터·학습 단계가 실제 실행 설정으로 연결되는 사례다.[^nemotron] Recipe를 읽을 때에는 모델 크기와 시퀀스 길이에서 출발해, parameter·gradient의 정밀도, TP·PP·DP·CP 구성, microbatch와 global batch, 재계산 범위, 저장·복구 설정을 차례로 대응시킨다. 공개 recipe의 데이터와 전체 공개 모델을 학습한 데이터가 완전히 같은지도 별도로 확인한다.
 
-<Details summary="심화: 정밀도·커널·스케줄 최적화">
+<Details summary="심화: 정밀도·스케줄 최적화">
 
-병목의 위치에 따라 더 세부적인 최적화를 검토할 수 있다. **FP8** 학습은 저장·연산 정밀도를 더 낮추는 선택이지만 수치 범위 관리와 하드웨어 지원을 함께 봐야 한다. **Kernel fusion**은 GPU에서 실행하는 여러 연산을 묶어 중간값의 메모리 왕복과 실행 요청 비용을 줄인다. `torch.compile` 같은 컴파일 경로도 연산 결합과 실행 최적화를 수행할 수 있다. 이런 기능은 모델·입력 모양·버전에 따라 효과가 달라지므로 동일한 조건에서 정확도와 처리량을 비교한다.[^survey][^compile]
+병목의 위치에 따라 더 세부적인 최적화를 검토할 수 있다. **FP8** 학습은 저장·연산 정밀도를 더 낮추는 선택이지만 수치 범위 관리와 하드웨어 지원을 함께 봐야 한다. 모델·입력 모양·구현에 따라 효과가 달라지므로 동일한 조건에서 정확도와 처리량을 비교한다.[^survey]
 
 PP를 더 깊게 다루려면 여러 model chunk를 교대로 실행하는 interleaved 스케줄과 그 통신 비용을 살펴볼 수 있다. 기본 1F1B에서 출발한 확장은 Narayanan 등의 논문 Figure 4와 성능 분석에 정리되어 있다.[^ptd]
 
@@ -616,3 +635,5 @@ PP를 더 깊게 다루려면 여러 model chunk를 교대로 실행하는 inter
 [^cuda]: PyTorch Contributors. (v2.8). *CUDA semantics*. [공식 문서](https://docs.pytorch.org/docs/2.8/notes/cuda.html).
 [^resume]: Inkawhich, M. (2025). *Saving and Loading Models*. [PyTorch 공식 튜토리얼](https://docs.pytorch.org/tutorials/beginner/saving_loading_models.html).
 [^compile]: Wen, W. (2026). *Introduction to torch.compile*. [PyTorch 공식 튜토리얼](https://docs.pytorch.org/tutorials/intermediate/torch_compile_tutorial.html).
+
+[^fusion]: PyTorch Contributors. *Performance Tuning Guide*. [공식 튜토리얼](https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html#fuse-operations).
