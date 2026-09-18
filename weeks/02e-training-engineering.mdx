@@ -145,47 +145,7 @@ $b=2$, $h=32$에서 길이 2,048이면 512 MiB, 길이 8,192이면 8 GiB다. GiB
 
 [공식 이미지](https://github.com/Dao-AILab/flash-attention/blob/main/assets/flashattn_banner.jpg) · <a href={flashLicense}>저작권·라이선스 고지</a>
 
-그림 왼쪽의 HBM(high-bandwidth memory)은 GPU의 큰 저장 공간이고, 칩 내부 SRAM(static random-access memory)은 작지만 빠르다. 가운데 점선의 큰 행렬 전체를 저장하는 대신 주황색 블록만 계산한다. 빨간 화살표는 $K_j,V_j$를 고르는 바깥 반복, 파란 화살표는 그 블록을 여러 $Q_i$에 재사용하는 안쪽 반복이다. 구체적인 순서는 다음과 같다.
-
-1. $K_j,V_j$ 블록을 HBM에서 SRAM으로 읽는다.
-2. 각 $Q_i$와 이전 출력 $O_i$, softmax 통계 $m_i,l_i$를 읽어 현재 score 블록을 계산한다.
-3. 행별 최댓값 $m_i$, 지수값의 합 $l_i$와 **지금까지 처리한 key에 대한 정규화된 출력** $O_i$를 갱신해 HBM에 쓴다.
-4. 모든 $Q_i$를 처리하면 다음 $K_j,V_j$로 넘어간다.
-
-따라서 FlashAttention 1에서도 출력과 통계는 반복해서 읽고 쓴다. 크게 줄이는 것은 **전체 score·확률 행렬의 HBM 왕복**이다. Backward에서는 저장한 통계 등을 이용해 필요한 score·확률 블록을 재계산한다. 그림 오른쪽의 속도 비교는 해당 실험의 attention 연산이며, 전체 학습이 같은 비율로 빨라진다는 뜻은 아니다.[^flash]
-
-블록별 softmax를 따로 구해 더하면 전체 softmax가 되지 않는다. 새 블록에서 더 큰 score를 만났을 때 이전 결과의 기준도 맞춰야 한다. 이렇게 블록을 읽으며 통계를 갱신하는 방법을 **online softmax**라고 한다. Query 하나에 key·value 네 개를 두 블록으로 나눈 예를 보자. Score는 scaling까지 마친 값이고, value는 계산을 따라가기 쉽도록 스칼라로 둔다.
-
-| 블록 | Score | Value |
-|---|---|---|
-| A | 2, 0 | 30, 40 |
-| B | 1, 3 | 10, 20 |
-
-$m$은 지금까지 본 score의 최댓값, $l$은 그 최댓값을 뺀 뒤 취한 지수값의 합이다. $O$는 정규화된 출력이므로 **$lO$가 정규화 전 가중합**이다. 새 블록의 score를 $s_k$, value를 $v_k$라 하면 갱신은 다음과 같다.
-
-$$
-\begin{aligned}
-m' &= \max(m,\max_k s_k), \qquad r=e^{m-m'},\\
-l' &= rl+\sum_k e^{s_k-m'},\\
-O' &= \frac{rlO+\sum_k e^{s_k-m'}v_k}{l'}.
-\end{aligned}
-$$
-
-첫 블록은 이전 기여분을 0으로 두고 시작한다. A에서는 $m=2$, $l=1+e^{-2}$이며 $O=(30+40e^{-2})/l$이다. B를 만나면 최댓값이 3이 되므로, 이전 합 $l$과 가중합 $lO$에 $r=e^{2-3}$을 곱해 새 기준에 맞춘다.
-
-| 처리 후 | $m$ | $l$ | 정규화 전 가중합 $lO$ | 정규화된 출력 $O$ |
-|---|---|---|---|---|
-| A | 2 | 1.1353 | 35.4134 | 31.1920 |
-| B | 3 | 1.5530 | 34.3812 | 22.1386 |
-
-최종 출력은 약 **22.14**다. 전체 score [2, 0, 1, 3]을 한 번에 softmax한 뒤 value [30, 40, 10, 20]과 가중합해도 같은 값이다. 표의 수치는 표시할 때만 반올림했다. 실제 알고리즘은 이 갱신을 여러 query에 대해 블록 단위로 수행한다.
-
-| 구현 관점 | 중간 attention 행렬 | 주된 비용 |
-|---|---|---|
-| 전체 행렬을 만드는 구현 | $n\times n$ score·확률 행렬을 명시적으로 저장 | 큰 중간값의 저장과 메모리 왕복 |
-| FlashAttention 1 | 블록 계산, 출력과 정규화 통계 갱신 | 블록의 읽기·계산·출력 갱신과 backward 재계산 |
-
-Dense FlashAttention은 원래 attention을 계산하는 알고리즘이며, 부동소수점 반올림에 따른 차이는 생길 수 있다. **Dense attention의 연산량이 시퀀스 길이에 대해 선형으로 바뀌는 것은 아니다.** 또 attention의 큰 중간값을 줄여도 다른 블록의 activation은 남으므로 activation checkpointing과 함께 사용할 수 있다. 두 방법을 조합하면 재계산 비용도 함께 확인한다.[^flash]
+그림 왼쪽의 HBM(high-bandwidth memory)은 GPU의 큰 저장 공간이고, SRAM(static random-access memory)은 칩 내부의 작고 빠른 공간이다. FlashAttention 1은 가운데 그림처럼 K·V 블록을 SRAM에 올린 뒤 여러 Q 블록에 재사용하며, softmax 통계와 출력을 조금씩 갱신한다. 이 과정에서 큰 attention 행렬 전체를 HBM에 저장하지 않아 **메모리 사용량과 데이터 이동을 줄인다.** Attention의 계산 결과는 반올림 오차 범위에서 유지되며, 오른쪽 그래프는 이러한 방식으로 attention 연산 시간이 줄어든 실험을 보여준다.[^flash]
 
 ## 3. 통신과 데이터·상태 분산
 
