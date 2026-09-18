@@ -39,21 +39,19 @@ GPU 하나의 메모리가 80 GB라고 가정하면 노드 하나의 합계는 6
 | 노드 내 통신(intra-node) | N0:G0 ↔ N0:G1 | 같은 서버 안의 GPU 연결 |
 | 노드 간 통신(inter-node) | N0:G0 ↔ N1:G0 | 서버 사이의 네트워크 |
 
-이 노트에서는 노드 안의 GPU들이 NVLink·NVSwitch 계열로 연결되고, 노드들은 InfiniBand나 Ethernet 계열 네트워크로 연결된 환경을 가정한다.<Sidenote>NVLink는 GPU 사이를 직접 잇는 NVIDIA의 고대역폭 연결이고, NVSwitch는 여러 GPU의 NVLink를 한 스위치에 모아 노드 안의 GPU를 촘촘하게 연결하는 칩이다. InfiniBand는 지연이 낮고 대역폭이 높은 서버 간 네트워크 표준으로, HPC·GPU 클러스터에서 Ethernet의 대안으로 흔히 쓰인다.</Sidenote> 실제 DGX H100 같은 8 GPU 서버에서도 노드 내 연결과 노드 간 네트워크를 구분한다. 모든 8 GPU 서버가 같은 연결 구조를 갖는 것은 아니다.[^hardware]
-
 보통 이런 환경에서는 노드 내 통신에 더 높은 대역폭과 낮은 지연을 기대하므로, 자주 큰 값을 주고받는 계산을 같은 노드에 모으는 배치를 먼저 검토한다. 다만 연결 속도, GPU와 네트워크 인터페이스의 배치, 다른 작업의 통신에 따라 실제 비용은 달라진다. GPU 개수뿐 아니라 **연결 구조**(topology)도 학습 설정의 일부다.[^survey]
 
 ### 1-3. 하드웨어와 병렬화의 관계
 
 하드웨어 배치가 같아도 역할은 다르게 줄 수 있다. 모델 전체가 GPU 하나에 들어간다면 64개 GPU에 복제본을 두고 서로 다른 데이터를 읽힐 수 있다. 모델 하나를 8개 GPU에 나누어야 한다면 노드 하나가 모델 하나의 계산을 맡고, 그 묶음을 8개 운영할 수 있다. 더 큰 모델은 여러 노드가 함께 담당할 수도 있다.
 
-따라서 각 예제에서 세 가지를 확인한다. **어느 GPU가 무엇을 저장하는가, 같은 입력을 함께 계산하는가 서로 다른 입력을 계산하는가, 어떤 값이 노드 경계를 넘는가?** 먼저 N0:G0 하나의 메모리를 계산하고, N0의 8개 GPU로 확장한 뒤, N0–N7 전체를 연결하자. 뒤의 배치들은 같은 장비에 적용하는 대안이며 모두 동시에 켜는 설정은 아니다.
+따라서 각 예제에서 세 가지를 확인한다. **어느 GPU가 무엇을 저장하는가, 같은 입력을 함께 계산하는가 서로 다른 입력을 계산하는가, 어떤 값이 노드 경계를 넘는가?** 먼저 N0:G0 하나의 메모리를 계산하고, N0의 8개 GPU로 확장한 뒤, N0–N7 전체를 연결하자.
 
 ## 2. 학습 메모리와 정밀도
 
 ### 2-1. 부동소수점과 정밀도
 
-지금까지 가중치와 activation을 실수로 썼지만, 컴퓨터는 무한한 자릿수를 저장할 수 없다. **Bit는 0 또는 1 한 자리, byte는 8 bits**다. FP32는 수 하나에 32 bits, 즉 4 bytes를 쓰는 부동소수점(floating-point) 형식이다. FP16과 BF16(bfloat16)은 각각 16 bits, 즉 2 bytes를 쓴다. Token ID라는 정수로 임베딩을 찾는 것과, 찾은 임베딩의 각 실숫값을 저장하는 것은 다른 단계다.
+지금까지 weight와 activation을 실수로 썼지만, 컴퓨터는 무한한 자릿수를 저장할 수 없다. **Bit는 0 또는 1 한 자리, byte는 8 bits**다. FP32는 수 하나에 32 bits, 즉 4 bytes를 쓰는 부동소수점(floating-point) 형식이다. FP16과 BF16(bfloat16, brain floating point)은 각각 16 bits, 즉 2 bytes를 쓴다.<Sidenote>BF16은 구글 브레인(Google Brain) 팀이 AI(artificial intelligence)와 딥러닝 연산을 최적화하려고 만든 16 bits 부동소수점 형식이다.[^bf16-origin]</Sidenote> 
 
 부동소수점은 과학적 표기 $1.234 \times 10^5$처럼 **자릿수와 크기를 나누어** 담되, 이진수를 사용한다. 부호는 양수·음수를, 지수(exponent)는 표현 범위(dynamic range)를, 유효숫자의 소수부(fraction)는 같은 크기에서 얼마나 촘촘히 값을 구분하는지, 즉 정밀도(precision)를 정한다.[^bf16]
 
@@ -63,7 +61,7 @@ GPU 하나의 메모리가 80 GB라고 가정하면 노드 하나의 합계는 6
 | FP16 | 1 | 5 | 10 | 2 bytes |
 | BF16 | 1 | 8 | 7 | 2 bytes |
 
-표의 소수부는 실제 저장하는 bits다. 정규화된 이진수에서는 맨 앞의 1을 생략해 저장하므로 유효숫자는 이보다 한 bit 많다. 여기서는 비트 패턴을 외우기보다 **같은 16 bits를 어디에 배분했는가**를 보자.
+표의 소수부는 실제 저장하는 bits다. 여기서는 비트 패턴을 외우기보다 **같은 16 bits를 어디에 배분했는가**를 보자.
 
 - **FP16**은 FP32보다 지수도 소수부도 줄였다. 최대 유한값은 65,504다. 계산 결과가 범위를 넘으면 overflow가, 너무 작으면 0으로 반올림되는 underflow가 생길 수 있다.
 - **BF16**은 FP32와 지수 bits가 같아 표현 범위가 비슷하다. 대신 FP16보다 소수부가 짧아 같은 크기에서 구분할 수 있는 값의 간격이 넓다. 넓은 범위가 곧 높은 정밀도는 아니다.
@@ -578,6 +576,7 @@ PP를 더 깊게 다루려면 여러 model chunk를 교대로 실행하는 inter
 [^packing]: NVIDIA. *Packed Sequences*. [Megatron Bridge 공식 문서](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/packed-sequences.html).
 
 [^bf16]: Kalamkar, D., et al. (2019). *A Study of BFLOAT16 for Deep Learning Training*. [arXiv:1905.12322](https://arxiv.org/abs/1905.12322).
+[^bf16-origin]: Wang, S., & Kanwar, P. (2019). *BFloat16: The secret to high performance on Cloud TPUs*. [Google Cloud Blog](https://cloud.google.com/blog/products/ai-machine-learning/bfloat16-the-secret-to-high-performance-on-cloud-tpus).
 
 [^amp]: PyTorch. (2025, v2.8). [Automatic Mixed Precision](https://docs.pytorch.org/docs/2.8/amp.html).
 
