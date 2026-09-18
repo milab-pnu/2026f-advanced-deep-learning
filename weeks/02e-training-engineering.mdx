@@ -57,18 +57,18 @@ GPU 하나의 메모리가 80 GB라고 가정하면 노드 하나의 합계는 6
 
 지금까지 weight(가중치)와 activation을 실수로 썼지만, 컴퓨터는 무한한 자릿수를 저장할 수 없다. **Bit는 0 또는 1 한 자리, byte는 8 bits**다. FP32는 수 하나에 32 bits, 즉 4 bytes를 쓰는 부동소수점(floating-point) 형식이다. FP16과 BF16(bfloat16, brain floating point)은 각각 16 bits, 즉 2 bytes를 쓴다.<Sidenote>BF16은 구글 브레인(Google Brain) 팀이 AI(artificial intelligence)와 딥러닝 연산을 최적화하려고 만든 16 bits 부동소수점 형식이다.[^bf16-origin]</Sidenote> 
 
-부동소수점은 과학적 표기 $1.234 \times 10^5$처럼 **자릿수와 크기를 나누어** 담되, 이진수를 사용한다. 부호는 양수·음수를, 지수(exponent)는 표현 범위를, 유효숫자(significand)는 같은 크기에서 얼마나 촘촘히 값을 구분하는지, 즉 정밀도(precision)를 정한다.[^bf16]
+부동소수점은 과학적 표기 $1.234 \times 10^5$처럼 **자릿수와 크기를 나누어** 담되, 이진수를 사용한다. 부호는 양수·음수를, 지수(exponent)는 표현 범위를, 가수(mantissa)는 같은 크기에서 얼마나 촘촘히 값을 구분하는지, 즉 정밀도(precision)를 정한다.[^bf16]
 
-| 형식 | 부호 bits | 지수 bits | 소수부 bits | 수 하나의 크기 |
+| 형식 | 부호 bits | 지수 bits | 가수 bits | 수 하나의 크기 |
 |---|---|---|---|---|
 | FP32 | 1 | 8 | 23 | 4 bytes |
 | FP16 | 1 | 5 | 10 | 2 bytes |
 | BF16 | 1 | 8 | 7 | 2 bytes |
 
-표의 소수부(fraction)는 실제 저장하는 bits다. 정규화된 이진수는 $1.f\times2^e$ 형태이므로 맨 앞의 1은 저장하지 않아도 알 수 있다. 이 1까지 포함한 유효숫자 정밀도는 FP32·FP16·BF16에서 각각 24·11·8 bits다. 여기서는 비트 패턴을 외우기보다 **같은 16 bits를 어디에 배분했는가**를 보자.
+여기서는 비트 패턴을 외우기보다 **같은 16 bits를 어디에 배분했는가**를 보자.
 
-- **FP16**은 FP32보다 지수도 소수부도 줄였다. 최대 유한값은 65,504다. 계산 결과가 범위를 넘으면 overflow가, 너무 작으면 정밀도가 줄거나 0으로 반올림되는 underflow가 생길 수 있다.
-- **BF16**은 FP32와 지수 bits가 같아 표현 범위가 비슷하다. 대신 FP16보다 소수부가 짧아 같은 크기에서 구분할 수 있는 값의 간격이 넓다. 그러나 정밀도가 낮아 정보가 사라질 수 있다.
+- **FP16**은 FP32보다 지수도 가수도 줄였다. 최대 유한값은 65,504다. 계산 결과가 범위를 넘으면 overflow가, 너무 작으면 정밀도가 줄거나 0으로 반올림되는 underflow가 생길 수 있다.
+- **BF16**은 FP32와 지수 bits가 같아 표현 범위가 비슷하다. 대신 FP16보다 가수가 짧아 같은 크기에서 구분할 수 있는 값의 간격이 넓다. 그러나 정밀도가 낮아 정보가 사라질 수 있다.
 
 BF16으로 가중치를 저장하면서 매번 작은 업데이트를 바로 더하면 변화가 사라질 수 있다. 그래서 **mixed precision**은 연산과 저장 항목에 맞게 정밀도를 섞는다. 예를 들어 행렬곱은 BF16 입력으로 수행하되 누적은 FP32로 하고, optimizer의 갱신용 가중치(master weight)와 상태를 FP32로 유지한다. 이때 작은 변화는 master weight에 누적되고, 계산에 쓸 때 낮은 정밀도로 변환한다.[^mixed]
 
@@ -78,7 +78,7 @@ FP16 학습에서는 작은 gradient가 0이 되는 것을 줄이기 위해 **lo
 
 ### 2-2. 메모리 구성
 
-8B 파라미터를 각각 2 bytes로 저장하면 16 GB다. 이 모델을 N0:G0의 80 GB 메모리에서 학습할 수 있을까? 아직 계산에 넣지 않은 항목이 있다. Backward를 위해 보관하는 중간 활성값(activation), 가중치마다 생기는 gradient, optimizer가 유지하는 상태를 저장해야 한다.
+8B 파라미터를 각각 2 bytes로 저장하면 16 GB다. 이 모델을 N0:G0의 80 GB 메모리에서 학습할 수 있을까? 아직 계산에 넣지 않은 항목이 있다. Backward를 위해 보관하는 중간 활성값(activation), 가중치마다 생기는 gradient, optimizer가 유지하는 상태(optimizer state)를 저장해야 한다.
 
 다음은 BF16 가중치·gradient, FP32 master weight와 Adam의 두 상태를 사용하는 **예시 구성**이다. 구현마다 dtype과 master weight 유지 여부가 달라져 실제 사용량은 달라진다. GB는 $10^9$ bytes 기준이다.
 
@@ -117,7 +117,7 @@ $b=2$, $n=2{,}048$, $d=4{,}096$이면 $33{,}554{,}432$ bytes, 즉 32 MiB다. MiB
 
 ### 2-3. Gradient checkpointing
 
-Backward에 필요한 중간 결과 중 일부만 저장하고 나머지는 필요할 때 재계산하는 방법을 **Gradient checkpointing**이라고 한다. **Activation checkpointing**이라는 이름도 같은 기법을 가리킨다. 이름에 gradient가 있지만 저장을 줄이는 대상은 주로 activation이다. 추가 연산으로 저장 공간을 줄이며, 장애 복구를 위해 파일에 저장하는 checkpoint와는 구분한다.[^recompute][^hf-checkpoint]
+Backward에 필요한 중간 결과 중 일부만 저장하고 나머지는 필요할 때 재계산하는 방법을 **Gradient checkpointing**이라고 한다. **Activation checkpointing**이라는 이름도 같은 기법을 가리킨다. 이름에 gradient가 있지만 저장을 줄이는 대상은 주로 activation이다. 추가 연산으로 저장 공간을 줄인다.[^recompute][^hf-checkpoint]
 
 네 블록을 통과하는 계산을 `x → h₁ → h₂ → h₃ → h₄`라고 하자. 실제 backward에는 블록 내부 중간값도 필요하다. 블록 두 개씩 checkpoint 구간으로 묶으면 구간 입력인 `x`와 `h₂`를 보관하고 내부 중간값을 필요할 때 다시 만들 수 있다.
 
@@ -128,8 +128,6 @@ Backward에 필요한 중간 결과 중 일부만 저장하고 나머지는 필�
 | 앞 두 블록 backward | 저장된 중간값 사용 | `x`에서 앞 구간을 재실행해 필요한 값 복원 |
 
 **줄어드는 것은 주로 activation**이며 가중치나 옵티마이저의 state가 자동으로 줄어들지는 않는다. 모든 블록에 적용하면 재계산량도 커질 수 있으므로, 큰 activation을 만드는 구간부터 적용하고 peak memory와 실행 시간을 비교한다. 같은 microbatch에서 step이 느려져도, 확보한 메모리로 더 큰 microbatch를 처리할 수 있다면 전체 처리량은 다시 측정해야 한다.
-
-재계산은 원래 forward와 일관되어야 한다. 예를 들어 dropout의 난수가 달라지면 gradient도 달라질 수 있다. PyTorch의 checkpoint 기능은 이를 위해 기본적으로 난수 상태를 보존한다.[^checkpoint]
 
 ### 2-4. Attention 메모리와 FlashAttention
 
@@ -143,9 +141,7 @@ $b=2$, $h=32$에서 길이 2,048이면 512 MiB, 길이 8,192이면 8 GiB다. GiB
 
 **FlashAttention**은 작은 블록의 score만 계산해 사용하고 버리므로, $n\times n$ score·확률 행렬 전체를 저장하지 않는다. 여기서는 2022년 **FlashAttention 1**을 기준으로 설명한다.[^flash]<Sidenote>후속 연구로 FlashAttention-2(2023)는 병렬성과 작업 분할을 개선했고,[^flash2] FlashAttention-3(2024)는 Hopper GPU의 비동기 실행과 저정밀도 연산을 활용했다.[^flash3] FlashAttention-4(2026)는 Blackwell GPU에 맞춰 행렬곱·softmax·메모리 작업을 겹치는 실행 구조를 개선했다.[^flash4]</Sidenote>
 
-<Figure src={flashOriginal.src} alt="FlashAttention 1 원본 그림. 왼쪽은 GPU SRAM과 HBM의 메모리 계층, 가운데는 K와 V의 바깥 반복 및 Q의 안쪽 반복, 오른쪽은 GPT-2 attention의 실행 시간 비교." caption="FlashAttention 1의 메모리 계층과 블록 계산. 그림의 N은 본문의 시퀀스 길이 n, d는 head dimension이다. 용량·대역폭과 실행 시간은 원논문의 예시다." source="Dao et al. (2022), Figure 1. Dao-AILab/flash-attention 공식 저장소 제공 이미지, 수정 없음. BSD-3-Clause." hero />
-
-[공식 이미지](https://github.com/Dao-AILab/flash-attention/blob/main/assets/flashattn_banner.jpg) · <a href={flashLicense}>저작권·라이선스 고지</a>
+<Figure src={flashOriginal.src} alt="FlashAttention 1 원본 그림. 왼쪽은 GPU SRAM과 HBM의 메모리 계층, 가운데는 K와 V의 바깥 반복 및 Q의 안쪽 반복, 오른쪽은 GPT-2 attention의 실행 시간 비교." caption="FlashAttention 1의 메모리 계층과 블록 계산 및 fused kernel" source="Dao et al. FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness (2022)." hero />
 
 그림 왼쪽의 HBM(high-bandwidth memory)은 GPU의 큰 저장 공간이고, SRAM(static random-access memory)은 칩 내부의 작고 빠른 공간이다. FlashAttention 1은 가운데 그림처럼 K·V 블록을 SRAM에 올린 뒤 여러 Q 블록에 재사용하며, softmax 통계와 출력을 조금씩 갱신한다. 이 과정에서 큰 attention 행렬 전체를 HBM에 저장하지 않아 **메모리 사용량과 데이터 이동을 줄인다.** Attention의 계산 결과는 반올림 오차 범위에서 유지되며, 오른쪽 그래프는 이러한 방식으로 attention 연산 시간이 줄어든 실험을 보여준다.[^flash]
 
