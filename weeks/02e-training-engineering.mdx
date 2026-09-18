@@ -147,7 +147,7 @@ $b=2$, $h=32$에서 길이 2,048이면 512 MiB, 길이 8,192이면 8 GiB다. GiB
 
 [공식 이미지](https://github.com/Dao-AILab/flash-attention/blob/main/assets/flashattn_banner.jpg) · <a href={flashLicense}>저작권·라이선스 고지</a>
 
-그림 왼쪽의 HBM(high-bandwidth memory)은 GPU의 큰 저장 공간이고, SRAM(static random-access memory)은 칩 내부의 작고 빠른 공간이다. FlashAttention 1은 가운데 그림처럼 K·V 블록을 SRAM에 올린 뒤 여러 Q 블록에 재사용하며, softmax 통계와 출력을 조금씩 갱신한다. 이 과정에서 큰 attention 행렬 전체를 HBM에 저장하지 않아 **메모리 사용량과 데이터 이동을 줄인다.** Attention의 계산 결과는 반올림 오차 범위에서 유지되며, 오른쪽 그래프는 이러한 방식으로 attention 연산 시간이 줄어든 실험을 보여준다.[^flash]
+그림 왼쪽의 HBM(high-bandwidth memory)은 GPU의 큰 저장 공간이고, SRAM(static random-access memory)은 칩 내부의 작고 빠른 공간이다.<Sidenote>그림의 MB·GB는 한 번에 담아 둘 수 있는 **용량**, TB/s는 초당 읽고 쓸 수 있는 데이터량인 **대역폭**이다. SRAM의 19 TB/s는 칩 내부 접근 대역폭의 추정치이며, 초당 연산 횟수나 HBM에서 데이터를 가져오는 속도가 아니다. HBM → 칩 내부 메모리 → 계산 → HBM 순서로 필요한 블록을 읽고 결과를 쓰므로, HBM 쪽 대역폭도 이동 시간을 제한한다. 빠른 SRAM에 올린 값을 여러 계산에 재사용하면 그 왕복을 줄일 수 있다. 그림의 20 MB는 A100의 여러 연산 구역에 나뉜 SRAM을 합한 대략적인 용량이다. 한 블록이 전부 쓰는 공간은 아니어서 계산도 작은 블록으로 나눈다. 19 TB/s·20 MB와 HBM의 1.5 TB/s·40 GB는 원논문의 장비 예시이며 실제 속도는 접근 방식에 따라 달라진다.[^flash]</Sidenote> FlashAttention 1은 가운데 그림처럼 K·V 블록을 SRAM에 올린 뒤 여러 Q 블록에 재사용하며, softmax 통계와 출력을 조금씩 갱신한다. 이 과정에서 큰 attention 행렬 전체를 HBM에 저장하지 않아 **메모리 사용량과 데이터 이동을 줄인다.** Attention의 계산 결과는 반올림 오차 범위에서 유지되며, 오른쪽 그래프는 이러한 방식으로 attention 연산 시간이 줄어든 실험을 보여준다.[^flash]
 
 <Details summary="심화: Kernel fusion은 왜 빨라지는가?">
 
