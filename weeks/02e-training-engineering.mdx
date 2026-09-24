@@ -25,9 +25,7 @@ $$
 
 GPU 한 장으로는 약 58년, 이 노트의 64개 GPU로도 약 11개월이 걸린다. 수천 장을 쓰면 몇 주로 줄지만, 그만큼 모델과 데이터를 여러 장치에 나누고 그 사이의 통신을 관리해야 한다. 이 노트는 그 방법을 다룬다. 40%라는 가정은 §6-1의 MFU(model FLOPs utilization)에서 다시 다룬다.
 
-같은 주제를 더 넓게 다룬 자료로 Hugging Face의 [The Ultra-Scale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook)을 함께 읽을 것을 권한다.[^playbook] 각 병렬화 방식의 메모리·통신을 실제 실험 그래프와 함께 설명한다. 강의로 먼저 전체 그림을 보고 싶다면 아래 Stanford CS336의 병렬화 강의를 권한다.
-
-<Video src="https://www.youtube.com/watch?v=l1RJcDjzK8M" caption="Stanford CS336 Language Modeling from Scratch (Spring 2025), Lecture 7: Parallelism 1." />
+같은 주제를 더 넓게 다룬 자료로 Hugging Face의 [The Ultra-Scale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook)을 함께 읽을 것을 권한다.[^playbook] 각 병렬화 방식의 메모리·통신을 실제 실험 그래프와 함께 설명한다. 강의로 먼저 전체 그림을 보고 싶다면 [Stanford CS336](https://cs336.stanford.edu/)의 병렬화 강의를 권한다.
 
 ## 1. 노드와 GPU
 
@@ -87,7 +85,7 @@ GPU 하나의 메모리가 80 GB라고 가정하면 노드 하나의 합계는 6
 여기서는 비트 패턴을 외우기보다 **같은 16 bits를 어디에 배분했는가**를 보자.
 
 - **FP16**은 FP32보다 지수도 가수도 줄였다. 최대 유한값은 65,504다. 계산 결과가 범위를 넘으면 overflow가, 너무 작으면 정밀도가 줄거나 0으로 반올림되는 underflow가 생길 수 있다.
-- **BF16**은 FP32와 지수 bits가 같아 표현 범위가 비슷하다. 대신 FP16보다 가수가 짧아 같은 크기에서 구분할 수 있는 값의 간격이 넓다. 그러나 정밀도가 낮아 정보가 사라질 수 있다.
+- **BF16**은 FP32와 지수 bits가 같아 표현 범위가 비슷하다. 대신 가수가 FP16보다 짧아 같은 크기에서 구분할 수 있는 값의 간격이 넓고, 작은 차이는 반올림으로 사라질 수 있다.
 
 가수 bits가 정하는 간격을 실제 값으로 확인하자. 1 이상 2 미만의 수는 가수 7 bits인 BF16에서 $2^{-7}=0.0078125$ 간격으로만 표현된다. 1 바로 다음 수가 1.0078125다. 가중치 1.0에 학습률과 gradient를 곱한 업데이트 0.001을 더하면 정확한 값 1.001은 두 후보 1과 1.0078125 중 1에 더 가깝다. 따라서 BF16으로 저장한 결과는 다시 1.0이다. 같은 업데이트를 1,000번 반복해도 가중치는 1.0에 머문다. 가수 23 bits인 FP32의 간격은 $2^{-23}\approx1.2\times10^{-7}$이라 1.001을 거의 그대로 담는다.[^bf16]
 
@@ -126,7 +124,7 @@ $$
 M_{\text{tensor}}=bnd\times2\ \text{bytes}
 $$
 
-$b=2$, $n=2{,}048$, $d=4{,}096$이면 $33{,}554{,}432$ bytes, 즉 32 MiB다. MiB(mebibyte)는 $2^{20}$ bytes다. 길이를 8,192로 늘리면 같은 텐서는 128 MiB가 된다. 하지만 한 층의 backward에는 이런 텐서가 여러 개 필요하다. Attention의 Q·K·V와 score, FFN(feed-forward network)의 확장된 중간값, 정규화 입력, dropout mask 등이 모두 저장된다.
+$b=2$, $n=2{,}048$, $d=4{,}096$이면 $33{,}554{,}432$ bytes, 즉 32 MiB다. MiB(mebibyte)는 $2^{20}$ bytes다. 길이를 8,192로 늘리면 같은 텐서는 128 MiB가 된다. 하지만 한 층의 backward에는 이런 텐서가 여러 개 필요하다. Attention의 Q·K·V와 softmax 결과, FFN(feed-forward network)의 확장된 중간값, 정규화 입력, dropout mask 등이 모두 저장된다.
 
 Korthikanti 등은 GPT 형태의 Transformer 층 하나가 저장하는 activation을 16-bit 기준으로 세어 다음 근사식을 제시했다. 기호는 앞의 텐서 예와 맞추어 $b$는 microbatch의 시퀀스 수, $n$은 시퀀스 길이, $d$는 hidden dimension, $h$는 attention head 수로 바꾸어 썼다. 병렬화를 적용하지 않은 경우다.[^sp]
 
@@ -134,7 +132,7 @@ $$
 M_{\text{layer}}\approx bnd\left(34+\frac{5hn}{d}\right)\ \text{bytes}
 $$
 
-괄호 안의 34는 크기가 $bnd$에 비례하는 항목들(선형층 입력, FFN 중간값, 정규화 입력 등)을 모두 더한 계수이고, $5hn/d$는 attention score·softmax 결과·dropout mask처럼 head마다 $n\times n$ 크기인 항목이다. 앞의 값 $b=2$, $n=2{,}048$, $d=4{,}096$, $h=32$를 넣고 32층으로 단순화한 8B급 모델에 적용해 보자. 실제 Llama 계열은 SwiGLU FFN과 GQA(grouped-query attention)를 써서 계수가 조금 다르므로 규모를 보는 계산이다.
+괄호 안의 34는 크기가 $bnd$에 비례하는 항목들(선형층 입력, FFN 중간값, 정규화 입력 등)을 모두 더한 계수이고, $5hn/d$는 softmax 결과(2 bytes), dropout mask(1 byte), dropout 결과(2 bytes)처럼 head마다 $n\times n$ 크기인 항목이다. 앞의 값 $b=2$, $n=2{,}048$, $d=4{,}096$, $h=32$를 넣고 32층으로 단순화한 8B급 모델에 적용해 보자. 실제 Llama 계열은 SwiGLU FFN과 GQA(grouped-query attention)를 써서 계수가 조금 다르므로 규모를 보는 계산이다.
 
 | 항목 | 계산 | 값 |
 |---|---|---|
@@ -145,7 +143,7 @@ $$
 
 Microbatch 2개, 길이 2,048만으로 activation이 약 61 GB다. 앞의 model state 128 GB와 합하면 약 190 GB가 된다. 길이를 8,192로 늘리면 $5hn/d$ 항이 320으로 커지므로 층 하나가 약 24 GB, 32층이 약 760 GB다. 길이가 4배일 때 activation은 4배가 아니라 약 12배로 늘어난다. 이 $n^2$ 항을 줄이는 방법이 §2-4의 FlashAttention이고, 나머지 항까지 줄이는 방법이 §2-3의 checkpointing과 §4의 시퀀스 분산이다.
 
-위 표의 **model state 128 GB에는 gradient 16 GB도 포함**되어 있다. Gradient를 제외한 가중치·master weight·Adam 상태는 112 GB다. 이 상태들이 이미 초기화되어 있고, step 시작 전에 gradient tensor를 해제하는 경우를 보자. 아래는 충분한 메모리가 있다고 가정한 저장량 예제이며, 80 GB GPU 하나에서 실행 가능한 구성은 아니다. 모델을 두 블록 $x\to h_1\to h_2$로 단순화하고, 각 블록의 backward를 위해 저장한 입력·내부 중간값을 $A_1,A_2$로 표기한다. 이 값들은 블록 출력 $h_1,h_2$ 하나와 같지 않다.
+앞의 model state 표에서 **128 GB에는 gradient 16 GB도 포함**되어 있다. Gradient를 제외한 가중치·master weight·Adam 상태는 112 GB다. 이 상태들이 이미 초기화되어 있고, step 시작 전에 gradient tensor를 해제하는 경우를 보자. 아래는 충분한 메모리가 있다고 가정한 저장량 예제이며, 80 GB GPU 하나에서 실행 가능한 구성은 아니다. 모델을 두 블록 $x\to h_1\to h_2$로 단순화하고, 각 블록의 backward를 위해 저장한 입력·내부 중간값을 $A_1,A_2$로 표기한다. 이 값들은 블록 출력 $h_1,h_2$ 하나와 같지 않다.
 
 | 시점 | 메모리에 있는 주요 항목 | 해제 가능한 중간값 |
 |---|---|---|
@@ -162,7 +160,7 @@ Microbatch 2개, 길이 2,048만으로 activation이 약 61 GB다. 앞의 model 
 
 ### 2-3. Gradient checkpointing
 
-Backward에 필요한 중간 결과 중 일부만 저장하고 나머지는 필요할 때 재계산하는 방법을 **Gradient checkpointing**이라고 한다. **Activation checkpointing**이라는 이름도 같은 기법을 가리킨다. 이름에 gradient가 있지만 저장을 줄이는 대상은 주로 activation이다. 추가 연산으로 저장 공간을 줄인다.[^recompute][^hf-checkpoint]
+Backward에 필요한 중간 결과 중 일부만 저장하고 나머지는 필요할 때 재계산하는 방법을 **Gradient checkpointing**이라고 한다. **Activation checkpointing**이라는 이름도 같은 기법을 가리킨다. 이름에 gradient가 있지만 저장을 줄이는 대상은 주로 activation이며, 가중치나 optimizer 상태는 줄지 않는다. 추가 연산으로 저장 공간을 줄인다.[^recompute][^hf-checkpoint]
 
 네 블록을 통과하는 계산을 `x → h₁ → h₂ → h₃ → h₄`라고 하자. 실제 backward에는 블록 내부 중간값도 필요하다. 블록 두 개씩 checkpoint 구간으로 묶으면 구간 입력인 `x`와 `h₂`를 보관하고 내부 중간값을 필요할 때 다시 만들 수 있다.
 
@@ -184,17 +182,17 @@ Backward에 필요한 중간 결과 중 일부만 저장하고 나머지는 필�
 
 층 수를 $L$이라 하자. Chen 등은 $L$개 층을 약 $\sqrt{L}$개 층씩 묶어 구간 입력만 저장하면, forward 한 번의 추가 계산으로 activation 메모리를 $O(\sqrt{L})$로 줄일 수 있음을 보였다.[^recompute] 위의 두 블록씩 묶는 예가 이 아이디어의 작은 형태다. PyTorch에서는 `torch.utils.checkpoint`로 구간을 지정한다.[^checkpoint]
 
-**줄어드는 것은 주로 activation**이며 가중치나 옵티마이저의 state가 자동으로 줄어들지는 않는다. 모든 블록에 적용하면 재계산량도 커질 수 있으므로, 큰 activation을 만드는 구간부터 적용하고 peak memory와 실행 시간을 비교한다. 같은 microbatch에서 step이 느려져도, 확보한 메모리로 더 큰 microbatch를 처리할 수 있다면 전체 처리량은 다시 측정해야 한다.
+모든 블록에 적용하면 재계산량도 커질 수 있으므로, 큰 activation을 만드는 구간부터 적용하고 peak memory와 실행 시간을 비교한다. 같은 microbatch에서 step이 느려져도, 확보한 메모리로 더 큰 microbatch를 처리할 수 있다면 전체 처리량은 다시 측정해야 한다.
 
 ### 2-4. Attention 메모리와 FlashAttention
 
-길이가 늘 때 모든 중간 텐서가 같은 비율로 커지지는 않는다. Attention score를 명시적으로 만드는 구현에서는 head 하나에 $n\times n$ 행렬이 생긴다. Batch 크기가 $b$, query head 수가 $h$이고 이 행렬을 2 bytes씩 저장한다면 다음과 같다.
+길이가 늘 때 모든 중간 텐서가 같은 비율로 커지지는 않는다. Attention score를 명시적으로 만드는 구현에서는 head 하나에 $n\times n$ 행렬이 생긴다. §2-2처럼 microbatch의 시퀀스 수를 $b$, query head 수를 $h$라 하고 이 행렬을 2 bytes씩 저장한다면 다음과 같다.
 
 $$
 M_{\text{score}}=bhn^2\times2\ \text{bytes}
 $$
 
-$b=2$, $h=32$에서 길이 2,048이면 512 MiB, 길이 8,192이면 8 GiB다. GiB(gibibyte)는 $2^{30}$ bytes다. 길이가 네 배일 때 이 행렬 하나는 16배로 커진다. 이는 softmax 결과와 다른 중간값, 전체 층의 메모리를 모두 합한 값은 아니다.
+$b=2$, $h=32$에서 길이 2,048이면 512 MiB, 길이 8,192이면 8 GiB다. GiB(gibibyte)는 $2^{30}$ bytes다. 길이가 네 배일 때 이 행렬 하나는 16배로 커진다. 이는 $n\times n$ 텐서 하나의 크기다. §2-2 식의 $5hn/d$ 항은 이런 텐서들(softmax 결과, dropout mask, dropout 결과)을 층마다 합친 것이다.
 
 **FlashAttention**은 작은 블록의 score만 계산해 사용하고 버리므로, $n\times n$ score·확률 행렬 전체를 저장하지 않는다. 여기서는 2022년 **FlashAttention 1**을 기준으로 설명한다.[^flash]<Sidenote>후속 연구로 FlashAttention-2(2023)는 병렬성과 작업 분할을 개선했고,[^flash2] FlashAttention-3(2024)는 Hopper GPU의 비동기 실행과 저정밀도 연산을 활용했다.[^flash3] FlashAttention-4(2026)는 Blackwell GPU에 맞춰 행렬곱·softmax·메모리 작업을 겹치는 실행 구조를 개선했다.[^flash4]</Sidenote>
 
@@ -382,9 +380,9 @@ FSDP(fully sharded data parallel)도 학습 상태를 분산 저장한다. PyTor
 | Backward 후 | 각 replica의 gradient를 합치고 자기 구간만 받음 | Reduce-scatter |
 | Optimizer step | 자기 구간의 상태로 $W_0$ 갱신 | 다른 GPU도 각자 담당 구간 갱신 |
 
-Gradient의 평균을 맞추는 배율도 적용한다. 다음 forward에서 갱신된 조각들을 다시 모은다.
+Gradient의 평균을 맞추는 배율도 적용한다. 다음 forward에서 갱신된 조각들을 다시 모은다. 실제 구현은 여러 층의 통신을 미리 요청하거나 전체 가중치를 더 오래 유지할 수 있다. 따라서 **상시 저장량과 계산 중 최대 사용량은 다르며**, sharding 단위가 너무 크면 잠깐 모으는 가중치도 커진다.
 
-Gradient clipping도 조각 단위로 하면 안 된다. Clipping은 전체 모델 gradient의 norm이 기준을 넘을 때 전체를 같은 비율로 줄이는 연산이다. G0의 gradient 조각이 $[3]$, G1의 조각이 $[4]$이고 기준 norm이 1이라고 하자. 각자 자기 조각의 norm인 3과 4로 나누면 $[1]$, $[1]$이 되어 방향이 바뀐다. 전역 norm은 $\sqrt{3^2+4^2}=5$이므로 둘 다 5로 나눈 $[0.6]$, $[0.8]$이 맞다. 그래서 PyTorch의 첫 FSDP API는 GPU별 제곱합을 모아 전역 norm을 계산하는 전용 clipping 함수를 제공한다. 사용하는 분산 구현이 전역 norm을 계산하는지 문서로 확인한다.[^fsdp-clip] DDP처럼 모든 GPU가 같은 gradient 전체를 가진 경우에는 각자 계산해도 같은 값이 나온다. 이때 GPU마다 같은 값을 다시 더해 norm을 부풀리지 않도록 주의한다. 실제 구현은 여러 층의 통신을 미리 요청하거나 전체 가중치를 더 오래 유지할 수 있다. 따라서 **상시 저장량과 계산 중 최대 사용량은 다르며**, sharding 단위가 너무 크면 잠깐 모으는 가중치도 커진다.
+Gradient clipping도 조각 단위로 하면 안 된다. Clipping은 전체 모델 gradient의 norm이 기준을 넘을 때 전체를 같은 비율로 줄이는 연산이다. G0의 gradient 조각이 $[3]$, G1의 조각이 $[4]$이고 기준 norm이 1이라고 하자. 각자 자기 조각의 norm인 3과 4로 나누면 $[1]$, $[1]$이 되어 방향이 바뀐다. 전역 norm은 $\sqrt{3^2+4^2}=5$이므로 둘 다 5로 나눈 $[0.6]$, $[0.8]$이 맞다. 그래서 PyTorch의 기존 FSDP(FSDP1)는 GPU별 제곱합을 모아 전역 norm을 계산하는 전용 clipping 함수를 제공한다.[^fsdp-clip] 다른 분산 구현을 쓸 때도 clipping이 전역 norm을 계산하는지 문서로 확인한다. 반대로 DDP처럼 모든 GPU가 gradient 전체를 똑같이 가진 경우에는 각자 계산해도 같은 norm이 나온다. 이때 GPU들의 제곱합을 다시 합산하면 같은 값을 여러 번 세게 되므로 합산하지 않는다.
 
 분할 그룹을 N0의 8개 GPU에서 64개 GPU로 넓히면 이상적인 model state 저장량은 128/64=2 GB까지 내려간다. 대신 층 실행에 필요한 조각을 모으는 통신도 노드 경계를 넘는다. “더 잘게 나누면 메모리는 줄지만, 필요한 값을 더 멀리서 가져올 수 있다”는 선택이다. 2 GB 역시 activation과 임시 buffer를 제외한 값이다.
 
@@ -412,7 +410,7 @@ GPU끼리 나누는 sharding과 달리 저장 위치 자체를 바꾸며, 데이
 
 ### 4-1. TP
 
-TP(tensor parallelism)는 하나의 층 안에서 큰 행렬 연산을 나눈다. Megatron-LM은 Transformer의 attention과 FFN(feed-forward network)에 이 방식을 적용한다.[^megatron]
+TP(tensor parallelism)는 하나의 층 안에서 큰 행렬 연산을 나눈다. Megatron-LM은 Transformer의 attention과 FFN에 이 방식을 적용한다.[^megatron]
 
 N0의 G0–G7이 같은 층의 계산을 나누는 TP=8을 생각하자. 계산식을 작게 보기 위해 먼저 G0·G1만 사용하는 TP=2 예를 들자. 두 선형층과 원소별 활성함수 $\phi$를 연결한 작은 FFN을 사용한다. Bias는 생략한다.
 
@@ -549,7 +547,7 @@ N1의 TP 그룹: 위치 4096–8191의 query 처리
 
 아래 그림은 같은 아이디어를 토큰 16개와 GPU 4개로 보여 준다. 행은 query 위치, 열은 key 위치이고, 칠해진 칸이 causal mask에서 실제로 계산하는 score다. 앞에서부터 네 토큰씩 차례로 나누면 GPU 1은 10칸, GPU 4는 58칸을 계산한다. 그림처럼 시퀀스를 여덟 조각으로 나누어 앞 조각과 뒤 조각을 짝지으면 네 GPU가 모두 34칸씩 계산한다.
 
-<Figure src={cpZigzagFig.src} alt="16×16 causal attention mask. 두 토큰씩 여덟 조각으로 나눈 query 행을 GPU 1은 1–2행과 15–16행, GPU 2는 3–4행과 13–14행, GPU 3은 5–6행과 11–12행, GPU 4는 7–10행을 맡도록 색칠했다." caption="Causal mask에서 앞뒤 조각을 짝지은 CP 배치. 색은 각 query 행을 맡은 GPU다." source="Tazi et al. (2025), The Ultra-Scale Playbook, Hugging Face · Apache-2.0 · 수정 없음" />
+<Figure src={cpZigzagFig.src} alt="16×16 causal attention mask. 두 토큰씩 여덟 조각으로 나눈 query 행을 GPU 1은 1–2행과 15–16행, GPU 2는 3–4행과 13–14행, GPU 3은 5–6행과 11–12행, GPU 4는 7–10행을 맡도록 색칠했다." caption="Causal mask에서 앞뒤 조각을 짝지은 CP 배치. 색은 각 query 행을 맡은 GPU다. §3-1의 통신 그림과 같은 Apache-2.0 조건으로 실었다." source="Tazi et al. (2025), The Ultra-Scale Playbook, Hugging Face · Apache-2.0 · 수정 없음" />
 
 각 그룹은 여전히 같은 수의 query를 계산하지만, 참조 범위가 작은 앞쪽과 큰 뒤쪽을 나누어 맡는다. 이 배치에서도 다른 조각의 key/value를 교환해야 한다. 또한 같은 가중치에 대한 gradient는 시퀀스 조각별 기여를 모아야 한다. CP=2는 독립 문서 두 개를 읽는 DP=2와 다르다.[^cp-overview]
 
@@ -680,7 +678,7 @@ $$
 
 분자의 토큰 수는 모델이 forward·backward로 실제 처리한 입력 위치의 수다. 앞의 유효 tokens/s와 달리 loss에서 제외한 위치도 계산은 거치므로 여기에 포함한다. 모든 위치가 loss에 기여하는 사전학습이라면 두 값이 같다. $6N$은 토큰 하나를 학습하는 데 드는 forward와 backward의 계산량이다([Scaling 노트](/lecture/2026f-advanced-deep-learning/02d-scaling/)의 $6ND$에서 $D=1$). Attention의 $n^2$ 계산을 더하는 더 정확한 식도 있지만, 여기서는 근사식을 쓴다. §2-3의 재계산처럼 모델에 필요한 계산이 아닌 추가 계산은 MFU에 넣지 않는다. 재계산을 켜면 GPU가 바쁘게 일해도 MFU는 낮아질 수 있다.
 
-예를 들어 64개 H100에서 8B 모델이 초당 50만 토큰을 처리한다면 분자는 $5\times10^5\times6\times8\times10^9=2.4\times10^{16}$ FLOP/s이고, 분모는 $64\times989\times10^{12}\approx6.33\times10^{16}$ FLOP/s이므로 MFU는 약 38%다. §5-1의 Llama 3 405B 학습이 38–43%를 보고했으므로,[^llama3] 도입에서 가정한 40%는 대규모로 조정된 학습이 보고한 수준이다. MFU가 이보다 크게 낮다면 §6-2의 방법으로 어디서 시간이 새는지 찾는다.
+예를 들어 64개 H100에서 8B 모델이 초당 50만 토큰을 처리한다면 분자는 $5\times10^5\times6\times8\times10^9=2.4\times10^{16}$ FLOP/s이고, 분모는 $64\times989\times10^{12}\approx6.33\times10^{16}$ FLOP/s이므로 MFU는 약 38%다. Llama 3 논문은 405B 학습의 구성별 MFU를 38–43%로 보고했으므로(§5-1),[^llama3] 도입에서 가정한 40%는 대규모로 조정된 학습이 보고한 수준이다. MFU가 이보다 크게 낮다면 §6-2의 방법으로 어디서 시간이 새는지 찾는다.
 
 GPU 수 $G$에서 처리량을 $T_G$라고 하면 scaling efficiency를 $T_G/(G T_1)$로 살펴볼 수 있다. 단, 한 GPU에서도 같은 모델이 실행되어야 이 기준이 의미가 있다. 그렇지 않으면 실행 가능한 최소 장치 수를 기준으로 비교한다. 모델·시퀀스 길이·정밀도 등 비교 조건을 함께 기록한다.
 
@@ -798,6 +796,6 @@ PP를 더 깊게 다루려면 여러 model chunk를 교대로 실행하는 inter
 [^h100]: NVIDIA. *NVIDIA H100 Tensor Core GPU*. [제품 사양](https://www.nvidia.com/en-us/data-center/h100/).
 [^hopper]: Andersch, M., et al. (2022). *NVIDIA Hopper Architecture In-Depth*. NVIDIA Technical Blog. [공식 블로그](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/).
 [^playbook]: Tazi, N., Mom, F., Zhao, H., Nguyen, P., Mekkouri, M., Werra, L., & Wolf, T. (2025). *The Ultra-Scale Playbook: Training LLMs on GPU Clusters*. Hugging Face. [공식 페이지](https://huggingface.co/spaces/nanotron/ultrascale-playbook).
-[^llama3]: Grattafiori, A., et al. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
+[^llama3]: Llama Team, AI @ Meta. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
 [^palm]: Chowdhery, A., et al. (2023). *PaLM: Scaling Language Modeling with Pathways*. Journal of Machine Learning Research, 24(240), pp. 1–113. [arXiv:2204.02311](https://arxiv.org/abs/2204.02311).
 [^fsdp-clip]: PyTorch Contributors. (v2.8). *FullyShardedDataParallel.clip_grad_norm_*. [공식 문서](https://docs.pytorch.org/docs/2.8/fsdp.html#torch.distributed.fsdp.FullyShardedDataParallel.clip_grad_norm_).
