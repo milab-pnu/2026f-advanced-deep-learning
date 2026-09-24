@@ -67,7 +67,7 @@ Llama 3 8B의 값($L=32$, query head 32개, K/V head 8개, $d_h=128$)으로 계�
 
 둘째는 **대역폭**(memory bandwidth)이다. Decode 한 스텝에서 층마다 캐시 전체를 메모리에서 읽어야 하는데, 읽은 양에 비해 하는 계산이 적다. MHA 가정의 Llama 3 8B 형태에서 문맥 길이가 $t$일 때 층 하나를 보자. 읽는 K/V는 $2\cdot32\cdot128\cdot t=8192t$개 원소이고, 점수 계산($QK^\top$)과 가중합($aV$)의 곱셈-덧셈도 합해서 약 $8192t$번이다. 원소 하나를 읽을 때마다 곱셈-덧셈을 한 번 정도 하는 셈이어서, 계산 장치보다 메모리에서 읽어 오는 속도가 스텝 시간을 좌우하기 쉽다.
 
-Shazeer는 이 관찰을 decode 전체에 대한 점근 분석으로 정리했다.[^mqa] 메모리 접근량과 연산량의 비율에는 두 항이 남는다. 하나는 가중치를 읽는 비용으로, batch를 키우면 여러 시퀀스가 같은 가중치를 나눠 쓰므로 줄어든다. 다른 하나는 매 스텝 K/V를 다시 읽는 비용인데, 시퀀스마다 캐시가 따로 있어 batch를 키워도 줄지 않는다. 이 둘째 항을 줄이는 방법으로 그는 시퀀스 길이를 제한하거나 참조 위치를 줄이는 방식([Efficient attention 노트](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/)의 계보)과 별개로, **K/V에서 head 차원을 없애는** 방식을 제안했다.
+Shazeer는 이 관찰을 decode 전체에 대한 점근 분석으로 정리했다.[^mqa] 메모리 접근량과 연산량의 비율에는 두 항이 남는다. 하나는 가중치를 읽는 비용으로, batch를 키우면 여러 시퀀스가 같은 가중치를 나눠 쓰므로 줄어든다. 다른 하나는 매 스텝 K/V를 다시 읽는 비용인데, 시퀀스마다 캐시가 따로 있어 batch를 키워도 줄지 않는다. 이 둘째 항을 줄이는 방법으로 Shazeer는 시퀀스 길이를 제한하거나 참조 위치를 줄이는 방식([Efficient attention 노트](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/)의 계보)과 별개로, **K/V에서 head 차원을 없애는** 방식을 제안했다.
 
 <Details summary="심화: Shazeer의 점근 분석과 그 가정">
 
