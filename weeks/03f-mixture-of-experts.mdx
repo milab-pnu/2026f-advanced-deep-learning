@@ -107,7 +107,7 @@ Mixtral 8x7B로 앞의 두 값을 계산해 보자. 층마다 attention은 약 4
 
 공개 config의 차원으로 직접 계산한 값이며, 논문이 보고한 47B·13B와 정수 자리에서 맞는다.[^mixtral] 이름의 "8x7B"와 달리 전체가 $8\times7.2=58$B가 아닌 이유는 attention과 embedding은 복제하지 않고 FFN만 8개로 늘렸기 때문이다.
 
-**학습 계산량.** $C\approx6ND$의 $N$에는 dense 모델과 같은 관례로 입력 embedding과 LM head를 뺀 블록 파라미터를 넣되, MoE에서는 그중 **활성 파라미터**만 넣는다. Forward에서 토큰 하나가 거치는 행렬곱이 그만큼이기 때문이다(문맥 길이에 따라 늘어나는 attention score 계산은 02d와 같이 생략한다). Mixtral의 블록 활성 파라미터는 $12.9-0.26\approx12.6$B이므로 토큰당 학습 계산은 약 $6\times12.6\text{B}\approx7.6\times10^{10}$ FLOPs다. 전체 블록 파라미터 46.4B를 넣으면 약 3.7배 과대 추정한다. DeepSeek-V3에 같은 근사를 적용하면, 보고된 활성 37B와 학습 토큰 14.8T로 $6\times37\text{B}\times14.8\text{T}\approx3.3\times10^{24}$ FLOPs가 나온다(우리가 계산한 근사치이며, 37B는 embedding 포함 여부를 따로 밝히지 않은 값이다).[^dsv3] 이 근사에는 router 계산, capacity를 맞추려고 채우는 padding(§3-4), 장치 간 통신 시간이 들어가지 않는다.
+**학습 계산량.** $C\approx6ND$의 $N$에는 dense 모델과 같은 관례로 입력 embedding과 LM head를 뺀 블록 파라미터를 넣되, MoE에서는 그중 **활성 파라미터**만 넣는다. Forward에서 토큰 하나가 거치는 행렬곱이 그만큼이기 때문이다(문맥 길이에 따라 늘어나는 attention score 계산은 02d와 같이 생략한다). Mixtral의 블록 활성 파라미터는 $12.9-0.26\approx12.6$B이므로 토큰당 학습 계산은 약 $6\times12.6\text{B}\approx7.6\times10^{10}$ FLOPs다. 전체 블록 파라미터 46.4B를 넣으면 약 3.7배 과대 추정한다. DeepSeek-V3에 같은 근사를 적용하면, 보고된 활성 37B와 학습 토큰 14.8T로 $6\times37\text{B}\times14.8\text{T}\approx3.3\times10^{24}$ FLOPs가 나온다(이 노트에서 계산한 근사치이며, 37B는 embedding 포함 여부를 따로 밝히지 않은 값이다).[^dsv3] 이 근사에는 router 계산, capacity를 맞추려고 채우는 padding(§3-4), 장치 간 통신 시간이 들어가지 않는다.
 
 **메모리.** 계산은 활성 파라미터를 따라가지만 메모리는 전체 파라미터를 따라간다. 어떤 토큰이 어떤 expert를 고를지 미리 모르므로 모든 expert를 올려 두어야 한다. Mixtral 논문도 활성 파라미터 비교는 계산 비용만 반영하며, 서빙 메모리는 전체 47B에 비례한다고 적는다.[^mixtral] BF16(bfloat16)으로 저장하면 Mixtral은 약 93GB로, 같은 활성 크기의 dense 13B 모델(약 26GB)보다 훨씬 크다. gpt-oss-120b에서는 MoE 가중치 114.7B가 전체 116.8B의 약 98%를 차지한다.[^gptoss]
 
@@ -136,7 +136,9 @@ f_i=\frac{1}{T}\sum_{x\in\mathcal{B}}\mathbb{1}\{\arg\max_j p_j(x)=i\},\qquad
 P_i=\frac{1}{T}\sum_{x\in\mathcal{B}}p_i(x)
 $$
 
-$f_i$는 expert $i$로 실제로 보내진 토큰의 비율이고, $P_i$는 router가 expert $i$에 준 확률의 평균이다. $f_i$는 argmax로 정해지므로 미분할 수 없고, gradient는 $P_i$를 통해서만 흐른다. 모든 expert가 토큰과 확률을 $1/N$씩 받는 균등 배정에서 $N\sum f_iP_i$는 1이다. 이 식은 토큰을 많이 받은 expert일수록 그 expert의 확률을 더 강하게 낮추는 학습 신호를 준다(아래 예제). 다만 균등 배정이 이 식의 전역 최솟값은 아니다. Expert 2개, 토큰 4개에서 세 토큰의 확률이 $(0.51,0.49)$, 한 토큰이 $(0.01,0.99)$이면 $f=(0.75,0.25)$, $P=(0.385,0.615)$이고 $2\sum f_iP_i=0.885$로 1보다 작다. 배정은 한쪽에 몰렸지만 확률 평균이 반대쪽으로 기울어 값이 작아진 경우다. GShard도 같은 발상으로, 미분할 수 없는 배정 비율 대신 평균 gate 값을 곱한 보조 손실을 쓴다.[^gshard]
+$f_i$는 expert $i$로 실제로 보내진 토큰의 비율이고, $P_i$는 router가 expert $i$에 준 확률의 평균이다. $f_i$는 argmax로 정해지므로 미분할 수 없고, gradient는 $P_i$를 통해서만 흐른다. 모든 expert가 토큰과 확률을 $1/N$씩 받는 균등 배정에서 $N\sum f_iP_i$는 1이다. 이 식은 토큰을 많이 받은 expert일수록 그 expert의 확률을 더 강하게 낮추는 학습 신호를 준다(아래 예제).
+
+다만 균등 배정이 이 식의 전역 최솟값은 아니다. Expert 2개, 토큰 4개에서 세 토큰의 확률이 $(0.51,0.49)$, 한 토큰이 $(0.01,0.99)$이면 $f=(0.75,0.25)$, $P=(0.385,0.615)$이고 $2\sum f_iP_i=0.885$로 1보다 작다. 배정은 한쪽에 몰렸지만 확률 평균이 반대쪽으로 기울어 값이 작아진 경우다. GShard도 같은 발상으로, 미분할 수 없는 배정 비율 대신 평균 gate 값을 곱한 보조 손실을 쓴다.[^gshard]
 
 <Callout type="example">
 
@@ -299,7 +301,7 @@ $f$는 attention과 MLP이고, $\tilde{X}^l$은 선택된 토큰들의 집합이
 
 그림 오른쪽의 비교가 중요하다. Early exit은 토큰이 어느 층에서 멈추면 그 뒤 층을 모두 건너뛴다. MoD에서는 앞쪽 블록을 건너뛴 토큰도 뒤쪽 블록에서 다시 계산될 수 있다.[^mod]
 
-MoD는 토큰별 선택 대신 블록이 상위 $k$개 토큰을 고르는 **expert-choice routing**을 쓴다. 블록마다 처리할 토큰 수가 정확히 $k$로 고정되므로 §3의 load balancing 문제와 보조 손실이 필요 없다. 이 $k$가 MoD의 capacity다. 논문에서 가장 좋았던 설정은 한 블록 걸러 하나씩 routing 블록을 두고 capacity를 12.5%로 둔 것이다. 시퀀스 길이 2048에서 256개 토큰만 블록을 계산하고 1792개는 건너뛴다. 이 블록에서 MLP 계산은 1/8로, attention의 query–key 곱은 $(256/2048)^2=1/64$로 줄어든다(계산은 우리가 한 것이다).
+MoD는 토큰별 선택 대신 블록이 상위 $k$개 토큰을 고르는 **expert-choice routing**을 쓴다. 블록마다 처리할 토큰 수가 정확히 $k$로 고정되므로 §3의 load balancing 문제와 보조 손실이 필요 없다. 이 $k$가 MoD의 capacity다. 논문에서 가장 좋았던 설정은 한 블록 걸러 하나씩 routing 블록을 두고 capacity를 12.5%로 둔 것이다. 시퀀스 길이 2048에서 256개 토큰만 블록을 계산하고 1792개는 건너뛴다. 이 블록에서 MLP 계산은 1/8로, attention의 query–key 곱은 $(256/2048)^2=1/64$로 줄어든다(이 노트에서 계산한 값이다).
 
 Expert-choice routing에는 추론 시 문제가 있다. 상위 $k$개인지는 시퀀스 전체의 점수를 봐야 알 수 있으므로, 뒤에 올 토큰을 모르는 자기회귀 생성에서는 그대로 쓸 수 없다(non-causal). MoD는 router 출력으로 "상위 $k$개에 들지"를 예측하도록 작은 보조 손실이나 별도의 예측기를 학습해 이를 우회했고, 생성 시 성능 저하가 작았다고 보고한다.[^mod] 실험은 60M–3B 규모의 isoFLOP 비교였다.
 
@@ -317,7 +319,7 @@ Bae 등(2025)의 **Mixture-of-Recursions**(MoR)은 두 갈래를 합친다. 가�
 
 **Routing.** 방식은 두 가지다. **Expert-choice**에서는 반복 단계마다 router가 계속 진행할 상위 $k$개 토큰을 고르고, 이번 단계에서 선택된 토큰만 다음 단계의 후보가 된다. 단계 $r$마다 남길 토큰 수 $k_r$을 미리 정해 두므로 balancing은 필요 없다. 논문 설정에서 $k_r$은 전체 토큰의 $1,\,2/3,\,1/3$로 단계가 깊어질수록 줄어든다. 다만 상위 $k_r$개를 고르려면 시퀀스 전체를 봐야 하므로 §5-1에서 본 non-causal 문제가 그대로 따라온다. MoR도 추론용 보조 router나 보조 손실로 이를 우회하며, 논문의 비교에서는 보조 손실 쪽이 나았다. **Token-choice**에서는 첫 단계에서 토큰마다 반복 횟수를 한 번에 정한다. 미래 토큰을 보지 않아 인과성 문제는 없지만, 반복 횟수별 토큰 수가 고르지 않을 수 있어 §3의 balancing loss나 bias 방식이 필요하다. 논문은 balancing loss 쪽이 더 안정적이었다고 보고한다.[^mor]
 
-**KV cache.** 반복 단계마다 계산하는 토큰이 달라지므로 KV cache도 설계해야 한다. **Recursion-wise caching**은 단계마다 그 단계에 남은 토큰의 key·value만 새로 만들어 저장하고, 남은 토큰끼리만 attention한다. **Recursive KV sharing**은 첫 반복에서 모든 토큰의 key·value를 계산해 두고 이후 단계가 재사용하므로, 남은 토큰의 query가 전체 문맥을 본다.[^mor] 두 방식의 세부 trade-off는 원논문 §2.2.2와 실험을 참고한다.
+**KV cache.** 반복 단계마다 계산하는 토큰이 달라지므로 KV(key–value) cache도 설계해야 한다. **Recursion-wise caching**은 단계마다 그 단계에 남은 토큰의 key·value만 새로 만들어 저장하고, 남은 토큰끼리만 attention한다. **Recursive KV sharing**은 첫 반복에서 모든 토큰의 key·value를 계산해 두고 이후 단계가 재사용하므로, 남은 토큰의 query가 전체 문맥을 본다.[^mor] 두 방식의 세부 trade-off는 원논문 §2.2.2와 실험을 참고한다.
 
 <Figure src="https://arxiv.org/html/2507.10524v3/overview_main3.png" alt="Mixture-of-Recursions의 토큰별 반복 예시. 위쪽 격자는 층과 시퀀스 위치에 따라 계산된 칸(진한 색)과 건너뛴 칸(연한 색)을 보여 주며, 맨 아래 층은 모든 위치가 계산되고 위로 갈수록 일부 위치만 계산된다. 아래쪽에는 영어 문장의 subword 토큰이 세 가지 색으로 칠해져 있어 토큰마다 반복 횟수가 1, 2, 3회로 다름을 나타낸다." caption="MoR에서 학습된 토큰별 반복 횟수의 예. 진한 칸은 반복 블록을 계산한 위치이고, 아래 문장의 색은 각 subword 토큰의 반복 횟수(1·2·3회)를 나타낸다." source="Bae et al. · Mixture-of-Recursions (arXiv:2507.10524v3) Figure 1 오른쪽 패널 · CC BY 4.0 · 수정 없음" />
 
@@ -335,7 +337,7 @@ $N_r=3$에서 균형 잡힌 token-choice로 토큰의 1/3씩이 1·2·3회 반�
 - K/V 투영: recursion-wise caching은 남은 토큰의 K/V를 단계마다 새로 만들므로 $2/3$, KV sharing은 첫 단계에서만 만들므로 $1/3$
 - Query–key 곱: recursion-wise caching은 query와 key가 함께 줄어 $(1+4/9+1/9)/3=14/27$, KV sharing은 key 길이가 유지되어 query 수에 비례하는 $2/3$
 
-원논문도 KV sharing이 K/V 투영 FLOPs를 줄인다고 밝힌다.[^mor] 비율은 모두 우리가 계산한 근사이며, 전체 FLOPs 비율은 attention의 비중과 KV 방식에 따라 달라진다.
+원논문도 KV sharing이 K/V 투영 FLOPs를 줄인다고 밝힌다.[^mor] 비율은 모두 이 노트에서 계산한 근사이며, 전체 FLOPs 비율은 attention의 비중과 KV 방식에 따라 달라진다.
 
 </Details>
 
