@@ -1,0 +1,367 @@
+---
+title: "Normalization and attention sink"
+week: 3
+order: 4
+---
+
+Transformer 블록을 수십 층 쌓으면 벡터의 크기(scale)가 층을 지나며 커지거나, attention score가 지나치게 커져 학습이 흔들리는 일이 생긴다. 이 노트는 **값의 크기를 어디서, 무엇으로 조절하는가**를 따라간다. 정규화(normalization) 기법 전반은 Huang 등의 서베이[^normsurvey]가 정규화 연산을 "어떤 범위의 통계로, 어떤 연산을 하고, 어떻게 표현력을 되돌리는가"로 나누어 정리한다. LayerNorm과 RMSNorm의 위치는 이 서베이의 §V-A에서 확인할 수 있다. 다만 2020년 서베이이므로 LLM의 정규화 배치, QK-Norm, attention sink는 이 노트에서 원논문으로 보완한다.
+
+정규화 설계는 서로 독립적인 세 축으로 나누어 보면 헷갈리지 않는다. 같은 "Pre-LN RMSNorm"이라는 표현에도 두 축의 선택이 섞여 있다.
+
+| 축 | 질문 | 선택지 예 | 절 |
+|---|---|---|---|
+| 연산 종류 | 벡터를 어떻게 정규화하는가 | LayerNorm, RMSNorm | §1 |
+| Residual 대비 위치 | 덧셈 경로의 어디에 두는가 | Post-LN, Pre-LN, Peri-LN(sandwich) | §2 |
+| 적용 대상 | 무엇을 정규화하는가 | 블록 입력·출력, query와 key(QK-Norm) | §3 |
+
+마지막 §4의 attention sink는 정규화 기법이 아니라 softmax attention에서 관측되는 현상이다. 특정 위치에 attention weight가 몰리는 현상으로, attention score의 규모를 다루는 §3과 같은 식을 출발점으로 삼으며 대응책의 일부(gated attention)는 최근 모델의 구조 선택으로 이어진다.
+
+## 1. LayerNorm과 RMSNorm
+
+### 1-1. LayerNorm의 두 단계
+
+[1주차 Transformer 노트](/lecture/2026f-advanced-deep-learning/01a-transformer/)에서 본 LayerNorm은 토큰 벡터 하나의 $d$개 성분에 대해 평균과 표준편차를 구한다.[^layernorm] Batch 축을 쓰지 않으므로 batch 크기나 시퀀스 길이와 무관하다.
+
+$$
+\mu=\frac{1}{d}\sum_{i=1}^{d}x_i,\qquad
+\sigma=\sqrt{\frac{1}{d}\sum_{i=1}^{d}(x_i-\mu)^2+\epsilon},\qquad
+\operatorname{LN}(x)_i=\gamma_i\,\frac{x_i-\mu}{\sigma}+\beta_i
+$$
+
+이 식은 두 단계로 읽을 수 있다. 평균을 빼는 **재중심화**(re-centering)와 표준편차로 나누는 **재스케일링**(re-scaling)이다. 학습되는 $\gamma$(gain)와 $\beta$(bias)가 정규화 후의 크기와 위치를 다시 조절한다. $\epsilon$은 0으로 나누는 것을 막는 작은 상수다.
+
+### 1-2. 평균 중심화의 재검토
+
+LayerNorm은 효과가 좋았지만 토큰마다 평균과 분산을 따로 구해야 해서, 작은 연산인데도 실행 시간을 적지 않게 차지한다는 지적이 있었다. Zhang과 Sennrich는 여기서 질문을 바꾸었다. LayerNorm의 성공이 두 단계 중 **어느 쪽 덕분인가**?[^rmsnorm]
+
+그들의 가설은 재스케일링이 핵심이고 재중심화는 없어도 된다는 것이다. 이 가설에 따라 평균을 빼지 않고 제곱평균제곱근(RMS, root mean square)으로만 나누는 RMSNorm을 제안했다.
+
+$$
+\operatorname{RMS}(x)=\sqrt{\frac{1}{d}\sum_{i=1}^{d}x_i^2+\epsilon},\qquad
+\operatorname{RMSNorm}(x)_i=\gamma_i\,\frac{x_i}{\operatorname{RMS}(x)}
+$$
+
+평균이 0인 벡터라면 $\operatorname{RMS}(x)=\sigma$이므로 두 연산은 같은 결과를 낸다. 차이는 평균이 0에서 멀 때 드러난다. RMSNorm은 입력 전체를 $\alpha$배 해도 출력이 같다는 재스케일링 불변성(re-scaling invariance)을 유지하지만, 모든 성분에 같은 값을 더하는 이동에는 불변이 아니다. 원논문은 RMSNorm이 번역·독해·이미지-캡션 검색 등의 과제에서 LayerNorm과 비슷한 성능을 내면서 모델에 따라 실행 시간을 7–64% 줄였다고 보고한다.
+
+재중심화가 불필요하다는 주장은 원논문의 실험 범위에서 뒷받침된 가설이다. 이후 대형 모델의 선택도 이 방향과 맞는다. ViT-22B는 LayerNorm에서 bias와 중심화를 빼고도 품질 저하 없이 가속기 활용률을 3% 높였다고 보고하고,[^vit22b] OLMo 2는 비모수(nonparametric) LayerNorm과 RMSNorm 사이에 차이가 없었다는 ablation을 보고했다.[^olmo2] [02a](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/)의 기준 모델 Llama 3 8B도 RMSNorm을 쓴다.
+
+### 1-3. 네 성분 벡터의 비교
+
+<Callout type="example">
+계산을 보이기 위해 $d=4$, $\gamma=1$, $\beta=0$, $\epsilon=0$으로 둔 가상 예시다.
+
+| 입력 $x$ | 평균 $\mu$ | LayerNorm 출력 | $\operatorname{RMS}(x)$ | RMSNorm 출력 |
+|---|---|---|---|---|
+| $(2, 4, 6, 8)$ | 5 | $(-1.342, -0.447, 0.447, 1.342)$ | 5.477 | $(0.365, 0.730, 1.095, 1.461)$ |
+| $(4, 8, 12, 16)$ (2배) | 10 | $(-1.342, -0.447, 0.447, 1.342)$ | 10.954 | $(0.365, 0.730, 1.095, 1.461)$ |
+| $(12, 14, 16, 18)$ (+10) | 15 | $(-1.342, -0.447, 0.447, 1.342)$ | 15.166 | $(0.791, 0.923, 1.055, 1.187)$ |
+| $(-3, -1, 1, 3)$ (평균 0) | 0 | $(-1.342, -0.447, 0.447, 1.342)$ | 2.236 | $(-1.342, -0.447, 0.447, 1.342)$ |
+
+- 첫 행에서 $\sigma=\sqrt{5}\approx2.236$이므로 LayerNorm 출력의 첫 성분은 $(2-5)/2.236\approx-1.342$다. RMSNorm은 $\sqrt{(4+16+36+64)/4}=\sqrt{30}\approx5.477$로 나누어 $2/5.477\approx0.365$가 된다.
+- 둘째 행처럼 입력을 2배 하면 두 연산 모두 출력이 그대로다. 둘 다 크기에는 불변이다.
+- 셋째 행처럼 모든 성분에 10을 더하면 LayerNorm은 그대로지만 RMSNorm 출력은 바뀐다. RMSNorm은 공통 이동을 제거하지 않는다.
+- 넷째 행처럼 평균이 0이면 두 출력이 같다.
+</Callout>
+
+RMSNorm을 쓴다는 것은 셋째 행의 차이, 즉 공통 이동을 제거하지 않는 차이를 모델이 나머지 층에서 감당할 수 있다고 보는 선택이다. 평균 계산 하나를 줄인 만큼 연산이 단순해진다.
+
+## 2. Post-LN과 Pre-LN
+
+§1이 "무엇으로 정규화하는가"였다면 이 절은 "어디에 두는가"다. 두 축은 독립이다. GPT-2는 Pre-LN 위치에 LayerNorm을, Llama는 같은 위치에 RMSNorm을 쓴다.
+
+### 2-1. Residual 대비 정규화 위치
+
+Sub-layer 하나(attention 또는 FFN)를 $F$라 하고, residual 경로의 입력을 $x_\ell$이라 하자. 정규화를 둘 수 있는 자리는 세 곳이다. Sub-layer 입력(A), sub-layer 출력(B), 덧셈 뒤의 residual 경로 위(C)다. 이 A·B·C 구분은 Peri-LN 논문의 그림 2를 따랐다.[^peri]
+
+<figure>
+<svg viewBox="0 0 560 384" role="img" aria-label="Sub-layer 하나를 기준으로 정규화 위치 네 가지를 나란히 비교한다. 각 그림에서 입력 x는 왼쪽 residual 경로로 곧게 올라가고, 오른쪽 가지에서 attention 또는 FFN을 거친 결과와 더해진다. Post-LN은 덧셈 뒤 residual 경로 위(위치 C)에 Norm이 있다. Pre-LN은 sub-layer 입력(위치 A)에만 Norm이 있다. Peri-LN 또는 sandwich 배치는 sub-layer 입력(A)과 출력(B) 양쪽에 Norm이 있다. 출력 정규화는 sub-layer 출력(B)에만 Norm이 있다. 예시 모델은 차례로 원 Transformer, GPT-2와 Llama, Gemma 2와 3, OLMo 2다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<text x="73" y="20" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">Post-LN</text>
+<path d="M42 318 V104" stroke="#0f172a" fill="none"/>
+<text x="42" y="334" font-size="12" text-anchor="middle" fill="#64748b">입력 x</text>
+<path d="M42 292 H106 V272" stroke="#0f172a" fill="none"/>
+<path d="M106 272 V230" stroke="#0f172a" fill="none"/><polygon points="106,223 102,230 110,230" fill="#0f172a"/>
+<rect x="74" y="182" width="64" height="40" rx="5" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="106" y="199" font-size="12" text-anchor="middle" fill="#0f172a">Attn</text>
+<text x="106" y="214" font-size="12" text-anchor="middle" fill="#0f172a">또는 FFN</text>
+<path d="M106 182 V95 H59" stroke="#0f172a" fill="none"/>
+<polygon points="52,95 59,91 59,99" fill="#0f172a"/>
+<circle cx="42" cy="95" r="9" fill="#ffffff" stroke="#0f172a"/>
+<text x="42" y="100" font-size="14" text-anchor="middle" fill="#0f172a">+</text>
+<path d="M42 86 V77" stroke="#0f172a" fill="none"/>
+<rect x="16" y="52" width="52" height="24" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="42" y="68" font-size="12" text-anchor="middle" fill="#0f172a">Norm</text>
+<path d="M42 52 V41" stroke="#0f172a" fill="none"/><polygon points="42,34 38,41 46,41" fill="#0f172a"/>
+<text x="73" y="356" font-size="12" text-anchor="middle" fill="#0f172a">위치 C</text>
+<text x="73" y="374" font-size="12" text-anchor="middle" fill="#64748b">원 Transformer</text>
+<text x="211" y="20" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">Pre-LN</text>
+<path d="M180 318 V104" stroke="#0f172a" fill="none"/>
+<text x="180" y="334" font-size="12" text-anchor="middle" fill="#64748b">입력 x</text>
+<path d="M180 292 H244 V272" stroke="#0f172a" fill="none"/>
+<rect x="218" y="246" width="52" height="24" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="244" y="262" font-size="12" text-anchor="middle" fill="#0f172a">Norm</text>
+<path d="M244 246 V230" stroke="#0f172a" fill="none"/><polygon points="244,223 240,230 248,230" fill="#0f172a"/>
+<rect x="212" y="182" width="64" height="40" rx="5" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="244" y="199" font-size="12" text-anchor="middle" fill="#0f172a">Attn</text>
+<text x="244" y="214" font-size="12" text-anchor="middle" fill="#0f172a">또는 FFN</text>
+<path d="M244 182 V95 H197" stroke="#0f172a" fill="none"/>
+<polygon points="190,95 197,91 197,99" fill="#0f172a"/>
+<circle cx="180" cy="95" r="9" fill="#ffffff" stroke="#0f172a"/>
+<text x="180" y="100" font-size="14" text-anchor="middle" fill="#0f172a">+</text>
+<path d="M180 86 V41" stroke="#0f172a" fill="none"/><polygon points="180,34 176,41 184,41" fill="#0f172a"/>
+<text x="211" y="356" font-size="12" text-anchor="middle" fill="#0f172a">위치 A</text>
+<text x="211" y="374" font-size="12" text-anchor="middle" fill="#64748b">GPT-2 · Llama</text>
+<text x="349" y="20" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">Peri-LN (sandwich)</text>
+<path d="M318 318 V104" stroke="#0f172a" fill="none"/>
+<text x="318" y="334" font-size="12" text-anchor="middle" fill="#64748b">입력 x</text>
+<path d="M318 292 H382 V272" stroke="#0f172a" fill="none"/>
+<rect x="356" y="246" width="52" height="24" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="382" y="262" font-size="12" text-anchor="middle" fill="#0f172a">Norm</text>
+<path d="M382 246 V230" stroke="#0f172a" fill="none"/><polygon points="382,223 378,230 386,230" fill="#0f172a"/>
+<rect x="350" y="182" width="64" height="40" rx="5" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="382" y="199" font-size="12" text-anchor="middle" fill="#0f172a">Attn</text>
+<text x="382" y="214" font-size="12" text-anchor="middle" fill="#0f172a">또는 FFN</text>
+<path d="M382 182 V168" stroke="#0f172a" fill="none"/><polygon points="382,161 378,168 386,168" fill="#0f172a"/>
+<rect x="356" y="137" width="52" height="24" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="382" y="153" font-size="12" text-anchor="middle" fill="#0f172a">Norm</text>
+<path d="M382 137 V95 H335" stroke="#0f172a" fill="none"/>
+<polygon points="328,95 335,91 335,99" fill="#0f172a"/>
+<circle cx="318" cy="95" r="9" fill="#ffffff" stroke="#0f172a"/>
+<text x="318" y="100" font-size="14" text-anchor="middle" fill="#0f172a">+</text>
+<path d="M318 86 V41" stroke="#0f172a" fill="none"/><polygon points="318,34 314,41 322,41" fill="#0f172a"/>
+<text x="349" y="356" font-size="12" text-anchor="middle" fill="#0f172a">위치 A+B</text>
+<text x="349" y="374" font-size="12" text-anchor="middle" fill="#64748b">Gemma 2·3</text>
+<text x="487" y="20" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">출력 정규화</text>
+<path d="M456 318 V104" stroke="#0f172a" fill="none"/>
+<text x="456" y="334" font-size="12" text-anchor="middle" fill="#64748b">입력 x</text>
+<path d="M456 292 H520 V272" stroke="#0f172a" fill="none"/>
+<path d="M520 272 V230" stroke="#0f172a" fill="none"/><polygon points="520,223 516,230 524,230" fill="#0f172a"/>
+<rect x="488" y="182" width="64" height="40" rx="5" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="520" y="199" font-size="12" text-anchor="middle" fill="#0f172a">Attn</text>
+<text x="520" y="214" font-size="12" text-anchor="middle" fill="#0f172a">또는 FFN</text>
+<path d="M520 182 V168" stroke="#0f172a" fill="none"/><polygon points="520,161 516,168 524,168" fill="#0f172a"/>
+<rect x="494" y="137" width="52" height="24" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="520" y="153" font-size="12" text-anchor="middle" fill="#0f172a">Norm</text>
+<path d="M520 137 V95 H473" stroke="#0f172a" fill="none"/>
+<polygon points="466,95 473,91 473,99" fill="#0f172a"/>
+<circle cx="456" cy="95" r="9" fill="#ffffff" stroke="#0f172a"/>
+<text x="456" y="100" font-size="14" text-anchor="middle" fill="#0f172a">+</text>
+<path d="M456 86 V41" stroke="#0f172a" fill="none"/><polygon points="456,34 452,41 460,41" fill="#0f172a"/>
+<text x="487" y="356" font-size="12" text-anchor="middle" fill="#0f172a">위치 B</text>
+<text x="487" y="374" font-size="12" text-anchor="middle" fill="#64748b">OLMo 2</text>
+</svg>
+<figcaption>Sub-layer 하나를 기준으로 비교한 정규화 위치. A는 sub-layer 입력, B는 sub-layer 출력, C는 덧셈 뒤 residual 경로 위다. 예시 모델은 각 공식 보고서와 구현에 따른다.</figcaption>
+</figure>
+
+식으로 쓰면 다음과 같다.
+
+$$
+\text{Post-LN: } x_{\ell+1}=\operatorname{Norm}\big(x_\ell+F(x_\ell)\big)
+$$
+
+$$
+\text{Pre-LN: } x_{\ell+1}=x_\ell+F\big(\operatorname{Norm}(x_\ell)\big)
+$$
+
+$$
+\text{Peri-LN: } x_{\ell+1}=x_\ell+\operatorname{Norm}\Big(F\big(\operatorname{Norm}(x_\ell)\big)\Big)
+$$
+
+Post-LN은 residual 경로 자체를 매번 정규화한다. Pre-LN과 Peri-LN은 residual 경로를 정규화하지 않고 그대로 더해 나가며, 마지막 블록 뒤에 최종 정규화를 한 번 둔다. 02a의 Llama 3 8B 구조도에 있던 "최종 RMSNorm"이 이것이다.
+
+### 2-2. Post-LN의 기울기와 warmup
+
+원 Transformer는 Post-LN이었고, 학습 초기에 learning rate를 0 근처에서 서서히 올리는 warmup이 사실상 필수였다. Xiong 등은 그 이유를 초기화 시점의 기울기 크기로 설명했다.[^xiong] 평균장 이론(mean field theory)으로 분석하면, Post-LN에서는 출력층 근처 파라미터의 기울기 크기가 층 수 $L$과 무관하게 크다. 마지막 FFN 가중치의 기울기 노름 상한이 Post-LN에서는 $O(d\sqrt{\ln d})$이고, Pre-LN에서는 $O\big(d\sqrt{\ln d/L}\big)$로 층이 깊을수록 작아진다(원논문 Theorem 1).
+
+출력층 근처의 기울기가 큰 상태에서 처음부터 큰 learning rate를 쓰면 갱신이 과해진다. Warmup은 이 구간을 작은 learning rate로 지나가게 하는 장치로 볼 수 있다. 원논문 실험에서 Post-LN은 warmup 길이와 learning rate 선택에 민감했다. 같은 조건에서 warmup을 4,000 step 대신 500 step으로 줄이면 성능이 나빠졌다.
+
+반대로 Pre-LN은 초기 기울기가 잘 조절되어, 원논문은 IWSLT14 De-En·WMT14 En-De 번역과 BERT pre-training에서 warmup 없이 Pre-LN을 학습해 비슷한 성능에 더 빨리 도달했다고 보고한다. 이 결과로 Pre-LN이 이후 GPT-2, Llama 등 decoder-only LLM의 기본 배치가 되었다.
+
+<Callout type="warning">
+Xiong 등의 결과는 **초기화 시점의 기울기 분석과 원논문의 실험 설정**에서 warmup을 없앨 수 있음을 보인 것이다. "Pre-LN이면 warmup이 필요 없다"로 일반화하면 안 된다. 대형 Pre-LN 모델도 대부분 warmup을 쓴다. [02c](/lecture/2026f-advanced-deep-learning/02c-pre-training/)에서 본 DeepSeek-V3는 Pre-LN 배치의 RMSNorm을 쓰면서도 처음 2K step 동안 learning rate를 0에서 $2.2\times10^{-4}$까지 선형으로 올린다.[^deepseekv3] Warmup은 정규화 위치 외에도 optimizer 상태의 초기 추정, batch 크기 등 다른 이유와 함께 쓰인다.
+</Callout>
+
+### 2-3. Pre-LN의 새 문제
+
+Pre-LN은 residual 경로를 정규화하지 않는다. 기울기 전달에는 유리하지만, 각 sub-layer의 출력이 residual 경로에 **계속 누적**된다는 뜻이기도 하다. 여기서 두 가지 문제가 보고되었다.
+
+첫째, **hidden state의 크기가 층을 따라 커진다.** Xiong 등은 초기화 시점에서 Pre-LN의 $\lVert x_\ell\rVert^2$ 기대값이 $\ell$에 대해 선형으로 증가함을 보였다(Lemma 2, 대략 $(1+\ell/2)d$와 $(1+3\ell/2)d$ 사이). Post-LN은 매 층 정규화하므로 이 값이 일정하다. Peri-LN 논문은 학습이 진행되면 Pre-LN의 hidden state 분산이 지수적으로 커질 수 있고, sub-layer가 한 번 큰 값을 내면 그 값이 residual 경로를 따라 끝까지 남는다고 관찰했다.[^peri]
+
+둘째, **깊은 층의 기여가 약해진다.** Residual 경로의 크기가 커지면 한 층이 더하는 $F(\operatorname{Norm}(x_\ell))$는 상대적으로 작아진다. 정규화된 입력을 받는 $F$의 출력 크기는 층이 깊어져도 커지지 않기 때문이다. Sun 등은 Llama, Mistral, DeepSeek, Qwen 계열 모델에서 깊은 쪽 층의 상당수가 기대보다 덜 효과적이며, 그 원인을 Pre-LN의 출력 분산 증가로 분석했다.[^curse]
+
+<Callout type="example">
+교육용 단순화로, 입력 $\lVert x_0\rVert^2=d$에서 시작해 각 sub-layer가 서로 무관한 방향으로 크기 $\lVert F\rVert^2=d/2$인 벡터를 더한다고 가정하자. 그러면 $\lVert x_\ell\rVert^2\approx(1+\ell/2)d$이고, $\ell$번째 층이 더하는 벡터의 상대 크기는 $\sqrt{(d/2)/\big((1+\ell/2)d\big)}$다.
+
+| 층 $\ell$ | 1 | 4 | 16 | 64 |
+|---|---|---|---|---|
+| 상대 크기 | 0.577 | 0.408 | 0.236 | 0.123 |
+
+64번째 층의 출력은 residual 경로 크기의 약 12%다. 같은 크기의 업데이트라도 깊은 층일수록 hidden state의 방향을 덜 바꾼다. 실제 학습된 모델의 값이 아니라 Xiong 등의 초기화 분석을 단순화한 계산이다.
+</Callout>
+
+정리하면 Post-LN은 residual 경로의 크기를 묶어 두는 대신 깊은 모델에서 기울기가 불안정했고, Pre-LN은 기울기를 살리는 대신 residual 경로의 크기를 묶지 못한다. 다음 소절의 배치들은 이 둘 사이를 절충하려는 시도다.
+
+### 2-4. Sandwich와 Peri-LN
+
+Pre-LN 입력 정규화(A)는 유지하면서 sub-layer 출력(B)도 정규화하면, 각 층이 residual 경로에 더하는 값의 크기가 묶인다. Residual 경로 자체(C)는 정규화하지 않으므로 Post-LN의 기울기 문제는 피하려는 설계다.
+
+<Details summary="심화: sandwich, Peri-LN, 출력 정규화의 계보">
+
+- **Sandwich-LN.** CogView가 text-to-image Transformer의 학습 불안정을 줄이려고 sub-layer의 입력과 출력 양쪽에 LayerNorm을 둔 배치를 이렇게 불렀다.[^cogview]
+- **출력 정규화(res-post-norm).** Swin Transformer V2는 입력 쪽 정규화를 빼고 sub-layer 출력(B)만 정규화했다.[^swinv2] OLMo 2의 "reordered norm"이 이 배치다. OLMo 2는 $h=x+\operatorname{RMSNorm}(\operatorname{Attn}(x))$, $h_{\text{out}}=h+\operatorname{RMSNorm}(\operatorname{MLP}(h))$로 쓰고, QK-Norm과 함께 적용했을 때 gradient spike가 줄었다고 보고했다.[^olmo2]<Sidenote>OLMo 2 보고서 §2.1의 식 (2)는 MLP 입력을 $x$로 적었지만, §3.3.2의 같은 식과 공개 구현은 중간 상태 $h$를 입력으로 쓴다.</Sidenote>
+- **Peri-LN.** Gemma 2·3이 자세한 분석 없이 쓰던 "pre-norm과 post-norm을 함께" 쓰는 배치[^gemma2]를 Kim 등이 Peri-LN이라 이름 붙이고 분석했다. 입력·출력 정규화에 더해 embedding 정규화와 최종 정규화까지 포함해 정의한다. 3.2B 규모까지의 실험에서 Pre-LN보다 hidden state 분산의 증가가 완만하고 기울기가 안정적이었다고 보고한다.[^peri]
+
+세 배치 모두 "sub-layer 출력을 정규화해 residual 경로에 더해지는 크기를 묶는다"는 공통점이 있다. 입력 정규화를 함께 두느냐와 embedding 정규화의 여부가 다르다.
+
+</Details>
+
+## 3. QK-Norm과 logit soft-capping
+
+§2의 정규화는 블록 단위 입력·출력의 크기를 다루었다. 그 안쪽의 attention에서는 또 다른 크기가 폭주할 수 있다. Softmax에 들어가는 attention logit $q\cdot k/\sqrt{d_h}$다.
+
+### 3-1. Attention logit의 폭주
+
+Pre-LN 블록에서 attention 입력은 정규화되지만, 그 뒤의 $W_Q$·$W_K$ 투영은 학습 중에 커질 수 있다. $q$와 $k$의 노름이 커지면 logit이 커지고, softmax는 거의 one-hot이 된다. ViT-22B를 학습하던 Dehghani 등은 약 8B 파라미터 규모에서 수천 step 뒤 loss가 발산하는 현상을 보고했다. 원인은 매우 큰 attention logit으로, attention weight가 거의 one-hot이 되어 엔트로피가 0에 가까워졌다.[^vit22b] Wortsman 등은 learning rate를 높이면 작은 모델에서도 같은 불안정(attention logit growth)이 재현됨을 보였다.[^wortsman]
+
+<Callout type="example">
+한 query가 key 세 개에 대해 logit $(2, 1, 0)$을 낸다고 하자. Softmax는 약 $(0.665, 0.245, 0.090)$이다. 학습 중 $q$와 $k$의 노름이 각각 3배가 되면 logit은 9배인 $(18, 9, 0)$이 되고 softmax는 약 $(0.99988, 0.00012, 0.00000)$이 된다. 방향은 그대로인데 크기만 커져도 분포의 엔트로피가 0.83에서 0.001로 떨어진다. 이 상태에서는 선택되지 않은 key 쪽으로 기울기가 거의 흐르지 않는다.
+</Callout>
+
+이 문제에는 두 갈래의 해법이 있다. Logit의 **재료**인 $q$·$k$의 크기를 정규화하는 QK-Norm과, 계산된 logit의 **결과값**을 부드럽게 자르는 soft-capping이다.
+
+### 3-2. QK-Norm
+
+QK-Norm은 attention logit을 계산하기 전에 query와 key에 정규화를 적용한다. ViT-22B는 LayerNorm을 썼고, 최근 LLM은 주로 RMSNorm을 쓴다.[^vit22b]
+
+$$
+\text{logit}_{ij}=\frac{\operatorname{Norm}(q_i)\cdot\operatorname{Norm}(k_j)}{\sqrt{d_h}}
+$$
+
+Gain이 1인 RMSNorm을 head 차원 $d_h$에 적용하면 정규화된 벡터의 노름은 $\sqrt{d_h}$다. Cauchy–Schwarz 부등식으로 $|\text{logit}|\le\sqrt{d_h}\cdot\sqrt{d_h}/\sqrt{d_h}=\sqrt{d_h}$이므로, $d_h=128$이면 logit의 절댓값이 약 11.3을 넘지 않는다. 학습되는 gain이 커지면 이 상한도 커지지만, logit의 규모가 $W_Q$·$W_K$와 입력 전체가 아니라 gain 파라미터를 통해서만 바뀐다는 점이 다르다.
+
+구현 세부는 모델마다 다르다. Qwen3와 Gemma 3의 공개 구현은 head마다 $d_h$ 차원에 정규화를 적용하고, OLMo 2는 여러 head를 합친 query·key 투영 전체에 적용한다.[^hfimpl] 이 구현들은 모두 RoPE를 적용하기 전에 정규화한다.
+
+### 3-3. Logit soft-capping
+
+Soft-capping은 logit이 정해진 범위를 넘지 않도록 $\tanh$로 감싼다.
+
+$$
+\text{logit}\leftarrow c\cdot\tanh(\text{logit}/c)
+$$
+
+작은 logit은 거의 그대로 두고, 큰 logit은 $\pm c$ 쪽으로 눌러 담는다. Gemma 2는 self-attention logit에 $c=50$, 최종 출력 logit에 $c=30$을 썼다.[^gemma2]
+
+| 원래 logit | 10 | 30 | 50 | 100 | 200 |
+|---|---|---|---|---|---|
+| $c=50$ 적용 후 | 9.87 | 26.85 | 38.08 | 48.20 | 49.97 |
+
+10은 거의 그대로이고 100과 200은 둘 다 50 가까이에 머문다. 상한이 50이면 §3-1 예시와 같은 one-hot 분포는 여전히 가능하다. Soft-capping은 분포를 평평하게 만드는 장치라기보다 logit이 무한히 커지는 것을 막는 장치다.
+
+두 해법은 같은 문제의 다른 지점을 건드린다. Gemma 3는 Gemma 2의 soft-capping을 QK-Norm으로 교체했다고 밝힌다.[^gemma3]
+
+## 4. Attention sink
+
+§3은 attention logit의 전체 규모가 커지는 문제였다. 이 절의 attention sink는 **특정 토큰 위치에 attention weight가 집중되는 현상**이다. 학습이 발산하지 않은 정상 모델에서도 관측된다. 관측된 사실, 원인에 대한 가설, 대응 방법을 구분해 읽어야 한다. 활용·해석·완화의 세 방향으로 관련 연구를 정리한 서베이도 있다.[^sinksurvey]
+
+### 4-1. 관측
+
+Xiao 등은 Llama-2-7B의 attention map에서, 아래 두 층을 지나면 거의 모든 층과 head가 **첫 토큰**에 큰 attention을 주는 것을 관찰했다.[^streamingllm] 첫 토큰의 내용이 그 문맥에서 중요하지 않아도 그렇다.
+
+<Figure src="https://arxiv.org/html/2309.17453v4/attention_weights.png" alt="Llama-2-7B의 평균 attention logit 지도 여섯 개. Layer 0과 Layer 1의 head 0은 대각선 근처, 즉 최근 토큰 쪽 값이 크다. Layer 2, 9, 16, 23, 31의 head 0은 모든 query 행에서 첫 번째 열, 즉 첫 토큰의 값이 두드러지게 크다." caption="길이 16인 문장 256개에 대한 Llama-2-7B의 평균 attention logit. 가로축은 key 위치, 세로축은 query 위치다. Layer 2부터 첫 열(첫 토큰)이 두드러진다." source="Xiao et al. · Efficient Streaming Language Models with Attention Sinks, Figure 2 · CC BY 4.0 · 수정 없음" />
+
+이 현상은 실제 동작에도 영향을 준다. 최근 토큰만 KV cache에 남기는 window attention으로 긴 텍스트를 처리하면, 첫 토큰들이 cache에서 밀려나는 순간 perplexity가 급증했다. Llama-2-13B에서 최근 1,024 토큰만 남기면 perplexity가 5158.07이었지만, 처음 4 토큰을 함께 남기면(4+1020) 5.40으로 돌아왔다. 처음 4 토큰을 줄바꿈 토큰 `\n`으로 바꾸어도 5.60으로 거의 회복되었다. 첫 토큰의 **의미**보다 **위치**가 중요하다는 증거다.
+
+Gu 등은 이 현상이 다양한 입력과 작은 모델을 포함한 여러 자기회귀 언어모델에서 나타나며, pre-training 도중 충분한 데이터로 효과적으로 최적화된 뒤에 생긴다고 보고했다.[^gu] 학습 데이터에서 특정 위치에 고정 토큰을 두면 sink가 그 위치로 옮겨 가기도 했다.
+
+### 4-2. 원인 가설
+
+아래는 관측을 설명하려는 가설이며, 각 논문의 실험 범위에서 뒷받침된 것이다.
+
+**Softmax의 합이 1이라는 제약.** Softmax attention은 모든 key에 대한 weight의 합이 1이다. 현재 토큰이 다른 위치에서 가져올 정보가 없어도 weight를 어딘가에 배분해야 한다. Xiao 등은 모델이 이 "남는" attention을 특정 토큰에 버리도록 학습한다고 설명했다. 첫 토큰은 causal mask에서 모든 뒤 토큰이 볼 수 있는 유일한 위치이므로 이 역할을 맡기 쉽다.[^streamingllm]
+
+**Key bias처럼 동작하는 sink.** Gu 등은 첫 토큰의 key가 다른 토큰과 다른 영역에 놓이고 value의 노름은 작다는 것을 보였다. 즉 sink는 attention score를 저장하되 출력에는 거의 기여하지 않는 **key bias**처럼 작동한다. Softmax 대신 정규화하지 않는 sigmoid attention을 쓰면 1B 파라미터까지의 실험에서 sink가 생기지 않았다.[^gu]
+
+<Callout type="example">
+한 head에서 query가 key 세 개에 logit $(0.1, 0, -0.1)$을 준다고 하자. 셋 다 관련이 없어서 logit이 비슷하다. Softmax는 약 $(0.367, 0.332, 0.301)$로, 관련 없는 value 세 개를 거의 균등하게 섞어 출력에 더한다.
+
+이번에는 첫 위치에 sink 역할의 토큰이 있고 그 logit이 3이라고 하자. $(3, 0.1, 0, -0.1)$의 softmax는 약 $(0.870, 0.048, 0.043, 0.039)$다. Weight의 87%가 sink로 가고, sink의 value 노름이 작다면 이 head의 출력은 거의 0에 가까워진다. Head가 "이번에는 아무것도 가져오지 않는다"를 표현하는 방법이 된다.
+</Callout>
+
+**Massive activation과의 관계.** Sun 등은 LLM의 hidden state에서 극소수의 성분이 다른 값보다 매우 큰(예: 10만 배) **massive activation**을 보고했다.[^massive] Llama2-7B에서는 특정 두 feature 차원에서, 시작 토큰과 첫 마침표나 줄바꿈 같은 토큰에 나타난다. 이것은 attention weight가 아니라 **residual stream의 활성값**이라는 다른 관측량이다. Sun 등은 massive activation이 해당 토큰으로 attention을 끌어당긴다고 분석했고, Gu 등도 Llama 3 8B에서 첫 토큰의 hidden state 노름이 크다는 것을 재현했다. 하지만 두 현상이 늘 함께 가는 것은 아니다. Qiu 등의 실험에서는 massive activation만 줄이고 첫 토큰으로의 attention은 줄지 않는 설정이 있었고, 저자들은 massive activation이 attention sink의 전제 조건은 아니라고 해석했다.[^gated] §2-3에서 본 Pre-LN의 residual 경로 크기 문제와도 연결해 논의되지만,[^peri] 인과 관계는 아직 정리되지 않았다.
+
+### 4-3. 대응
+
+대응은 이미 학습된 모델에서 sink를 **보존**하는 방법과, 학습 단계에서 sink 역할을 **전용 장치**에 맡기거나 필요 자체를 줄이는 방법으로 나뉜다.
+
+**추론 시 초기 KV 보존(StreamingLLM).** 첫 토큰을 cache에서 빼면 softmax 분모의 큰 몫이 사라져 나머지 weight가 크게 달라진다. 예를 들어 logit이 $(4, 0, 0, 0)$일 때 나머지 세 토큰의 weight는 각각 0.017이지만, 첫 토큰을 빼면 각각 0.333이 된다. StreamingLLM은 처음 몇 토큰(보통 4개)의 KV와 최근 토큰의 KV를 함께 유지해, 길이 제한 없이 안정적으로 생성한다.[^streamingllm] 원논문은 Llama-2, MPT, Falcon, Pythia로 400만 토큰까지 안정적으로 언어 모델링했다고 보고한다.
+
+<Figure src="https://arxiv.org/html/2309.17453v4/scheme.png" alt="네 가지 attention 방식 비교. (a) Dense attention은 모든 T개 토큰을 cache에 두어 O(T²) 비용이고 긴 텍스트에서 perplexity가 5641이다. (b) Window attention은 최근 L개 토큰만 남겨 O(TL)이지만 첫 토큰이 밀려나면 perplexity가 5158로 무너진다. (c) Re-computation을 쓰는 sliding window는 perplexity 5.43이지만 토큰마다 cache를 다시 계산해 O(TL²)다. (d) StreamingLLM은 attention sink인 처음 몇 토큰과 최근 L개 토큰을 유지해 O(TL) 비용으로 perplexity 5.40을 얻는다." caption="StreamingLLM과 기존 방식의 비교. (d)의 노란 칸이 보존하는 초기 토큰(attention sink)이다. PPL은 원논문이 긴 텍스트에서 측정한 예시 값이다." source="Xiao et al. · Efficient Streaming Language Models with Attention Sinks, Figure 1 · CC BY 4.0 · 수정 없음" />
+
+StreamingLLM은 문맥 길이를 늘리는 방법이 아니다. 밀려난 중간 토큰의 정보는 여전히 볼 수 없고, 긴 생성에서 분포가 무너지지 않게 할 뿐이다. KV cache 관리 전반은 6주차에서 다룬다.
+
+**학습 시 전용 sink.** Sink가 필요하다면 처음부터 그 자리를 따로 마련할 수 있다.
+
+- *Sink token.* Xiao 등은 모든 학습 샘플 앞에 학습 가능한 토큰 하나를 붙여 160M 모델을 학습했고, 이 모델은 streaming 시 그 토큰 하나만 남겨도 충분했다.[^streamingllm]
+- *학습되는 attention bias.* Sun 등은 head마다 학습 가능한 key·value 벡터 $k',v'$를 attention에 추가하면 massive activation이 나타나지 않았다고 보고했다.[^massive] Gu 등은 key bias만 있어도 sink가 첫 토큰 대신 bias로 옮겨 간다는 것을 보였다.[^gu]
+- *Learned sink logit(gpt-oss).* gpt-oss는 각 attention head가 softmax 분모에 학습된 bias를 하나 가져, 어떤 토큰에도 attention을 주지 않을 수 있게 했다.[^gptoss] 공식 구현에서는 head마다 스칼라 $s$ 하나를 logit 목록 끝에 붙여 softmax를 계산한 뒤 그 자리의 weight를 버린다.[^gptossimpl] 위 예시의 logit 3짜리 sink 토큰을, value 없이 logit만 있는 파라미터로 바꾼 셈이다. 이는 분모에 1을 더하는 softmax-off-by-one을 일반화한 형태이기도 하다.
+
+$$
+w_j=\frac{\exp(\text{logit}_j)}{\exp(s)+\sum_{m}\exp(\text{logit}_m)},\qquad \sum_j w_j\lt 1
+$$
+
+**Gated attention.** Qiu 등은 softmax attention 출력(SDPA, scaled dot-product attention의 출력)에 head별 sigmoid gate를 곱하는 방식을 여러 위치의 gate와 비교했다.[^gated]
+
+$$
+Y'=Y\odot\sigma(XW_\theta)
+$$
+
+$Y$는 head별 attention 출력, $X$는 pre-normalization을 거친 블록 입력, $W_\theta$는 gate의 파라미터다. Gate가 0에 가까우면 head 출력이 줄어들므로, "가져올 정보가 없다"를 sink에 attention을 버리는 대신 gate로 표현할 수 있다. 원논문의 baseline에서는 층 평균으로 attention의 46.7%가 첫 토큰에 갔지만, SDPA 출력에 원소별 gate를 둔 모델에서는 4.8%로 줄었다. 같은 연구는 학습 안정성과 긴 문맥 외삽 성능의 개선도 보고한다.
+
+<Callout type="note">
+여기의 gate는 **softmax attention의 출력**에 곱하는 gate다. [03c](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/)의 Gated DeltaNet에서 gate는 linear attention의 **recurrent 상태**를 얼마나 잊을지 정한다. 둘 다 sigmoid류 gate를 곱하지만 적용 대상과 목적이 다르다. Qwen3-Next처럼 두 종류를 한 모델에서 함께 쓰는 경우도 있다.
+</Callout>
+
+Sink를 어떻게 다루든, 이미 sink에 의존하도록 학습된 모델에서 그 장치를 빼는 것은 별개 문제다. Gu 등은 학습 가능한 sink token이나 KV bias로 학습한 모델에서 그것을 제거하면 성능이 크게 떨어졌다고 보고했다.[^gu] Sink는 학습된 모델에서 계산의 일부로 쓰이는 구조라 보는 편이 안전하다.
+
+## 5. 최근 모델의 선택
+
+아래 표는 공식 기술 보고서와 공개 구현에서 확인한 norm 위치, attention logit 규모 제어, attention 출력 gate만 정리한 것이다. 정규화 연산은 모두 RMSNorm이다.
+
+| 모델 | 블록 정규화 위치 | Attention logit 규모 제어 | Attention 출력 gate |
+|---|---|---|---|
+| Llama 3 8B | Pre-LN (A) | 없음 | 없음 |
+| Gemma 2 | Pre + Post (A+B) | Soft-capping, $c=50$ | 없음 |
+| Gemma 3 | Pre + Post (A+B) | QK-Norm (soft-capping 대체) | 없음 |
+| OLMo 2 | 출력만 (B) | QK-Norm | 없음 |
+| Qwen3 | Pre-LN (A) | QK-Norm | 없음 |
+| Qwen3-Next | Pre-LN (A) | QK-Norm | SDPA 출력의 원소별 sigmoid gate |
+| gpt-oss | Pre-LN (A) | 없음 | 없음 |
+
+출처는 Llama 3 공식 구현,[^llamaimpl] Gemma 2·3 보고서,[^gemma2][^gemma3] OLMo 2 보고서,[^olmo2] Qwen3 보고서,[^qwen3] Qwen3-Next 모델 카드와 공개 구현,[^qwen3next] gpt-oss 모델 카드다.[^gptoss] Qwen3-Next의 gate와 QK-Norm은 표준 softmax attention 층(Gated Attention 층)에 해당한다. 공개 구현은 query 투영을 두 배 폭으로 만들어 절반을 gate로 쓴다. Gated DeltaNet 층의 구성은 03c에서 다룬다. gpt-oss의 learned sink는 §4-3에서 설명했다.
+
+표에서 보이듯 Pre-LN이 여전히 흔하지만, Gemma와 OLMo 2처럼 sub-layer 출력을 정규화하는 배치도 쓰인다. Attention logit 쪽에서는 QK-Norm을 쓰는 모델이 늘었고, Gemma는 soft-capping에서 QK-Norm으로 옮겨 갔다. 각 선택은 그 모델의 학습 안정성 실험에 근거한 것이며, 어느 조합이 모든 규모에서 낫다는 비교는 아니다.
+
+[^normsurvey]: Huang, L., Qin, J., Zhou, Y., Zhu, F., Liu, L., & Shao, L. (2023). *Normalization Techniques in Training DNNs: Methodology, Analysis and Application*. IEEE Transactions on Pattern Analysis and Machine Intelligence, 45(8), 10173–10196. [arXiv:2009.12836](https://arxiv.org/abs/2009.12836).
+[^layernorm]: Ba, J. L., Kiros, J. R., & Hinton, G. E. (2016). *Layer Normalization*. [arXiv:1607.06450](https://arxiv.org/abs/1607.06450).
+[^rmsnorm]: Zhang, B., & Sennrich, R. (2019). *Root Mean Square Layer Normalization*. NeurIPS 2019. [arXiv:1910.07467](https://arxiv.org/abs/1910.07467).
+[^vit22b]: Dehghani, M., et al. (2023). *Scaling Vision Transformers to 22 Billion Parameters*. ICML 2023. [arXiv:2302.05442](https://arxiv.org/abs/2302.05442).
+[^olmo2]: OLMo Team, et al. (2025). *2 OLMo 2 Furious*. COLM 2025. [arXiv:2501.00656](https://arxiv.org/abs/2501.00656).
+[^peri]: Kim, J., et al. (2025). *Peri-LN: Revisiting Normalization Layer in the Transformer Architecture*. ICML 2025. [arXiv:2502.02732](https://arxiv.org/abs/2502.02732).
+[^xiong]: Xiong, R., et al. (2020). *On Layer Normalization in the Transformer Architecture*. ICML 2020. [arXiv:2002.04745](https://arxiv.org/abs/2002.04745).
+[^deepseekv3]: DeepSeek-AI. (2024). *DeepSeek-V3 Technical Report*. [arXiv:2412.19437](https://arxiv.org/abs/2412.19437).
+[^curse]: Sun, W., Song, X., Li, P., Yin, L., Zheng, Y., & Liu, S. (2025). *The Curse of Depth in Large Language Models*. NeurIPS 2025. [arXiv:2502.05795](https://arxiv.org/abs/2502.05795).
+[^cogview]: Ding, M., et al. (2021). *CogView: Mastering Text-to-Image Generation via Transformers*. NeurIPS 2021. [arXiv:2105.13290](https://arxiv.org/abs/2105.13290).
+[^swinv2]: Liu, Z., et al. (2022). *Swin Transformer V2: Scaling Up Capacity and Resolution*. CVPR 2022. [arXiv:2111.09883](https://arxiv.org/abs/2111.09883).
+[^gemma2]: Gemma Team. (2024). *Gemma 2: Improving Open Language Models at a Practical Size*. [arXiv:2408.00118](https://arxiv.org/abs/2408.00118).
+[^wortsman]: Wortsman, M., et al. (2024). *Small-scale proxies for large-scale Transformer training instabilities*. ICLR 2024. [arXiv:2309.14322](https://arxiv.org/abs/2309.14322).
+[^hfimpl]: Hugging Face. (2025). *Transformers*. [modeling_qwen3.py](https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3/modeling_qwen3.py), [modeling_gemma3.py](https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma3/modeling_gemma3.py), [modeling_olmo2.py](https://github.com/huggingface/transformers/blob/main/src/transformers/models/olmo2/modeling_olmo2.py).
+[^gemma3]: Gemma Team. (2025). *Gemma 3 Technical Report*. [arXiv:2503.19786](https://arxiv.org/abs/2503.19786).
+[^sinksurvey]: Su, Z., et al. (2026). *Attention Sink in Transformers: A Survey on Utilization, Interpretation, and Mitigation*. [arXiv:2604.10098](https://arxiv.org/abs/2604.10098).
+[^streamingllm]: Xiao, G., Tian, Y., Chen, B., Han, S., & Lewis, M. (2024). *Efficient Streaming Language Models with Attention Sinks*. ICLR 2024. [arXiv:2309.17453](https://arxiv.org/abs/2309.17453).
+[^gu]: Gu, X., et al. (2025). *When Attention Sink Emerges in Language Models: An Empirical View*. ICLR 2025. [arXiv:2410.10781](https://arxiv.org/abs/2410.10781).
+[^massive]: Sun, M., Chen, X., Kolter, J. Z., & Liu, Z. (2024). *Massive Activations in Large Language Models*. COLM 2024. [arXiv:2402.17762](https://arxiv.org/abs/2402.17762).
+[^gated]: Qiu, Z., et al. (2025). *Gated Attention for Large Language Models: Non-linearity, Sparsity, and Attention-Sink-Free*. NeurIPS 2025. [arXiv:2505.06708](https://arxiv.org/abs/2505.06708).
+[^gptoss]: OpenAI. (2025). *gpt-oss-120b & gpt-oss-20b Model Card*. [arXiv:2508.10925](https://arxiv.org/abs/2508.10925).
+[^gptossimpl]: OpenAI. (2025). *gpt-oss reference implementation*. [gpt_oss/torch/model.py](https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py).
+[^llamaimpl]: Meta. (2024). *Llama 3 reference implementation*. [model.py](https://github.com/meta-llama/llama3/blob/main/llama/model.py).
+[^qwen3]: Qwen Team. (2025). *Qwen3 Technical Report*. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
+[^qwen3next]: Qwen Team. (2025). *Qwen3-Next-80B-A3B-Instruct*. [모델 카드](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct), [modeling_qwen3_next.py](https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3_next/modeling_qwen3_next.py).

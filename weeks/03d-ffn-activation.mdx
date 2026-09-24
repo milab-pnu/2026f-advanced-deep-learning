@@ -1,0 +1,396 @@
+---
+title: "FFN activations"
+week: 3
+order: 3
+---
+
+원래 Transformer의 FFN(feed-forward network)은 행렬 두 개 사이에 ReLU를 둔 구조였다. Llama 3 8B의 FFN은 두 가지 점에서 다르다. 가운데 활성화 함수의 모양이 바뀌었고(ReLU → GELU·SiLU), 한 입력 투영의 출력으로 다른 투영의 출력을 원소별로 조절하는 **곱셈 gating**이 들어왔다(GLU → SwiGLU·GeGLU). 활성화 함수 전반은 400여 개를 정리한 Kunc와 Kléma의 서베이[^survey]가 가장 넓은 목록을 제공하는데, 이 노트와 겹치는 범위는 §3.3(SiLU와 GELU), §3.4(GLU 계열), §3.6(ReLU)이다.
+
+두 변화는 동기가 다르다. 앞의 것은 "같은 값으로 만든 gate의 모양"을, 뒤의 것은 "gate를 별도 투영으로 만드는 구조"를 바꾼다. 이 노트는 두 축을 따로 따라간 뒤 SwiGLU에서 만나는 지점을 보고, 행렬이 셋으로 늘면서 생긴 폭 조정 문제를 Llama 3 8B의 실제 중간 폭 14336으로 계산한다.
+
+<figure>
+<svg viewBox="0 0 560 318" role="img" aria-label="FFN 활성화 계보의 두 축. 위쪽 축 1은 활성화 모양의 선택으로, ReLU max(0, x)에서 GELU x 곱하기 Phi(x)와 SiLU x 곱하기 sigma(x)로 간다. 화살표에 붙은 기존 방식의 문제는 음수 입력의 기울기 0, 0에서 꺾임, 부호만 보고 통과와 차단을 정하는 것이다. 아래쪽 축 2는 곱셈 gating의 도입으로, 행렬 2개 FFN에서 GLU sigma(xW) 곱하기 xV로, 다시 gate 함수를 바꾼 병렬 변형 ReGLU, GeGLU, SwiGLU로 간다. 첫 화살표의 문제는 gate와 전달 값이 같은 투영에서 정해진다는 것이다. 축 1의 GELU와 SiLU가 축 2의 gate 함수 자리에 들어가며 두 축이 합류한다. SwiGLU는 SiLU를 gate 함수로 쓴 GLU다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<text x="280" y="22" font-size="17" text-anchor="middle" fill="#0f172a" font-weight="600">FFN 활성화의 두 축</text>
+<text x="16" y="52" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">축 1 · 활성화 모양 (자기 값으로 만든 gate)</text>
+<rect x="16" y="62" width="160" height="66" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="96" y="84" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">ReLU</text>
+<text x="96" y="103" font-size="13" text-anchor="middle" fill="#0f172a">max(0, x)</text>
+<text x="96" y="120" font-size="11" text-anchor="middle" fill="#64748b">Nair, Hinton 2010</text>
+<rect x="384" y="62" width="160" height="66" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="464" y="84" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">GELU · SiLU</text>
+<text x="464" y="103" font-size="13" text-anchor="middle" fill="#0f172a">x·Φ(x) · x·σ(x)</text>
+<text x="464" y="120" font-size="11" text-anchor="middle" fill="#64748b">Hendrycks, Gimpel 2016</text>
+<path d="M176 95 H377" stroke="#0f172a" fill="none"/><polygon points="384,95 377,91 377,99" fill="#0f172a"/>
+<text x="280" y="88" font-size="12" text-anchor="middle" fill="#0f172a">음수 기울기 0 · 0에서 꺾임</text>
+<text x="280" y="112" font-size="11" text-anchor="middle" fill="#64748b">부호만 보고 통과·차단</text>
+<text x="16" y="178" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">축 2 · 곱셈 gating (별도 투영으로 만든 gate)</text>
+<rect x="16" y="188" width="160" height="66" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="96" y="210" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">행렬 2개 FFN</text>
+<text x="96" y="229" font-size="13" text-anchor="middle" fill="#0f172a">act(xW₁) W₂</text>
+<text x="96" y="246" font-size="11" text-anchor="middle" fill="#64748b">Vaswani 2017</text>
+<rect x="200" y="188" width="160" height="66" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="280" y="210" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">GLU</text>
+<text x="280" y="229" font-size="13" text-anchor="middle" fill="#0f172a">σ(xW) ⊗ xV</text>
+<text x="280" y="246" font-size="11" text-anchor="middle" fill="#64748b">Dauphin 2017</text>
+<rect x="384" y="188" width="160" height="66" rx="6" fill="#f8fafc" stroke="#0f172a"/>
+<text x="464" y="210" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">GLU 변형 (병렬)</text>
+<text x="464" y="229" font-size="12" text-anchor="middle" fill="#0f172a">ReGLU · GeGLU · SwiGLU</text>
+<text x="464" y="246" font-size="11" text-anchor="middle" fill="#64748b">f(xW) ⊗ xV · Shazeer 2020</text>
+<path d="M176 221 H193" stroke="#0f172a" fill="none"/><polygon points="200,221 193,217 193,225" fill="#0f172a"/>
+<path d="M360 221 H377" stroke="#0f172a" fill="none"/><polygon points="384,221 377,217 377,225" fill="#0f172a"/>
+<text x="188" y="274" font-size="11" text-anchor="middle" fill="#64748b">gate와 값이 같은 투영</text>
+<text x="372" y="274" font-size="11" text-anchor="middle" fill="#64748b">gate 함수 교체</text>
+<path d="M464 128 V181" stroke="#0f172a" fill="none" stroke-dasharray="4 3"/><polygon points="464,188 460,181 468,181" fill="#0f172a"/>
+<text x="456" y="160" font-size="11" text-anchor="end" fill="#64748b">gate 함수로 대입</text>
+<text x="280" y="304" font-size="13" text-anchor="middle" fill="#0f172a">SwiGLU = SiLU를 gate 함수로 쓴 GLU</text>
+</svg>
+<figcaption>이 노트의 계보를 직접 구성한 도식. 화살표 아래의 문구는 기존 방식의 문제이고, 점선은 축 1의 선택이 축 2의 gate 함수 자리에 들어가는 합류를 나타낸다. 연도는 각 방식을 제시하거나 이름 붙인 논문 기준이다.</figcaption>
+</figure>
+
+## 1. FFN의 역할
+
+[1주차 Transformer 노트](/lecture/2026f-advanced-deep-learning/01a-transformer/)의 FFN을 다시 쓰면 다음과 같다. 토큰 벡터 하나를 행벡터 $x\in\mathbb{R}^{1\times d}$로 둔다.
+
+$$
+\operatorname{FFN}(x)=\max(0,\;xW_1+b_1)\,W_2+b_2,\qquad W_1\in\mathbb{R}^{d\times d_{\text{ff}}},\;W_2\in\mathbb{R}^{d_{\text{ff}}\times d}
+$$
+
+원래 Transformer는 $d_{\text{ff}}=4d$로 두어 벡터를 네 배 넓혔다가 다시 좁힌다. 같은 가중치를 모든 위치에 따로 적용하므로 FFN은 위치 사이의 정보를 섞지 않는다. [2주차 노트](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/)의 표현대로 attention이 위치 사이의 정보를 모으고, FFN은 모인 결과를 토큰마다 비선형 변환한다.<Sidenote>FFN의 두 행렬을 key–value memory로 읽는 해석도 있다. $W_1$의 각 열이 입력 패턴을 감지하는 key, $W_2$의 대응하는 행이 출력에 더할 value 역할을 한다는 관찰이다.[^geva]</Sidenote>
+
+가운데 활성화가 빠지면 넓히는 의미가 사라진다. 두 선형 변환의 합성 $xW_1W_2$는 $d\times d$ 행렬 하나 $W_1W_2$를 곱하는 것과 같기 때문이다. 이 노트에서 바꿔 가는 부분이 바로 이 가운데 비선형 부분과, 그 앞의 입력 투영이다.
+
+FFN은 LLM 파라미터의 큰 몫을 차지한다. Llama 3 8B의 공식 설정($d=4096$, 층 32개, key–value head 8개 × 128차원, 중간 폭 14336, vocabulary 128256)으로 직접 세어 보자.[^llama3][^llamacode]
+
+| 부분 | 계산 | 파라미터 수 |
+|---|---|---|
+| Attention (층당) | $2\cdot4096^2+2\cdot4096\cdot1024$ | 41,943,040 |
+| FFN (층당) | $3\cdot4096\cdot14336$ | 176,160,768 |
+| Attention 32층 | | 1,342,177,280 |
+| FFN 32층 | | 5,637,144,576 |
+| Embedding + LM head | $2\cdot128256\cdot4096$ | 1,050,673,152 |
+| RMSNorm | $(2\cdot32+1)\cdot4096$ | 266,240 |
+| 합계 | | 8,030,261,248 |
+
+FFN이 전체의 약 70%, embedding을 뺀 블록 파라미터의 약 81%다. 행렬 곱의 연산량도 토큰당 가중치 하나에 곱셈·덧셈 두 번이므로 파라미터 수에 비례한다(시퀀스 길이에 따라 늘어나는 attention score 계산은 따로다). FFN 설계의 작은 선택이 모델 전체의 크기와 연산량에 직접 반영되는 이유다. 표의 FFN이 행렬 세 개로 계산된 까닭은 §3에서, 14336이라는 값은 §4에서 다룬다.
+
+## 2. ReLU와 GELU
+
+첫 번째 축은 가운데 활성화 함수의 모양이다. 여기서는 모든 함수를 "입력 $x$에 gate 값 $g(x)\in[0,1]$을 곱한다"는 한 형식으로 읽는다. 이 형식은 GELU 논문이 ReLU와 GELU를 비교할 때 쓴 관점이다.[^gelu]
+
+### 2-1. ReLU의 hard gating
+
+ReLU(rectified linear unit)는 Nair와 Hinton이 restricted Boltzmann machine의 은닉 단위로 쓰면서 널리 알려졌다.[^nair] 위의 형식으로 쓰면 gate가 계단 함수다.
+
+$$
+\operatorname{ReLU}(x)=\max(0,x)=x\cdot\mathbf{1}[x>0]
+$$
+
+양수 입력에서 기울기가 정확히 1이라, 활성화된 단위를 따라가는 경로에서는 층을 거듭해도 기울기가 줄어들지 않는다.[^maas] Sigmoid나 tanh에 비해 깊은 망을 학습시키기 쉬웠던 이유로 흔히 이 점이 꼽힌다.[^swish] 같은 모양이 세 가지 성질도 함께 가져온다.
+
+- **음수 입력의 기울기가 0이다.** Maas 등은 비활성 단위의 기울기가 0이므로, 처음부터 한 번도 활성화되지 않는 단위는 gradient 기반 최적화로 가중치가 갱신되지 않을 수 있다고 지적했다.[^maas] 서베이는 이를 "dead" 뉴런 문제로 정리한다(§3.6).
+- **0에서 꺾인다.** 도함수가 0에서 1로 불연속하게 뛰므로 $x=0$에서 미분할 수 없다. Nair와 Hinton도 역전파에서는 $x\le0$일 때 기울기를 0, $x>0$일 때 1로 정하고 불연속점은 무시했다.[^nair]
+- **부호만 보고 통과와 차단을 정한다.** GELU 논문의 표현으로 ReLU는 입력을 부호에 따라 gate한다.[^gelu] $-0.01$과 $-3$은 똑같이 0이 되고, $0.01$은 그대로 통과한다.
+
+입력 네 개 $x=(-3,\,-0.01,\,0.01,\,2)$로 확인하면 출력은 $(0,\,0,\,0.01,\,2)$, 기울기는 $(0,\,0,\,1,\,1)$이다. 0 근처의 두 값은 크기가 0.02밖에 차이 나지 않지만 기울기는 0과 1로 갈린다.
+
+<Callout type="note">
+세 성질이 곧 결함인 것은 아니다. 정확한 0 출력은 희소한 표현을 만들고, Maas 등은 이것이 분류기의 입력 특징으로는 이로울 수 있다고 보았다.[^maas] §5에서 보듯 ReLU를 제곱한 형태를 쓰는 최근 LLM도 있다. 아래의 발전은 이 성질들을 다르게 절충한 선택으로 읽는 편이 정확하다.
+</Callout>
+
+### 2-2. GELU와 SiLU
+
+Hendrycks와 Gimpel은 ReLU와 dropout이 모두 입력에 0 또는 1을 곱한다는 공통점에서 출발했다.[^gelu] ReLU는 부호로 0/1을 정하고, dropout은 입력과 무관하게 무작위로 0을 곱한다. 두 성질을 합쳐 **입력이 작을수록 0이 될 확률이 높은 무작위 mask** $m\sim\operatorname{Bernoulli}(\Phi(x))$를 생각하면, 출력 $mx$의 기대값이 GELU(Gaussian error linear unit)다. $\Phi$는 표준정규분포의 누적분포함수다.
+
+$$
+\operatorname{GELU}(x)=\mathbb{E}[mx]=\Phi(x)\cdot x+(1-\Phi(x))\cdot0=x\,\Phi(x)
+$$
+
+gate가 계단 함수 $\mathbf{1}[x>0]$에서 매끄러운 $\Phi(x)$로 바뀐 것이다. 논문은 이를 두고 GELU가 입력을 부호가 아니라 값의 크기에 따라 가중한다고 설명한다. 같은 논문은 $\Phi$ 대신 logistic sigmoid $\sigma$를 쓴 SiLU(sigmoid linear unit) $x\,\sigma(x)$도 함께 제시했고, 빠른 계산을 위한 두 근사식도 주었다.
+
+$$
+\operatorname{GELU}(x)\approx0.5x\left(1+\tanh\left[\sqrt{2/\pi}\,(x+0.044715x^3)\right]\right)\approx x\,\sigma(1.702x)
+$$
+
+Ramachandran 등은 자동 탐색으로 $x\,\sigma(\beta x)$ 꼴을 찾아 Swish라고 불렀다.[^swish] $\beta=1$이면 SiLU와 같고, $\beta\to\infty$이면 ReLU에 가까워지며, $\beta=0$이면 $x/2$가 된다. 두 번째 근사식을 보면 GELU도 $\beta\approx1.702$인 Swish에 가깝다. 세 함수는 결국 gate $g(x)$의 모양만 다르다.
+
+| $x$ | ReLU | GELU | SiLU | ReLU′ | GELU′ | SiLU′ |
+|---|---|---|---|---|---|---|
+| −3 | 0 | −0.004 | −0.142 | 0 | −0.012 | −0.088 |
+| −1 | 0 | −0.159 | −0.269 | 0 | −0.083 | 0.072 |
+| −0.5 | 0 | −0.154 | −0.189 | 0 | 0.133 | 0.260 |
+| 0 | 0 | 0 | 0 | 0 또는 1 | 0.500 | 0.500 |
+| 0.5 | 0.5 | 0.346 | 0.311 | 1 | 0.867 | 0.740 |
+| 1 | 1 | 0.841 | 0.731 | 1 | 1.083 | 0.928 |
+| 2 | 2 | 1.954 | 1.762 | 1 | 1.085 | 1.091 |
+
+$x=-1$에서 GELU의 값 $-0.159$는 $-1\times\Phi(-1)=-1\times0.159$, 즉 입력의 15.9%만 통과시킨 결과다. 표에서 읽을 점은 세 가지다.
+
+1. **꺾임이 사라진다.** GELU와 SiLU의 기울기는 0에서 0.5이고 양옆으로 연속해서 변한다.
+2. **음수 영역에도 작은 출력과 기울기가 남는다.** GELU는 $x\approx-0.75$에서 최솟값 약 $-0.170$, SiLU는 $x\approx-1.28$에서 약 $-0.278$을 가지며, 그 구간에서 함수가 감소한다(비단조, non-monotonic).
+3. **먼 음수 영역의 기울기는 여전히 0에 가깝다.** GELU′$(-3)\approx-0.012$다. 정확한 0을 작은 값으로 바꾸고 꺾임을 없앤 것이지, 음수 영역의 기울기 문제가 통째로 사라지는 것은 아니다.
+
+<figure>
+<svg viewBox="0 0 560 306" role="img" aria-label="ReLU, GELU, SiLU의 함수값과 기울기를 x가 −3부터 3까지인 구간에서 실제 함수값으로 그린 그래프. 왼쪽 함수값 그래프에서 ReLU는 음수에서 0이고 0에서 꺾여 기울기 1의 직선이 된다. GELU와 SiLU는 0 근처에서 매끄럽게 휘고 음수 영역에서 조금 아래로 내려갔다가 다시 0으로 다가간다. GELU의 최솟값은 x 약 −0.75에서 약 −0.17, SiLU는 x 약 −1.28에서 약 −0.28이다. 양수 쪽에서 GELU는 ReLU에 빠르게 붙고 SiLU는 조금 아래에 있다. 오른쪽 기울기 그래프에서 ReLU는 음수에서 0, 양수에서 1로 x=0에서 불연속하게 뛴다. GELU와 SiLU의 기울기는 0에서 0.5를 지나며 연속적으로 증가하고, 양수 쪽에서 1을 약간 넘었다가 1로 돌아온다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<text x="157" y="30" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">함수값 f(x)</text>
+<text x="427" y="30" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">기울기 f′(x)</text>
+<rect x="52" y="44" width="210" height="200" fill="#f8fafc" stroke="#e2e8f0"/>
+<path d="M52 215.4 H262" stroke="#e2e8f0"/>
+<text x="46" y="219.4" font-size="11" text-anchor="end" fill="#64748b">0</text>
+<path d="M52 158.3 H262" stroke="#e2e8f0"/>
+<text x="46" y="162.3" font-size="11" text-anchor="end" fill="#64748b">1</text>
+<path d="M52 101.1 H262" stroke="#e2e8f0"/>
+<text x="46" y="105.1" font-size="11" text-anchor="end" fill="#64748b">2</text>
+<path d="M52 44.0 H262" stroke="#e2e8f0"/>
+<text x="46" y="48.0" font-size="11" text-anchor="end" fill="#64748b">3</text>
+<text x="52.0" y="259" font-size="11" text-anchor="middle" fill="#64748b">−3</text>
+<text x="87.0" y="259" font-size="11" text-anchor="middle" fill="#64748b">−2</text>
+<text x="122.0" y="259" font-size="11" text-anchor="middle" fill="#64748b">−1</text>
+<text x="157.0" y="259" font-size="11" text-anchor="middle" fill="#64748b">0</text>
+<text x="192.0" y="259" font-size="11" text-anchor="middle" fill="#64748b">1</text>
+<text x="227.0" y="259" font-size="11" text-anchor="middle" fill="#64748b">2</text>
+<text x="262.0" y="259" font-size="11" text-anchor="middle" fill="#64748b">3</text>
+<path d="M52 215.4 H262" stroke="#94a3b8"/>
+<path d="M157.0 44 V244" stroke="#94a3b8"/>
+<path d="M52.0 215.4 L157.0 215.4 L262.0 44.0" fill="none" stroke="#94a3b8" stroke-width="3"/>
+<path d="M52.0 215.7 L54.1 215.7 L56.2 215.8 L58.3 215.8 L60.4 215.9 L62.5 216.0 L64.6 216.1 L66.7 216.2 L68.8 216.3 L70.9 216.4 L73.0 216.6 L75.1 216.7 L77.2 216.9 L79.3 217.1 L81.4 217.3 L83.5 217.6 L85.6 217.8 L87.7 218.1 L89.8 218.4 L91.9 218.8 L94.0 219.1 L96.1 219.5 L98.2 219.9 L100.3 220.3 L102.4 220.7 L104.5 221.2 L106.6 221.6 L108.7 222.0 L110.8 222.5 L112.9 222.9 L115.0 223.3 L117.1 223.7 L119.2 224.1 L121.3 224.4 L123.4 224.7 L125.5 224.9 L127.6 225.1 L129.7 225.1 L131.8 225.1 L133.9 225.0 L136.0 224.8 L138.1 224.5 L140.2 224.1 L142.3 223.5 L144.4 222.8 L146.5 222.0 L148.6 221.0 L150.7 219.8 L152.8 218.5 L154.9 217.1 L157.0 215.4 L159.1 213.6 L161.2 211.7 L163.3 209.6 L165.4 207.3 L167.5 204.8 L169.6 202.3 L171.7 199.5 L173.8 196.7 L175.9 193.7 L178.0 190.5 L180.1 187.3 L182.2 184.0 L184.3 180.6 L186.4 177.1 L188.5 173.5 L190.6 169.8 L192.7 166.1 L194.8 162.4 L196.9 158.6 L199.0 154.7 L201.1 150.9 L203.2 147.0 L205.3 143.2 L207.4 139.3 L209.5 135.4 L211.6 131.6 L213.7 127.7 L215.8 123.9 L217.9 120.1 L220.0 116.3 L222.1 112.5 L224.2 108.7 L226.3 105.0 L228.4 101.3 L230.5 97.6 L232.6 93.9 L234.7 90.2 L236.8 86.6 L238.9 83.0 L241.0 79.4 L243.1 75.8 L245.2 72.3 L247.3 68.7 L249.4 65.2 L251.5 61.7 L253.6 58.2 L255.7 54.7 L257.8 51.2 L259.9 47.7 L262.0 44.2" fill="none" stroke="#0f172a" stroke-width="2"/>
+<path d="M52.0 223.6 L54.1 223.9 L56.2 224.2 L58.3 224.5 L60.4 224.8 L62.5 225.1 L64.6 225.5 L66.7 225.8 L68.8 226.2 L70.9 226.5 L73.0 226.8 L75.1 227.2 L77.2 227.5 L79.3 227.9 L81.4 228.2 L83.5 228.5 L85.6 228.8 L87.7 229.2 L89.8 229.5 L91.9 229.7 L94.0 230.0 L96.1 230.3 L98.2 230.5 L100.3 230.7 L102.4 230.9 L104.5 231.1 L106.6 231.2 L108.7 231.3 L110.8 231.3 L112.9 231.3 L115.0 231.3 L117.1 231.2 L119.2 231.1 L121.3 230.9 L123.4 230.6 L125.5 230.3 L127.6 229.9 L129.7 229.4 L131.8 228.9 L133.9 228.3 L136.0 227.6 L138.1 226.8 L140.2 225.9 L142.3 224.9 L144.4 223.9 L146.5 222.7 L148.6 221.5 L150.7 220.1 L152.8 218.7 L154.9 217.1 L157.0 215.4 L159.1 213.7 L161.2 211.8 L163.3 209.8 L165.4 207.8 L167.5 205.6 L169.6 203.3 L171.7 200.9 L173.8 198.5 L175.9 195.9 L178.0 193.3 L180.1 190.6 L182.2 187.8 L184.3 184.9 L186.4 181.9 L188.5 178.9 L190.6 175.8 L192.7 172.6 L194.8 169.4 L196.9 166.1 L199.0 162.7 L201.1 159.3 L203.2 155.9 L205.3 152.4 L207.4 148.9 L209.5 145.4 L211.6 141.8 L213.7 138.2 L215.8 134.5 L217.9 130.8 L220.0 127.2 L222.1 123.5 L224.2 119.7 L226.3 116.0 L228.4 112.3 L230.5 108.5 L232.6 104.8 L234.7 101.0 L236.8 97.2 L238.9 93.5 L241.0 89.7 L243.1 85.9 L245.2 82.2 L247.3 78.4 L249.4 74.6 L251.5 70.9 L253.6 67.1 L255.7 63.4 L257.8 59.6 L259.9 55.9 L262.0 52.1" fill="none" stroke="#0f172a" stroke-width="1.6" stroke-dasharray="5 3"/>
+<rect x="322" y="44" width="210" height="200" fill="#f8fafc" stroke="#e2e8f0"/>
+<path d="M322 210.7 H532" stroke="#e2e8f0"/>
+<text x="316" y="214.7" font-size="11" text-anchor="end" fill="#64748b">0</text>
+<path d="M322 144.0 H532" stroke="#e2e8f0"/>
+<text x="316" y="148.0" font-size="11" text-anchor="end" fill="#64748b">0.5</text>
+<path d="M322 77.3 H532" stroke="#e2e8f0"/>
+<text x="316" y="81.3" font-size="11" text-anchor="end" fill="#64748b">1</text>
+<text x="322.0" y="259" font-size="11" text-anchor="middle" fill="#64748b">−3</text>
+<text x="357.0" y="259" font-size="11" text-anchor="middle" fill="#64748b">−2</text>
+<text x="392.0" y="259" font-size="11" text-anchor="middle" fill="#64748b">−1</text>
+<text x="427.0" y="259" font-size="11" text-anchor="middle" fill="#64748b">0</text>
+<text x="462.0" y="259" font-size="11" text-anchor="middle" fill="#64748b">1</text>
+<text x="497.0" y="259" font-size="11" text-anchor="middle" fill="#64748b">2</text>
+<text x="532.0" y="259" font-size="11" text-anchor="middle" fill="#64748b">3</text>
+<path d="M322 210.7 H532" stroke="#94a3b8"/>
+<path d="M427.0 44 V244" stroke="#94a3b8"/>
+<path d="M322.0 210.7 H427.0 M427.0 77.3 H532.0" fill="none" stroke="#94a3b8" stroke-width="3"/>
+<circle cx="427.0" cy="210.7" r="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<circle cx="427.0" cy="77.3" r="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<path d="M322.0 212.3 L324.1 212.5 L326.2 212.8 L328.3 213.2 L330.4 213.5 L332.5 214.0 L334.6 214.4 L336.7 214.9 L338.8 215.5 L340.9 216.1 L343.0 216.7 L345.1 217.4 L347.2 218.2 L349.3 219.0 L351.4 219.8 L353.5 220.6 L355.6 221.5 L357.7 222.3 L359.8 223.2 L361.9 224.0 L364.0 224.8 L366.1 225.6 L368.2 226.3 L370.3 226.9 L372.4 227.3 L374.5 227.7 L376.6 227.8 L378.7 227.8 L380.8 227.6 L382.9 227.1 L385.0 226.4 L387.1 225.4 L389.2 224.1 L391.3 222.4 L393.4 220.4 L395.5 218.1 L397.6 215.3 L399.7 212.2 L401.8 208.8 L403.9 205.0 L406.0 200.8 L408.1 196.2 L410.2 191.3 L412.3 186.2 L414.4 180.7 L416.5 175.0 L418.6 169.0 L420.7 162.9 L422.8 156.7 L424.9 150.4 L427.0 144.0 L429.1 137.6 L431.2 131.3 L433.3 125.1 L435.4 119.0 L437.5 113.0 L439.6 107.3 L441.7 101.8 L443.8 96.7 L445.9 91.8 L448.0 87.2 L450.1 83.0 L452.2 79.2 L454.3 75.8 L456.4 72.7 L458.5 69.9 L460.6 67.6 L462.7 65.6 L464.8 63.9 L466.9 62.6 L469.0 61.6 L471.1 60.9 L473.2 60.4 L475.3 60.2 L477.4 60.2 L479.5 60.3 L481.6 60.7 L483.7 61.1 L485.8 61.7 L487.9 62.4 L490.0 63.2 L492.1 64.0 L494.2 64.8 L496.3 65.7 L498.4 66.5 L500.5 67.4 L502.6 68.2 L504.7 69.0 L506.8 69.8 L508.9 70.6 L511.0 71.3 L513.1 71.9 L515.2 72.5 L517.3 73.1 L519.4 73.6 L521.5 74.0 L523.6 74.5 L525.7 74.8 L527.8 75.2 L529.9 75.5 L532.0 75.7" fill="none" stroke="#0f172a" stroke-width="2"/>
+<path d="M322.0 222.4 L324.1 222.7 L326.2 222.9 L328.3 223.1 L330.4 223.3 L332.5 223.5 L334.6 223.7 L336.7 223.8 L338.8 223.9 L340.9 224.0 L343.0 224.0 L345.1 224.0 L347.2 223.9 L349.3 223.8 L351.4 223.6 L353.5 223.3 L355.6 223.0 L357.7 222.6 L359.8 222.2 L361.9 221.6 L364.0 221.0 L366.1 220.2 L368.2 219.4 L370.3 218.4 L372.4 217.4 L374.5 216.2 L376.6 214.9 L378.7 213.4 L380.8 211.8 L382.9 210.1 L385.0 208.3 L387.1 206.3 L389.2 204.1 L391.3 201.8 L393.4 199.4 L395.5 196.8 L397.6 194.1 L399.7 191.2 L401.8 188.2 L403.9 185.0 L406.0 181.7 L408.1 178.3 L410.2 174.8 L412.3 171.2 L414.4 167.5 L416.5 163.7 L418.6 159.8 L420.7 155.9 L422.8 152.0 L424.9 148.0 L427.0 144.0 L429.1 140.0 L431.2 136.0 L433.3 132.1 L435.4 128.2 L437.5 124.3 L439.6 120.5 L441.7 116.8 L443.8 113.2 L445.9 109.7 L448.0 106.3 L450.1 103.0 L452.2 99.8 L454.3 96.8 L456.4 93.9 L458.5 91.2 L460.6 88.6 L462.7 86.2 L464.8 83.9 L466.9 81.7 L469.0 79.7 L471.1 77.9 L473.2 76.2 L475.3 74.6 L477.4 73.1 L479.5 71.8 L481.6 70.6 L483.7 69.6 L485.8 68.6 L487.9 67.8 L490.0 67.0 L492.1 66.4 L494.2 65.8 L496.3 65.4 L498.4 65.0 L500.5 64.7 L502.6 64.4 L504.7 64.2 L506.8 64.1 L508.9 64.0 L511.0 64.0 L513.1 64.0 L515.2 64.1 L517.3 64.2 L519.4 64.3 L521.5 64.5 L523.6 64.7 L525.7 64.9 L527.8 65.1 L529.9 65.3 L532.0 65.6" fill="none" stroke="#0f172a" stroke-width="1.6" stroke-dasharray="5 3"/>
+<text x="157" y="274" font-size="11" text-anchor="middle" fill="#64748b">x</text>
+<text x="427" y="274" font-size="11" text-anchor="middle" fill="#64748b">x</text>
+<path d="M112 294 H142" stroke="#94a3b8" stroke-width="3"/>
+<text x="148" y="298" font-size="12" text-anchor="start" fill="#0f172a">ReLU</text>
+<path d="M214 294 H244" stroke="#0f172a" stroke-width="2"/>
+<text x="250" y="298" font-size="12" text-anchor="start" fill="#0f172a">GELU</text>
+<path d="M318 294 H348" stroke="#0f172a" stroke-width="1.6" stroke-dasharray="5 3"/>
+<text x="354" y="298" font-size="12" text-anchor="start" fill="#0f172a">SiLU (Swish, β=1)</text>
+</svg>
+<figcaption>세 함수의 정의식에서 계산한 값으로 직접 그린 그래프. 오른쪽의 빈 원은 ReLU 도함수가 x=0에서 불연속임을 나타낸다.</figcaption>
+</figure>
+
+GELU 논문은 MNIST, CIFAR-10/100, TIMIT 등에서 ReLU·ELU보다 나은 결과를 보고했다. 예를 들어 CIFAR-10의 9층 CNN에서 중앙값 오류율이 GELU 7.89%, ReLU 8.16%였다.[^gelu] Transformer에서는 BERT가 OpenAI GPT를 따라 ReLU 대신 GELU를 썼다고 밝혔다.[^bert]
+
+그렇다면 Transformer FFN에서 모양만 바꾼 효과는 얼마나 클까? Shazeer는 T5 base 설정에서 파라미터와 연산량을 맞춘 FFN 여러 개를 비교했다.[^glu] 65,536 step에서 held-out log-perplexity는 ReLU 1.997, GELU 1.983(네 번 반복한 표준편차 약 0.005)이었고, 524,288 step에서는 ReLU 1.677, GELU 1.679였다. 이 설정에서는 모양만 바꾼 차이가 작았다. 같은 표에서 더 큰 차이를 보인 것은 다음 절의 gating 구조다.
+
+## 3. Gated linear unit
+
+두 번째 축은 활성화의 모양이 아니라 FFN 첫 투영의 구조를 바꾼다.
+
+### 3-1. 곱셈 gating
+
+행렬 2개 FFN의 은닉 단위 $i$를 보자. 입력 투영 $u=xW_1$의 성분 $u_i$가 하나 정해지면 출력 $\operatorname{act}(u_i)$도 정해진다. 통과시킬지(gate)와 무엇을 전달할지(값)가 **같은 투영 $u_i$ 하나**에 묶여 있다. Dauphin 등은 ReLU를 $x\otimes\mathbf{1}[x>0]$, 곧 gate가 입력 자신의 부호로 정해지는 단순화된 gating으로 보았다.[^dauphin]
+
+GLU(gated linear unit)는 gate와 값을 서로 다른 선형 투영으로 만든다. 원논문은 gated convolutional language model의 층으로 제안했고, 식의 문자 배치는 Shazeer를 따른다.[^dauphin][^glu]
+
+$$
+\operatorname{GLU}(x)=\sigma(xW)\otimes xV
+$$
+
+$\otimes$는 원소별 곱이다. $\sigma(xW)$의 각 성분은 0과 1 사이의 gate이고, $xV$는 gate가 조절할 값이다. Dauphin 등이 제시한 동기는 두 가지다. 하나는 LSTM의 gate처럼 층 사이로 어떤 정보를 넘길지 학습하게 하는 것이다. 다른 하나는 기울기 경로다. LSTM식 gate인 $\tanh(X)\otimes\sigma(X)$의 기울기는 두 항 모두 $\tanh'$이나 $\sigma'$로 줄어드는 반면, GLU의 기울기에는 줄어들지 않는 항이 있다.
+
+$$
+\nabla[X\otimes\sigma(X)]=\nabla X\otimes\sigma(X)+X\otimes\sigma'(X)\nabla X
+$$
+
+첫 항 $\nabla X\otimes\sigma(X)$는 gate가 열려 있는 단위에서 기울기를 거의 그대로 전달한다. 원논문은 이를 곱셈 형태의 skip connection에 비유했다. 비교 실험에서 GLU는 WikiText-103에서 ReLU·tanh·tanh 기반 gate보다, Google Billion Word에서 ReLU·tanh 기반 gate보다 빨리 수렴하고 더 낮은 perplexity에 도달했다(원논문 Figure 3). Gate의 비선형을 뺀 bilinear 층 $xW\otimes xV$도 선형 층보다는 크게 나았지만 GLU에는 못 미쳤다(Figure 5).
+
+작은 수치로 비교해 보자. 은닉 단위가 2개이고, 두 토큰 A와 B의 gate 투영 $u=xW$는 같지만 값 투영 $v=xV$는 다르다고 하자(설명용 가정 값).
+
+| 계산 | 토큰 A | 토큰 B |
+|---|---|---|
+| $u=xW$ | (2, −1) | (2, −1) |
+| $v=xV$ | (3, 3) | (−1, 0.5) |
+| 행렬 2개 FFN: $\operatorname{ReLU}(u)$ | (2, 0) | (2, 0) |
+| GLU gate: $\sigma(u)$ | (0.881, 0.269) | (0.881, 0.269) |
+| GLU: $\sigma(u)\otimes v$ | (2.642, 0.807) | (−0.881, 0.134) |
+
+행렬 2개 FFN에서는 $u$가 같으면 은닉값도 같고, 두 번째 단위는 $u_2<0$이라 두 토큰 모두 0이다. GLU에서는 같은 gate 아래에서도 $v$에 따라 은닉값이 달라지고, 두 번째 단위도 $v_2$의 26.9%를 넘긴다. 출력이 두 선형 투영의 곱이므로 입력 성분끼리의 곱셈 상호작용을 한 층에서 표현할 수 있다는 점도 다르다.
+
+### 3-2. SwiGLU와 GeGLU
+
+GLU의 $\sigma$는 다른 함수로 바꿀 수 있다. Shazeer는 gate 자리에 §2의 함수를 넣은 변형을 Transformer FFN에 적용했다.[^glu] 모두 bias 없이 행렬 세 개 $W, V, W_2$를 쓴다.
+
+$$
+\operatorname{FFN}_{\text{SwiGLU}}(x)=\big(\operatorname{Swish}_1(xW)\otimes xV\big)W_2,\qquad \operatorname{FFN}_{\text{GEGLU}}(x)=\big(\operatorname{GELU}(xW)\otimes xV\big)W_2
+$$
+
+ReGLU는 $\max(0,\cdot)$, bilinear는 항등 함수를 넣은 경우다. 이 변형들은 앞뒤로 이어진 발전이 아니라, GLU라는 같은 구조에서 gate 함수만 달리 고른 **병렬 변형**이다. 축 1에서 고른 모양이 축 2의 gate 자리에 들어가는 합류 지점이 여기다.
+
+앞의 예제에서 $\sigma(u)$를 $\operatorname{SiLU}(u)=u\,\sigma(u)$로 바꾸면 토큰 A의 gate 쪽은 $(1.762,\,-0.269)$, 은닉값은 $(5.285,\,-0.807)$이 된다. SwiGLU의 "gate"는 0과 1 사이에 갇히지 않고 음수도 될 수 있다. 은닉값은 $u$의 부호와 크기, $\sigma(u)$, $v$ 세 요소의 곱이다.
+
+Shazeer의 T5 base 비교(파라미터·연산량 일치, 524,288 step, held-out log-perplexity, 낮을수록 좋음)를 정리하면 다음과 같다.
+
+| FFN | 구조 | Log-perplexity |
+|---|---|---|
+| ReLU | 행렬 2개 | 1.677 |
+| GELU | 행렬 2개 | 1.679 |
+| Swish | 행렬 2개 | 1.683 |
+| GLU | 행렬 3개, gate $\sigma$ | 1.663 |
+| Bilinear | 행렬 3개, gate 없음 | 1.648 |
+| ReGLU | 행렬 3개, gate ReLU | 1.645 |
+| GEGLU | 행렬 3개, gate GELU | 1.633 |
+| SwiGLU | 행렬 3개, gate Swish | 1.636 |
+
+같은 표의 65,536 step 결과에서 GEGLU(1.942 ± 0.004)와 SwiGLU(1.944 ± 0.010)의 차이는 반복 실험의 표준편차 안에 있다. GLUE·SuperGLUE fine-tuning에서도 GLU 계열이 대부분의 과제에서 좋았지만 원논문 스스로 결과에 잡음이 많다고 적었다. 왜 잘 되는지에 대해서는 설명을 제시하지 않았다.<Sidenote>논문의 결론은 이렇게 끝난다. “We offer no explanation as to why these architectures seem to work; we attribute their success, as all else, to divine benevolence.”[^glu]</Sidenote>
+
+Llama 3의 공식 구현에서 SwiGLU FFN은 한 줄이다.[^llamacode] `w1`이 $W$, `w3`가 $V$, `w2`가 $W_2$에 해당하고, Hugging Face 구현에서는 각각 `gate_proj`, `up_proj`, `down_proj`라고 부른다. `F.silu`는 $\operatorname{Swish}_1$과 같은 함수다.
+
+```python
+def forward(self, x):
+    return self.w2(F.silu(self.w1(x)) * self.w3(x))
+```
+
+<Callout type="note">
+Gating 없이 곱셈 효과를 내는 갈래도 있다. Primer는 행렬 2개 FFN의 ReLU를 제곱한 squared ReLU $\max(0,u)^2$를 제안했다.[^primer] $\max(0,u)^2=\max(0,u)\cdot u$이므로, ReGLU에서 $W=V$로 두 투영을 묶은 경우와 같다. 저자들은 추가 파라미터 없이 GLU 변형의 이점을 얻는다고 보았고, 자신들의 언어 모델 실험에서 ReGLU·SwiGLU보다 나은 결과를 보고했다(원논문 Figure 5).
+</Callout>
+
+<figure>
+<svg viewBox="0 0 560 292" role="img" aria-label="행렬 2개 FFN과 SwiGLU FFN의 구조 비교. 왼쪽 행렬 2개 FFN은 1 곱하기 d 입력 x가 W1(d 곱하기 d_ff), ReLU 또는 GELU, W2(d_ff 곱하기 d)를 차례로 거쳐 1 곱하기 d 출력이 된다. 파라미터는 2 곱하기 d 곱하기 d_ff이다. 오른쪽 SwiGLU FFN은 입력 x가 두 갈래로 나뉜다. 한 갈래는 W(d 곱하기 h, Llama 구현의 w1, gate_proj)와 SiLU를 거치고, 다른 갈래는 V(d 곱하기 h, w3, up_proj)를 거친다. 두 결과를 원소별로 곱한 뒤 W2(h 곱하기 d, w2, down_proj)로 1 곱하기 d 출력을 만든다. 파라미터는 3 곱하기 d 곱하기 h이다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<text x="140" y="24" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">행렬 2개 FFN</text>
+<text x="420" y="24" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">SwiGLU FFN</text>
+<text x="140" y="56" font-size="13" text-anchor="middle" fill="#0f172a">x (1 × d)</text>
+<path d="M140 62 V73" stroke="#0f172a" fill="none"/><polygon points="140,80 136,73 144,73" fill="#0f172a"/>
+<rect x="75" y="80" width="130" height="34" rx="5" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="140" y="102" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">W₁ : d × d_ff</text>
+<path d="M140 114 V123" stroke="#0f172a" fill="none"/><polygon points="140,130 136,123 144,123" fill="#0f172a"/>
+<rect x="75" y="130" width="130" height="28" rx="5" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="140" y="149" font-size="12" text-anchor="middle" fill="#0f172a">ReLU 또는 GELU</text>
+<path d="M140 158 V189" stroke="#0f172a" fill="none"/><polygon points="140,196 136,189 144,189" fill="#0f172a"/>
+<rect x="75" y="196" width="130" height="34" rx="5" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="140" y="218" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">W₂ : d_ff × d</text>
+<path d="M140 230 V239" stroke="#0f172a" fill="none"/><polygon points="140,246 136,239 144,239" fill="#0f172a"/>
+<text x="140" y="260" font-size="13" text-anchor="middle" fill="#0f172a">출력 (1 × d)</text>
+<text x="140" y="282" font-size="12" text-anchor="middle" fill="#64748b">행렬 2개 · 파라미터 2·d·d_ff</text>
+<path d="M280 40 V270" stroke="#e2e8f0"/>
+<text x="420" y="56" font-size="13" text-anchor="middle" fill="#0f172a">x (1 × d)</text>
+<path d="M420 62 L360 72 V73" stroke="#0f172a" fill="none"/><polygon points="360,80 356,73 364,73" fill="#0f172a"/>
+<path d="M420 62 L480 72 V73" stroke="#0f172a" fill="none"/><polygon points="480,80 476,73 484,73" fill="#0f172a"/>
+<rect x="305" y="80" width="110" height="34" rx="5" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="360" y="96" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">W : d × h</text>
+<text x="360" y="109" font-size="10" text-anchor="middle" fill="#64748b">w1 · gate_proj</text>
+<rect x="425" y="80" width="110" height="34" rx="5" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="480" y="96" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">V : d × h</text>
+<text x="480" y="109" font-size="10" text-anchor="middle" fill="#64748b">w3 · up_proj</text>
+<path d="M360 114 V123" stroke="#0f172a" fill="none"/><polygon points="360,130 356,123 364,123" fill="#0f172a"/>
+<rect x="315" y="130" width="90" height="28" rx="5" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="360" y="149" font-size="12" text-anchor="middle" fill="#0f172a">SiLU</text>
+<path d="M360 158 L412 170" stroke="#0f172a" fill="none"/>
+<path d="M480 114 V150 L428 170" stroke="#0f172a" fill="none"/>
+<circle cx="420" cy="175" r="9" fill="#f8fafc" stroke="#0f172a"/>
+<text x="420" y="180" font-size="13" text-anchor="middle" fill="#0f172a">⊗</text>
+<path d="M420 184 V189" stroke="#0f172a" fill="none"/><polygon points="420,196 416,189 424,189" fill="#0f172a"/>
+<rect x="355" y="196" width="130" height="34" rx="5" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="420" y="212" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">W₂ : h × d</text>
+<text x="420" y="225" font-size="10" text-anchor="middle" fill="#64748b">w2 · down_proj</text>
+<path d="M420 230 V239" stroke="#0f172a" fill="none"/><polygon points="420,246 416,239 424,239" fill="#0f172a"/>
+<text x="420" y="260" font-size="13" text-anchor="middle" fill="#0f172a">출력 (1 × d)</text>
+<text x="420" y="282" font-size="12" text-anchor="middle" fill="#64748b">행렬 3개 · 파라미터 3·d·h</text>
+</svg>
+<figcaption>두 FFN 구조를 직접 구성한 도식. 오른쪽의 행렬 이름 아래 작은 글씨는 Llama 3 공식 구현과 Hugging Face 구현의 변수 이름이다. Bias는 생략했다.</figcaption>
+</figure>
+
+## 4. 같은 파라미터 예산의 FFN 폭
+
+행렬이 셋이 되면 같은 중간 폭에서 파라미터와 연산량이 1.5배가 된다. §2 끝의 비교처럼 구조의 효과를 따지려면 예산을 맞춰야 하고, 실제 모델에서도 중간 폭을 새로 정해야 한다.
+
+### 4-1. 8d/3 규칙
+
+행렬 2개 FFN의 파라미터는 $W_1$과 $W_2$를 합쳐 $2\,d\,d_{\text{ff}}$다. $d_{\text{ff}}=4d$이면 $8d^2$이다. GLU 계열 FFN은 $W, V\in\mathbb{R}^{d\times h}$, $W_2\in\mathbb{R}^{h\times d}$로 $3\,d\,h$다. 둘을 같게 두면 다음을 얻는다.
+
+$$
+3\,d\,h=2\,d\cdot4d\quad\Rightarrow\quad h=\frac{2}{3}\cdot4d=\frac{8d}{3}\approx2.67d
+$$
+
+토큰당 행렬 곱 연산량도 파라미터 수에 비례하므로 이 폭에서 연산량도 같아진다. Shazeer의 T5 base 실험은 $d=768$에서 $d_{\text{ff}}=3072$를 $h=2048$로 줄여 이 조건을 맞췄다.[^glu]
+
+$d=4096$에 대입하면 행렬 2개 FFN($d_{\text{ff}}=16384$)의 파라미터는 $2\cdot4096\cdot16384=134{,}217{,}728$이고, 맞춰야 할 폭은 $h=8\cdot4096/3=10922.67$로 정수가 아니다. 실제 구현은 이 값을 어떤 규칙으로 정수로 만들지 정해야 한다.
+
+예산을 맞추는 것은 비교 실험의 조건이지 설계 규칙은 아니다. PaLM은 SwiGLU를 쓰면서 $d_{\text{ff}}=4d$를 유지했다.[^palm] 같은 $d$의 행렬 2개 FFN보다 FFN 파라미터가 1.5배다. PaLM은 이 선택을 설명하면서, Shazeer가 연산량을 맞춘 실험에서도 품질 향상을 보였다는 점을 근거로 들었다.
+
+### 4-2. Llama 3 8B의 FFN 폭
+
+Llama 3 공식 구현의 `FeedForward`는 폭을 다음 순서로 정한다.[^llamacode] 입력으로 받는 `hidden_dim`은 블록에서 넘겨준 `4 * dim`이다.
+
+```python
+hidden_dim = int(2 * hidden_dim / 3)
+# custom dim factor multiplier
+if ffn_dim_multiplier is not None:
+    hidden_dim = int(ffn_dim_multiplier * hidden_dim)
+hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
+```
+
+Meta의 `llama-models` 저장소에 있는 Llama 3 8B 설정은 `dim=4096`, `ffn_dim_multiplier=1.3`, `multiple_of=1024`다.[^llamaparams] 한 줄씩 대입한다.
+
+| 단계 | 식 | 값 |
+|---|---|---|
+| 1. 행렬 2개 기준 폭 | $4\cdot4096$ | 16,384 |
+| 2. 파라미터 일치 폭 | $\lfloor 2\cdot16384/3\rfloor=\lfloor10922.67\rfloor$ | 10,922 |
+| 3. 배율 적용 | $\lfloor1.3\cdot10922\rfloor=\lfloor14198.6\rfloor$ | 14,198 |
+| 4. 1024의 배수로 올림 | $1024\cdot\lceil14198/1024\rceil=1024\cdot\lceil13.87\rceil=1024\cdot14$ | 14,336 |
+
+결과 14,336은 Llama 3 논문 Table 3의 FFN dimension과 같고, $14336/4096=3.5$이다.[^llama3] 파라미터로 환산하면 FFN 한 층이 $3\cdot4096\cdot14336=176{,}160{,}768$로, 예산을 맞춘 경우(134,217,728)의 1.3125배다. 배율 1.3에 올림으로 붙은 약 1%($14336/14198\approx1.0097$)가 곱해진 값이다. 즉 Llama 3 8B는 8d/3에서 출발하되 FFN에 예산보다 약 31% 많은 파라미터를 배정했다.
+
+두 조정의 이유는 공식 자료에서 확인되는 범위가 다르다. `multiple_of`에는 "SwiGLU hidden layer size를 큰 2의 거듭제곱의 배수로 만든다"는 주석이 달려 있다. $14336=14\cdot1024$라서, 예를 들어 GPU 8개에 나누면 1792씩 떨어진다. 배율 1.3을 고른 이유는 공식 구현이나 논문에서 찾지 못했다.
+
+같은 규칙에서 배율 없이 `multiple_of=256`을 쓰면 $256\cdot\lceil10922/256\rceil=256\cdot43=11008$이 된다. §5의 OLMo 2 7B가 쓰는 폭이 이 값과 같다.
+
+## 5. 최근 모델의 선택
+
+### 5-1. FFN 식과 폭
+
+공식 설정 파일과 구현, 기술 보고서에서 확인한 FFN의 식과 중간 폭이다.
+
+| 모델 | FFN 식 | $d$ | 중간 폭 | 폭 / $d$ |
+|---|---|---|---|---|
+| Llama 3 8B[^llama3][^llamacode] | SwiGLU | 4,096 | 14,336 | 3.5 |
+| Qwen3-8B[^qwen3][^hfcode] | SwiGLU | 4,096 | 12,288 | 3.0 |
+| OLMo 2 7B[^olmo2][^hfcode] | SwiGLU | 4,096 | 11,008 | 약 2.69 |
+| Gemma 3 12B[^gemma3] | GeGLU (tanh 근사 GELU) | 3,840 | 15,360 | 4.0 |
+| Nemotron-4 15B[^nemotron] | squared ReLU, 행렬 2개 | 6,144 | 보고서 미기재 | |
+
+같은 SwiGLU라도 폭은 $d$의 2.69배에서 3.5배까지 다르고, GeGLU를 쓰는 Gemma 3 12B는 PaLM처럼 $4d$를 쓴다. FFN의 식을 정하는 일과 FFN에 파라미터를 얼마나 줄지 정하는 일은 별개의 선택이며, 8d/3은 그 출발점 중 하나다. Nemotron-4는 gating 없이 squared ReLU를 쓴다고 밝혔지만, 보고서의 하이퍼파라미터 표에는 FFN 폭이 없다.
+
+### 5-2. Bias 제거
+
+활성화 계보와는 별개로, 최근 모델은 FFN의 선형 층에서 bias를 대부분 뺀다. §1의 원래 FFN에는 $b_1, b_2$가 있었지만, Shazeer의 비교는 T5 코드베이스를 따라 bias 없는 FFN을 썼다.[^glu] PaLM은 dense 층과 layer norm 어디에도 bias를 쓰지 않았고, 그렇게 하면 큰 모델의 학습 안정성이 높아졌다고 보고했다.[^palm] Llama 3 공식 구현의 `w1`, `w2`, `w3`는 모두 `bias=False`이고,[^llamacode] Qwen3와 OLMo 2의 Hugging Face 구현도 세 투영에 bias가 없다.[^hfcode] Nemotron-4 보고서도 bias 항이 없다고 적었다.[^nemotron]
+
+절약되는 파라미터는 작다. Llama 3 8B의 FFN 한 층에 bias를 붙이면 $14336\cdot2+4096=32{,}768$개로, 층당 FFN 파라미터 1억 7,616만 개의 0.02%에 못 미친다. 따라서 bias 제거를 파라미터 절약으로 설명하기는 어렵고, 공식 자료가 드는 이유는 PaLM의 학습 안정성 관찰 정도다. 이 관찰이 모든 규모와 설정에서 성립한다고 확인된 것은 아니다.
+
+[^survey]: Kunc, V., & Kléma, J. (2024). *Three Decades of Activations: A Comprehensive Survey of 400 Activation Functions for Neural Networks*. [arXiv:2402.09092](https://arxiv.org/abs/2402.09092).
+[^geva]: Geva, M., Schuster, R., Berant, J., & Levy, O. (2021). *Transformer Feed-Forward Layers Are Key-Value Memories*. EMNLP 2021. [arXiv:2012.14913](https://arxiv.org/abs/2012.14913).
+[^llama3]: Dubey, A., et al. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783v1](https://arxiv.org/abs/2407.21783v1).
+[^llamacode]: Meta. (2024). *Llama 3 reference implementation*. [model.py](https://github.com/meta-llama/llama3/blob/a0940f9cf7065d45bb6675660f80d305c041a754/llama/model.py).
+[^gelu]: Hendrycks, D., & Gimpel, K. (2016). *Gaussian Error Linear Units (GELUs)*. [arXiv:1606.08415](https://arxiv.org/abs/1606.08415).
+[^nair]: Nair, V., & Hinton, G. E. (2010). *Rectified Linear Units Improve Restricted Boltzmann Machines*. ICML 2010. [PDF](https://www.cs.toronto.edu/~hinton/absps/reluICML.pdf).
+[^maas]: Maas, A. L., Hannun, A. Y., & Ng, A. Y. (2013). *Rectifier Nonlinearities Improve Neural Network Acoustic Models*. ICML 2013. [PDF](https://ai.stanford.edu/~amaas/papers/relu_hybrid_icml2013_final.pdf).
+[^swish]: Ramachandran, P., Zoph, B., & Le, Q. V. (2017). *Searching for Activation Functions*. [arXiv:1710.05941](https://arxiv.org/abs/1710.05941).
+[^bert]: Devlin, J., Chang, M.-W., Lee, K., & Toutanova, K. (2019). *BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding*. NAACL 2019. [arXiv:1810.04805](https://arxiv.org/abs/1810.04805).
+[^glu]: Shazeer, N. (2020). *GLU Variants Improve Transformer*. [arXiv:2002.05202](https://arxiv.org/abs/2002.05202).
+[^dauphin]: Dauphin, Y. N., Fan, A., Auli, M., & Grangier, D. (2017). *Language Modeling with Gated Convolutional Networks*. ICML 2017. [arXiv:1612.08083](https://arxiv.org/abs/1612.08083).
+[^primer]: So, D. R., Mańke, W., Liu, H., Dai, Z., Shazeer, N., & Le, Q. V. (2021). *Primer: Searching for Efficient Transformers for Language Modeling*. NeurIPS 2021. [arXiv:2109.08668](https://arxiv.org/abs/2109.08668).
+[^palm]: Chowdhery, A., et al. (2023). *PaLM: Scaling Language Modeling with Pathways*. *Journal of Machine Learning Research*, 24(240). [arXiv:2204.02311](https://arxiv.org/abs/2204.02311).
+[^llamaparams]: Meta. (2025). *llama-models*. [sku_list.py](https://github.com/meta-llama/llama-models/blob/0e0b8c519242d5833d8c11bffc1232b77ad7f301/models/sku_list.py).
+[^qwen3]: Qwen Team. (2025). *Qwen3-8B*. Hugging Face. [config.json](https://huggingface.co/Qwen/Qwen3-8B/blob/main/config.json).
+[^hfcode]: Hugging Face. (2026). *Transformers*. [modeling_qwen3.py](https://github.com/huggingface/transformers/blob/f324707307757d9c0b8dac1c4462eceff911fa2f/src/transformers/models/qwen3/modeling_qwen3.py), [modeling_olmo2.py](https://github.com/huggingface/transformers/blob/f324707307757d9c0b8dac1c4462eceff911fa2f/src/transformers/models/olmo2/modeling_olmo2.py).
+[^olmo2]: Allen Institute for AI. (2024). *OLMo-2-1124-7B*. Hugging Face. [config.json](https://huggingface.co/allenai/OLMo-2-1124-7B/blob/main/config.json).
+[^gemma3]: Google. (2025). *Gemma in PyTorch*. [config.py](https://github.com/google/gemma_pytorch/blob/014acb7ac4563a5f77c76d7ff98f31b568c16508/gemma/config.py), [model.py](https://github.com/google/gemma_pytorch/blob/014acb7ac4563a5f77c76d7ff98f31b568c16508/gemma/model.py).
+[^nemotron]: Parmar, J., et al. (2024). *Nemotron-4 15B Technical Report*. [arXiv:2402.16819](https://arxiv.org/abs/2402.16819).

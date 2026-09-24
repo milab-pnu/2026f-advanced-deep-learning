@@ -1,0 +1,347 @@
+---
+title: "Mixture of Experts and conditional computation"
+week: 3
+order: 5
+---
+
+Dense Transformer는 모든 토큰에 같은 가중치와 같은 계산량을 쓴다. 모델을 키우면 파라미터와 토큰당 계산이 함께 늘어난다. 이 노트는 **토큰마다 네트워크의 일부만 계산하는 conditional computation**을 두 방향에서 살펴본다. 폭 방향에서는 FFN(feed-forward network)을 여러 expert로 나누고 router가 일부만 고르는 MoE(mixture of experts)가 있다. 깊이 방향에서는 토큰마다 통과하는 블록 수를 바꾸는 Mixture-of-Depths와 Mixture-of-Recursions가 있다.
+
+MoE 부분의 전체 지도는 Cai 등의 서베이[^moe-survey]가 좋다. §II에서 dense MoE와 sparse MoE의 식과 load balancing loss를, §IV-A·IV-B에서 gating 함수와 expert 설계(shared expert 포함)를, §V에서 계산·통신·저장의 시스템 문제를 정리한다. 이 노트의 계보는 **dense FFN → sparse MoE와 top-k routing → expert 쏠림과 처리 용량 문제 → expert 구성의 설계 선택**으로 이어진다. 깊이 방향의 두 기법은 동기가 달라 §5에서 따로 다루며, 이 부분은 서베이 대신 원논문을 따른다.
+
+## 1. Dense FFN의 확장 한계
+
+[FFN activations](/lecture/2026f-advanced-deep-learning/03d-ffn-activation/#1-ffn의-역할)에서 계산했듯이, 기준 모델 Llama 3 8B에서는 SwiGLU FFN이 전체 8.03B 파라미터의 약 70%를 차지한다.
+
+Dense 구조에서는 이 FFN 가중치를 **모든 토큰이 전부** 사용한다. FFN 폭을 두 배로 키우면 저장할 파라미터도 두 배, 토큰마다 곱해야 하는 행렬도 두 배가 된다. [Scaling](/lecture/2026f-advanced-deep-learning/02d-scaling/#1-1-모델데이터계산량)에서 본 근사 $C\approx6ND$도 같은 가정을 깔고 있다. 파라미터 $N$을 늘리면 토큰당 계산 $6N$이 같이 늘어난다.
+
+그런데 파라미터 수와 토큰당 계산을 꼭 함께 늘려야 할까? Shazeer 등(2017)은 입력마다 네트워크의 일부만 활성화하는 conditional computation으로 이 둘을 분리하자고 제안했다. 논문의 표현을 빌리면 "계산을 비례해서 늘리지 않고 모델 용량을 크게 늘리는" 방법이다.[^shazeer] 이들은 LSTM 층 사이에 expert 수천 개로 이루어진 MoE layer를 넣어 최대 137B 파라미터 규모까지 학습했다. 이 구조를 Transformer의 FFN 자리에 옮긴 것이 GShard[^gshard]와 Switch Transformer[^switch]이고, 현재 LLM의 MoE는 대부분 이 형태를 따른다.
+
+## 2. Sparse MoE와 routing
+
+### 2-1. MoE layer의 구조
+
+MoE layer는 dense FFN 하나를 **expert** $E$개와 **router**(gating network) 하나로 바꾼다. Expert는 보통 dense FFN과 같은 모양의 작은 FFN이다. Router는 토큰 벡터 $x\in\mathbb{R}^d$를 expert별 점수로 바꾸는 선형층 $W_g\in\mathbb{R}^{d\times E}$다. 각 토큰은 점수가 높은 $k$개 expert만 통과하고, layer의 출력은 선택된 expert 출력의 가중합이다. Attention·normalization·residual 경로는 dense 모델과 같다.
+
+<Figure src="https://arxiv.org/html/2401.04088v1/images/smoe.png" alt="Mixtral 논문의 MoE layer 그림. 입력이 router로 들어가고, router는 겹쳐 그려진 여러 expert 중 두 개로 입력을 보낸다. Router가 낸 gating weights가 점선으로 출력 쪽에 전달되고, 두 expert의 출력이 가중합되어 layer의 출력이 된다." caption="Mixtral 8x7B의 MoE layer. 각 입력 벡터는 router에 의해 8개 expert 중 2개로 보내지고, 출력은 두 expert 출력의 가중합이다." source="Jiang et al. · Mixtral of Experts (arXiv:2401.04088) Figure 1 · CC BY 4.0 · 수정 없음" />
+
+Mixtral 8x7B는 이 구조를 이해하기 좋은 사례다. 층 수 32, hidden dimension 4096, FFN 중간 차원 14336, query head 32개와 key–value head 8개로, attention과 FFN 한 개의 모양이 Llama 3 8B와 같다. 차이는 각 층의 FFN 자리에 같은 모양의 SwiGLU FFN 8개를 두고, 토큰마다 2개를 고른다는 점이다.[^mixtral]
+
+$$
+y=\sum_{i\in\mathcal{T}(x)} g_i(x)\,E_i(x),\qquad \mathcal{T}(x)=\text{점수 상위 }k\text{개 expert의 번호}
+$$
+
+$E_i(x)$는 $i$번째 expert의 출력, $g_i(x)$는 그 expert에 주는 gate 값이다. 선택되지 않은 expert는 계산하지 않는다. 이 선택 규칙이 top-k routing이다.
+
+### 2-2. Top-k routing
+
+Expert 4개 중 2개를 고르는 작은 예로 한 토큰의 계산을 밟아 보자. 아래 값은 교육용 가상 값이다.
+
+<Callout type="example">
+
+**1단계: router 점수.** 토큰 벡터 $x$에 $W_g$를 곱해 expert별 logit을 얻었다고 하자.
+
+$$
+z=xW_g=[\,2.0,\;1.0,\;0.5,\;-1.0\,]
+$$
+
+**2단계: softmax.** 네 logit 전체에 softmax를 적용한다. $e^{2}=7.389$, $e^{1}=2.718$, $e^{0.5}=1.649$, $e^{-1}=0.368$이고 합은 12.124다.
+
+$$
+p=[\,0.609,\;0.224,\;0.136,\;0.030\,]
+$$
+
+**3단계: top-2 선택.** 가장 큰 두 값은 expert 1과 expert 2다. Expert 3과 4는 이 토큰에 대해 계산하지 않는다.
+
+**4단계: gate 값.** 선택된 두 확률을 합이 1이 되도록 다시 나눈다. $0.609/(0.609+0.224)=0.731$, $0.224/0.833=0.269$이다. 선택한 두 logit $[2.0,1.0]$에만 softmax를 적용해도 같은 값이 나온다.
+
+**5단계: 가중합.** 계산을 줄이기 위해 expert 출력을 2차원으로 두고 $E_1(x)=[1.0,\,0.0]$, $E_2(x)=[0.0,\,2.0]$이라 하자.
+
+$$
+y=0.731\cdot[1.0,\,0.0]+0.269\cdot[0.0,\,2.0]=[\,0.731,\;0.538\,]
+$$
+
+실제 모델에서는 $y$가 hidden dimension 크기의 벡터이고, residual 경로로 입력에 더해진다.
+
+</Callout>
+
+이 토큰에서 계산한 FFN은 두 개뿐이지만, 저장해 둔 FFN은 네 개다. 옆 토큰은 expert 3과 4를 고를 수도 있다. 토큰마다 다른 가중치 조합을 쓰므로 모델 전체의 파라미터는 expert 수에 비례해 늘고, 토큰당 계산은 $k$에 비례한다.
+
+Router가 학습되는 경로도 이 식에 있다. Top-k 선택 자체는 미분할 수 없지만, 출력이 gate 값 $g_i(x)$에 곱해지므로 language modeling loss의 gradient가 선택된 expert의 gate를 통해 router로 흐른다.[^switch] Shazeer 등은 두 expert를 비교할 수 있어야 routing이 학습된다고 보고 $k\ge2$를 썼다. Switch Transformer는 $k=1$만으로도 품질을 유지하면서 router 계산과 통신을 줄였다고 보고했다.[^switch] $k$는 이후 모델마다 다르게 선택되었다(§6).
+
+### 2-3. Gating 함수의 변형
+
+예제의 1–4단계는 모델마다 조금씩 다르다. 같은 logit $[2.0,1.0,0.5,-1.0]$으로 비교해 보자.
+
+| 방식 | 사용 예 | Expert 1 | Expert 2 | 가중합 $y$ |
+|---|---|---|---|---|
+| 전체 softmax 후 top-k, 재정규화 없음 | Switch Transformer 식 | 0.609 | 0.224 | $[0.609,\,0.448]$ |
+| 선택한 logit에만 softmax (= 전체 softmax 후 재정규화) | Mixtral, GShard, gpt-oss, Qwen3 | 0.731 | 0.269 | $[0.731,\,0.538]$ |
+| Sigmoid 점수 후 top-k, 선택한 점수로 정규화 | DeepSeek-V3 | 0.546 | 0.454 | $[0.546,\,0.907]$ |
+
+첫 행은 Switch Transformer가 쓴 식 그대로다. 전체 softmax 확률 $p_i(x)$를 gate로 쓰므로 선택된 gate의 합이 1보다 작다.[^switch] 둘째 행에서 GShard는 top-2 확률을 합으로 나누고,[^gshard] Mixtral은 top-2 logit에 softmax를 적용한다.[^mixtral] 두 방법은 수학적으로 같다. Shazeer 등(2017)은 여기에 top-k 전에 학습 가능한 크기의 Gaussian noise를 더해 여러 expert가 선택될 기회를 주었다(noisy top-k gating).[^shazeer] 셋째 행의 DeepSeek-V3는 expert마다 독립적인 sigmoid 점수 $s_i=\sigma(z_i)$를 쓰고, 선택된 점수끼리 정규화한다. 예제에서는 $\sigma(2)=0.881$, $\sigma(1)=0.731$이므로 $0.881/(0.881+0.731)=0.546$이다.[^dsv3] 실제로는 이 모델들의 router가 서로 다른 값을 학습하므로, 같은 logit을 넣은 이 표는 함수의 차이만 보여 준다.
+
+### 2-4. 활성 파라미터와 메모리·통신 비용
+
+MoE의 크기를 말할 때는 세 가지 비용을 구분해야 한다.
+
+- **전체 파라미터(total parameters):** 모든 expert를 포함해 저장하는 가중치 수. 서빙·학습 시 메모리에 올려야 하는 양을 정한다.
+- **활성 파라미터(active parameters):** 토큰 하나를 처리할 때 실제로 곱해지는 가중치 수. 토큰당 FLOPs를 정한다.
+- **메모리 이동과 통신:** 어떤 expert가 어느 장치에 있는지, 토큰이 장치 사이를 얼마나 오가는지에 따라 달라진다. 파라미터 수만으로는 드러나지 않는다.
+
+Mixtral 8x7B로 앞의 두 값을 계산해 보자. 층마다 attention은 약 41.9M, expert 하나는 약 176.2M, router는 $4096\times8$개다. Embedding과 LM head는 각각 $32000\times4096$이다.
+
+| 항목 | Llama형 dense (Mixtral과 같은 차원) | Mixtral 8x7B 전체 | Mixtral 8x7B 활성 (top-2) |
+|---|---|---|---|
+| Attention (32층) | 1.34B | 1.34B | 1.34B |
+| FFN/expert (32층) | 5.64B (1개) | 45.10B (8개) | 11.27B (2개) |
+| Embedding + LM head | 0.26B | 0.26B | 0.26B |
+| 합계 | 약 7.2B | 약 46.7B | 약 12.9B |
+
+공개 config의 차원으로 직접 계산한 값이며, 논문이 보고한 47B·13B와 맞는다.[^mixtral] 이름의 "8x7B"와 달리 전체가 $8\times7.2=58$B가 아닌 이유는 attention과 embedding은 복제하지 않고 FFN만 8개로 늘렸기 때문이다.
+
+**학습 계산량.** $C\approx6ND$의 $N$에는 토큰마다 실제로 곱하는 파라미터, 즉 embedding을 제외한 **활성 파라미터**를 넣는다. Forward에서 토큰 하나가 거치는 행렬곱이 그만큼이기 때문이다. Mixtral의 embedding 제외 활성 파라미터는 약 12.6B이므로 토큰당 학습 계산은 약 $6\times12.6\text{B}\approx7.6\times10^{10}$ FLOPs다. 전체 46.4B를 넣으면 약 3.7배 과대 추정한다. DeepSeek-V3에 같은 근사를 적용하면, 보고된 활성 37B와 학습 토큰 14.8T로 $6\times37\text{B}\times14.8\text{T}\approx3.3\times10^{24}$ FLOPs가 나온다(우리가 계산한 근사치이며, 37B는 embedding 포함 여부를 따로 밝히지 않은 값이다).[^dsv3] 이 근사에는 router 계산, capacity를 맞추려고 채우는 padding(§3-4), 장치 간 통신 시간이 들어가지 않는다.
+
+**메모리.** 계산은 활성 파라미터를 따라가지만 메모리는 전체 파라미터를 따라간다. 어떤 토큰이 어떤 expert를 고를지 미리 모르므로 모든 expert를 올려 두어야 한다. Mixtral 논문도 활성 파라미터 비교는 계산 비용만 반영하며, 서빙 메모리는 전체 47B에 비례한다고 적는다.[^mixtral] BF16으로 저장하면 Mixtral은 약 93GB로, 같은 활성 크기의 dense 13B 모델(약 26GB)보다 훨씬 크다. gpt-oss-120b에서는 MoE 가중치가 전체 파라미터의 90% 이상을 차지한다.[^gptoss]
+
+**통신.** Expert가 많으면 여러 GPU에 나누어 둔다. 이것이 [Training engineering](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#4-4-ep)에서 본 EP(expert parallelism)다. 각 GPU는 자기 토큰을 선택된 expert가 있는 GPU로 보내고(dispatch), 결과를 다시 받아 원래 순서로 합친다(combine). 두 단계 모두 all-to-all 통신이다. DeepSeek-V3는 노드를 넘는 EP 때문에 계산과 통신의 비율이 약 1:1이 되었다고 보고했고, 토큰 하나가 가는 노드를 최대 4개로 제한하는 routing 규칙을 두었다.[^dsv3] 추론에서 batch가 작으면 토큰 몇 개를 위해 여러 expert의 가중치를 메모리에서 읽어야 하므로 효율이 떨어질 수 있다. Mixtral 논문도 MoE가 batch가 큰 작업에 더 적합하다고 적는다.[^mixtral] 추론 쪽 비용 분석은 6주차에서 다룬다.
+
+<Video src="https://www.youtube.com/watch?v=RcJ1YXHLv5o" caption="Stanford CS25 V4, Albert Jiang, Demystifying Mixtral of Experts (2024). Mixtral의 router와 expert 구성, routing 분석을 설명한다." />
+
+## 3. Load balancing과 capacity
+
+Top-k routing을 그대로 학습시키면 두 문제가 생긴다. 하나는 **학습 중 expert 사용이 한쪽으로 쏠리는 문제**이고, 다른 하나는 **한 batch 안에서 특정 expert에 배정된 토큰이 그 expert의 처리 용량을 넘는 문제**다. 앞의 문제는 routing을 학습시키는 방식(§3-1–3-3)으로, 뒤의 문제는 expert마다 처리할 토큰 수의 상한을 정하는 방식(§3-4)으로 다룬다. 두 문제는 연결되어 있다. 쏠림이 심하면 용량 초과도 잦아진다. 그래도 balancing이 잘 되어도 batch마다 우연한 불균형은 남으므로 용량 규칙이 따로 필요하다.
+
+### 3-1. Expert 쏠림
+
+학습 초기에 어떤 expert가 조금 더 자주 선택되었다고 하자. 그 expert는 gradient를 더 많이 받아 빨리 좋아지고, 좋아진 만큼 router가 더 자주 고른다. Shazeer 등은 gating network가 소수 expert에만 큰 가중치를 주는 상태로 수렴하는 경향을 관찰하고, 이 불균형이 스스로 강화된다고 설명했다.[^shazeer] 나머지 expert는 거의 학습되지 않으므로 파라미터를 늘린 의미가 줄어든다. 이 현상을 routing collapse라고도 부른다.[^dsv3] EP에서는 시스템 문제도 겹친다. 바쁜 expert가 있는 GPU가 끝날 때까지 다른 GPU가 기다린다.
+
+### 3-2. Auxiliary load balancing loss
+
+가장 널리 쓰인 해법은 language modeling loss에 **균형을 유도하는 보조 손실(auxiliary loss)** 을 더하는 것이다. Switch Transformer의 식은 다음과 같다. Expert 수를 $N$, batch의 토큰 수를 $T$라 한다.[^switch]
+
+$$
+\mathcal{L}_{\text{aux}}=\alpha\,N\sum_{i=1}^{N}f_i\,P_i
+$$
+
+$$
+f_i=\frac{1}{T}\sum_{x\in\mathcal{B}}\mathbb{1}\{\arg\max_j p_j(x)=i\},\qquad
+P_i=\frac{1}{T}\sum_{x\in\mathcal{B}}p_i(x)
+$$
+
+$f_i$는 expert $i$로 실제로 보내진 토큰의 비율이고, $P_i$는 router가 expert $i$에 준 확률의 평균이다. $f_i$는 argmax로 정해지므로 미분할 수 없고, gradient는 $P_i$를 통해서만 흐른다. 모든 expert가 $1/N$씩 받을 때 $N\sum f_iP_i$가 최소값 1이 된다. GShard도 같은 발상으로, 미분할 수 없는 배정 비율 대신 평균 gate 값을 곱한 보조 손실을 쓴다.[^gshard]
+
+<Callout type="example">
+
+Expert 4개, top-1, 토큰 8개인 batch를 생각하자(교육용 가상 값). 5개가 expert 1로, 나머지 셋이 하나씩 다른 expert로 갔다.
+
+- $f=[5/8,\,1/8,\,1/8,\,1/8]=[0.625,\,0.125,\,0.125,\,0.125]$
+- Router 확률의 평균이 $P=[0.50,\,0.20,\,0.15,\,0.15]$라면
+- $N\sum f_iP_i=4\times(0.3125+0.025+0.01875+0.01875)=4\times0.375=1.5$
+
+완전히 균형을 이루면 1.0이다. $P_i$에 대한 기울기는 $N f_i=[2.5,\,0.5,\,0.5,\,0.5]$로, 토큰을 많이 받은 expert 1의 확률을 가장 강하게 낮춘다. Softmax 확률은 합이 1이므로 그만큼 다른 expert의 확률이 올라간다.
+
+</Callout>
+
+계수 $\alpha$가 문제다. Switch Transformer는 $10^{-1}$부터 $10^{-5}$까지 탐색해 $\alpha=10^{-2}$가 학습 loss를 방해하지 않으면서 빠르게 균형을 잡았다고 보고했다.[^switch] 그러나 보조 손실은 언어 모델링과 다른 목표이므로 계수를 키우면 router가 "다음 토큰 예측에 좋은 expert"보다 "균형에 좋은 expert"를 고르도록 밀린다. Wang 등(2024)은 큰 보조 손실이 학습에 무시할 수 없는 간섭 gradient를 만들어 성능을 떨어뜨린다고 지적했다.[^lossfree] 계수가 작으면 간섭은 줄지만 균형이 약해진다.
+
+### 3-3. Bias 기반 balancing
+
+Wang 등은 loss를 더하지 않고 **routing 점수에 expert별 bias를 더해 선택만 조정**하는 방법을 제안했고,[^lossfree] DeepSeek-V3가 이를 채택했다.[^dsv3]
+
+$$
+\text{선택: } s_{i,t}+b_i \text{ 기준 top-}K,\qquad \text{gate 값: 원래 점수 } s_{i,t}\text{로 계산}
+$$
+
+Bias $b_i$는 gradient로 학습하지 않는다. 매 학습 step이 끝나면 batch 전체의 expert 부하를 보고, 과부하인 expert의 bias는 $\gamma$만큼 낮추고 부하가 적은 expert의 bias는 $\gamma$만큼 올린다. Bias는 어떤 expert를 고를지에만 쓰이고 출력에 곱하는 gate 값에는 들어가지 않는다. 그래서 language modeling loss의 gradient에 균형용 항이 섞이지 않는다.
+
+<Callout type="example">
+
+Expert 4개, top-2, 교육용 $\gamma=0.1$로 두자(DeepSeek-V3의 실제 값은 0.001이다).[^dsv3] 직전 step에서 16번의 배정(토큰 8개 × 2)이 $[7,\,5,\,2,\,2]$로 나뉘었다. 평균은 4이므로 expert 1·2는 과부하, 3·4는 부하가 적다.
+
+- Bias 갱신: $b=[-0.1,\,-0.1,\,+0.1,\,+0.1]$
+- 다음 step의 한 토큰 점수: $s=[0.62,\,0.58,\,0.55,\,0.30]$
+- Bias 없이 고르면 expert 1·2가 선택된다.
+- $s+b=[0.52,\,0.48,\,0.65,\,0.40]$로 고르면 expert 3·1이 선택된다.
+- Gate 값은 원래 점수로 계산한다: $0.55/(0.55+0.62)=0.470$, $0.62/1.17=0.530$.
+
+Bias는 점수가 비슷하던 expert 2와 3의 순서만 바꾸었다. 점수 차이가 큰 선택은 그대로 두고, 경계에 있는 토큰부터 덜 붐비는 expert로 옮긴다.
+
+</Callout>
+
+DeepSeek-V3가 보조 손실을 완전히 없앤 것은 아니다. 한 시퀀스 안의 극단적인 불균형을 막기 위해 **시퀀스 단위의 보조 손실**을 함께 쓰고, 그 계수를 $\alpha=0.0001$로 매우 작게 두었다.[^dsv3] 논문은 bias 방식이 보조 손실만 쓴 기준 모델보다 대부분의 벤치마크에서 좋았다고 보고한다(15.7B·228.7B 규모의 ablation).
+
+이 비교를 읽을 때 균형을 맞추는 **범위**도 함께 보아야 한다. DeepSeek-V3 보고서 §4.5.3은 bias 방식이 batch 전체의 균형만 요구하는 반면, 기존 보조 손실은 시퀀스마다 균형을 요구한다는 차이에 주목한다. 1B·3B MoE 실험에서 batch 단위 보조 손실도 bias 방식과 비슷한 validation loss를 냈다.[^dsv3] 즉 성능 차이의 일부는 "loss냐 bias냐"보다 "시퀀스 단위냐 batch 단위냐"에서 온다. Qwen3도 expert 특화를 위해 global-batch 단위의 load balancing loss를 쓴다고 밝혔다.[^qwen3]
+
+### 3-4. Expert capacity와 overflow
+
+학습이 균형을 향하더라도 매 batch의 배정은 고르지 않다. 한편 GPU 연산은 텐서 모양이 미리 정해져 있을 때 효율적이다. 그래서 GShard와 Switch Transformer는 expert마다 한 batch에서 처리할 토큰 수의 상한, 즉 **expert capacity**를 둔다.[^gshard][^switch]
+
+$$
+\text{expert capacity}=\frac{\text{batch의 토큰 수}}{\text{expert 수}}\times\text{capacity factor}
+$$
+
+Top-k routing에서는 토큰마다 $k$번 배정되므로 분자에 $k$를 곱해 생각한다. 상한을 넘은 토큰은 **overflow** 토큰이다. GShard와 Switch Transformer는 이 토큰의 expert 계산을 건너뛰고 residual 경로로 다음 층에 그대로 넘긴다(token dropping). 반대로 배정이 상한보다 적은 expert는 빈 자리를 padding으로 채우므로 계산과 메모리를 낭비한다.
+
+<Callout type="example">
+
+앞의 batch(expert 4개, top-1, 토큰 8개, 배정 $[5,1,1,1]$)에 capacity factor를 바꿔 적용해 보자.
+
+| Capacity factor | Expert당 자리 | 처리한 토큰 | Drop된 토큰 | 빈 자리 (전체 자리) |
+|---|---|---|---|---|
+| 1.0 | 2 | 2+1+1+1 = 5 | 3 | 3 (8) |
+| 1.5 | 3 | 3+1+1+1 = 6 | 2 | 6 (12) |
+| 2.5 | 5 | 5+1+1+1 = 8 | 0 | 12 (20) |
+
+Capacity factor를 키우면 drop이 줄지만 빈 자리가 늘어, 계산·메모리·통신에 쓰는 버퍼가 커진다. Balancing이 잘 되어 배정이 $[2,2,2,2]$에 가까워지면 작은 capacity factor로도 drop과 빈 자리가 함께 줄어든다.
+
+</Callout>
+
+Switch Transformer는 보조 손실을 충분한 계수로 쓰면 drop 비율이 대체로 1% 미만이었다고 보고했고, 1.0·1.25 같은 낮은 capacity factor에서 잘 동작했다.[^switch] ST-MoE는 학습 capacity factor 1.25, 평가 2.0을 썼다.[^stmoe] Drop된 토큰을 두 번째 expert로 다시 보내는 방법(No-Token-Left-Behind)도 시도되었지만, Switch Transformer 논문에서는 뚜렷한 이득이 없었다.[^switch]
+
+Token dropping은 필수 요소가 아니다. DeepSeek-V3는 balancing이 학습 내내 잘 유지되었기 때문에 학습에서 토큰을 drop하지 않았고, 추론에서도 부하를 맞추는 배치 전략으로 drop 없이 처리한다고 밝혔다.[^dsv3] 고정된 capacity 대신 expert마다 가변 길이 입력을 처리하는 커널로 drop을 피하는 구현도 있다.
+
+<Details summary="심화: Router z-loss와 routing 안정성">
+
+Balancing과 별개로, 큰 MoE 학습에서는 loss가 갑자기 튀며 발산하는 불안정성이 보고되었다. ST-MoE는 router logit의 크기를 원인 중 하나로 보고 **router z-loss**를 제안했다.[^stmoe]
+
+$$
+L_z=\frac{1}{B}\sum_{i=1}^{B}\Bigl(\log\sum_{j=1}^{N}e^{x_j^{(i)}}\Bigr)^2
+$$
+
+$B$는 토큰 수, $N$은 expert 수, $x^{(i)}$는 $i$번째 토큰의 router logit이다. 이 항은 logit 전체가 커지는 것을 벌한다. 근거는 수치 정밀도다. bfloat16은 가수 비트가 7개뿐이라 큰 수일수록 반올림 오차가 크고, softmax의 지수 함수는 작은 입력 오차를 큰 출력 차이로 키운다. ST-MoE의 예에서 logit 10개가 128이고 하나가 128.5일 때, bfloat16 반올림으로 128.5가 128이 되면 가장 큰 확률이 약 0.142에서 0.091로 바뀐다. Router 확률은 expert 출력에 곱해지는 gate이므로 이런 오차가 바로 출력에 반영된다.
+
+ST-MoE는 전체 loss를 $L_{CE}+c_BL_B+c_zL_z$로 두고 $c_z=0.001$을 썼다. 실험에서 update clipping은 학습을 안정시켰지만 품질을 크게 떨어뜨렸고, router z-loss는 품질 저하 없이 안정화했다(논문 Table 4).[^stmoe]
+
+</Details>
+
+<Video src="https://www.youtube.com/watch?v=U8J32Z3qV8s" caption="Stanford CS25 V1, Mixture of Experts (MoE) paradigm and the Switch Transformer. Switch Transformer와 ST-MoE 저자들이 top-1 routing, load balancing, capacity factor, 학습 안정성을 설명한다." />
+
+## 4. Fine-grained expert와 shared expert
+
+§2–3의 MoE는 "dense FFN과 같은 크기의 expert 몇 개 중 한두 개 선택"이었다. DeepSeekMoE는 이 구성에서 expert 수와 크기, 항상 켜 두는 expert를 바꾸는 두 가지 선택을 제안했다.[^dsmoe] 두 선택 모두 MoE가 동작하는 데 필수는 아니며, 최근 모델들도 서로 다르게 고른다(§6).
+
+### 4-1. Fine-grained expert segmentation
+
+DeepSeekMoE는 expert가 8개나 16개뿐이면 한 expert에 성격이 다른 토큰들이 섞여 배정되어, expert 하나가 여러 종류의 지식을 한꺼번에 담아야 한다고 보았다(논문은 이를 knowledge hybridity라 부른다).[^dsmoe] 해법은 expert 하나를 $m$개의 작은 expert로 쪼개고, 활성 expert 수도 $m$배로 늘리는 것이다. 각 expert의 FFN 중간 차원을 $1/m$로 줄이므로 전체 파라미터와 토큰당 계산은 그대로다.
+
+바뀌는 것은 **고를 수 있는 조합의 수**다. 논문의 예에서 expert 16개 중 2개를 고르면 조합은 $\binom{16}{2}=120$가지다. 각 expert를 4개로 쪼개 64개 중 8개를 고르면 $\binom{64}{8}=4{,}426{,}165{,}368$가지가 된다.[^dsmoe] 토큰마다 더 세밀하게 맞춘 expert 조합을 쓸 수 있다는 것이 동기다.
+
+실제 모델에서 이 차이는 expert의 크기로 드러난다. Mixtral의 expert 중간 차원은 hidden dimension의 3.5배(14336)다. DeepSeek-V3는 hidden 7168에 expert 중간 차원 2048, Qwen3-235B-A22B는 hidden 4096에 1536으로, expert 하나가 hidden dimension보다 좁다.[^dsv3][^qwen3-config] 대신 expert 수가 수백 개이고 토큰마다 8개를 고른다. Expert가 작고 많아지면 router 계산과 토큰 배정 관리, 통신 횟수가 늘어나는 비용이 생긴다.
+
+### 4-2. Shared expert
+
+두 번째 선택은 일부 expert를 **routing과 무관하게 모든 토큰이 통과하는 shared expert**로 떼어 두는 것이다. DeepSeekMoE는 서로 다른 routed expert가 여러 토큰에 공통으로 필요한 지식을 각자 중복해서 배우는 문제(knowledge redundancy)를 지적하고, 이 공통 부분을 shared expert가 맡으면 routed expert의 중복이 줄어든다고 보았다.[^dsmoe] DeepSeek-V3의 FFN 출력은 다음과 같다.[^dsv3]
+
+$$
+h'_t=u_t+\sum_{i=1}^{N_s}\mathrm{FFN}^{(s)}_i(u_t)+\sum_{i=1}^{N_r}g_{i,t}\,\mathrm{FFN}^{(r)}_i(u_t)
+$$
+
+$N_s$개의 shared expert에는 gate가 없고, $N_r$개의 routed expert 중 선택된 것만 gate 값 $g_{i,t}$를 곱해 더한다. DeepSeek-V3는 shared expert 1개와 routed expert 256개를 두고 routed expert 중 8개를 고른다. 토큰마다 계산하는 expert는 모두 9개다.
+
+DeepSeekMoE 원논문은 2B 규모에서 두 선택을 적용한 모델이 expert 파라미터와 계산이 1.5배인 GShard 2.9B와 비슷한 성능을 냈다고 보고했다.[^dsmoe] 그러나 이후 모델들이 모두 같은 선택을 한 것은 아니다. Qwen3는 fine-grained expert segmentation은 따르지만, 이전 Qwen2.5-MoE와 달리 shared expert를 두지 않았다. 보고서의 해당 절은 이유를 따로 설명하지 않는다.[^qwen3]
+
+## 5. Mixture-of-Depths와 Mixture-of-Recursions
+
+MoE는 층의 **폭** 방향에서 토큰마다 다른 가중치를 쓴다. 하지만 토큰이 거치는 층 수는 여전히 모두 같다. 깊이 방향에서는 기존 방식의 두 가지 성질을 각각 문제로 볼 수 있다. 하나는 쉬운 토큰과 어려운 토큰이 같은 계산을 받는다는 점이고, 다른 하나는 블록마다 가중치가 따로 있어 깊이만큼 파라미터가 늘어난다는 점이다. 앞의 문제에서 Mixture-of-Depths가, 뒤의 문제에서 recursive Transformer가 나왔고, Mixture-of-Recursions가 둘을 합친다.
+
+<figure>
+<svg viewBox="0 0 560 372" role="img" aria-label="깊이 방향 conditional computation의 분기와 합류. 맨 위의 dense Transformer는 서로 다른 가중치의 블록 L개를 모든 토큰이 통과한다. 왼쪽 갈래는 모든 토큰이 같은 계산을 받는다는 문제에서 Mixture-of-Depths로 이어지고, 블록마다 router가 상위 k개 토큰만 계산하며 나머지는 residual로 통과한다. 오른쪽 갈래는 깊이만큼 가중치가 늘어난다는 문제에서 recursive Transformer로 이어지고, 공유 블록 묶음을 정해진 횟수만큼 반복한다. 두 갈래는 아래의 Mixture-of-Recursions에서 합류하며, 공유 블록을 반복하되 router가 토큰마다 반복 횟수를 정한다. 실험 규모는 135M에서 1.7B다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<rect x="150" y="10" width="260" height="62" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="280" y="35" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Dense Transformer</text>
+<text x="280" y="57" font-size="12" text-anchor="middle" fill="#64748b">블록 L개, 가중치 각각 · 모든 토큰이 전부 통과</text>
+<path d="M220 72 L140 138" stroke="#0f172a" fill="none"/><polygon points="136,142 140,134 145,139" fill="#0f172a"/>
+<path d="M340 72 L420 138" stroke="#0f172a" fill="none"/><polygon points="424,142 415,139 420,134" fill="#0f172a"/>
+<text x="112" y="96" font-size="12" text-anchor="middle" fill="#64748b">문제: 토큰마다</text>
+<text x="112" y="112" font-size="12" text-anchor="middle" fill="#64748b">같은 계산량</text>
+<text x="448" y="96" font-size="12" text-anchor="middle" fill="#64748b">문제: 깊이만큼</text>
+<text x="448" y="112" font-size="12" text-anchor="middle" fill="#64748b">가중치 증가</text>
+<rect x="16" y="144" width="248" height="82" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="140" y="168" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Mixture-of-Depths</text>
+<text x="140" y="190" font-size="12" text-anchor="middle" fill="#0f172a">블록마다 router가 top-k 토큰만 계산</text>
+<text x="140" y="210" font-size="12" text-anchor="middle" fill="#64748b">나머지 토큰은 residual로 통과</text>
+<rect x="296" y="144" width="248" height="82" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="420" y="168" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Recursive Transformer</text>
+<text x="420" y="190" font-size="12" text-anchor="middle" fill="#0f172a">공유 블록 묶음을 N번 반복</text>
+<text x="420" y="210" font-size="12" text-anchor="middle" fill="#64748b">모든 토큰이 같은 반복 횟수</text>
+<path d="M140 226 L240 282" stroke="#0f172a" fill="none"/><polygon points="244,285 235,284 239,277" fill="#0f172a"/>
+<path d="M420 226 L320 282" stroke="#0f172a" fill="none"/><polygon points="316,285 321,277 325,284" fill="#0f172a"/>
+<rect x="130" y="286" width="300" height="78" rx="8" fill="#f8fafc" stroke="#0f172a"/>
+<text x="280" y="310" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Mixture-of-Recursions</text>
+<text x="280" y="332" font-size="12" text-anchor="middle" fill="#0f172a">공유 블록 반복 + 토큰별 반복 횟수 router</text>
+<text x="280" y="352" font-size="12" text-anchor="middle" fill="#64748b">실험 규모 135M–1.7B</text>
+</svg>
+<figcaption>깊이 방향 conditional computation의 분기와 합류. 각 논문의 설명을 바탕으로 직접 구성한 개념도다.</figcaption>
+</figure>
+
+### 5-1. Mixture-of-Depths
+
+Dense Transformer에서는 모든 토큰이 모든 블록의 attention과 FFN을 거친다. Raposo 등(2024)은 모든 토큰에 같은 계산이 필요하지는 않을 것이라는 가설에서 출발해 **Mixture-of-Depths(MoD)** 를 제안했다.[^mod] 블록마다 router가 토큰별 점수를 내고, 점수가 높은 상위 $k$개 토큰만 그 블록의 attention과 MLP를 계산한다. 나머지 토큰은 residual 경로로 블록을 건너뛴다. MoE가 여러 FFN 중 하나를 고른다면, MoD는 "블록 계산"과 "아무것도 하지 않음" 두 경로 중 하나를 고른다.
+
+$$
+x^{l+1}_i=\begin{cases} r^l_i\,f(\tilde{X}^l)_i+x^l_i, & r^l_i\text{가 상위 }k\text{개 안에 들 때}\\ x^l_i, & \text{그 외}\end{cases}
+$$
+
+$f$는 attention과 MLP이고, $\tilde{X}^l$은 선택된 토큰들의 집합이다. Router 점수 $r^l_i$를 출력에 곱하므로 router가 language modeling loss로 학습된다.
+
+<Figure src="https://arxiv.org/html/2404.02258v1/mod.png" alt="Mixture-of-Depths 그림. 왼쪽에는 두 토큰의 블록 처리가 있다. Router 가중치 0.41인 토큰은 self-attention과 MLP를 건너뛰고 residual로 통과하며, 0.65인 토큰은 블록을 계산하고 출력에 router 가중치를 곱한다. 오른쪽 위에는 층과 시퀀스 위치에 따른 routing 결정이 보라색(블록 사용)과 주황색(우회)으로 섞여 있고, 아래에는 모든 칸이 보라색인 vanilla Transformer와 뒤쪽 층을 연속으로 건너뛰는 early-exit의 패턴이 비교되어 있다." caption="Mixture-of-Depths. 왼쪽은 router 가중치에 따라 블록을 계산하거나 건너뛰는 두 토큰, 오른쪽은 학습된 모델의 routing 결정과 vanilla Transformer·early-exit 방식의 비교다." source="Raposo et al. · Mixture-of-Depths (arXiv:2404.02258) Figure 1 · CC BY 4.0 · 수정 없음" />
+
+그림 오른쪽의 비교가 중요하다. Early exit은 토큰이 어느 층에서 멈추면 그 뒤 층을 모두 건너뛴다. MoD에서는 앞쪽 블록을 건너뛴 토큰도 뒤쪽 블록에서 다시 계산될 수 있다.[^mod]
+
+MoD는 토큰별 선택 대신 블록이 상위 $k$개 토큰을 고르는 **expert-choice routing**을 쓴다. 블록마다 처리할 토큰 수가 정확히 $k$로 고정되므로 §3의 load balancing 문제와 보조 손실이 필요 없다. 이 $k$가 MoD의 capacity다. 논문에서 가장 좋았던 설정은 한 블록 걸러 하나씩 routing 블록을 두고 capacity를 12.5%로 둔 것이다. 시퀀스 길이 2048에서 256개 토큰만 블록을 계산하고 1792개는 건너뛴다. 이 블록에서 MLP 계산은 1/8로, attention의 query–key 곱은 $(256/2048)^2=1/64$로 줄어든다(계산은 우리가 한 것이다).
+
+Expert-choice routing에는 추론 시 문제가 있다. 상위 $k$개인지는 시퀀스 전체의 점수를 봐야 알 수 있으므로, 뒤에 올 토큰을 모르는 자기회귀 생성에서는 그대로 쓸 수 없다(non-causal). MoD는 router 출력으로 "상위 $k$개에 들지"를 예측하도록 작은 보조 손실이나 별도의 예측기를 학습해 이를 우회했고, 생성 시 성능 저하가 작았다고 보고한다.[^mod] 실험은 60M–3B 규모의 isoFLOP 비교였다.
+
+### 5-2. 가중치 공유와 recursive Transformer
+
+또 다른 성질은 블록마다 가중치가 따로 있다는 점이다. Llama 3 8B의 32개 블록은 구조가 같지만 가중치는 모두 다르다. 깊이를 두 배로 늘리면 블록 파라미터도 두 배가 된다. 같은 가중치를 여러 층에서 재사용하는 **가중치 공유(parameter sharing)** 는 오래된 아이디어다. Universal Transformer는 한 블록을 반복 적용했고,[^ut] ALBERT는 모든 층의 가중치를 공유해 파라미터를 줄였다.[^albert]
+
+최근에는 이런 모델을 recursive Transformer라고 부른다.[^rrt] $L$개 층을 $N_r$개의 반복 단위로 나누고 한 단위의 가중치를 공유한다. MoR 논문의 예에서 $L=9$, $N_r=3$이면 Cycle 방식은 층 $(0,1,2)$를 세 번 반복해 $[(0,1,2),(0,1,2),(0,1,2)]$로 펼친다. 실제 계산 깊이는 9층이지만 고유한 가중치는 3층 분량이다. Middle-Cycle 방식은 첫 층과 마지막 층을 공유하지 않고 가운데 층만 반복한다.[^mor]
+
+가중치 공유는 파라미터를 줄이지만 계산을 줄이지는 않는다. 모든 토큰이 여전히 같은 횟수만큼 반복한다. §5-1이 해결하려던 "균일한 계산" 문제가 그대로 남는다.
+
+### 5-3. Mixture-of-Recursions
+
+Bae 등(2025)의 **Mixture-of-Recursions(MoR)** 은 두 갈래를 합친다. 가중치는 recursive Transformer처럼 공유하고, 토큰마다 공유 블록을 몇 번 반복할지는 MoD처럼 router가 정한다.[^mor] [Decoder-only LLM overview](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/#2-2-llama-3-8b-구조)의 곁주에서 "블록 가중치 공유와 토큰별 반복 횟수 선택을 결합한 변형"이라고 소개한 모델이다. Universal Transformer도 위치별로 반복을 멈추는 halting 장치를 두었지만,[^ut] MoR 논문은 기존의 동적 반복 방식들이 별도 학습 절차나 배포 효율의 제약 때문에 실제로는 고정 횟수 반복으로 돌아가는 경우가 많았다고 설명한다.[^mor]
+
+Routing 방식은 두 가지다. **Expert-choice**에서는 반복 단계마다 router가 계속 진행할 상위 $k$개 토큰을 고르고, 이번 단계에서 선택된 토큰만 다음 단계 후보가 된다. **Token-choice**에서는 첫 단계에서 토큰마다 반복 횟수를 한 번에 정한다. 예를 들어 $N_r=3$에서 균형 잡힌 token-choice라면 토큰의 1/3씩이 1·2·3회 반복을 받는다. 반복 단계 1·2·3이 처리하는 토큰 비율은 $1,\ 2/3,\ 1/3$이다. 논문은 같은 비율을 expert-choice의 단계별 $k$로 맞추어 두 방식을 같은 계산량에서 비교했다.[^mor] 이 경우 공유 블록의 계산량은 모든 토큰이 3회 반복하는 고정 recursive 모델의 $(1+2/3+1/3)/3=2/3$이다(우리가 계산한 값).
+
+<Figure src="https://arxiv.org/html/2507.10524v3/overview_main3.png" alt="Mixture-of-Recursions의 토큰별 반복 예시. 위쪽 격자는 층과 시퀀스 위치에 따라 계산된 칸(진한 색)과 건너뛴 칸(연한 색)을 보여 주며, 맨 아래 층은 모든 위치가 계산되고 위로 갈수록 일부 위치만 계산된다. 아래쪽에는 영어 문장의 subword 토큰이 세 가지 색으로 칠해져 있어 토큰마다 반복 횟수가 1, 2, 3회로 다름을 나타낸다." caption="MoR에서 학습된 토큰별 반복 횟수의 예. 진한 칸은 반복 블록을 계산한 위치이고, 아래 문장의 색은 각 subword 토큰의 반복 횟수(1·2·3회)를 나타낸다." source="Bae et al. · Mixture-of-Recursions (arXiv:2507.10524v3) Figure 1 오른쪽 패널 · CC BY 4.0 · 수정 없음" />
+
+반복 단계마다 계산하는 토큰이 달라지므로 KV cache도 설계해야 한다. MoR은 단계마다 그 단계에 남은 토큰의 key·value만 저장하는 방식(recursion-wise caching)과, 첫 반복의 key·value를 이후 단계가 공유하는 방식(recursive KV sharing)을 비교한다.[^mor] 두 방식의 세부 trade-off는 원논문 §2.2.2와 실험을 참고한다.
+
+논문은 135M–1.7B 규모에서, 같은 학습 FLOPs 조건으로 MoR이 vanilla와 기존 recursive 모델보다 낮은 validation loss와 높은 처리량을 보였다고 보고한다.[^mor] 저자들도 계산 자원의 제약으로 실험이 1.7B까지였다고 밝히며, 3B 이상으로의 확장을 후속 과제로 둔다. MoD와 MoR은 아직 대규모 공개 LLM의 표준 구성으로 자리 잡은 기법이 아니다. 폭 방향의 MoE처럼 토큰별 계산량을 바꾸는 방향의 연구로 읽는 것이 적절하다.
+
+## 6. 최근 모델의 선택
+
+아래는 공개 모델의 expert·router 구성만 모은 것이다. 값은 각 모델의 기술 보고서·model card와 공개 config에서 확인했다.
+
+| 모델 | 전체 / 활성 파라미터 | MoE 층 | Routed expert (층당) | Top-k | Shared expert | Gate 계산 |
+|---|---|---|---|---|---|---|
+| Mixtral 8x7B | 47B / 13B | 32층 전부 | 8 | 2 | 없음 | 선택한 logit의 softmax |
+| DeepSeek-V3 | 671B / 37B | 61층 중 앞 3층 제외 | 256 | 8 | 1 | Sigmoid 점수, 선택한 점수로 정규화, bias는 선택에만 사용 |
+| Qwen3-235B-A22B | 235B / 22B | 94층 전부 | 128 | 8 | 없음 | 전체 softmax 후 top-k 재정규화 |
+| Qwen3-30B-A3B | 30.5B / 3.3B | 48층 전부 | 128 | 8 | 없음 | 전체 softmax 후 top-k 재정규화 |
+| gpt-oss-120b | 116.8B / 5.1B | 36층 전부 | 128 | 4 | 없음 | 선택한 4개의 softmax |
+| gpt-oss-20b | 20.9B / 3.6B | 24층 전부 | 32 | 4 | 없음 | 선택한 4개의 softmax |
+
+출처: Mixtral[^mixtral], DeepSeek-V3[^dsv3], Qwen3 보고서[^qwen3]와 config·구현[^qwen3-config], gpt-oss model card[^gptoss]. Qwen3-30B-A3B의 파라미터 수는 공식 model card 값이다. gpt-oss의 활성 파라미터에는 LM head(unembedding)가 포함되고 입력 embedding은 빠져 있다.[^gptoss] DeepSeek-V3는 routing 대상 노드를 토큰당 최대 4개로 제한한다.[^dsv3]
+
+표에서 몇 가지 경향을 읽을 수 있다. 초기의 "큰 expert 8개 중 2개"(Mixtral) 이후 공개된 모델들은 expert를 100개 이상으로 늘리고 4–8개를 고른다. 활성 파라미터 비율은 Mixtral의 약 28%에서 DeepSeek-V3의 약 5.5%, gpt-oss-120b의 약 4.4%까지 낮아졌다. Shared expert는 DeepSeek-V3에만 있고, Qwen3와 gpt-oss는 두지 않았다. 전체 파라미터가 비슷한 모델이라도 활성 파라미터와 expert 구성이 크게 다르므로, MoE 모델을 비교할 때는 두 숫자와 expert 구성을 함께 보아야 한다.
+
+[^moe-survey]: Cai, W., Jiang, J., Wang, F., Tang, J., Kim, S., & Huang, J. (2025). *A Survey on Mixture of Experts in Large Language Models*. IEEE Transactions on Knowledge and Data Engineering (accepted). [arXiv:2407.06204v3](https://arxiv.org/abs/2407.06204v3).
+[^shazeer]: Shazeer, N., Mirhoseini, A., Maziarz, K., Davis, A., Le, Q., Hinton, G., & Dean, J. (2017). *Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer*. ICLR 2017. [arXiv:1701.06538](https://arxiv.org/abs/1701.06538).
+[^gshard]: Lepikhin, D., et al. (2021). *GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding*. ICLR 2021. [arXiv:2006.16668](https://arxiv.org/abs/2006.16668).
+[^switch]: Fedus, W., Zoph, B., & Shazeer, N. (2022). *Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity*. Journal of Machine Learning Research, 23(120), pp. 1–39. [arXiv:2101.03961](https://arxiv.org/abs/2101.03961).
+[^mixtral]: Jiang, A. Q., et al. (2024). *Mixtral of Experts*. [arXiv:2401.04088](https://arxiv.org/abs/2401.04088).
+[^dsv3]: DeepSeek-AI. (2024). *DeepSeek-V3 Technical Report*. [arXiv:2412.19437v2](https://arxiv.org/abs/2412.19437v2).
+[^gptoss]: OpenAI. (2025). *gpt-oss-120b & gpt-oss-20b Model Card*. [arXiv:2508.10925](https://arxiv.org/abs/2508.10925).
+[^lossfree]: Wang, L., Gao, H., Zhao, C., Sun, X., & Dai, D. (2024). *Auxiliary-Loss-Free Load Balancing Strategy for Mixture-of-Experts*. [arXiv:2408.15664](https://arxiv.org/abs/2408.15664).
+[^qwen3]: Qwen Team. (2025). *Qwen3 Technical Report*. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
+[^stmoe]: Zoph, B., Bello, I., Kumar, S., Du, N., Huang, Y., Dean, J., Shazeer, N., & Fedus, W. (2022). *ST-MoE: Designing Stable and Transferable Sparse Expert Models*. [arXiv:2202.08906](https://arxiv.org/abs/2202.08906).
+[^dsmoe]: Dai, D., et al. (2024). *DeepSeekMoE: Towards Ultimate Expert Specialization in Mixture-of-Experts Language Models*. ACL 2024. [arXiv:2401.06066](https://arxiv.org/abs/2401.06066).
+[^qwen3-config]: Qwen. (2025). *Qwen3-235B-A22B* [config.json](https://huggingface.co/Qwen/Qwen3-235B-A22B/blob/main/config.json), *Qwen3-30B-A3B* [model card](https://huggingface.co/Qwen/Qwen3-30B-A3B). Hugging Face Transformers, [modeling_qwen3_moe.py](https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3_moe/modeling_qwen3_moe.py).
+[^mod]: Raposo, D., Ritter, S., Richards, B., Lillicrap, T., Humphreys, P. C., & Santoro, A. (2024). *Mixture-of-Depths: Dynamically allocating compute in transformer-based language models*. [arXiv:2404.02258](https://arxiv.org/abs/2404.02258).
+[^ut]: Dehghani, M., Gouws, S., Vinyals, O., Uszkoreit, J., & Kaiser, Ł. (2019). *Universal Transformers*. ICLR 2019. [arXiv:1807.03819](https://arxiv.org/abs/1807.03819).
+[^albert]: Lan, Z., et al. (2020). *ALBERT: A Lite BERT for Self-supervised Learning of Language Representations*. ICLR 2020. [arXiv:1909.11942](https://arxiv.org/abs/1909.11942).
+[^rrt]: Bae, S., Fisch, A., Harutyunyan, H., Ji, Z., Kim, S., & Schuster, T. (2025). *Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA*. ICLR 2025. [arXiv:2410.20672](https://arxiv.org/abs/2410.20672).
+[^mor]: Bae, S., et al. (2025). *Mixture-of-Recursions: Learning Dynamic Recursive Depths for Adaptive Token-Level Computation*. NeurIPS 2025. [arXiv:2507.10524](https://arxiv.org/abs/2507.10524).
