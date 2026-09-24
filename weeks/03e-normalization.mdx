@@ -266,7 +266,7 @@ $$
 
 Xiao 등은 Llama-2-7B의 attention map에서, 아래 두 층을 지나면 거의 모든 층과 head가 **첫 토큰**에 큰 attention을 주는 것을 관찰했다.[^streamingllm] 첫 토큰의 내용이 그 문맥에서 중요하지 않아도 그렇다.
 
-<Figure src="https://arxiv.org/html/2309.17453v4/attention_weights.png" alt="Llama-2-7B의 평균 attention logit 지도 여섯 개. Layer 0과 Layer 1의 head 0은 대각선 근처, 즉 최근 토큰 쪽 값이 크다. Layer 2, 9, 16, 23, 31의 head 0은 모든 query 행에서 첫 번째 열, 즉 첫 토큰의 값이 두드러지게 크다." caption="길이 16인 문장 256개에 대한 Llama-2-7B의 평균 attention logit. 가로축은 key 위치, 세로축은 query 위치다. Layer 2부터 첫 열(첫 토큰)이 두드러진다." source="Xiao et al. · Efficient Streaming Language Models with Attention Sinks, Figure 2 · CC BY 4.0 · 수정 없음" />
+<Figure src="https://arxiv.org/html/2309.17453v4/attention_weights.png" alt="Llama-2-7B의 평균 attention logit 지도 일곱 개. Layer 0과 Layer 1의 head 0은 대각선 근처, 즉 최근 토큰 쪽 값이 크다. Layer 2, 9, 16, 23, 31의 head 0은 모든 query 행에서 첫 번째 열, 즉 첫 토큰의 값이 두드러지게 크다." caption="길이 16인 문장 256개에 대한 Llama-2-7B의 평균 attention logit. 가로축은 key 위치, 세로축은 query 위치다. Layer 2부터 첫 열(첫 토큰)이 두드러진다." source="Xiao et al. · Efficient Streaming Language Models with Attention Sinks, Figure 2 · CC BY 4.0 · 수정 없음" />
 
 이 현상은 실제 동작에도 영향을 준다. 최근 토큰만 KV cache에 남기는 window attention으로 긴 텍스트를 처리하면, 첫 토큰들이 cache에서 밀려나는 순간 perplexity가 급증했다. Llama-2-13B에서 최근 1,024 토큰만 남기면 perplexity가 5158.07이었지만, 처음 4 토큰을 함께 남기면(4+1020) 5.40으로 돌아왔다. 처음 4 토큰을 줄바꿈 토큰 `\n`으로 바꾸어도 5.60으로 거의 회복되었다. 첫 토큰의 **의미**보다 **위치**가 중요하다는 증거다.
 
@@ -346,7 +346,7 @@ Sink를 어떻게 다루든, 이미 sink에 의존하도록 학습된 모델에�
 
 출처는 Llama 3 공식 구현,[^llamaimpl] Gemma 2·3 보고서,[^gemma2][^gemma3] OLMo 2 보고서,[^olmo2] Qwen3 보고서,[^qwen3] Qwen3-Next 모델 카드와 공개 구현,[^qwen3next] gpt-oss 모델 카드다.[^gptoss] Qwen3-Next의 gate와 QK-Norm은 표준 softmax attention 층(Gated Attention 층)에 해당한다. 공개 구현은 query 투영을 두 배 폭으로 만들어 절반을 gate로 쓴다. Gated DeltaNet 층의 구성은 03c에서 다룬다. gpt-oss의 learned sink는 §4-3에서 설명했다.
 
-표에서 보이듯 Pre-LN이 여전히 흔하지만, Gemma와 OLMo 2처럼 sub-layer 출력을 정규화하는 배치도 쓰인다. Attention logit 쪽에서는 QK-Norm을 쓰는 모델이 늘었고, Gemma는 soft-capping에서 QK-Norm으로 옮겨 갔다. 각 선택은 그 모델의 학습 안정성 실험에 근거한 것이며, 어느 조합이 모든 규모에서 낫다는 비교는 아니다.
+표에서 보이듯 Pre-LN이 여전히 흔하지만, Gemma와 OLMo 2처럼 sub-layer 출력을 정규화하는 배치도 쓰인다. Attention logit 쪽에서는 QK-Norm을 쓰는 모델이 늘었고, Gemma는 soft-capping에서 QK-Norm으로 옮겨 갔다. 일부 선택은 해당 보고서의 학습 안정성 실험으로 뒷받침되지만(예: OLMo 2의 배치 변경과 QK-Norm), 구현 문제나 하드웨어 같은 다른 이유가 함께 제시되기도 하고 공개 구현만으로는 선택의 동기를 알 수 없는 경우도 있다. 어느 조합이 모든 규모에서 낫다는 비교는 아니다.
 
 [^normsurvey]: Huang, L., Qin, J., Zhou, Y., Zhu, F., Liu, L., & Shao, L. (2023). *Normalization Techniques in Training DNNs: Methodology, Analysis and Application*. IEEE Transactions on Pattern Analysis and Machine Intelligence, 45(8), 10173–10196. [arXiv:2009.12836](https://arxiv.org/abs/2009.12836).
 [^layernorm]: Ba, J. L., Kiros, J. R., & Hinton, G. E. (2016). *Layer Normalization*. [arXiv:1607.06450](https://arxiv.org/abs/1607.06450).

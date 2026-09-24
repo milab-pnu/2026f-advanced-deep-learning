@@ -156,7 +156,7 @@ Bias $b_i$는 gradient로 학습하지 않는다. 매 학습 step이 끝나면 b
 
 <Callout type="example">
 
-Expert 4개, top-2, 교육용 $\gamma=0.1$로 두자(DeepSeek-V3의 실제 값은 0.001이다).[^dsv3] 직전 step에서 16번의 배정(토큰 8개 × 2)이 $[7,\,5,\,2,\,2]$로 나뉘었다. 평균은 4이므로 expert 1·2는 과부하, 3·4는 부하가 적다.
+Expert 4개, top-2, 교육용 $\gamma=0.1$로 두자(DeepSeek-V3는 처음 14.3T 토큰 동안 0.001을 쓰고 마지막 500B 토큰에서는 0으로 두어 갱신을 멈췄다).[^dsv3] 직전 step에서 16번의 배정(토큰 8개 × 2)이 $[7,\,5,\,2,\,2]$로 나뉘었다. 평균은 4이므로 expert 1·2는 과부하, 3·4는 부하가 적다.
 
 - Bias 갱신: $b=[-0.1,\,-0.1,\,+0.1,\,+0.1]$
 - 다음 step의 한 토큰 점수: $s=[0.62,\,0.58,\,0.55,\,0.30]$
@@ -180,7 +180,7 @@ $$
 \text{expert capacity}=\frac{\text{batch의 토큰 수}}{\text{expert 수}}\times\text{capacity factor}
 $$
 
-Top-k routing에서는 토큰마다 $k$번 배정되므로 분자에 $k$를 곱해 생각한다. 상한을 넘는 배정은 **overflow**로 처리되어 그 expert의 계산이 생략된다. Top-1인 Switch Transformer에서는 이것이 곧 토큰의 expert 계산 전체가 생략되는 것이다. Top-2인 GShard에서는 첫 expert가 가득 찼어도 두 번째 expert에 수용되면 그 expert의 계산은 수행되고, 선택한 두 expert 모두 가득 찬 토큰만 expert 출력 없이 residual 경로로 다음 층에 넘어간다(token dropping).[^gshard] 반대로 배정이 상한보다 적은 expert는 빈 자리를 padding으로 채우므로 계산과 메모리를 낭비한다.
+Top-k routing에서는 토큰마다 $k$번 배정되므로 분자에 $k$를 곱해 생각한다. 상한을 넘는 배정은 **overflow**로 처리되어 그 expert의 계산이 생략된다. Top-1인 Switch Transformer에서는 이것이 곧 토큰의 expert 계산 전체가 생략되는 것이다. Top-2인 GShard에서는 두 번째 expert로의 배정이 capacity뿐 아니라 확률 조건도 따른다. 정규화한 두 번째 gate 값 $g_2$에 대해 $2g_2$의 확률로만 보낸다(원논문 Algorithm 1). 그래서 첫 expert가 가득 찼을 때 두 번째 배정이 capacity나 확률 조건으로 거절되면, 그 토큰은 어느 expert의 출력도 없이 residual 경로로 다음 층에 넘어간다(token dropping).[^gshard] 반대로 배정이 상한보다 적은 expert는 빈 자리를 padding으로 채우므로 계산과 메모리를 낭비한다.
 
 <Callout type="example">
 
@@ -309,7 +309,7 @@ Routing 방식은 두 가지다. **Expert-choice**에서는 반복 단계마다 
 
 반복 단계마다 계산하는 토큰이 달라지므로 KV cache도 설계해야 한다. MoR은 단계마다 그 단계에 남은 토큰의 key·value만 저장하는 방식(recursion-wise caching)과, 첫 반복의 key·value를 이후 단계가 공유하는 방식(recursive KV sharing)을 비교한다.[^mor] 두 방식의 세부 trade-off는 원논문 §2.2.2와 실험을 참고한다.
 
-논문은 135M–1.7B 규모에서, 같은 학습 FLOPs 조건으로 MoR이 vanilla와 기존 recursive 모델보다 낮은 validation loss와 높은 처리량을 보였다고 보고한다.[^mor] 저자들도 계산 자원의 제약으로 실험이 1.7B까지였다고 밝히며, 3B 이상으로의 확장을 후속 과제로 둔다. MoD와 MoR은 아직 대규모 공개 LLM의 표준 구성으로 자리 잡은 기법이 아니다. 폭 방향의 MoE처럼 토큰별 계산량을 바꾸는 방향의 연구로 읽는 것이 적절하다.
+논문은 vanilla 기준 135M–1.7B 규모에서(공유 모델의 고유 파라미터는 약 1/3), 같은 학습 FLOPs 조건으로 MoR이 기존 recursive 모델보다 일관되게 낮은 validation loss를 보였고 더 큰 규모에서는 vanilla와 같거나 나았다고 보고한다. 가장 작은 135M 기준에서는 vanilla보다 나빴고, 처리량 개선은 360M 기준 모델로 측정했다.[^mor] 저자들도 계산 자원의 제약으로 실험이 1.7B까지였다고 밝히며, 3B 이상으로의 확장을 후속 과제로 둔다. MoD와 MoR은 아직 대규모 공개 LLM의 표준 구성으로 자리 잡은 기법이 아니다. 폭 방향의 MoE처럼 토큰별 계산량을 바꾸는 방향의 연구로 읽는 것이 적절하다.
 
 ## 6. 최근 모델의 선택
 
@@ -326,7 +326,7 @@ Routing 방식은 두 가지다. **Expert-choice**에서는 반복 단계마다 
 
 출처: Mixtral[^mixtral], DeepSeek-V3 보고서[^dsv3]와 config·구현[^dsv3-config], Qwen3 보고서[^qwen3]와 config·구현[^qwen3-config], gpt-oss model card[^gptoss]. Qwen3-30B-A3B의 파라미터 수는 공식 model card 값이다. gpt-oss의 활성 파라미터에는 LM head(unembedding)가 포함되고 입력 embedding은 빠져 있다.[^gptoss] DeepSeek-V3는 routing 대상 노드를 토큰당 최대 4개로 제한한다.[^dsv3]
 
-표에서 몇 가지 경향을 읽을 수 있다. 초기의 "큰 expert 8개 중 2개"(Mixtral) 이후 공개된 모델들은 expert를 100개 이상으로 늘리고 4–8개를 고른다. 활성 파라미터 비율은 Mixtral의 약 28%에서 DeepSeek-V3의 약 5.5%, gpt-oss-120b의 약 4.4%까지 낮아졌다. Shared expert는 DeepSeek-V3에만 있고, Qwen3와 gpt-oss는 두지 않았다. 전체 파라미터가 비슷한 모델이라도 활성 파라미터와 expert 구성이 크게 다르므로, MoE 모델을 비교할 때는 두 숫자와 expert 구성을 함께 보아야 한다.
+표에서 몇 가지 경향을 읽을 수 있다. 초기의 "큰 expert 8개 중 2개"(Mixtral) 이후 DeepSeek-V3, Qwen3, gpt-oss-120b는 expert를 100개 이상으로 늘리고 4–8개를 고른다(gpt-oss-20b는 32개). 활성 파라미터 비율은 Mixtral의 약 28%에서 DeepSeek-V3의 약 5.5%, gpt-oss-120b의 약 4.4%까지 낮아졌다. Shared expert는 DeepSeek-V3에만 있고, Qwen3와 gpt-oss는 두지 않았다. 전체 파라미터가 비슷한 모델이라도 활성 파라미터와 expert 구성이 크게 다르므로, MoE 모델을 비교할 때는 두 숫자와 expert 구성을 함께 보아야 한다.
 
 [^moe-survey]: Cai, W., Jiang, J., Wang, F., Tang, J., Kim, S., & Huang, J. (2025). *A Survey on Mixture of Experts in Large Language Models*. IEEE Transactions on Knowledge and Data Engineering (accepted). [arXiv:2407.06204v3](https://arxiv.org/abs/2407.06204v3).
 [^shazeer]: Shazeer, N., Mirhoseini, A., Maziarz, K., Davis, A., Le, Q., Hinton, G., & Dean, J. (2017). *Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer*. ICLR 2017. [arXiv:1701.06538](https://arxiv.org/abs/1701.06538).

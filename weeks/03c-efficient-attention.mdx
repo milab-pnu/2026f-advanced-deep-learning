@@ -71,7 +71,7 @@ $M$은 causal mask다. 문제는 가운데의 $QK^\top$가 $n\times n$ 행렬이
 반면 Q·K·V·출력 투영과 FFN(feed-forward network)은 토큰마다 독립적으로 적용되므로 비용이 $n$에 비례한다. 길이가 짧을 때는 이 선형 항이 크고, 길이가 길어지면 제곱 항이 역전한다.
 
 <Callout type="example">
-[Llama 3 8B](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/)($d=4096$, K·V 차원 합 1024, FFN 중간 차원 14,336)의 한 층에서 forward FLOPs를 어림해 보자. 행렬 곱 하나의 FLOPs를 (입력 차원 × 출력 차원 × 2)로 세고, causal mask로 절반을 건너뛰는 최적화는 넣지 않았다.
+[Llama 3 8B](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/)($d=4096$, K·V 각각의 차원 1024, FFN 중간 차원 14,336)의 한 층에서 forward FLOPs를 어림해 보자. 행렬 곱 하나의 FLOPs를 (입력 차원 × 출력 차원 × 2)로 세고, causal mask로 절반을 건너뛰는 최적화는 넣지 않았다.
 
 - 투영: Q와 출력 투영 $2\cdot(4096\cdot4096)$, K와 V 투영 $2\cdot(4096\cdot1024)$, 합해 파라미터 약 41.9M → 토큰당 약 83.9M FLOPs
 - SwiGLU FFN: 파라미터 $3\cdot4096\cdot14336\approx176.2$M → 토큰당 약 352.3M FLOPs
@@ -116,7 +116,7 @@ Window를 캐시 크기로만 쓰는 방식은 학습 방법과 맞물려야 한
 
 ### 2-2. 고정 패턴과 global token
 
-Window만 쓰면 문서 전체를 요약해야 하는 위치도 주변만 본다. 초기 연구는 window에 다른 고정 패턴을 더했다. Longformer는 local window에 간격을 두고 보는 dilated window, 그리고 지정한 몇 토큰이 전체를 보고 전체가 그 토큰을 보는 global attention을 섞었다.[^longformer] BigBird는 window, global token, 무작위로 고른 random attention을 결합했다.[^bigbird] Tay 등의 분류로는 fixed pattern과 그 조합에 해당한다.[^tay]
+Window만 쓰면 문서 전체를 요약해야 하는 위치도 주변만 본다. 초기 연구는 window에 다른 고정 패턴을 더했다. Longformer는 local window에, 지정한 몇 토큰이 전체를 보고 전체가 그 토큰을 보는 global attention을 섞었다. 문자 단위 언어 모델 실험에서는 window에 간격을 두고 보는 dilated window도 썼지만, 사전학습과 fine-tuning에는 dilation 없는 구현을 썼다.[^longformer] BigBird는 window, global token, 무작위로 고른 random attention을 결합했다.[^bigbird] Tay 등의 분류로는 fixed pattern과 그 조합에 해당한다.[^tay]
 
 이 패턴들은 **입력 내용과 무관하게 미리 정한 칸**을 계산한다. 계산은 $O(n)$에 가깝게 줄지만, 멀리 떨어진 중요한 토큰이 정해진 칸에 들어오지 않으면 직접 볼 방법이 없다.
 
@@ -351,7 +351,7 @@ Mamba나 Mamba-2 층만 쌓은 순수 SSM 언어 모델은 attention 없이 시�
 
 ### 6-2. Linear attention과 attention
 
-둘째는 **linear attention 계열 층과 softmax attention 층의 조합**이다. Qwen3-Next는 이 선택을 "linear attention은 빠르지만 recall이 약하고, standard attention은 비싸고 추론이 느리다"는 관찰로 설명한다.[^qwen3next] Qwen3-Next-80B-A3B는 48층을 `12 × (3 × (Gated DeltaNet → MoE) → 1 × (Gated Attention → MoE))`로 쌓아, Gated DeltaNet과 gated attention을 3:1로 섞었다.[^qwen3next-card] 블로그는 3:1 혼합이 한 종류로만 쌓은 구성보다 좋았고, Gated DeltaNet이 sliding window attention이나 Mamba-2보다 in-context learning 능력이 강했다고 보고한다.[^qwen3next]
+둘째는 **linear attention 계열 층과 softmax attention 층의 조합**이다. Qwen3-Next의 공식 발표 블로그는 이 선택을 "linear attention은 빠르지만 recall이 약하고, standard attention은 비싸고 추론이 느리다"는 관찰로 설명한다.[^qwen3next] Qwen3-Next-80B-A3B는 48층을 `12 × (3 × (Gated DeltaNet → MoE) → 1 × (Gated Attention → MoE))`로 쌓아, Gated DeltaNet과 gated attention을 3:1로 섞었다.[^qwen3next-card] 블로그는 3:1 혼합이 한 종류로만 쌓은 구성보다 좋았고, Gated DeltaNet이 sliding window attention이나 Mamba-2보다 in-context learning 능력이 강했다고 보고한다.[^qwen3next] 다만 블로그는 이 비교의 실험 표를 공개하지 않았으므로 개발사의 보고로 읽는다.
 
 앞 절의 연구 흐름에서도 같은 조합이 먼저 나타났다. DeltaNet 논문의 두 hybrid(§4-2)와 Gated DeltaNet 논문의 H1, H2(§4-3)가 linear 계열 층에 attention 층을 섞은 예다.
 
@@ -370,7 +370,7 @@ Jamba 논문은 attention이 왜 필요한지도 실험으로 보여 준다. IMD
 | Jamba (attention:Mamba = 1:7) | attention 층 4/32 | Mamba 층은 고정 크기 상태 | $\tfrac{4}{32}=0.125$ (보고된 8배 감소와 일치) |
 | Qwen3.5-397B-A17B (3:1) | full attention 층 15/60 | Gated DeltaNet 층은 고정 크기 상태 | $\tfrac{15}{60}=0.25$ |
 
-Qwen3.5의 config로 고정 크기 상태를 직접 세어 보면, Gated DeltaNet 층 하나의 상태는 value head 64개 × $128\times128$ = 약 105만 원소다. 같은 모델의 full attention 층은 KV head 2개 × head 차원 256 × (K, V) = 토큰당 1,024 원소를 저장하므로, 약 1,024 토큰부터는 attention 층 하나의 캐시가 recurrent 상태보다 커진다. 128K 토큰이면 attention 층 하나가 약 1.34억 원소를 저장한다.
+Qwen3.5의 config로 고정 크기 상태를 직접 세어 보면, Gated DeltaNet 층 하나의 recurrent 상태 행렬만 세면 value head 64개 × $128\times128$ = 약 105만 원소다(짧은 convolution의 상태는 제외했다). 같은 모델의 full attention 층은 KV head 2개 × head 차원 256 × (K, V) = 토큰당 1,024 원소를 저장하므로, 약 1,024 토큰부터는 attention 층 하나의 캐시가 recurrent 상태보다 커진다. 128K 토큰이면 attention 층 하나가 약 1.34억 원소를 저장한다.
 </Callout>
 
 세 종류는 섞는 부품이 다르지만 공통된 판단 위에 있다. 대부분의 층에서는 가까운 문맥이나 압축된 요약으로 충분하고, **정확한 검색이 필요한 몇 층만 전체 문맥을 직접 보면 된다**는 판단이다. 어떤 비율과 배치가 최선인지는 모델 규모와 작업에 따라 다르게 보고되며, 아직 합의된 답은 없다.

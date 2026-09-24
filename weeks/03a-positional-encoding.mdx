@@ -244,7 +244,7 @@ RoPE도 학습 길이를 크게 넘기면 성능이 무너진다. Press 등의 �
 - **설정 길이**: config나 모델 카드에 적힌 최대 위치. Qwen3-8B의 config에는 `max_position_embeddings: 40960`이 적혀 있지만, 모델 카드는 기본 문맥을 32,768로 소개하고 40,960은 출력 32,768과 프롬프트 8,192를 합한 할당이라고 설명한다.[^qwen3-card] 설정 길이가 곧 학습 길이는 아니다.
 - **유효 길이**: 모델이 실제로 정보를 활용하는 길이. Needle-in-a-haystack이나 RULER 같은 과제로 측정하며, 설정 길이보다 짧을 수 있다.
 
-<Figure src="https://arxiv.org/html/2503.19786v1/assets/lc_all_sizes3.png" alt="Gemma 3 4B, 12B, 27B의 문맥 길이별 평균 perplexity. 가로축은 16K부터 512K까지 로그 간격이다. 점선인 RoPE rescaling 전 모델은 32K를 넘으면서 perplexity가 오르거나 12B처럼 급격히 치솟는다. 실선인 rescaling 후 모델은 128K까지 perplexity가 계속 내려가고, 256K 부근을 지나면 다시 오른다." caption="Gemma 3의 사전학습 모델. 32K로 학습한 모델(점선)은 학습 길이를 넘자 perplexity가 오른다. RoPE를 rescale해 128K로 확장한 모델(실선)도 256K 부근을 넘기면 다시 나빠진다. 학습 길이, 설정 길이(128K), 유효 길이가 서로 다른 값임을 보여 준다." source="Gemma Team (2025), Gemma 3 Technical Report, Figure 7 · arXiv · CC BY 4.0 · 수정 없음" />
+<Figure src="https://arxiv.org/html/2503.19786v1/assets/lc_all_sizes3.png" alt="Gemma 3 4B, 12B, 27B의 문맥 길이별 평균 perplexity. 가로축은 16K부터 512K까지 로그 간격이다. 점선은 32K로 학습한 모델, 실선은 긴 문맥으로 확장한 모델이다. 12B 점선은 32K를 조금 넘자 perplexity가 급격히 치솟고, 4B와 27B 점선은 64K–128K 부근에서 평탄해진 뒤 천천히 오른다. 실선은 128K를 넘어서도 perplexity가 내려가다가, 4B와 12B는 256K 부근을 지나며 다시 오르고 12B는 급격히 치솟는다. 27B 실선은 400K 부근까지 내려간 뒤 약간 오른다." caption="Gemma 3의 사전학습 모델. 32K로 학습한 모델(점선)은 학습 길이를 넘기면 perplexity가 더 내려가지 않고, 12B는 곧바로 급격히 나빠진다. RoPE를 rescale해 128K로 확장한 모델(실선)은 128K를 넘어서도 한동안 개선되지만, 4B와 12B는 256K 부근을 지나며 다시 나빠진다. 학습 길이, 설정 길이(128K), 유효 길이가 서로 다른 값임을 보여 준다." source="Gemma Team (2025), Gemma 3 Technical Report, Figure 7 · arXiv · CC BY 4.0 · 수정 없음" />
 
 그렇다면 RoPE는 왜 학습 길이 밖에서 무너질까? RoPE는 상대 위치 방식이니 거리만 같으면 괜찮을 것 같지만, 학습 길이 $L$을 넘는 입력에서는 $L$보다 먼 **거리** 자체가 처음 등장한다. 문제는 그 거리에서 모든 성분이 낯선 값을 갖는 것은 아니라는 점이다. 파장이 짧은 쌍은 학습 중에 이미 여러 바퀴를 돌았으므로, 새 거리에서의 각도도 학습 중에 본 각도 중 하나다. 낯선 것은 **여러 쌍의 각도가 한꺼번에 만드는 조합**, 그리고 한 바퀴도 돌지 못한 저주파 쌍의 새 각도다.
 
@@ -399,7 +399,7 @@ $$
 \text{scale}(p)=1+0.1\,\ln\!\left(\left\lfloor\frac{p+1}{8192}\right\rfloor+1\right)
 $$
 
-위치 $p$가 8,191보다 작으면 scale은 1이라 짧은 입력은 영향을 받지 않는다. 위치 100,000에서는 $\lfloor100001/8192\rfloor=12$이므로 scale은 $1+0.1\ln13\approx1.26$이 된다. 긴 문맥에서 평평해지는 softmax를 날카롭게 만든다는 점에서 YaRN의 temperature와 같은 목적이다. Llama 4 Scout는 256K 길이로 사전·사후 학습했고, Meta는 지원 문맥을 10M 토큰으로 발표했다.[^llama4-blog]
+위치 $p$가 8,191보다 작으면 scale은 1이라 짧은 입력은 영향을 받지 않는다. 위치 100,000에서는 $\lfloor100001/8192\rfloor=12$이므로 scale은 $1+0.1\ln13\approx1.26$이 된다. 긴 문맥에서 평평해지는 softmax를 날카롭게 만든다는 점에서 YaRN의 temperature와 같은 목적이다. Meta의 공식 발표에 따르면 Llama 4 Scout는 256K 길이로 사전·사후 학습했고, 지원 문맥은 10M 토큰이다.[^llama4-blog] 공식 모델 카드도 문맥 길이를 10M으로 적는다.[^llama4-card]
 
 ### 6-2. Head 차원 일부에만 적용하는 RoPE
 
@@ -417,7 +417,7 @@ Gemma 3는 1,024토큰 sliding window를 쓰는 지역 attention 층 다섯 개�
 |---|---|---|---|---|
 | Llama 3 8B[^llama3] | 모든 층에 RoPE | 500,000 | 8,192 | 없음 |
 | Llama 3.1 8B[^llama-code] | 모든 층에 RoPE | 500,000 | 8,192에서 늘려 128K | 대역별 조정(§5-3), 배율 8 |
-| Llama 4 Scout[^llama4-blog][^llama4-code] | RoPE 층과 NoPE 층의 교대(iRoPE) | 비공개(gated config) | 256K → 10M 발표 | RoPE scaling 배율 16, NoPE 층 temperature |
+| Llama 4 Scout[^llama4-blog][^llama4-code] | RoPE 층과 NoPE 층의 교대(iRoPE) | checkpoint 값 미확인(접근 제한) | 256K → 10M 발표 | RoPE scaling 배율 16, NoPE 층 temperature |
 | Gemma 3 (4B·12B·27B)[^gemma3] | 지역 5 : 전체 1, 층별 base | 지역 10,000 / 전체 1,000,000 | 32K → 128K | 전체 층에 PI 방식, 배율 8 |
 | Qwen3-8B[^qwen3][^qwen3-card] | 모든 층에 RoPE | 1,000,000 (ABF) | 32,768 → 131,072 | 추론 시 YaRN, 배율 4 |
 | DeepSeek-V3[^deepseek3] | Decoupled RoPE key(03b) | 10,000 | 4K → 32K → 128K | YaRN $s=40$, $\alpha=1$, $\beta=32$ |
@@ -451,6 +451,7 @@ Gemma 3는 1,024토큰 sliding window를 쓰는 지역 attention 층 다섯 개�
 [^longrope]: Ding, Y., Zhang, L. L., Zhang, C., Xu, Y., Shang, N., Xu, J., Yang, F., & Yang, M. (2024). *LongRoPE: Extending LLM Context Window Beyond 2 Million Tokens*. ICML 2024. [arXiv:2402.13753](https://arxiv.org/abs/2402.13753).
 [^llama4-blog]: Meta. (2025). *The Llama 4 herd: The beginning of a new era of natively multimodal AI innovation*. [Meta AI Blog](https://ai.meta.com/blog/llama-4-multimodal-intelligence/).
 [^llama4-code]: Meta. (2025). *llama-models: Llama 4 reference implementation*. [args.py](https://github.com/meta-llama/llama-models/blob/main/models/llama4/args.py), [model.py](https://github.com/meta-llama/llama-models/blob/main/models/llama4/model.py).
+[^llama4-card]: Meta. (2025). *Llama 4 model card*. [MODEL_CARD.md](https://github.com/meta-llama/llama-models/blob/main/models/llama4/MODEL_CARD.md).
 [^llama4-hf]: Hugging Face. *Transformers: Llama4 configuration*. [configuration_llama4.py](https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama4/configuration_llama4.py).
 [^neox]: Black, S., et al. (2022). *GPT-NeoX-20B: An Open-Source Autoregressive Language Model*. Proceedings of BigScience Episode #5, Workshop on Challenges & Perspectives in Creating Large Language Models. [arXiv:2204.06745](https://arxiv.org/abs/2204.06745).
 [^qwen3]: Qwen Team. (2025). *Qwen3 Technical Report*. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
