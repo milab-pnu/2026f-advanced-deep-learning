@@ -25,7 +25,7 @@ $$
 
 GPU 한 장으로는 약 58년, 이 노트의 64개 GPU로도 약 11개월이 걸린다. 수천 장을 쓰면 몇 주로 줄지만, 그만큼 모델과 데이터를 여러 장치에 나누고 그 사이의 통신을 관리해야 한다. 이 노트는 그 방법을 다룬다. 40%라는 가정은 §6-1의 MFU(model FLOPs utilization)에서 다시 다룬다.
 
-같은 주제를 더 넓게 다룬 자료로 Hugging Face의 [The Ultra-Scale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook)을 함께 읽을 것을 권한다.[^playbook] 각 병렬화 방식의 메모리·통신을 실제 실험 그래프와 함께 설명한다. 강의로 먼저 전체 그림을 보고 싶다면 아래 Stanford CS336의 병렬화 강의를 권한다. 이 노트의 §3–§5에서 다루는 병렬화 방식들을 강의로 소개한다.
+같은 주제를 더 넓게 다룬 자료로 Hugging Face의 [The Ultra-Scale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook)을 함께 읽을 것을 권한다.[^playbook] 각 병렬화 방식의 메모리·통신을 실제 실험 그래프와 함께 설명한다. 강의로 먼저 전체 그림을 보고 싶다면 아래 Stanford CS336의 병렬화 강의를 권한다.
 
 <Video src="https://www.youtube.com/watch?v=l1RJcDjzK8M" caption="Stanford CS336 Language Modeling from Scratch (Spring 2025), Lecture 7: Parallelism 1." />
 
@@ -96,7 +96,7 @@ GPU 하나의 메모리가 80 GB라고 가정하면 노드 하나의 합계는 6
 | FP32 | $2^{-23}\approx0.00000012$ | 약 1.001 |
 | BF16 | $2^{-7}=0.0078125$ | 1.0 (업데이트 소실) |
 
-이처럼 BF16으로 가중치를 저장하면서 매번 작은 업데이트를 바로 더하면 변화가 사라질 수 있다. 그래서 **mixed precision**은 연산과 저장 항목에 맞게 정밀도를 섞는다. 예를 들어 행렬곱은 BF16 입력으로 수행하되 누적은 FP32로 하고, optimizer의 갱신용 가중치(master weight)와 상태를 FP32로 유지한다. 이때 작은 변화는 master weight에 누적되고, 계산에 쓸 때 낮은 정밀도로 변환한다.[^mixed]
+이처럼 BF16으로 가중치를 저장하면서 매번 작은 업데이트를 바로 더하면 변화가 사라질 수 있다. 그래서 **mixed precision**은 연산과 저장 항목에 맞게 정밀도를 섞는다. 예를 들어 행렬곱은 BF16 입력으로 수행하되 누적은 FP32로 하고, optimizer의 갱신용 가중치(master weight)와 상태를 FP32로 유지한다. 이때 작은 변화는 master weight에 누적되고, 계산에 쓸 때 낮은 정밀도로 변환한다.[^mixed][^bf16]
 
 FP16 학습에서는 작은 gradient가 0이 되는 것을 줄이기 위해 **loss scaling**도 사용한다. Loss에 큰 상수를 곱해 역전파(backpropagation)하고, optimizer 갱신 전 gradient에서 그 배율을 되돌리는 방식이다. BF16에서는 넓은 범위 덕분에 보통 필요하지 않지만, 반올림 오차나 불안정한 학습까지 없어지는 것은 아니다.[^amp]
 
@@ -182,7 +182,7 @@ Backward에 필요한 중간 결과 중 일부만 저장하고 나머지는 필�
 | Selective recomputation | $34bnd$ | 약 18 GB | Attention 일부 재계산 |
 | Full recomputation | $2bnd$ | 약 1.1 GB | Forward 한 번 추가 |
 
-Chen 등은 $n$개 층을 약 $\sqrt{n}$개 층씩 묶어 구간 입력만 저장하면, forward 한 번의 추가 계산으로 activation 메모리를 $O(\sqrt{n})$으로 줄일 수 있음을 보였다.[^recompute] 위의 두 블록씩 묶는 예가 이 아이디어의 작은 형태다. PyTorch에서는 `torch.utils.checkpoint`로 구간을 지정한다.[^checkpoint]
+층 수를 $L$이라 하자. Chen 등은 $L$개 층을 약 $\sqrt{L}$개 층씩 묶어 구간 입력만 저장하면, forward 한 번의 추가 계산으로 activation 메모리를 $O(\sqrt{L})$로 줄일 수 있음을 보였다.[^recompute] 위의 두 블록씩 묶는 예가 이 아이디어의 작은 형태다. PyTorch에서는 `torch.utils.checkpoint`로 구간을 지정한다.[^checkpoint]
 
 **줄어드는 것은 주로 activation**이며 가중치나 옵티마이저의 state가 자동으로 줄어들지는 않는다. 모든 블록에 적용하면 재계산량도 커질 수 있으므로, 큰 activation을 만드는 구간부터 적용하고 peak memory와 실행 시간을 비교한다. 같은 microbatch에서 step이 느려져도, 확보한 메모리로 더 큰 microbatch를 처리할 수 있다면 전체 처리량은 다시 측정해야 한다.
 
@@ -250,7 +250,7 @@ PyTorch의 `torch.compile`은 결합 가능한 연산을 찾아 이런 최적화
 
 예를 들어 N0:G0–G7이 각각 스칼라 gradient 1–8을 가졌다면 all-reduce 합은 36이며, 각 GPU가 36을 받는다. 평균이 필요하면 8로 나누어 4.5를 사용한다. 같은 연산에 N1의 GPU도 참여시키면 노드 사이로도 값이 이동한다. 연산 이름은 값을 합치거나 나누는 방식을, 참여 GPU의 배치는 통신이 지나갈 경로를 정한다.
 
-아래 그림은 장치 세 개에서 각 연산의 전후를 보여 준다. 그림의 Node는 통신에 참여하는 장치 하나를 뜻하므로, 이 노트의 GPU 하나로 읽는다. 왼쪽이 시점 $t$의 상태, 오른쪽이 연산 뒤인 $t+1$의 상태이고, $f()$는 합산 같은 reduce 연산이다. 원래 그림은 결과를 한 장치(root)만 받는 Reduce·Gather·Scatter와 나란히 놓여 있는데, 여기서는 이 노트에서 쓰는 All- 연산과 reduce-scatter 쪽만 잘라 실었다.
+아래 그림은 장치 세 개에서 각 연산의 전후를 보여 준다. 그림의 Node는 통신에 참여하는 장치 하나를 뜻하므로, 이 노트의 GPU 하나로 읽는다. 왼쪽이 시점 $t$의 상태, 오른쪽이 연산 뒤인 $t+1$의 상태이고, $f()$는 합산 같은 reduce 연산이다. 원래 그림에서는 각 연산이 Reduce·Gather·Scatter와 나란히 놓여 있다. Reduce·Gather는 결과를 한 장치(root)만 받고, Scatter는 root가 데이터를 나누어 각 장치에 보낸다. 여기서는 이 노트에서 쓰는 all-reduce·all-gather·reduce-scatter 패널만 잘라 실었다.
 
 <Figure src={allreduceFig.src} alt="AllReduce. 세 장치의 A, B, C가 f()로 합쳐지고, 결과 X를 세 장치가 모두 받는다." caption="All-reduce. 세 장치의 값 A·B·C를 합산한 결과 X를 모두가 받는다." source="Tazi et al. (2025), The Ultra-Scale Playbook, Hugging Face · Apache-2.0 · 오른쪽 패널만 잘라냄" />
 
