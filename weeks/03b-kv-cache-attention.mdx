@@ -4,7 +4,7 @@ week: 3
 order: 1
 ---
 
-LLM(large language model)이 토큰을 하나씩 생성할 때마다 과거 위치의 key와 value가 층마다 쌓인다. 이 저장소가 KV(key–value) cache이고, 문맥이 길어질수록 메모리를 차지할 뿐 아니라 토큰을 하나 만들 때마다 전부 다시 읽어야 한다. 이 노트는 **토큰 하나가 캐시에 남기는 원소 수를 어떻게 줄여 왔는가**를 따라간다. KV cache 관리 기법을 정리한 Li 등의 서베이[^kvsurvey]는 §2.2에서 KV cache의 동작과 복잡도를, §5.1.1에서 head를 묶는 MQA·GQA를, §5.2.1에서 attention 구조를 바꾼 MLA를 다룬다. 이 노트는 그 세 범위를 원논문 수준으로 풀어 쓴다.
+LLM(large language model)이 토큰을 하나씩 생성할 때마다 과거 위치의 key와 value가 층마다 쌓인다. 이 저장소가 KV(key–value) cache이고, 문맥이 길어질수록 메모리를 차지할 뿐 아니라 토큰을 하나 만들 때마다 전부 다시 읽어야 한다. 이 노트는 **토큰 하나가 캐시에 남기는 원소 수를 어떻게 줄여 왔는가**를 따라간다. KV cache 관리 기법을 정리한 Li 등의 서베이[^kvsurvey]는 §II-B에서 KV cache의 동작과 복잡도를, §V-A-1에서 head를 묶는 MQA·GQA를, §V-B-1에서 attention 구조를 바꾼 MLA를 다룬다(절 번호는 서베이의 로마 숫자 표기를 따랐다). 이 노트는 그 세 범위를 원논문 수준으로 풀어 쓴다.
 
 계보는 다음과 같다. Multi-head attention(MHA)은 query head마다 K/V head를 따로 두어 캐시가 head 수에 비례한다. Multi-query attention(MQA)은 모든 query head가 K/V head 하나를 공유해 캐시를 크게 줄였지만 품질 저하와 학습 불안정이 보고되었다. Grouped-query attention(GQA)은 그 중간을 택했지만, 캐시는 여전히 K/V head 수와 head 차원에 비례한다. Multi-head latent attention(MLA)은 head를 공유하는 대신 토큰마다 작은 latent 벡터 하나를 저장하고 head별 K/V를 그로부터 복원한다. 같은 서베이가 다루는 시퀀스 축의 절감(sliding window, 토큰 선택)은 [Efficient attention 노트](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/)의 별도 계보이고, 정밀도를 낮추는 양자화와 서빙 시스템은 6주차에서 다룬다.
 
@@ -67,7 +67,7 @@ Llama 3 8B의 값($L=32$, query head 32개, K/V head 8개, $d_h=128$)으로 계�
 
 둘째는 **대역폭**(memory bandwidth)이다. Decode 한 스텝에서 층마다 캐시 전체를 메모리에서 읽어야 하는데, 읽은 양에 비해 하는 계산이 적다. MHA 가정의 Llama 3 8B 형태에서 문맥 길이가 $t$일 때 층 하나를 보자. 읽는 K/V는 $2\cdot32\cdot128\cdot t=8192t$개 원소이고, 점수 계산($QK^\top$)과 가중합($aV$)의 곱셈-덧셈도 합해서 약 $8192t$번이다. 원소 하나를 읽을 때마다 곱셈-덧셈을 한 번 정도 하는 셈이어서, 계산 장치보다 메모리에서 읽어 오는 속도가 스텝 시간을 좌우하기 쉽다.
 
-Shazeer는 이 관찰을 decode 전체에 대한 점근 분석으로 정리했다.[^mqa] 메모리 접근량과 연산량의 비율에는 두 항이 남는다. 하나는 가중치를 읽는 비용으로, batch를 키우면 여러 시퀀스가 같은 가중치를 나눠 쓰므로 줄어든다. 다른 하나는 매 스텝 K/V를 다시 읽는 비용인데, 시퀀스마다 캐시가 따로 있어 batch를 키워도 줄지 않는다. 이 둘째 항을 줄이는 방법으로 그는 시퀀스 길이를 제한하거나 참조 위치를 줄이는 방식(03c의 계보)과 별개로, **K/V에서 head 차원을 없애는** 방식을 제안했다.
+Shazeer는 이 관찰을 decode 전체에 대한 점근 분석으로 정리했다.[^mqa] 메모리 접근량과 연산량의 비율에는 두 항이 남는다. 하나는 가중치를 읽는 비용으로, batch를 키우면 여러 시퀀스가 같은 가중치를 나눠 쓰므로 줄어든다. 다른 하나는 매 스텝 K/V를 다시 읽는 비용인데, 시퀀스마다 캐시가 따로 있어 batch를 키워도 줄지 않는다. 이 둘째 항을 줄이는 방법으로 그는 시퀀스 길이를 제한하거나 참조 위치를 줄이는 방식([Efficient attention 노트](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/)의 계보)과 별개로, **K/V에서 head 차원을 없애는** 방식을 제안했다.
 
 <Details summary="심화: Shazeer의 점근 분석과 그 가정">
 
@@ -91,7 +91,7 @@ $$
 
 모든 head가 같은 $k_j, v_j$를 읽지만 query가 서로 달라 attention 가중치는 head마다 다르다. 토큰당 캐시는 $2Ld_h$로, MHA보다 $n_h$배 작다. Llama 3 8B 형태라면 $2\cdot32\cdot128=8{,}192$개 원소로 MHA 가정의 32분의 1이다. §2-2의 점근 분석에서 K/V를 다시 읽는 항도 $n_h$배 줄어든다.
 
-실험에서도 차이가 컸다. 같은 번역 과제에서 batch 1,024로 greedy decoding을 했을 때 decoder의 토큰당 시간이 MHA 46 μs에서 MQA 3.8 μs로 줄었다. 측정은 TPU(tensor processing unit) v2에서 했다(원논문 Table 2). 품질은 조금 나빠졌다. Dev perplexity의 로그값은 1.424에서 1.439로 높아지고(낮을수록 좋다), BLEU는 26.7에서 26.5로 낮아졌다. 이 비교에서 MQA 모델은 줄어든 K/V 파라미터만큼 FFN(feed-forward network)을 넓혀 전체 파라미터 수를 맞췄다.
+실험에서도 차이가 컸다. 같은 번역 과제에서 입력·출력 길이 128, batch 1,024로 greedy decoding을 했을 때 decoder 한 스텝(배치 전체가 토큰 하나씩 생성)의 시간이 MHA 47 ms에서 MQA 3.9 ms로 줄었다. 이를 스텝당 출력 토큰 수 1,024로 나눈 값이 논문 Table 2의 토큰당 46 μs와 3.8 μs이며, 요청 하나의 지연이 아니라 배치 전체에 걸쳐 나눈 평균 비용이다. 측정은 TPU(tensor processing unit) v2 한 개(8 core)에서 했다(원논문 §4.3, Table 2). 품질은 조금 나빠졌다. Dev perplexity의 로그값은 1.424에서 1.439로 높아지고(낮을수록 좋다), BLEU는 26.7에서 26.5로 낮아졌다. 이 비교에서 MQA 모델은 줄어든 K/V 파라미터만큼 FFN(feed-forward network)을 넓혀 전체 파라미터 수를 맞췄다.
 
 <Callout type="warning">
 Head 공유는 **캐시 크기와 캐시를 읽어 오는 메모리 전송량**을 줄인다. Attention 연산 전체가 같은 비율로 줄지는 않는다. Query head는 여전히 $n_h$개이고, head마다 캐시된 모든 위치와 점수를 계산하고 value를 가중합한다. 위 예의 $8192t$번 곱셈-덧셈은 MQA에서도 그대로이고, 줄어드는 것은 K/V 투영 계산과 읽는 원소 수다.
@@ -161,7 +161,7 @@ T5 XXL 기준 결과(원논문 Table 1)는 다음과 같다. 요약·번역·질
 
 MQA와 GQA는 모두 **캐시할 K/V head의 개수**를 줄인다. 캐시되는 벡터 하나하나는 여전히 $d_h$ 차원 그대로이고, 토큰당 캐시는 $2Ln_{kv}d_h$로 K/V head 수와 head 차원에 비례한다. 캐시를 더 줄이려면 $n_{kv}$를 낮춰야 하는데, 그러면 더 많은 query head가 완전히 같은 K/V를 공유하게 된다.
 
-그 대가가 얼마인지는 실험 설정에 따라 다르게 보고된다. 앞의 GQA 실험은 T5를 uptraining한 경우였다. DeepSeek-V2 보고서는 파라미터 수를 약 7B로 맞추고 1.33T 토큰으로 처음부터 학습한 dense 모델 세 개를 비교했는데, 네 벤치마크 모두 MHA가 GQA(8 그룹)와 MQA보다 높았다. 예를 들어 MMLU는 MHA 45.2, GQA 41.2, MQA 37.9였다(원논문 Appendix D.1, Table 8).[^dsv2] 두 결과는 모델·학습 방식·평가 과제가 달라 직접 비교하기 어렵지만, head를 더 공유할수록 품질을 잃을 수 있다는 점은 공통으로 보여 준다.
+그 대가가 얼마인지는 실험 설정에 따라 다르게 보고된다. 앞의 GQA 실험은 T5를 uptraining한 경우였다. DeepSeek-V2 보고서는 attention 방식만 다른 dense 모델 세 개를 1.33T 토큰으로 처음부터 학습해 비교했다. Head 공유로 줄어드는 파라미터는 층 수를 조정해 약 7B로 맞췄다. 네 벤치마크 모두 MHA가 GQA(8 그룹)와 MQA보다 높았고, 예를 들어 MMLU(Massive Multitask Language Understanding, 5-shot 정확도)는 MHA 45.2, GQA 41.2, MQA 37.9였다(원논문 Appendix D.1, Table 8).[^dsv2] 두 결과는 모델·학습 방식·평가 과제가 달라 직접 비교하기 어렵지만, head를 더 공유할수록 품질을 잃을 수 있다는 점은 공통으로 보여 준다.
 
 Head 수를 줄이는 대신 **토큰마다 저장하는 표현 자체를 압축**하고, head별 K/V는 그 표현에서 따로 만들어 낼 수는 없을까? 이것이 MLA의 출발점이다.
 
@@ -294,7 +294,7 @@ $$
 
 원논문 표의 그룹 수 $n_g$는 이 노트의 $n_{kv}$다. MLA의 576은 MHA의 약 57분의 1이고, 원논문 표현으로는 그룹이 2.25개인 GQA와 같은 크기다. 캐시 크기만 보면 MQA보다 크고 GQA-2와 GQA-3 사이에 있다. 차이는 그 원소로 head마다 다른 K/V를 복원한다는 점이다.
 
-품질 주장은 원논문의 ablation 범위에서 읽어야 한다. DeepSeek-V2는 attention 방식만 다르고 나머지 구조가 같은 MoE(mixture of experts) 모델 쌍을 두 규모로 학습해 비교했다(원논문 Appendix D.2, Table 9).[^dsv2]
+품질 주장은 원논문의 ablation 범위에서 읽어야 한다. DeepSeek-V2는 attention 방식만 다르고 나머지 구조가 같은 MoE(mixture of experts) 모델 쌍을 두 규모로 학습해 비교했다(원논문 Appendix D.2, Table 9).[^dsv2] 네 벤치마크는 모두 지식·추론 문제 모음이다. BBH(BIG-Bench Hard)는 3-shot exact match, MMLU와 중국어 벤치마크인 C-Eval·CMMLU는 5-shot 정확도이며 값은 모두 백분율이다.
 
 | 비교 | 토큰당 KV cache (원소) | BBH | MMLU | C-Eval | CMMLU |
 |---|---|---|---|---|---|
@@ -311,7 +311,7 @@ $$
 
 ## 6. 최근 모델의 선택
 
-공개 보고서와 공식 config로 확인한 KV 표현과 head 구성만 모았다. Head 수와 층 수는 보고서 값이고, 나머지는 공식 config 값이다. GQA 모델의 $d_h$는 `head_dim`, MLA 모델의 $d_h$는 `qk_nope_head_dim`과 `v_head_dim`(둘 다 128), latent와 RoPE key 차원은 `kv_lora_rank`와 `qk_rope_head_dim`이다. 토큰당 원소 수는 표의 값으로 이 노트에서 계산했으며, 모든 층이 전체 문맥을 캐시한다고 본 값이다.
+공개 보고서와 공식 config로 확인한 KV 표현과 head 구성만 모았다. Head 수와 층 수는 보고서 값이고, 나머지는 공식 config 값이다. GQA 모델의 $d_h$는 Qwen3는 config의 `head_dim`, Llama 3는 참조 구현이 모델 폭을 head 수로 나눈 값(4096/32)이고, MLA 모델의 $d_h$는 `qk_nope_head_dim`과 `v_head_dim`(둘 다 128), latent와 RoPE key 차원은 `kv_lora_rank`와 `qk_rope_head_dim`이다. 토큰당 원소 수는 표의 값으로 이 노트에서 계산했으며, 모든 층이 전체 문맥을 캐시한다고 본 값이다.
 
 | 모델 | Attention | Query head | K/V head 또는 캐시 벡터 | $d_h$ | 층 수 | 토큰당 캐시 원소 |
 |---|---|---|---|---|---|---|
