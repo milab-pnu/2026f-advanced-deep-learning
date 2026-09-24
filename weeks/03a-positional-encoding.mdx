@@ -14,10 +14,10 @@ Self-attention은 토큰 사이의 관계를 계산하지만, 그 자체로는 �
 |---|---|---|
 | 03a (이 노트) | Query·key의 위치 신호 | 절대 위치, 상대 위치, RoPE, long context 확장 |
 | [03b](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/) | Attention head 구성과 KV cache | MHA, MQA, GQA, MLA |
-| [03c](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/) | Attention 층 자체(sequence mixer) | O(n²) 문제의 두 갈래인 sparse·sliding window와 linear·gating·SSM, 둘이 합류하는 hybrid |
-| [03d](/lecture/2026f-advanced-deep-learning/03d-ffn-activation/) | FFN 활성화 함수 | ReLU, GELU, GLU(SwiGLU) |
+| [03c](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/) | Attention 층 자체(sequence mixer) | O(n²) 문제의 두 갈래인 sparse·sliding window와 linear·gating·SSM(state space model), 둘이 합류하는 hybrid |
+| [03d](/lecture/2026f-advanced-deep-learning/03d-ffn-activation/) | FFN(feed-forward network) 활성화 함수 | ReLU, GELU, GLU(SwiGLU) |
 | [03e](/lecture/2026f-advanced-deep-learning/03e-normalization/) | Normalization과 attention 출력 | LayerNorm과 RMSNorm, Post-LN과 Pre-LN, QK-Norm, attention sink |
-| [03f](/lecture/2026f-advanced-deep-learning/03f-mixture-of-experts/) | FFN의 조건부 계산 | Dense FFN, sparse MoE, load balancing, fine-grained·shared expert, MoD·MoR |
+| [03f](/lecture/2026f-advanced-deep-learning/03f-mixture-of-experts/) | FFN의 조건부 계산 | Dense FFN, sparse MoE(mixture of experts), load balancing, fine-grained·shared expert, MoD(mixture-of-depths)·MoR(mixture-of-recursions) |
 
 이 부품들이 실제 모델에서 어떻게 조합되는지는 Sebastian Raschka의 [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/)에서 볼 수 있다.[^gallery] 모델마다 블록 구성도와 config·기술 보고서 링크를 모아 두었고, 두 모델의 구조를 나란히 비교하는 기능도 있다. 이 노트에서 다루는 RoPE base나 NoPE 층 같은 설정이 모델마다 어떻게 다른지 확인할 때 유용하다. 갤러리의 그림에는 별도의 재사용 라이선스 표시가 없어(페이지에 © 표기) 이 노트에는 링크로만 둔다.
 
@@ -27,7 +27,7 @@ Self-attention은 토큰 사이의 관계를 계산하지만, 그 자체로는 �
 
 Decoder-only 모델은 causal mask를 쓰므로 사정이 조금 다르다. 위치 $i$는 $i$개의 토큰만 볼 수 있으니, mask 자체가 앞뒤의 비대칭을 준다. 예를 들어 첫 토큰(BOS, beginning of sequence)의 value만 1이고 나머지 value가 0이라고 하자. 모든 앞 토큰에 균등하게 attention하면 위치 1의 출력은 1, 위치 2는 1/2, 위치 4는 1/4이 된다. 출력값에서 위치를 거꾸로 읽어 낼 수 있는 셈이다. Kazemnejad 등은 이런 원리로 위치 인코딩이 없는(NoPE, no positional encoding) decoder의 첫 층이 절대 위치를 복원할 수 있고, 이후 층에서 상대 위치도 표현할 수 있음을 보였다.[^nope]
 
-다만 이 정보는 모델이 스스로 만들어 내야 하는 간접 신호다. 위 예에서 위치 1,000과 1,001의 출력 차이는 약 $10^{-6}$에 불과해, 먼 위치일수록 인접한 두 위치를 구분하기 어려워진다. 대부분의 LLM은 이 간접 신호에만 기대지 않고 위치 신호를 명시적으로 넣는다. 설계의 갈림길은 **어디에 넣는가**다. 입력 embedding에 더하면 절대 위치 인코딩(§2), attention score를 계산하는 자리에서 두 위치의 거리를 반영하면 상대 위치 인코딩(§3)이 된다.
+다만 이 정보는 모델이 스스로 만들어 내야 하는 간접 신호다. 위 예에서 위치 1,000과 1,001의 출력 차이는 약 $10^{-6}$에 불과해, 먼 위치일수록 인접한 두 위치를 구분하기 어려워진다. 대부분의 LLM(large language model)은 이 간접 신호에만 기대지 않고 위치 신호를 명시적으로 넣는다. 설계의 갈림길은 **어디에 넣는가**다. 입력 embedding에 더하면 절대 위치 인코딩(§2), attention score를 계산하는 자리에서 두 위치의 거리를 반영하면 상대 위치 인코딩(§3)이 된다.
 
 ## 2. 절대 위치 인코딩
 
@@ -197,7 +197,7 @@ $$
 
 $b$는 RoPE base다. RoFormer와 초기 모델은 $b=10{,}000$을 썼고, Llama 3는 $b=500{,}000$으로 올렸다.[^llama3] Llama 3 8B는 head 차원이 128이므로 64개 쌍이 각자의 속도로 회전한다.
 
-적용 위치도 절대 위치 인코딩과 다르다. RoPE는 입력 embedding이 아니라 **각 층의 attention 안에서 query와 key에** 적용하며, value에는 적용하지 않는다. 절대 위치로 회전을 계산하지만 그 효과는 내적 안에서만 상대 위치로 나타난다. 회전을 적용한 뒤의 key는 이후 토큰이 생성되어도 바뀌지 않으므로(위치 변환 규칙이 생성 중에 고정되어 있을 때), KV cache에 그대로 저장할 수 있다.
+적용 위치도 절대 위치 인코딩과 다르다. RoPE는 입력 embedding이 아니라 **각 층의 attention 안에서 query와 key에** 적용하며, value에는 적용하지 않는다. 절대 위치로 회전을 계산하지만 그 효과는 내적 안에서만 상대 위치로 나타난다. 회전을 적용한 뒤의 key는 이후 토큰이 생성되어도 바뀌지 않으므로(위치 변환 규칙이 생성 중에 고정되어 있을 때), KV(key–value) cache에 그대로 저장할 수 있다.
 
 쌍별 기여를 모두 더하면 RoPE의 attention score는 거리 $m-n$에 대한 $d/2$개 사인파의 가중합이 되고, 각 사인파의 진폭과 위상은 토큰 내용이 정한다. 이 표현은 §5-1에서 외삽 실패를 설명할 때 다시 쓴다. 유도는 아래 접힌 부분에 있다.
 
@@ -323,7 +323,9 @@ $$
 
 <Figure src="https://arxiv.org/html/2306.15595v2/sin.png" alt="RoPE의 한 성분을 위치에 따라 그린 그림. 위쪽은 학습 범위 0부터 2048까지 파란 점으로 표시되고, 2048부터 4096까지는 학습에서 보지 못한 범위로 붉게 칠해진 채 빨간 점이 이어진다. 아래쪽은 position interpolation으로 위치 0부터 4096을 절반으로 줄여, 모든 점이 학습 범위 0부터 2048 안의 곡선 위에 촘촘히 놓인다. 원래 정수 위치는 파란 점, 새로 생긴 정수 사이 위치는 초록 점이다." caption="외삽과 보간. 위: 2,048로 학습한 모델에 4,096 길이를 넣으면 위치 2,048 이후는 학습 범위 밖이다(빨간 점). 아래: PI는 위치를 절반으로 줄여 모든 점을 학습 범위 안에 놓는다(초록 점은 원래 없던 정수 사이 위치). 한 성분만 보면 빨간 점의 값도 [−1, 1] 안에 있다는 점에 주목하자. 낯선 것은 여러 성분의 조합이다(§5-1)." source="Chen et al. (2023), Extending Context Window of Large Language Models via Positional Interpolation, Figure 1 · arXiv · CC BY 4.0 · 수정 없음" />
 
-2,048로 학습한 모델을 4,096으로 늘리면($s=2$) 위치 3,000은 1,500으로, 4,095는 2,047.5로 바뀐다. 모든 위치와 거리가 학습 범위 안에 들어오고, 정수 사이의 위치는 RoPE가 실수 위치에서도 정의되므로 문제없이 계산된다. Chen 등은 보간한 위치의 score가 양쪽 정수 위치의 score를 선형 보간한 값에서 벗어날 수 있는 크기의 상한을 구하고, 이것이 외삽에서 score가 커질 수 있는 상한보다 약 600배 작다고 분석했다. 두 상한의 비교이지, 실제 모델의 오차나 perplexity가 600배 좋아진다는 뜻은 아니다. 다만 이 상한의 증명(원논문 부록 A 식 (14))은 $1-c^{-4/d}\le\tfrac{4}{d}\ln c$의 역수를 취하면서 부등호 방향을 잃었고, 논문의 설정($d=128$, $c=10{,}000$)에서 상한을 넘는 예도 만들 수 있다. 따라서 600배는 저자들의 보고로 소개하고, 보간이 안정적이라는 결론은 뒤의 실험 결과에 기대어 받아들인다. LLaMA 7B–65B를 최대 32,768까지 늘리는 데 1,000 step 이내의 미세조정이면 충분했고, 원래 2,048 범위의 벤치마크에서는 약간의 성능 저하가 있었다. 비교로 PI 없이 긴 시퀀스로 바로 미세조정하자, 10,000 batch 넘게 학습해도 유효 길이가 2,048에서 2,560으로만 늘었다.
+2,048로 학습한 모델을 4,096으로 늘리면($s=2$) 위치 3,000은 1,500으로, 4,095는 2,047.5로 바뀐다. 모든 위치와 거리가 학습 범위 안에 들어오고, 정수 사이의 위치는 RoPE가 실수 위치에서도 정의되므로 문제없이 계산된다. Chen 등은 보간한 위치의 score가 양쪽 정수 위치의 score를 선형 보간한 값에서 벗어날 수 있는 크기의 상한을 구하고, 이것이 외삽에서 score가 커질 수 있는 상한보다 약 600배 작다고 분석했다. 두 상한의 비교이지, 실제 모델의 오차나 perplexity가 600배 좋아진다는 뜻은 아니다. 다만 이 상한의 증명(원논문 부록 A 식 (14))은 $1-c^{-4/d}\le\tfrac{4}{d}\ln c$의 역수를 취하면서 부등호 방향을 잃었고, 논문의 설정($d=128$, $c=10{,}000$)에서 상한을 넘는 예도 만들 수 있다. 따라서 600배는 저자들의 보고로 소개하고, 보간이 안정적이라는 결론은 뒤의 실험 결과에 기대어 받아들인다.
+
+실험에서는 LLaMA 7B–65B를 최대 32,768까지 늘리는 데 1,000 step 이내의 미세조정이면 충분했고, 원래 2,048 범위의 벤치마크에서는 약간의 성능 저하가 있었다. 비교로 PI 없이 긴 시퀀스로 바로 미세조정하자, 10,000 batch 넘게 학습해도 유효 길이가 2,048에서 2,560으로만 늘었다.
 
 **남은 문제: 고주파 쌍의 해상도도 함께 떨어진다.** PI는 모든 쌍을 똑같이 $s$배 느리게 만든다. 가장 빠른 $i=0$ 쌍에서 인접 토큰의 각도 차이는 원래 1 rad인데, $s=2$에서는 0.5 rad, $s=8$에서는 0.125 rad로 줄어든다. 저주파 쌍은 원래 이웃 위치를 구분하는 역할이 아니어서 느려져도 영향이 작지만, 가까운 거리를 구분하던 고주파 쌍은 인접 위치의 각도 차이가 그만큼 줄어 해상도를 잃는다. Peng 등은 PI 기반 미세조정이 대체로 $s=8$ 정도를 넘기면 출력 품질이 떨어졌다고 정리했다.[^yarn]
 
@@ -399,11 +401,11 @@ Ding 등의 LongRoPE는 대역 규칙을 사람이 정하는 대신 **쌍별 배
 
 </Callout>
 
-탐색 결과는 미세조정 없이 LLaMA2의 문맥을 4K에서 32K(8배)까지 늘렸다.
+탐색 결과는 미세조정 없이 Llama 2의 문맥을 4K에서 32K(8배)까지 늘렸다.
 
 <Details summary="LongRoPE의 점진적 확장과 비용">
 
-더 긴 확장에는 **점진적 확장**을 쓴다. LLaMA2에서는 128K용 배율로 400 step, 256K용 배율로 600 step 미세조정한 뒤, 미세조정된 모델에서 배율을 다시 탐색해 추가 학습 없이 2,048K까지 늘렸다. 마지막으로 늘린 배율 때문에 짧은 입력의 성능이 떨어지는 문제는 8K 이하 길이용 배율을 따로 탐색해, 입력이 8K보다 짧으면 그 배율을 쓰는 방식으로 회복한다. 비용도 작지 않아서, 128K 미세조정 400 step에 A100 8장으로 일주일이 걸렸다고 보고한다.
+더 긴 확장에는 **점진적 확장**을 쓴다. Llama 2에서는 128K용 배율로 400 step, 256K용 배율로 600 step 미세조정한 뒤, 미세조정된 모델에서 배율을 다시 탐색해 추가 학습 없이 2,048K까지 늘렸다. 마지막으로 늘린 배율 때문에 짧은 입력의 성능이 떨어지는 문제는 8K 이하 길이용 배율을 따로 탐색해, 입력이 8K보다 짧으면 그 배율을 쓰는 방식으로 회복한다. 비용도 작지 않아서, 128K 미세조정 400 step에 A100 8장으로 일주일이 걸렸다고 보고한다.
 
 </Details>
 
