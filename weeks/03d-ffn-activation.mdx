@@ -4,12 +4,12 @@ week: 3
 order: 3
 ---
 
-원래 Transformer의 FFN(feed-forward network)은 행렬 두 개 사이에 ReLU를 둔 구조였다. Llama 3 8B의 FFN은 두 가지 점에서 다르다. 가운데 활성화 함수의 모양이 바뀌었고(ReLU → GELU·SiLU), 한 입력 투영의 출력으로 다른 투영의 출력을 원소별로 조절하는 **곱셈 gating**이 들어왔다(GLU → SwiGLU·GeGLU). 활성화 함수 전반은 400여 개를 정리한 Kunc와 Kléma의 서베이[^survey]가 가장 넓은 목록을 제공하는데, 이 노트와 겹치는 범위는 §3.3(SiLU와 GELU), §3.4(GLU 계열), §3.6(ReLU)이다.
+원래 Transformer의 FFN(feed-forward network)은 행렬 두 개 사이에 ReLU를 둔 구조였다. Llama 3 8B의 FFN은 두 가지 점에서 다르다. 가운데 활성화 함수의 모양이 바뀌었고(ReLU → GELU·SiLU), 한 입력 투영의 출력으로 다른 투영의 출력을 원소별로 조절하는 **곱셈 gating**이 들어왔다(GLU → SwiGLU·GeGLU). 활성화 함수 전반은 Kunc와 Kléma가 2024년에 400개를 정리한 서베이[^survey]로 조망할 수 있는데, 이 노트와 겹치는 범위는 §3.3(SiLU와 GELU), §3.4(GLU 계열), §3.6(ReLU)이다.
 
 두 변화는 동기가 다르다. 앞의 것은 "같은 값으로 만든 gate의 모양"을, 뒤의 것은 "gate를 별도 투영으로 만드는 구조"를 바꾼다. 이 노트는 두 축을 따로 따라간 뒤 SwiGLU에서 만나는 지점을 보고, 행렬이 셋으로 늘면서 생긴 폭 조정 문제를 Llama 3 8B의 실제 중간 폭 14336으로 계산한다.
 
 <figure>
-<svg viewBox="0 0 560 318" role="img" aria-label="FFN 활성화 계보의 두 축. 위쪽 축 1은 활성화 모양의 선택으로, ReLU max(0, x)에서 GELU x 곱하기 Phi(x)와 SiLU x 곱하기 sigma(x)로 간다. 화살표에 붙은 기존 방식의 문제는 음수 입력의 기울기 0, 0에서 꺾임, 부호만 보고 통과와 차단을 정하는 것이다. 아래쪽 축 2는 곱셈 gating의 도입으로, 행렬 2개 FFN에서 GLU sigma(xW) 곱하기 xV로, 다시 gate 함수를 바꾼 병렬 변형 ReGLU, GeGLU, SwiGLU로 간다. 첫 화살표의 문제는 gate와 전달 값이 같은 투영에서 정해진다는 것이다. 축 1의 GELU와 SiLU가 축 2의 gate 함수 자리에 들어가며 두 축이 합류한다. SwiGLU는 SiLU를 gate 함수로 쓴 GLU다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 560 340" role="img" aria-label="FFN 활성화 계보의 두 축. 위쪽 축 1은 활성화 모양의 선택으로, ReLU max(0, x)에서 GELU x 곱하기 Phi(x)와 SiLU x 곱하기 sigma(x)로 간다. 화살표에 붙은 기존 방식의 문제는 음수 입력의 기울기 0, 0에서 꺾임, 부호만 보고 통과와 차단을 정하는 것이다. 아래쪽 축 2는 곱셈 gating의 도입으로, 출발점이 둘이다. 하나는 Transformer의 행렬 2개 FFN이고, 그 문제는 gate와 전달 값이 같은 투영에서 정해진다는 것이다. 다른 하나는 convolutional 언어 모델에서 제안된 GLU sigma(xW) 곱하기 xV다. 둘은 Shazeer가 GLU를 Transformer FFN에 들여오며 gate 함수를 바꿔 본 GLU 변형 FFN(ReGLU, GeGLU, SwiGLU)에서 합류한다. 축 1의 GELU와 SiLU가 그 gate 함수 자리에 들어가며 두 축도 합류한다. SwiGLU는 SiLU를 gate 함수로 쓴 GLU다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
 <text x="280" y="22" font-size="17" text-anchor="middle" fill="#0f172a" font-weight="600">FFN 활성화의 두 축</text>
 <text x="16" y="52" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">축 1 · 활성화 모양 (자기 값으로 만든 gate)</text>
 <rect x="16" y="62" width="160" height="66" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
@@ -23,28 +23,29 @@ order: 3
 <path d="M176 95 H377" stroke="#0f172a" fill="none"/><polygon points="384,95 377,91 377,99" fill="#0f172a"/>
 <text x="280" y="88" font-size="12" text-anchor="middle" fill="#0f172a">음수 기울기 0 · 0에서 꺾임</text>
 <text x="280" y="112" font-size="11" text-anchor="middle" fill="#64748b">부호만 보고 통과·차단</text>
-<text x="16" y="178" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">축 2 · 곱셈 gating (별도 투영으로 만든 gate)</text>
-<rect x="16" y="188" width="160" height="66" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="96" y="210" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">행렬 2개 FFN</text>
-<text x="96" y="229" font-size="13" text-anchor="middle" fill="#0f172a">act(xW₁) W₂</text>
-<text x="96" y="246" font-size="11" text-anchor="middle" fill="#64748b">Vaswani 2017</text>
-<rect x="200" y="188" width="160" height="66" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="280" y="210" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">GLU</text>
-<text x="280" y="229" font-size="13" text-anchor="middle" fill="#0f172a">σ(xW) ⊗ xV</text>
-<text x="280" y="246" font-size="11" text-anchor="middle" fill="#64748b">Dauphin 2017</text>
-<rect x="384" y="188" width="160" height="66" rx="6" fill="#f8fafc" stroke="#0f172a"/>
-<text x="464" y="210" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">GLU 변형 (병렬)</text>
-<text x="464" y="229" font-size="12" text-anchor="middle" fill="#0f172a">ReGLU · GeGLU · SwiGLU</text>
-<text x="464" y="246" font-size="11" text-anchor="middle" fill="#64748b">f(xW) ⊗ xV · Shazeer 2020</text>
-<path d="M176 221 H193" stroke="#0f172a" fill="none"/><polygon points="200,221 193,217 193,225" fill="#0f172a"/>
-<path d="M360 221 H377" stroke="#0f172a" fill="none"/><polygon points="384,221 377,217 377,225" fill="#0f172a"/>
-<text x="188" y="274" font-size="11" text-anchor="middle" fill="#64748b">gate와 값이 같은 투영</text>
-<text x="372" y="274" font-size="11" text-anchor="middle" fill="#64748b">gate 함수 교체</text>
-<path d="M464 128 V181" stroke="#0f172a" fill="none" stroke-dasharray="4 3"/><polygon points="464,188 460,181 468,181" fill="#0f172a"/>
-<text x="456" y="160" font-size="11" text-anchor="end" fill="#64748b">gate 함수로 대입</text>
-<text x="280" y="304" font-size="13" text-anchor="middle" fill="#0f172a">SwiGLU = SiLU를 gate 함수로 쓴 GLU</text>
+<text x="16" y="176" font-size="13" text-anchor="start" fill="#0f172a" font-weight="600">축 2 · 곱셈 gating (별도 투영으로 만든 gate)</text>
+<rect x="16" y="186" width="160" height="54" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="96" y="204" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">행렬 2개 FFN</text>
+<text x="96" y="221" font-size="13" text-anchor="middle" fill="#0f172a">act(xW₁) W₂</text>
+<text x="96" y="235" font-size="10" text-anchor="middle" fill="#64748b">Vaswani 2017 · Transformer</text>
+<rect x="16" y="250" width="160" height="54" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="96" y="268" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">GLU</text>
+<text x="96" y="285" font-size="13" text-anchor="middle" fill="#0f172a">σ(xW) ⊗ xV</text>
+<text x="96" y="299" font-size="10" text-anchor="middle" fill="#64748b">Dauphin 2017 · conv 언어 모델</text>
+<rect x="384" y="204" width="160" height="66" rx="6" fill="#f8fafc" stroke="#0f172a"/>
+<text x="464" y="226" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">GLU 변형 FFN (병렬)</text>
+<text x="464" y="245" font-size="12" text-anchor="middle" fill="#0f172a">ReGLU · GeGLU · SwiGLU</text>
+<text x="464" y="262" font-size="11" text-anchor="middle" fill="#64748b">(f(xW) ⊗ xV) W₂ · Shazeer 2020</text>
+<path d="M176 213 H250 V228 H377" stroke="#0f172a" fill="none"/><polygon points="384,228 377,224 377,232" fill="#0f172a"/>
+<path d="M176 277 H250 V246 H377" stroke="#0f172a" fill="none"/><polygon points="384,246 377,242 377,250" fill="#0f172a"/>
+<text x="314" y="222" font-size="11" text-anchor="middle" fill="#64748b">gate와 값이 같은 투영</text>
+<text x="314" y="261" font-size="11" text-anchor="middle" fill="#64748b">Transformer FFN에 도입</text>
+<text x="314" y="275" font-size="11" text-anchor="middle" fill="#64748b">gate 함수 탐색</text>
+<path d="M464 128 V197" stroke="#0f172a" fill="none" stroke-dasharray="4 3"/><polygon points="464,204 460,197 468,197" fill="#0f172a"/>
+<text x="456" y="168" font-size="11" text-anchor="end" fill="#64748b">gate 함수로 대입</text>
+<text x="280" y="328" font-size="13" text-anchor="middle" fill="#0f172a">SwiGLU = SiLU를 gate 함수로 쓴 GLU</text>
 </svg>
-<figcaption>이 노트의 계보를 직접 구성한 도식. 화살표 아래의 문구는 기존 방식의 문제이고, 점선은 축 1의 선택이 축 2의 gate 함수 자리에 들어가는 합류를 나타낸다. 연도는 각 방식을 제시하거나 이름 붙인 논문 기준이다.</figcaption>
+<figcaption>이 노트의 계보를 직접 구성한 도식. 축 2는 Transformer의 행렬 2개 FFN과 convolutional 언어 모델에서 따로 제안된 GLU를 별도 출발점으로 두고, Shazeer가 GLU를 Transformer FFN에 들여온 지점에서 합류시킨다. 위 화살표의 문구는 행렬 2개 FFN의 문제이고, 아래 화살표는 결함을 고친 단계가 아니라 gate 함수를 바꿔 본 탐색이다. 점선은 축 1의 선택이 축 2의 gate 함수 자리에 들어가는 합류를 나타낸다. 연도는 각 방식을 제시하거나 이름 붙인 논문 기준이다.</figcaption>
 </figure>
 
 ## 1. FFN의 역할
@@ -59,7 +60,9 @@ $$
 
 가운데 활성화가 빠지면 넓히는 의미가 사라진다. 두 선형 변환의 합성 $xW_1W_2$는 $d\times d$ 행렬 하나 $W_1W_2$를 곱하는 것과 같기 때문이다. 이 노트에서 바꿔 가는 부분이 바로 이 가운데 비선형 부분과, 그 앞의 입력 투영이다.
 
-FFN은 LLM 파라미터의 큰 몫을 차지한다. Llama 3 8B의 공식 설정($d=4096$, 층 32개, key–value head 8개 × 128차원, 중간 폭 14336, vocabulary 128256)으로 직접 세어 보자.[^llama3][^llamacode]
+FFN은 LLM(large language model) 파라미터의 큰 몫을 차지한다. Llama 3 8B의 공식 설정($d=4096$, 층 32개, key–value head 8개 × 128차원, 중간 폭 14336, vocabulary 128256)으로 직접 세어 보면 전체 약 80.3억 개 중 FFN이 약 56.4억 개다.[^llama3][^llamacode]
+
+<Details summary="Llama 3 8B 파라미터 집계">
 
 | 부분 | 계산 | 파라미터 수 |
 |---|---|---|
@@ -67,9 +70,11 @@ FFN은 LLM 파라미터의 큰 몫을 차지한다. Llama 3 8B의 공식 설정(
 | FFN (층당) | $3\cdot4096\cdot14336$ | 176,160,768 |
 | Attention 32층 | | 1,342,177,280 |
 | FFN 32층 | | 5,637,144,576 |
-| Embedding + LM head | $2\cdot128256\cdot4096$ | 1,050,673,152 |
-| RMSNorm | $(2\cdot32+1)\cdot4096$ | 266,240 |
+| Embedding + LM head(language model head) | $2\cdot128256\cdot4096$ | 1,050,673,152 |
+| RMSNorm(root mean square normalization) | $(2\cdot32+1)\cdot4096$ | 266,240 |
 | 합계 | | 8,030,261,248 |
+
+</Details>
 
 FFN이 전체의 약 70%, embedding을 뺀 블록 파라미터의 약 81%다. 행렬 곱의 연산량도 토큰당 가중치 하나에 곱셈·덧셈 두 번이므로 파라미터 수에 비례한다(시퀀스 길이에 따라 늘어나는 attention score 계산은 따로다). FFN 설계의 작은 선택이 모델 전체의 크기와 연산량에 직접 반영되는 이유다. 표의 FFN이 행렬 세 개로 계산된 까닭은 §3에서, 14336이라는 값은 §4에서 다룬다.
 
@@ -85,7 +90,7 @@ $$
 \operatorname{ReLU}(x)=\max(0,x)=x\cdot\mathbf{1}[x>0]
 $$
 
-양수 입력에서 도함수가 정확히 1이라, 활성화된 단위에서는 활성화 함수 자체가 역전파되는 기울기를 추가로 줄이지 않는다.[^maas] 층을 지나는 기울기에는 가중치 행렬도 곱해지므로 전체 기울기가 보존된다는 뜻은 아니다. 예를 들어 $h_{\ell+1}=\operatorname{ReLU}(0.5\,h_\ell)$를 $L$층 쌓으면 모든 단위가 활성화되어 있어도 기울기는 $0.5^L$로 줄어든다. Sigmoid나 tanh에 비해 깊은 망을 학습시키기 쉬웠던 이유로 흔히 이 점이 꼽힌다.[^swish] 같은 모양이 세 가지 성질도 함께 가져온다.
+양수 입력에서 도함수가 정확히 1이므로, 활성화된 단위를 지나는 기울기는 활성화 함수에서 줄어들지 않는다.[^maas] 층을 지나는 기울기에는 가중치 행렬도 곱해지므로 전체 기울기가 보존된다는 뜻은 아니다. 예를 들어 $h_{\ell+1}=\operatorname{ReLU}(0.5\,h_\ell)$를 $L$층 쌓으면 모든 단위가 활성화되어 있어도 기울기는 $0.5^L$로 줄어든다. Sigmoid나 tanh에 비해 깊은 망을 학습시키기 쉬웠던 이유로 흔히 이 점이 꼽힌다.[^swish] 이 모양에는 다음 세 성질도 따라온다.
 
 - **음수 입력의 기울기가 0이다.** Maas 등은 비활성 단위의 기울기가 0이므로, 처음부터 한 번도 활성화되지 않는 단위는 gradient 기반 최적화로 가중치가 갱신되지 않을 수 있다고 지적했다.[^maas] 서베이는 이를 "dead" 뉴런 문제로 정리한다(§3.6).
 - **0에서 꺾인다.** 도함수가 0에서 1로 불연속하게 뛰므로 $x=0$에서 미분할 수 없다. Nair와 Hinton도 역전파에서는 $x\le0$일 때 기울기를 0, $x>0$일 때 1로 정하고 불연속점은 무시했다.[^nair]
@@ -118,7 +123,7 @@ Ramachandran 등은 자동 탐색으로 $x\,\sigma(\beta x)$ 꼴을 찾아 Swish
 | −3 | 0 | −0.004 | −0.142 | 0 | −0.012 | −0.088 |
 | −1 | 0 | −0.159 | −0.269 | 0 | −0.083 | 0.072 |
 | −0.5 | 0 | −0.154 | −0.189 | 0 | 0.133 | 0.260 |
-| 0 | 0 | 0 | 0 | 0 또는 1 | 0.500 | 0.500 |
+| 0 | 0 | 0 | 0 | 정의되지 않음(구현은 0) | 0.500 | 0.500 |
 | 0.5 | 0.5 | 0.346 | 0.311 | 1 | 0.867 | 0.740 |
 | 1 | 1 | 0.841 | 0.731 | 1 | 1.083 | 0.928 |
 | 2 | 2 | 1.954 | 1.762 | 1 | 1.085 | 1.091 |
@@ -127,7 +132,7 @@ $x=-1$에서 GELU의 값 $-0.159$는 $-1\times\Phi(-1)=-1\times0.159$, 즉 입�
 
 1. **꺾임이 사라진다.** GELU와 SiLU의 기울기는 0에서 0.5이고 양옆으로 연속해서 변한다.
 2. **음수 영역에도 작은 출력과 기울기가 남는다.** GELU는 $x\approx-0.75$에서 최솟값 약 $-0.170$, SiLU는 $x\approx-1.28$에서 약 $-0.278$을 가지며, 그 구간에서 함수가 감소한다(비단조, non-monotonic).
-3. **먼 음수 영역의 기울기는 여전히 0에 가깝다.** GELU′$(-3)\approx-0.012$다. 정확한 0을 작은 값으로 바꾸고 꺾임을 없앤 것이지, 음수 영역의 기울기 문제가 통째로 사라지는 것은 아니다.
+3. **입력이 충분히 작은 음수이면 기울기는 여전히 0에 가깝다.** GELU′$(-3)\approx-0.012$다. 정확한 0을 작은 값으로 바꾸고 꺾임을 없앤 것이지, 음수 영역의 기울기 문제가 통째로 사라지는 것은 아니다.
 
 <figure>
 <svg viewBox="0 0 560 306" role="img" aria-label="ReLU, GELU, SiLU의 함수값과 기울기를 x가 −3부터 3까지인 구간에서 실제 함수값으로 그린 그래프. 왼쪽 함수값 그래프에서 ReLU는 음수에서 0이고 0에서 꺾여 기울기 1의 직선이 된다. GELU와 SiLU는 0 근처에서 매끄럽게 휘고 음수 영역에서 조금 아래로 내려갔다가 다시 0으로 다가간다. GELU의 최솟값은 x 약 −0.75에서 약 −0.17, SiLU는 x 약 −1.28에서 약 −0.28이다. 양수 쪽에서 GELU는 ReLU에 빠르게 붙고 SiLU는 조금 아래에 있다. 오른쪽 기울기 그래프에서 ReLU는 음수에서 0, 양수에서 1로 x=0에서 불연속하게 뛴다. GELU와 SiLU의 기울기는 0에서 0.5를 지나며 연속적으로 증가하고, 양수 쪽에서 1을 약간 넘었다가 1로 돌아온다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -187,9 +192,9 @@ $x=-1$에서 GELU의 값 $-0.159$는 $-1\times\Phi(-1)=-1\times0.159$, 즉 입�
 <figcaption>세 함수의 정의식에서 계산한 값으로 직접 그린 그래프. 오른쪽의 빈 원은 ReLU 도함수가 x=0에서 불연속임을 나타낸다.</figcaption>
 </figure>
 
-GELU 논문은 MNIST, CIFAR-10/100, TIMIT 등에서 ReLU·ELU보다 나은 결과를 보고했다. 예를 들어 CIFAR-10의 9층 CNN에서 중앙값 오류율이 GELU 7.89%, ReLU 8.16%였다.[^gelu] Transformer에서는 BERT가 OpenAI GPT를 따라 ReLU 대신 GELU를 썼다고 밝혔다.[^bert]
+GELU 논문은 MNIST, CIFAR-10/100, TIMIT 등에서 ReLU와 ELU(exponential linear unit)보다 나은 결과를 보고했다. 예를 들어 CIFAR-10의 9층 CNN(convolutional neural network)에서 중앙값 오류율이 GELU 7.89%, ReLU 8.16%였다.[^gelu] Transformer에서는 BERT가 OpenAI GPT를 따라 ReLU 대신 GELU를 썼다고 밝혔다.[^bert]
 
-그렇다면 Transformer FFN에서 모양만 바꾼 효과는 얼마나 클까? Shazeer는 T5 base 설정에서 파라미터와 연산량을 맞춘 FFN 여러 개를 비교했다.[^glu] 65,536 step에서 held-out log-perplexity는 ReLU 1.997, GELU 1.983(네 번 반복한 표준편차 약 0.005)이었고, 524,288 step에서는 ReLU 1.677, GELU 1.679였다. 이 설정에서는 모양만 바꾼 차이가 작았다. 같은 표에서 더 큰 차이를 보인 것은 다음 절의 gating 구조다.
+그렇다면 Transformer FFN에서 모양만 바꾼 효과는 얼마나 클까? Shazeer는 encoder–decoder인 T5 base 설정에서 파라미터와 연산량을 맞춘 FFN 여러 개를 비교했다.[^glu] 학습 목표는 C4 말뭉치의 span-filling(빈칸 채우기) 사전학습이고, 평가 지표는 같은 목표의 held-out log-perplexity(낮을수록 좋음)다. 앞 주차의 다음 토큰 예측 perplexity와 목표가 다르므로 절대값을 그쪽과 비교하지는 않는다. 65,536 step에서 log-perplexity는 ReLU 1.997, GELU 1.983(네 번 반복한 표준편차 약 0.005)이었고, 524,288 step에서는 ReLU 1.677, GELU 1.679였다. 이 설정에서는 모양만 바꾼 차이가 작았다. 같은 표에서 더 큰 차이를 보인 것은 다음 절의 gating 구조다.
 
 ## 3. Gated linear unit
 
@@ -205,13 +210,13 @@ $$
 \operatorname{GLU}(x)=\sigma(xW)\otimes xV
 $$
 
-$\otimes$는 원소별 곱이다. $\sigma(xW)$의 각 성분은 0과 1 사이의 gate이고, $xV$는 gate가 조절할 값이다. Dauphin 등이 제시한 동기는 두 가지다. 하나는 LSTM의 gate처럼 층 사이로 어떤 정보를 넘길지 학습하게 하는 것이다. 다른 하나는 기울기 경로다. LSTM식 gate인 $\tanh(X)\otimes\sigma(X)$의 기울기는 두 항 모두 $\tanh'$이나 $\sigma'$로 줄어드는 반면, GLU의 기울기에는 줄어들지 않는 항이 있다.
+$\otimes$는 원소별 곱이다. $\sigma(xW)$의 각 성분은 0과 1 사이의 gate이고, $xV$는 gate가 조절할 값이다. Dauphin 등이 제시한 동기는 두 가지다. 하나는 LSTM의 gate처럼 층 사이로 어떤 정보를 넘길지 학습하게 하는 것이다. 다른 하나는 기울기 경로다. Gate 투영을 $u=xW$, 값 투영을 $v=xV$로 두면 GLU의 출력은 $y=\sigma(u)\otimes v$다. 손실 $L$의 출력에 대한 기울기를 $g=\partial L/\partial y$라 하면 두 투영으로 돌아가는 기울기는 다음과 같다.
 
 $$
-\nabla[X\otimes\sigma(X)]=\nabla X\otimes\sigma(X)+X\otimes\sigma'(X)\nabla X
+\frac{\partial L}{\partial v}=g\otimes\sigma(u),\qquad \frac{\partial L}{\partial u}=g\otimes v\otimes\sigma'(u)
 $$
 
-첫 항 $\nabla X\otimes\sigma(X)$는 gate가 열려 있는 단위에서 기울기를 거의 그대로 전달한다. 원논문은 이를 곱셈 형태의 skip connection에 비유했다. 비교 실험에서 GLU는 WikiText-103에서 ReLU·tanh·tanh 기반 gate보다, Google Billion Word에서 ReLU·tanh 기반 gate보다 빨리 수렴하고 더 낮은 perplexity에 도달했다(원논문 Figure 3). Gate의 비선형을 뺀 bilinear 층 $xW\otimes xV$도 선형 층보다는 크게 나았지만 GLU에는 못 미쳤다(Figure 5).
+$v$ 경로에는 활성화 함수의 도함수가 곱해지지 않는다. 0과 1 사이의 gate 값만 곱해지므로, gate가 열린 단위에서는 $g$가 거의 그대로 $v$까지 전달된다. 원논문은 이를 곱셈 형태의 skip connection에 비유했다. 반면 $u$ 경로에는 $\sigma'(u)\le0.25$가 곱해진다($v$도 곱해지므로 크기가 반드시 줄어드는 것은 아니지만, 층을 쌓을수록 sigmoid 도함수가 거듭 곱해지는 경로다). 비교 대상인 LSTM(long short-term memory)식 gate $\tanh(u)\otimes\sigma(v)$에는 도함수가 곱해지지 않는 경로가 없어서, 두 경로 모두 $\tanh'$이나 $\sigma'$가 거듭 곱해진다. 비교 실험에서 GLU는 WikiText-103에서 tanh, ReLU, tanh 기반 gate보다 빨리 수렴하고 더 낮은 perplexity에 도달했으며, Google Billion Word에서도 가장 좋았고 ReLU와는 약 5 perplexity 차이가 났다(원논문 Figure 3). Gate의 비선형을 뺀 bilinear 층 $xW\otimes xV$도 선형 층보다는 크게 나았지만 GLU에는 못 미쳤다(Figure 5).
 
 작은 수치로 비교해 보자. 은닉 단위가 2개이고, 두 토큰 A와 B의 gate 투영 $u=xW$는 같지만 값 투영 $v=xV$는 다르다고 하자(설명용 가정 값).
 
@@ -223,7 +228,7 @@ $$
 | GLU gate: $\sigma(u)$ | (0.881, 0.269) | (0.881, 0.269) |
 | GLU: $\sigma(u)\otimes v$ | (2.642, 0.807) | (−0.881, 0.134) |
 
-행렬 2개 FFN에서는 $u$가 같으면 은닉값도 같고, 두 번째 단위는 $u_2<0$이라 두 토큰 모두 0이다. GLU에서는 같은 gate 아래에서도 $v$에 따라 은닉값이 달라지고, 두 번째 단위도 $v_2$의 26.9%를 넘긴다. 출력이 두 선형 투영의 곱이므로 입력 성분끼리의 곱셈 상호작용을 한 층에서 표현할 수 있다는 점도 다르다.
+행렬 2개 FFN에서는 $u$가 같으면 은닉값도 같고, 두 번째 단위는 $u_2<0$이라 두 토큰 모두 0이다. GLU에서는 같은 gate 아래에서도 $v$에 따라 은닉값이 달라지고, 두 번째 단위도 $v_2$의 26.9%를 넘긴다. 한 투영에 sigmoid를 씌운 값과 다른 투영을 곱하므로, 입력 성분끼리의 곱셈 상호작용을 한 층에서 표현할 수 있다는 점도 다르다.
 
 ### 3-2. SwiGLU와 GeGLU
 
@@ -235,9 +240,9 @@ $$
 
 ReGLU는 $\max(0,\cdot)$, bilinear는 항등 함수를 넣은 경우다. 이 변형들은 앞뒤로 이어진 발전이 아니라, GLU라는 같은 구조에서 gate 함수만 달리 고른 **병렬 변형**이다. 축 1에서 고른 모양이 축 2의 gate 자리에 들어가는 합류 지점이 여기다.
 
-앞의 예제에서 $\sigma(u)$를 $\operatorname{SiLU}(u)=u\,\sigma(u)$로 바꾸면 토큰 A의 gate 쪽은 $(1.762,\,-0.269)$, 은닉값은 $(5.285,\,-0.807)$이 된다. SwiGLU의 "gate"는 0과 1 사이에 갇히지 않고 음수도 될 수 있다. 은닉값은 $u$의 부호와 크기, $\sigma(u)$, $v$ 세 요소의 곱이다.
+앞의 예제에서 $\sigma(u)$를 $\operatorname{SiLU}(u)=u\,\sigma(u)$로 바꾸면 토큰 A에서 SiLU를 적용한 gate 투영값은 $(1.762,\,-0.269)$, 은닉값은 $(5.285,\,-0.807)$이 된다. SwiGLU의 "gate"는 0과 1 사이에 갇히지 않고 음수도 될 수 있다. 은닉값은 $u$의 부호와 크기, $\sigma(u)$, $v$ 세 요소의 곱이다.
 
-Shazeer의 T5 base 비교(파라미터·연산량 일치, 524,288 step, held-out log-perplexity, 낮을수록 좋음)를 정리하면 다음과 같다.
+§2 끝에서 본 Shazeer의 T5 base 실험(파라미터·연산량 일치) 중 524,288 step의 결과(원논문 Table 1)를 정리하면 다음과 같다.
 
 | FFN | 구조 | Log-perplexity |
 |---|---|---|
@@ -250,7 +255,7 @@ Shazeer의 T5 base 비교(파라미터·연산량 일치, 524,288 step, held-out
 | GEGLU | 행렬 3개, gate GELU | 1.633 |
 | SwiGLU | 행렬 3개, gate Swish | 1.636 |
 
-같은 표의 65,536 step 결과에서 GEGLU(1.942 ± 0.004)와 SwiGLU(1.944 ± 0.010)의 차이는 반복 실험의 표준편차 안에 있다. GLUE·SuperGLUE fine-tuning에서도 GLU 계열이 대부분의 과제에서 좋았지만 원논문 스스로 결과에 잡음이 많다고 적었다. 왜 잘 되는지에 대해서는 설명을 제시하지 않았다.<Sidenote>논문의 결론은 이렇게 끝난다. “We offer no explanation as to why these architectures seem to work; we attribute their success, as all else, to divine benevolence.”[^glu]</Sidenote>
+같은 표의 65,536 step 결과에서 GEGLU(1.942 ± 0.004)와 SwiGLU(1.944 ± 0.010)의 차이는 반복 실험의 표준편차 안에 있다. GLUE·SuperGLUE fine-tuning에서도 GLU 계열이 대부분의 과제에서 좋았지만 원논문 스스로 결과에 잡음이 많다고 적었다. 이 결과가 decoder-only 사전학습에도 그대로 옮겨지는지는 이 논문이 검증한 범위 밖이다. 왜 잘 되는지에 대해서는 설명을 제시하지 않았다.<Sidenote>논문의 결론은 이렇게 끝난다. “We offer no explanation as to why these architectures seem to work; we attribute their success, as all else, to divine benevolence.”[^glu]</Sidenote>
 
 Llama 3의 공식 구현에서 SwiGLU FFN은 한 줄이다.[^llamacode] `w1`이 $W$, `w3`가 $V$, `w2`가 $W_2$에 해당하고, Hugging Face 구현에서는 각각 `gate_proj`, `up_proj`, `down_proj`라고 부른다. `F.silu`는 $\operatorname{Swish}_1$과 같은 함수다.
 
@@ -310,7 +315,7 @@ Gating 없이 곱셈 효과를 내는 갈래도 있다. Primer는 행렬 2개 FF
 
 ## 4. 같은 파라미터 예산의 FFN 폭
 
-행렬이 셋이 되면 같은 중간 폭에서 파라미터와 연산량이 1.5배가 된다. §2 끝의 비교처럼 구조의 효과를 따지려면 예산을 맞춰야 하고, 실제 모델에서도 중간 폭을 새로 정해야 한다.
+행렬이 셋이 되면 같은 중간 폭에서 파라미터와 행렬 곱 연산량이 1.5배가 된다. §2 끝의 비교처럼 구조의 효과를 따지려면 예산을 맞춰야 하고, 실제 모델에서도 중간 폭을 새로 정해야 한다.
 
 ### 4-1. 8d/3 규칙
 
@@ -349,7 +354,7 @@ Meta의 `llama-models` 저장소에 있는 Llama 3 8B 설정은 `dim=4096`, `ffn
 
 결과 14,336은 Llama 3 논문 Table 3의 FFN dimension과 같고, $14336/4096=3.5$이다.[^llama3] 파라미터로 환산하면 FFN 한 층이 $3\cdot4096\cdot14336=176{,}160{,}768$로, 예산을 맞춘 경우(134,217,728)의 1.3125배다. 배율 1.3에 올림으로 붙은 약 1%($14336/14198\approx1.0097$)가 곱해진 값이다. 즉 Llama 3 8B는 8d/3에서 출발하되 FFN에 예산보다 약 31% 많은 파라미터를 배정했다.
 
-두 조정의 이유는 공식 자료에서 확인되는 범위가 다르다. `multiple_of`에는 "SwiGLU hidden layer size를 큰 2의 거듭제곱의 배수로 만든다"는 주석이 달려 있다. $14336=14\cdot1024$라서, 예를 들어 GPU 8개에 나누면 1792씩 떨어진다. 배율 1.3을 고른 이유는 공식 구현이나 논문에서 찾지 못했다.
+두 조정의 이유는 공식 자료에서 확인되는 범위가 다르다. `multiple_of`에는 "SwiGLU hidden layer size를 큰 2의 거듭제곱의 배수로 만든다"는 주석이 달려 있다. $14336=14\cdot1024$라서, 예를 들어 GPU(graphics processing unit) 8개에 나누면 1792씩 떨어진다. 배율 1.3을 고른 이유는 공식 구현이나 논문에서 찾지 못했다.
 
 같은 규칙에서 배율 없이 `multiple_of=256`을 쓰면 $256\cdot\lceil10922/256\rceil=256\cdot43=11008$이 된다. §5의 OLMo 2 7B가 쓰는 폭이 이 값과 같다.
 
@@ -365,9 +370,9 @@ Meta의 `llama-models` 저장소에 있는 Llama 3 8B 설정은 `dim=4096`, `ffn
 | Qwen3-8B[^qwen3][^hfcode] | SwiGLU | 4,096 | 12,288 | 3.0 |
 | OLMo 2 7B[^olmo2][^hfcode] | SwiGLU | 4,096 | 11,008 | 약 2.69 |
 | Gemma 3 12B[^gemma3] | GeGLU (tanh 근사 GELU) | 3,840 | 15,360 | 4.0 |
-| Nemotron-4 15B[^nemotron] | squared ReLU, 행렬 2개 | 6,144 | 보고서 미기재 | |
+| Nemotron-4 15B[^nemotron] | squared ReLU(gate 투영 없음) | 6,144 | 보고서 미기재 | |
 
-같은 SwiGLU라도 폭은 $d$의 2.69배에서 3.5배까지 다르고, GeGLU를 쓰는 Gemma 3 12B는 PaLM처럼 $4d$를 쓴다. FFN의 식을 정하는 일과 FFN에 파라미터를 얼마나 줄지 정하는 일은 별개의 선택이며, 8d/3은 그 출발점 중 하나다. Nemotron-4는 gating 없이 squared ReLU를 쓴다고 밝혔지만, 보고서의 하이퍼파라미터 표에는 FFN 폭이 없다.
+같은 SwiGLU라도 폭은 $d$의 2.69배에서 3.5배까지 다르고, GeGLU를 쓰는 Gemma 3 12B는 PaLM처럼 $4d$를 쓴다. FFN의 식을 정하는 일과 FFN에 파라미터를 얼마나 줄지 정하는 일은 별개의 선택이며, 8d/3은 그 출발점 중 하나다. Nemotron-4 보고서는 표준 decoder-only Transformer의 MLP(multilayer perceptron)에 squared ReLU를 쓴다고만 적었다. Gate 투영이 없는 행렬 2개 FFN으로 읽히지만 구조를 따로 설명하지 않았고, 하이퍼파라미터 표에도 FFN 폭이 없다.
 
 ### 5-2. Bias 제거
 
@@ -378,10 +383,10 @@ Meta의 `llama-models` 저장소에 있는 Llama 3 8B 설정은 `dim=4096`, `ffn
 [^survey]: Kunc, V., & Kléma, J. (2024). *Three Decades of Activations: A Comprehensive Survey of 400 Activation Functions for Neural Networks*. [arXiv:2402.09092](https://arxiv.org/abs/2402.09092).
 [^geva]: Geva, M., Schuster, R., Berant, J., & Levy, O. (2021). *Transformer Feed-Forward Layers Are Key-Value Memories*. EMNLP 2021. [arXiv:2012.14913](https://arxiv.org/abs/2012.14913).
 [^llama3]: Dubey, A., et al. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783v1](https://arxiv.org/abs/2407.21783v1).
-[^llamacode]: Meta. (2024). *Llama 3 reference implementation*. [model.py](https://github.com/meta-llama/llama3/blob/a0940f9cf7065d45bb6675660f80d305c041a754/llama/model.py).
+[^llamacode]: Meta. (2025). *Llama 3 reference implementation*. [model.py](https://github.com/meta-llama/llama3/blob/a0940f9cf7065d45bb6675660f80d305c041a754/llama/model.py).
 [^gelu]: Hendrycks, D., & Gimpel, K. (2016). *Gaussian Error Linear Units (GELUs)*. [arXiv:1606.08415](https://arxiv.org/abs/1606.08415).
 [^nair]: Nair, V., & Hinton, G. E. (2010). *Rectified Linear Units Improve Restricted Boltzmann Machines*. ICML 2010. [PDF](https://www.cs.toronto.edu/~hinton/absps/reluICML.pdf).
-[^maas]: Maas, A. L., Hannun, A. Y., & Ng, A. Y. (2013). *Rectifier Nonlinearities Improve Neural Network Acoustic Models*. ICML 2013. [PDF](https://ai.stanford.edu/~amaas/papers/relu_hybrid_icml2013_final.pdf).
+[^maas]: Maas, A. L., Hannun, A. Y., & Ng, A. Y. (2013). *Rectifier Nonlinearities Improve Neural Network Acoustic Models*. ICML 2013 Workshop on Deep Learning for Audio, Speech and Language Processing. [PDF](https://ai.stanford.edu/~amaas/papers/relu_hybrid_icml2013_final.pdf).
 [^swish]: Ramachandran, P., Zoph, B., & Le, Q. V. (2017). *Searching for Activation Functions*. [arXiv:1710.05941](https://arxiv.org/abs/1710.05941).
 [^bert]: Devlin, J., Chang, M.-W., Lee, K., & Toutanova, K. (2019). *BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding*. NAACL 2019. [arXiv:1810.04805](https://arxiv.org/abs/1810.04805).
 [^glu]: Shazeer, N. (2020). *GLU Variants Improve Transformer*. [arXiv:2002.05202](https://arxiv.org/abs/2002.05202).
