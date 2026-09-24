@@ -4,7 +4,7 @@ week: 3
 order: 3
 ---
 
-원래 Transformer의 FFN(feed-forward network)은 행렬 두 개 사이에 ReLU를 둔 구조였다. Llama 3 8B의 FFN은 두 가지 점에서 다르다. 가운데 활성화 함수의 모양이 바뀌었고(ReLU → GELU·SiLU), 한 입력 투영의 출력으로 다른 투영의 출력을 원소별로 조절하는 **곱셈 gating**이 들어왔다(GLU → SwiGLU·GeGLU). 활성화 함수 전반은 Kunc와 Kléma가 2024년에 400개를 정리한 서베이[^survey]로 조망할 수 있는데, 이 노트와 겹치는 범위는 §3.3(SiLU와 GELU), §3.4(GLU 계열), §3.6(ReLU)이다.
+원래 Transformer의 FFN(feed-forward network)은 행렬 두 개 사이에 ReLU(rectified linear unit)를 둔 구조였다. Llama 3 8B의 FFN은 두 가지 점에서 다르다. 가운데 활성화 함수가 매끄러운 모양으로 바뀌었고(GELU(Gaussian error linear unit)·SiLU(sigmoid linear unit) 계열, Llama 3는 SiLU), 한 입력 투영의 출력으로 다른 투영의 출력을 원소별로 조절하는 **곱셈 gating**이 들어왔다(GLU(gated linear unit) 계열, Llama 3는 SwiGLU(Swish-gated linear unit)). 활성화 함수 전반은 Kunc와 Kléma가 2024년에 400개를 정리한 서베이[^survey]로 조망할 수 있는데, 이 노트와 겹치는 범위는 §3.3(SiLU와 GELU), §3.4(GLU 계열), §3.6(ReLU)이다.
 
 두 변화는 동기가 다르다. 앞의 것은 "같은 값으로 만든 gate의 모양"을, 뒤의 것은 "gate를 별도 투영으로 만드는 구조"를 바꾼다. 이 노트는 두 축을 따로 따라간 뒤 SwiGLU에서 만나는 지점을 보고, 행렬이 셋으로 늘면서 생긴 폭 조정 문제를 Llama 3 8B의 실제 중간 폭 14336으로 계산한다.
 
@@ -84,7 +84,7 @@ FFN이 전체의 약 70%, embedding을 뺀 블록 파라미터의 약 81%다. �
 
 ### 2-1. ReLU의 hard gating
 
-ReLU(rectified linear unit)는 Nair와 Hinton이 restricted Boltzmann machine의 은닉 단위로 쓰면서 널리 알려졌다.[^nair] 위의 형식으로 쓰면 gate가 계단 함수다.
+ReLU는 Nair와 Hinton이 restricted Boltzmann machine의 은닉 단위로 쓰면서 널리 알려졌다.[^nair] 위의 형식으로 쓰면 gate가 계단 함수다.
 
 $$
 \operatorname{ReLU}(x)=\max(0,x)=x\cdot\mathbf{1}[x>0]
@@ -104,13 +104,13 @@ $$
 
 ### 2-2. GELU와 SiLU
 
-Hendrycks와 Gimpel은 ReLU와 dropout이 모두 입력에 0 또는 1을 곱한다는 공통점에서 출발했다.[^gelu] ReLU는 부호로 0/1을 정하고, dropout은 입력과 무관하게 무작위로 0을 곱한다. 두 성질을 합쳐 **입력이 작을수록 0이 될 확률이 높은 무작위 mask** $m\sim\operatorname{Bernoulli}(\Phi(x))$를 생각하면, 출력 $mx$의 기대값이 GELU(Gaussian error linear unit)다. $\Phi$는 표준정규분포의 누적분포함수다.
+Hendrycks와 Gimpel은 ReLU와 dropout이 모두 입력에 0 또는 1을 곱한다는 공통점에서 출발했다.[^gelu] ReLU는 부호로 0/1을 정하고, dropout은 입력과 무관하게 무작위로 0을 곱한다. 두 성질을 합쳐 **입력이 작을수록 0이 될 확률이 높은 무작위 mask** $m\sim\operatorname{Bernoulli}(\Phi(x))$를 생각하면, 출력 $mx$의 기대값이 GELU다. $\Phi$는 표준정규분포의 누적분포함수다.
 
 $$
 \operatorname{GELU}(x)=\mathbb{E}[mx]=\Phi(x)\cdot x+(1-\Phi(x))\cdot0=x\,\Phi(x)
 $$
 
-gate가 계단 함수 $\mathbf{1}[x>0]$에서 매끄러운 $\Phi(x)$로 바뀐 것이다. 논문은 이를 두고 GELU가 입력을 부호가 아니라 값의 크기에 따라 가중한다고 설명한다. 같은 논문은 $\Phi$ 대신 logistic sigmoid $\sigma$를 쓴 SiLU(sigmoid linear unit) $x\,\sigma(x)$도 함께 제시했고, 빠른 계산을 위한 두 근사식도 주었다.
+gate가 계단 함수 $\mathbf{1}[x>0]$에서 매끄러운 $\Phi(x)$로 바뀐 것이다. 논문은 이를 두고 ReLU가 입력을 부호로 gate하는 반면 GELU는 입력이 다른 입력들보다 얼마나 큰지에 따라 가중한다고 설명한다. 여기서 "다른 입력"은 실제 다른 토큰이나 배치의 값을 참조한다는 뜻이 아니다. 입력이 대략 표준정규분포를 따른다고 가정하고, 그 분포에서 $x$보다 작은 값의 비율 $\Phi(x)$를 곱한다는 해석이다. 같은 논문은 $\Phi$ 대신 logistic sigmoid $\sigma$를 쓴 SiLU $x\,\sigma(x)$도 함께 제시했고, 빠른 계산을 위한 두 근사식도 주었다.
 
 $$
 \operatorname{GELU}(x)\approx0.5x\left(1+\tanh\left[\sqrt{2/\pi}\,(x+0.044715x^3)\right]\right)\approx x\,\sigma(1.702x)
@@ -192,7 +192,7 @@ $x=-1$에서 GELU의 값 $-0.159$는 $-1\times\Phi(-1)=-1\times0.159$, 즉 입�
 <figcaption>세 함수의 정의식에서 계산한 값으로 직접 그린 그래프. 오른쪽의 빈 원은 ReLU 도함수가 x=0에서 불연속임을 나타낸다.</figcaption>
 </figure>
 
-GELU 논문은 MNIST, CIFAR-10/100, TIMIT 등에서 ReLU와 ELU(exponential linear unit)보다 나은 결과를 보고했다. 예를 들어 CIFAR-10의 9층 CNN(convolutional neural network)에서 중앙값 오류율이 GELU 7.89%, ReLU 8.16%였다.[^gelu] Transformer에서는 BERT가 OpenAI GPT를 따라 ReLU 대신 GELU를 썼다고 밝혔다.[^bert]
+GELU 논문은 MNIST, CIFAR-10/100, TIMIT 등에서 ReLU와 ELU(exponential linear unit)보다 나은 결과를 보고했다. 예를 들어 CIFAR-10의 9층 CNN(convolutional neural network)에서 세 번 실행의 중앙값 오류율이 GELU 7.89%, ReLU 8.16%였다(arXiv v5 기준 §3.5, Figure 6).[^gelu] Transformer에서는 BERT가 OpenAI GPT를 따라 ReLU 대신 GELU를 썼다고 밝혔다.[^bert]
 
 그렇다면 Transformer FFN에서 모양만 바꾼 효과는 얼마나 클까? Shazeer는 encoder–decoder인 T5 base 설정에서 파라미터와 연산량을 맞춘 FFN 여러 개를 비교했다.[^glu] 학습 목표는 C4 말뭉치의 span-filling(빈칸 채우기) 사전학습이고, 평가 지표는 같은 목표의 held-out log-perplexity(낮을수록 좋음)다. 앞 주차의 다음 토큰 예측 perplexity와 목표가 다르므로 절대값을 그쪽과 비교하지는 않는다. 65,536 step에서 log-perplexity는 ReLU 1.997, GELU 1.983(네 번 반복한 표준편차 약 0.005)이었고, 524,288 step에서는 ReLU 1.677, GELU 1.679였다. 이 설정에서는 모양만 바꾼 차이가 작았다. 같은 표에서 더 큰 차이를 보인 것은 다음 절의 gating 구조다.
 
@@ -204,19 +204,19 @@ GELU 논문은 MNIST, CIFAR-10/100, TIMIT 등에서 ReLU와 ELU(exponential line
 
 행렬 2개 FFN의 은닉 단위 $i$를 보자. 입력 투영 $u=xW_1$의 성분 $u_i$가 하나 정해지면 출력 $\operatorname{act}(u_i)$도 정해진다. 통과시킬지(gate)와 무엇을 전달할지(값)가 **같은 투영 $u_i$ 하나**에 묶여 있다. Dauphin 등은 ReLU를 $x\otimes\mathbf{1}[x>0]$, 곧 gate가 입력 자신의 부호로 정해지는 단순화된 gating으로 보았다.[^dauphin]
 
-GLU(gated linear unit)는 gate와 값을 서로 다른 선형 투영으로 만든다. 원논문은 gated convolutional language model의 층으로 제안했고, 식의 문자 배치는 Shazeer를 따른다.[^dauphin][^glu]
+GLU는 gate와 값을 서로 다른 선형 투영으로 만든다. 원논문은 gated convolutional language model의 층으로 제안했고, 식의 문자 배치는 Shazeer를 따른다.[^dauphin][^glu]
 
 $$
 \operatorname{GLU}(x)=\sigma(xW)\otimes xV
 $$
 
-$\otimes$는 원소별 곱이다. $\sigma(xW)$의 각 성분은 0과 1 사이의 gate이고, $xV$는 gate가 조절할 값이다. Dauphin 등이 제시한 동기는 두 가지다. 하나는 LSTM의 gate처럼 층 사이로 어떤 정보를 넘길지 학습하게 하는 것이다. 다른 하나는 기울기 경로다. Gate 투영을 $u=xW$, 값 투영을 $v=xV$로 두면 GLU의 출력은 $y=\sigma(u)\otimes v$다. 손실 $L$의 출력에 대한 기울기를 $g=\partial L/\partial y$라 하면 두 투영으로 돌아가는 기울기는 다음과 같다.
+$\otimes$는 원소별 곱이다. $\sigma(xW)$의 각 성분은 0과 1 사이의 gate이고, $xV$는 gate가 조절할 값이다. Dauphin 등이 제시한 동기는 두 가지다. 하나는 LSTM(long short-term memory)의 gate처럼 층 사이로 어떤 정보를 넘길지 학습하게 하는 것이다. 다른 하나는 기울기 경로다. Gate 투영을 $u=xW$, 값 투영을 $v=xV$로 두면 GLU의 출력은 $y=\sigma(u)\otimes v$다. 손실 $L$의 출력에 대한 기울기를 $g=\partial L/\partial y$라 하면 두 투영으로 돌아가는 기울기는 다음과 같다.
 
 $$
 \frac{\partial L}{\partial v}=g\otimes\sigma(u),\qquad \frac{\partial L}{\partial u}=g\otimes v\otimes\sigma'(u)
 $$
 
-$v$ 경로에는 활성화 함수의 도함수가 곱해지지 않는다. 0과 1 사이의 gate 값만 곱해지므로, gate가 열린 단위에서는 $g$가 거의 그대로 $v$까지 전달된다. 원논문은 이를 곱셈 형태의 skip connection에 비유했다. 반면 $u$ 경로에는 $\sigma'(u)\le0.25$가 곱해진다($v$도 곱해지므로 크기가 반드시 줄어드는 것은 아니지만, 층을 쌓을수록 sigmoid 도함수가 거듭 곱해지는 경로다). 비교 대상인 LSTM(long short-term memory)식 gate $\tanh(u)\otimes\sigma(v)$에는 도함수가 곱해지지 않는 경로가 없어서, 두 경로 모두 $\tanh'$이나 $\sigma'$가 거듭 곱해진다. 비교 실험에서 GLU는 WikiText-103에서 tanh, ReLU, tanh 기반 gate보다 빨리 수렴하고 더 낮은 perplexity에 도달했으며, Google Billion Word에서도 가장 좋았고 ReLU와는 약 5 perplexity 차이가 났다(원논문 Figure 3). Gate의 비선형을 뺀 bilinear 층 $xW\otimes xV$도 선형 층보다는 크게 나았지만 GLU에는 못 미쳤다(Figure 5).
+$v$ 경로에는 활성화 함수의 도함수가 곱해지지 않는다. 0과 1 사이의 gate 값만 곱해지므로, gate가 열린 단위에서는 $g$가 거의 그대로 $v$까지 전달된다. 원논문은 이를 곱셈 형태의 skip connection에 비유했다. 반면 $u$ 경로에는 $\sigma'(u)\le0.25$가 곱해진다($v$도 곱해지므로 크기가 반드시 줄어드는 것은 아니지만, 층을 쌓을수록 sigmoid 도함수가 거듭 곱해지는 경로다). 비교 대상인 LSTM식 gate $\tanh(u)\otimes\sigma(v)$에는 도함수가 곱해지지 않는 경로가 없어서, 두 경로 모두 $\tanh'$이나 $\sigma'$가 거듭 곱해진다. 비교 실험에서 GLU는 WikiText-103에서 tanh, ReLU, tanh 기반 gate보다 빨리 수렴하고 더 낮은 perplexity에 도달했으며, Google Billion Word에서도 가장 좋았고 ReLU와는 약 5 perplexity 차이가 났다(원논문 Figure 3). Gate의 비선형을 뺀 bilinear 층 $xW\otimes xV$도 선형 층보다는 크게 나았지만 GLU에는 못 미쳤다(Figure 5).
 
 작은 수치로 비교해 보자. 은닉 단위가 2개이고, 두 토큰 A와 B의 gate 투영 $u=xW$는 같지만 값 투영 $v=xV$는 다르다고 하자(설명용 가정 값).
 
@@ -232,10 +232,10 @@ $v$ 경로에는 활성화 함수의 도함수가 곱해지지 않는다. 0과 1
 
 ### 3-2. SwiGLU와 GeGLU
 
-GLU의 $\sigma$는 다른 함수로 바꿀 수 있다. Shazeer는 gate 자리에 §2의 함수를 넣은 변형을 Transformer FFN에 적용했다.[^glu] 모두 bias 없이 행렬 세 개 $W, V, W_2$를 쓴다.
+GLU의 $\sigma$는 다른 함수로 바꿀 수 있다. Shazeer는 gate 자리에 §2의 함수를 넣은 변형 SwiGLU와 GeGLU(GELU-gated linear unit)를 Transformer FFN에 적용했다.[^glu] 모두 bias 없이 행렬 세 개 $W, V, W_2$를 쓴다.
 
 $$
-\operatorname{FFN}_{\text{SwiGLU}}(x)=\big(\operatorname{Swish}_1(xW)\otimes xV\big)W_2,\qquad \operatorname{FFN}_{\text{GEGLU}}(x)=\big(\operatorname{GELU}(xW)\otimes xV\big)W_2
+\operatorname{FFN}_{\text{SwiGLU}}(x)=\big(\operatorname{Swish}_1(xW)\otimes xV\big)W_2,\qquad \operatorname{FFN}_{\text{GeGLU}}(x)=\big(\operatorname{GELU}(xW)\otimes xV\big)W_2
 $$
 
 ReGLU는 $\max(0,\cdot)$, bilinear는 항등 함수를 넣은 경우다. 이 변형들은 앞뒤로 이어진 발전이 아니라, GLU라는 같은 구조에서 gate 함수만 달리 고른 **병렬 변형**이다. 축 1에서 고른 모양이 축 2의 gate 자리에 들어가는 합류 지점이 여기다.
@@ -252,12 +252,12 @@ ReGLU는 $\max(0,\cdot)$, bilinear는 항등 함수를 넣은 경우다. 이 변
 | GLU | 행렬 3개, gate $\sigma$ | 1.663 |
 | Bilinear | 행렬 3개, gate 없음 | 1.648 |
 | ReGLU | 행렬 3개, gate ReLU | 1.645 |
-| GEGLU | 행렬 3개, gate GELU | 1.633 |
+| GeGLU | 행렬 3개, gate GELU | 1.633 |
 | SwiGLU | 행렬 3개, gate Swish | 1.636 |
 
-같은 표의 65,536 step 결과에서 GEGLU(1.942 ± 0.004)와 SwiGLU(1.944 ± 0.010)의 차이는 반복 실험의 표준편차 안에 있다. GLUE·SuperGLUE fine-tuning에서도 GLU 계열이 대부분의 과제에서 좋았지만 원논문 스스로 결과에 잡음이 많다고 적었다. 이 결과가 decoder-only 사전학습에도 그대로 옮겨지는지는 이 논문이 검증한 범위 밖이다. 왜 잘 되는지에 대해서는 설명을 제시하지 않았다.<Sidenote>논문의 결론은 이렇게 끝난다. “We offer no explanation as to why these architectures seem to work; we attribute their success, as all else, to divine benevolence.”[^glu]</Sidenote>
+같은 표의 65,536 step 결과에서 GeGLU(1.942 ± 0.004)와 SwiGLU(1.944 ± 0.010)의 차이는 반복 실험의 표준편차 안에 있다. GLUE·SuperGLUE fine-tuning에서도 GLU 계열이 대부분의 과제에서 좋았지만 원논문 스스로 결과에 잡음이 많다고 적었다. 이 결과가 decoder-only 사전학습에도 그대로 옮겨지는지는 이 논문이 검증한 범위 밖이다. 왜 잘 되는지에 대해서는 설명을 제시하지 않았다.<Sidenote>논문의 결론은 이렇게 끝난다. “We offer no explanation as to why these architectures seem to work; we attribute their success, as all else, to divine benevolence.”[^glu]</Sidenote>
 
-Llama 3의 공식 구현에서 SwiGLU FFN은 한 줄이다.[^llamacode] `w1`이 $W$, `w3`가 $V$, `w2`가 $W_2$에 해당하고, Hugging Face 구현에서는 각각 `gate_proj`, `up_proj`, `down_proj`라고 부른다. `F.silu`는 $\operatorname{Swish}_1$과 같은 함수다.
+Llama 3의 공식 구현에서 SwiGLU FFN은 한 줄이다.[^llamacode] `w1`이 $W$, `w3`가 $V$, `w2`가 $W_2$에 해당하고, Hugging Face 구현에서는 각각 `gate_proj`, `up_proj`, `down_proj`라고 부른다.[^hfcode] `F.silu`는 $\operatorname{Swish}_1$과 같은 함수다.
 
 ```python
 def forward(self, x):
@@ -370,7 +370,7 @@ Meta의 `llama-models` 저장소에 있는 Llama 3 8B 설정은 `dim=4096`, `ffn
 | Qwen3-8B[^qwen3][^hfcode] | SwiGLU | 4,096 | 12,288 | 3.0 |
 | OLMo 2 7B[^olmo2][^hfcode] | SwiGLU | 4,096 | 11,008 | 약 2.69 |
 | Gemma 3 12B[^gemma3] | GeGLU (tanh 근사 GELU) | 3,840 | 15,360 | 4.0 |
-| Nemotron-4 15B[^nemotron] | squared ReLU(gate 투영 없음) | 6,144 | 보고서 미기재 | |
+| Nemotron-4 15B[^nemotron] | squared ReLU(gate 투영 여부 미기재) | 6,144 | 보고서 미기재 | |
 
 같은 SwiGLU라도 폭은 $d$의 2.69배에서 3.5배까지 다르고, GeGLU를 쓰는 Gemma 3 12B는 PaLM처럼 $4d$를 쓴다. FFN의 식을 정하는 일과 FFN에 파라미터를 얼마나 줄지 정하는 일은 별개의 선택이며, 8d/3은 그 출발점 중 하나다. Nemotron-4 보고서는 표준 decoder-only Transformer의 MLP(multilayer perceptron)에 squared ReLU를 쓴다고만 적었다. Gate 투영이 없는 행렬 2개 FFN으로 읽히지만 구조를 따로 설명하지 않았고, 하이퍼파라미터 표에도 FFN 폭이 없다.
 
@@ -395,7 +395,7 @@ Meta의 `llama-models` 저장소에 있는 Llama 3 8B 설정은 `dim=4096`, `ffn
 [^palm]: Chowdhery, A., et al. (2023). *PaLM: Scaling Language Modeling with Pathways*. *Journal of Machine Learning Research*, 24(240). [arXiv:2204.02311](https://arxiv.org/abs/2204.02311).
 [^llamaparams]: Meta. (2025). *llama-models*. [sku_list.py](https://github.com/meta-llama/llama-models/blob/0e0b8c519242d5833d8c11bffc1232b77ad7f301/models/sku_list.py).
 [^qwen3]: Qwen Team. (2025). *Qwen3-8B*. Hugging Face. [config.json](https://huggingface.co/Qwen/Qwen3-8B/blob/main/config.json).
-[^hfcode]: Hugging Face. (2026). *Transformers*. [modeling_qwen3.py](https://github.com/huggingface/transformers/blob/f324707307757d9c0b8dac1c4462eceff911fa2f/src/transformers/models/qwen3/modeling_qwen3.py), [modeling_olmo2.py](https://github.com/huggingface/transformers/blob/f324707307757d9c0b8dac1c4462eceff911fa2f/src/transformers/models/olmo2/modeling_olmo2.py).
+[^hfcode]: Hugging Face. (2026). *Transformers*. [modeling_llama.py](https://github.com/huggingface/transformers/blob/f324707307757d9c0b8dac1c4462eceff911fa2f/src/transformers/models/llama/modeling_llama.py), [modeling_qwen3.py](https://github.com/huggingface/transformers/blob/f324707307757d9c0b8dac1c4462eceff911fa2f/src/transformers/models/qwen3/modeling_qwen3.py), [modeling_olmo2.py](https://github.com/huggingface/transformers/blob/f324707307757d9c0b8dac1c4462eceff911fa2f/src/transformers/models/olmo2/modeling_olmo2.py).
 [^olmo2]: Allen Institute for AI. (2024). *OLMo-2-1124-7B*. Hugging Face. [config.json](https://huggingface.co/allenai/OLMo-2-1124-7B/blob/main/config.json).
 [^gemma3]: Google. (2025). *Gemma in PyTorch*. [config.py](https://github.com/google/gemma_pytorch/blob/014acb7ac4563a5f77c76d7ff98f31b568c16508/gemma/config.py), [model.py](https://github.com/google/gemma_pytorch/blob/014acb7ac4563a5f77c76d7ff98f31b568c16508/gemma/model.py).
 [^nemotron]: Parmar, J., et al. (2024). *Nemotron-4 15B Technical Report*. [arXiv:2402.16819](https://arxiv.org/abs/2402.16819).
