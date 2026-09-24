@@ -69,7 +69,7 @@ Llama 3 8B의 값($L=32$, query head 32개, K/V head 8개, $d_h=128$)으로 계�
 
 둘째는 **대역폭**(memory bandwidth)이다. Decode 한 스텝에서 층마다 캐시 전체를 메모리에서 읽어야 하는데, 읽은 양에 비해 하는 계산이 적다. MHA 가정의 Llama 3 8B 형태에서 문맥 길이가 $t$일 때 층 하나를 보자. 읽는 K/V는 $2\cdot32\cdot128\cdot t=8192t$개 원소이고, 점수 계산($QK^\top$)과 가중합($aV$)의 곱셈-덧셈도 합해서 약 $8192t$번이다. 원소 하나를 읽을 때마다 곱셈-덧셈을 한 번 정도 하는 셈이어서, 계산 장치보다 메모리에서 읽어 오는 속도가 스텝 시간을 좌우하기 쉽다.
 
-Shazeer는 incremental decoding의 메모리 접근량과 연산량의 비율을 $\Theta(n/d+1/b)$로 분석했다.[^mqa] $1/b$ 항은 가중치를 읽는 비용으로, batch $b$를 키우면 여러 시퀀스가 같은 가중치를 나눠 쓰므로 줄어든다. $n/d$ 항은 매 스텝 K/V를 다시 읽는 비용인데, 시퀀스마다 캐시가 따로 있어 batch를 키워도 줄지 않는다. 이 항을 줄이는 방법으로 그는 시퀀스 길이를 제한하거나 참조 위치를 줄이는 방식(03c의 계보)과 별개로, **K/V에서 head 차원을 없애는** 방식을 제안했다.
+Shazeer는 query 위치 수와 key 위치 수가 같고($m=n$), head 차원이 $d/h$이며, 시퀀스 길이가 모델 폭 이하($n\le d$)라고 가정한 뒤, 길이 $n$까지 decode하는 $n$번의 호출 전체를 모아 메모리 접근량과 연산량의 비율을 $\Theta(n/d+1/b)$로 분석했다.[^mqa] $n\le d$ 가정 덕분에 전체 연산량을 투영 계산의 $\Theta(bnd^2)$로 적을 수 있었다. 이 가정을 빼면 점수 계산과 가중합에서 나오는 $\Theta(bn^2d)$ 항이 더해져 $\Theta(bnd^2+bn^2d)$가 되므로, 문맥이 $d$보다 긴 경우에는 이 비율 식을 그대로 옮기지 않는다. $1/b$ 항은 가중치를 읽는 비용으로, batch $b$를 키우면 여러 시퀀스가 같은 가중치를 나눠 쓰므로 줄어든다. $n/d$ 항은 매 스텝 K/V를 다시 읽는 비용인데, 시퀀스마다 캐시가 따로 있어 batch를 키워도 줄지 않는다. 이 항을 줄이는 방법으로 그는 시퀀스 길이를 제한하거나 참조 위치를 줄이는 방식(03c의 계보)과 별개로, **K/V에서 head 차원을 없애는** 방식을 제안했다.
 
 그렇다면 head 수나 head 차원을 그냥 줄이면 어떨까? Shazeer는 파라미터 수를 맞춘 비교 실험에서 $h$나 $d_k, d_v$를 줄인 모델이 MQA보다 품질이 더 떨어졌다고 보고했다. WMT14 영어–독일어 번역에서 기준 MHA의 dev BLEU가 26.7일 때, head 1개 모델은 25.8, head 8개에 $d_k=d_v=16$인 모델은 25.8이었다(원논문 Table 1). Query 쪽 표현력은 유지하고 K/V만 줄이는 설계가 필요했다.
 
@@ -83,12 +83,12 @@ $$
 q_{t,i}=x_tW^Q_i\ (i=1,\dots,n_h),\qquad k_j=x_jW^K,\qquad v_j=x_jW^V
 $$
 
-모든 head가 같은 $k_j, v_j$를 읽지만 query가 서로 달라 attention 가중치는 head마다 다르다. 토큰당 캐시는 $2Ld_h$로, MHA보다 $n_h$배 작다. Llama 3 8B 형태라면 $2\cdot32\cdot128=8{,}192$개 원소로 MHA 가정의 32분의 1이다. Shazeer의 분석에서 메모리 접근 대 연산 비율은 $\Theta(1/d+n/(dh)+1/b)$가 되어, 문제의 $n/d$ 항이 $h$배 줄어든다.
+모든 head가 같은 $k_j, v_j$를 읽지만 query가 서로 달라 attention 가중치는 head마다 다르다. 토큰당 캐시는 $2Ld_h$로, MHA보다 $n_h$배 작다. Llama 3 8B 형태라면 $2\cdot32\cdot128=8{,}192$개 원소로 MHA 가정의 32분의 1이다. 같은 가정($n\le d$, $n$번의 decode 전체)에서 Shazeer가 구한 메모리 접근 대 연산 비율은 $\Theta(1/d+n/(dh)+1/b)$가 되어, 문제의 $n/d$ 항이 $h$배 줄어든다.
 
 실험에서도 차이가 컸다. 같은 번역 과제에서 batch 1,024로 greedy decoding을 했을 때 decoder의 토큰당 시간이 MHA 46 μs에서 MQA 3.8 μs로 줄었다(TPUv2, 원논문 Table 2). 품질은 dev perplexity와 BLEU 모두 기준보다 약간 낮았다(ln PPL 1.424 → 1.439, BLEU 26.7 → 26.5). 이 비교에서 MQA 모델은 줄어든 K/V 파라미터만큼 FFN을 넓혀 전체 파라미터 수를 맞췄다.
 
 <Callout type="warning">
-Head 공유는 **캐시 크기와 캐시를 읽는 대역폭**을 줄인다. Attention 연산 전체가 같은 비율로 줄지는 않는다. Query head는 여전히 $n_h$개이고, head마다 캐시된 모든 위치와 점수를 계산하고 value를 가중합한다. 위 예의 $8192t$번 곱셈-덧셈은 MQA에서도 그대로이고, 줄어드는 것은 K/V 투영 계산과 읽는 원소 수다. Shazeer의 분석에서도 전체 연산량은 MHA와 같은 $\Theta(bnd^2)$로 남는다.[^mqa]
+Head 공유는 **캐시 크기와 캐시를 읽는 대역폭**을 줄인다. Attention 연산 전체가 같은 비율로 줄지는 않는다. Query head는 여전히 $n_h$개이고, head마다 캐시된 모든 위치와 점수를 계산하고 value를 가중합한다. 위 예의 $8192t$번 곱셈-덧셈은 MQA에서도 그대로이고, 줄어드는 것은 K/V 투영 계산과 읽는 원소 수다. Shazeer의 분석($n\le d$, $n$번의 decode 전체)에서도 전체 연산량은 MHA와 같은 $\Theta(bnd^2)$로 남는다.[^mqa] 가정 없이 쓴 $\Theta(bnd^2+bn^2d)$에서 문맥이 길어질수록 커지는 $bn^2d$ 항은 점수 계산과 가중합에서 나오며, head 공유로 줄지 않는다.
 </Callout>
 
 ### 3-2. 품질 저하와 학습 불안정
@@ -193,7 +193,7 @@ $$
 q_{t,i}^{C\top}k_{j,i}^C=q_{t,i}^{C\top}W_i^{UK}c_j^{KV}=\big(W_i^{UK\top}q_{t,i}^C\big)^{\top}c_j^{KV}=\tilde q_{t,i}^{\top}c_j^{KV}
 $$
 
-$\tilde q_{t,i}=W_i^{UK\top}q_{t,i}^C$는 $d_c$차원 벡터다. 새 토큰의 query를 **latent 공간으로 한 번 옮겨 두면**, 캐시된 모든 위치 $j$에 대해 $c_j^{KV}$와 바로 내적할 수 있다. Query 자체가 $h_t$의 선형 변환이므로 $W_i^{UK\top}$를 query 투영 행렬에 미리 곱해 둘 수도 있다.
+$\tilde q_{t,i}=W_i^{UK\top}q_{t,i}^C$는 $d_c$차원 벡터다. 새 토큰의 query를 **latent 공간으로 한 번 옮겨 두면**, 캐시된 모든 위치 $j$에 대해 $c_j^{KV}$와 바로 내적할 수 있다. 다만 DeepSeek-V2·V3의 query는 $h_t$를 압축한 latent에 RMSNorm을 거친 뒤 up-projection $W^{UQ}$로 만든다(V3 코드의 `wq_b(q_norm(wq_a(x)))`).[^dsv3-code] 정규화가 사이에 있어 query 경로의 행렬을 하나로 합칠 수는 없고, $W_i^{UK\top}$는 정규화 뒤의 query up-projection $W_i^{UQ}$에 미리 곱해 둘 수 있다.
 
 출력 쪽도 같다. $a_{ij}$를 head $i$의 attention 가중치라고 하면
 
@@ -211,7 +211,7 @@ $$
 (R_tq_{t,i}^C)^{\top}(R_jW_i^{UK}c_j^{KV})=q_{t,i}^{C\top}R_{j-t}W_i^{UK}c_j^{KV}
 $$
 
-이제 $q_{t,i}^C$와 $W_i^{UK}$ 사이에 **위치 쌍에 따라 달라지는** 회전 $R_{j-t}$가 끼어 있다. 행렬 곱은 교환법칙이 성립하지 않아 $R_{j-t}W_i^{UK}\ne W_i^{UK}R_{j-t}$이므로, $W_i^{UK}$를 회전 너머로 옮겨 query 쪽에 미리 합칠 수 없다. §5-2처럼 latent 공간의 query 하나를 만들어 모든 $j$에 재사용하려면 $\tilde q=W_i^{UK\top}R_{j-t}^{\top}q_{t,i}^C$를 캐시된 위치마다 따로 계산해야 한다. 원논문은 이 경우 prefix 토큰 전체의 key를 추론 때마다 다시 계산해야 해 효율이 크게 떨어진다고 지적한다.[^dsv2]
+이제 $q_{t,i}^C$와 $W_i^{UK}$ 사이에 **위치 쌍에 따라 달라지는** 회전 $R_{j-t}$가 끼어 있다. §5-2처럼 query를 latent 공간으로 옮기면 $\tilde q=W_i^{UK\top}R_{j-t}^{\top}q_{t,i}^C$가 되는데, 이 벡터는 캐시된 위치 $j$마다 달라진다. Query 하나를 만들어 모든 $j$에 재사용할 수 없고, $W_i^{UK}$를 query 쪽 행렬에 미리 합쳐 둘 수도 없다. 원논문은 이 경우 prefix 토큰 전체의 key를 추론 때마다 다시 계산해야 해 효율이 크게 떨어진다고 지적한다.[^dsv2]
 
 2차원으로 줄여 보면 문제가 분명하다. $d_c=1$, $d_h=2$이고 $W^{UK}=[1,0]^\top$이라면 회전 전 key는 $[c_j,0]$이다. 위치 $j$의 회전을 적용하면 key는 $c_j[\cos j\theta,\sin j\theta]$가 된다. 회전된 query와 내적한 점수는 $c_j$에 $\cos((j-t)\theta)$와 $\sin((j-t)\theta)$가 섞인 계수를 곱한 형태다. 이 계수가 위치 $j$마다 달라지므로 "query에 한 번 곱해 둘 고정 행렬"이 존재하지 않는다. MHA에서는 회전된 key를 그대로 캐시하면 됐지만(§1-1), MLA는 회전 전 latent를 캐시하므로 이 문제가 생긴다.
 

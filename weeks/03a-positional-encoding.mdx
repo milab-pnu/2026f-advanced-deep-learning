@@ -23,7 +23,7 @@ Self-attention은 토큰 사이의 관계를 계산하지만, 그 자체로는 �
 
 ## 1. 위치 정보의 필요성
 
-[01a](/lecture/2026f-advanced-deep-learning/01a-transformer/)의 §3-1에서 보았듯이, 위치 정보와 mask가 모두 없는 self-attention은 순열 등변(permutation equivariant)이다. "개가 사람을 물었다"의 토큰 순서를 "사람이 개를 물었다"로 바꾸면 각 토큰의 출력 벡터는 그대로이고, 출력의 순서만 입력과 똑같이 바뀐다. $q_i^\top k_j$가 두 토큰의 내용만으로 정해지기 때문이다. 이 상태에서는 누가 문 쪽인지 구분할 방법이 없다.
+[01a](/lecture/2026f-advanced-deep-learning/01a-transformer/)의 §3-1에서 보았듯이, 위치 정보와 mask가 모두 없는 self-attention은 순열 등변(permutation equivariant)이다. 토큰 세 개로 된 입력 `[dog, bites, man]`을 같은 토큰의 재배열인 `[man, bites, dog]`로 바꾸어 보자. `dog`의 출력 벡터는 첫 번째 자리에 있을 때와 세 번째 자리에 있을 때 똑같고, 세 토큰의 출력은 입력과 같은 방식으로 자리만 바뀐다. $q_i^\top k_j$가 두 토큰의 내용만으로 정해지고, 각 토큰이 참조하는 토큰의 집합도 같기 때문이다. 이 상태에서는 누가 문 쪽인지 구분할 방법이 없다.
 
 Decoder-only 모델은 causal mask를 쓰므로 사정이 조금 다르다. 위치 $i$는 $i$개의 토큰만 볼 수 있으니, mask 자체가 앞뒤의 비대칭을 준다. 예를 들어 첫 토큰(BOS)의 value만 1이고 나머지 value가 0이라고 하자. 모든 앞 토큰에 균등하게 attention하면 위치 1의 출력은 1, 위치 2는 1/2, 위치 4는 1/4이 된다. 출력값에서 위치를 거꾸로 읽어 낼 수 있는 셈이다. Kazemnejad 등은 이런 원리로 위치 인코딩이 없는(NoPE, no positional encoding) decoder의 첫 층이 절대 위치를 복원할 수 있고, 이후 층에서 상대 위치도 표현할 수 있음을 보였다.[^nope]
 
@@ -228,7 +228,7 @@ $$
 
 $i=0$ 쌍은 토큰 하나마다 1 rad(약 57°) 돌아서, 바로 옆 토큰과 두 칸 옆 토큰을 뚜렷이 구분한다. 대신 7토큰쯤 지나면 한 바퀴를 돌아 제자리에 오므로 먼 거리는 구분하지 못한다. 반대로 $i=63$ 쌍은 수백만 토큰에 걸쳐 조금씩 돌기 때문에 이웃한 토큰 사이에서는 거의 변하지 않지만, 수만 토큰 떨어진 거리는 구분할 수 있다. 가까운 거리의 해상도는 고주파 쌍이, 먼 거리의 구분은 저주파 쌍이 맡는 분업이다.
 
-RoFormer는 $\theta_i=10000^{-2i/d}$일 때 score의 상한이 거리가 멀어질수록 줄어드는 성질(long-term decay)을 보였다.[^rope] 이는 상한에 대한 성질이며, 개별 query–key 쌍의 score가 거리에 따라 항상 줄어든다는 뜻은 아니다. Base를 키우면 모든 쌍의 회전이 느려져 이 감쇠도 완만해진다. Xiong 등은 base를 10,000에서 500,000으로 올리는 ABF(adjusted base frequency)로 긴 문맥 성능이 좋아졌다고 보고했고,[^abf] Llama 3가 500,000을 택한 근거로 이 결과를 인용한다.[^llama3]
+RoFormer는 $\theta_i=10000^{-2i/d}$일 때 score의 상한이 거리가 멀어질수록 줄어드는 성질(long-term decay)을 보였다.[^rope] 이는 상한에 대한 성질이며, 개별 query–key 쌍의 score가 거리에 따라 항상 줄어든다는 뜻은 아니다. Base를 키우면 첫 쌍($\theta_0=b^0=1$)을 제외한 쌍들의 회전이 느려져 이 감쇠도 완만해진다. Xiong 등은 base를 10,000에서 500,000으로 올리는 ABF(adjusted base frequency)로 긴 문맥 성능이 좋아졌다고 보고했고,[^abf] Llama 3가 500,000을 택한 근거로 이 결과를 인용한다.[^llama3]
 
 <Video src="https://www.youtube.com/watch?v=SMBkImDWOyQ" caption="Jia-Bin Huang, How Rotary Position Embedding Supercharges Modern LLMs. 절대·상대 위치 인코딩에서 RoPE의 회전과 주파수까지 그림으로 정리한다." />
 

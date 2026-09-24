@@ -41,7 +41,7 @@ $$
 \operatorname{RMSNorm}(x)_i=\gamma_i\,\frac{x_i}{\operatorname{RMS}(x)}
 $$
 
-평균이 0인 벡터라면 $\operatorname{RMS}(x)=\sigma$이므로 두 연산은 같은 결과를 낸다. 차이는 평균이 0에서 멀 때 드러난다. RMSNorm은 입력 전체를 $\alpha$배 해도 출력이 같다는 재스케일링 불변성(re-scaling invariance)을 유지하지만, 모든 성분에 같은 값을 더하는 이동에는 불변이 아니다. 원논문은 RMSNorm이 번역·독해·이미지-캡션 검색 등의 과제에서 LayerNorm과 비슷한 성능을 내면서 모델에 따라 실행 시간을 7–64% 줄였다고 보고한다.
+평균이 0인 벡터라면 $\operatorname{RMS}(x)=\sigma$이므로, 두 연산이 같은 gain $\gamma$를 쓰고 LayerNorm의 bias $\beta$가 0일 때 같은 결과를 낸다. $\beta\neq0$이면 평균이 0이어도 LayerNorm 출력은 $\beta$만큼 이동한다. 차이는 평균이 0에서 멀 때 드러난다. RMSNorm은 입력 전체를 양수 $\alpha$배 해도 출력이 같다는 재스케일링 불변성(re-scaling invariance)을 LayerNorm과 공유하지만, 모든 성분에 같은 값을 더하는 이동에는 불변이 아니다. 이 불변성은 $\alpha>0$이고 $\epsilon=0$일 때 정확히 성립한다. 원논문의 불변성 유도도 $\epsilon$ 없는 식을 기준으로 한다. $\alpha<0$이면 출력의 부호가 바뀌고, 실제 구현처럼 $\epsilon>0$이면 입력 크기가 $\epsilon$에 비해 충분히 클 때의 근사적 성질이 된다. 원논문은 RMSNorm이 번역·독해·이미지-캡션 검색 등의 과제에서 LayerNorm과 비슷한 성능을 내면서 모델에 따라 실행 시간을 7–64% 줄였다고 보고한다.
 
 재중심화가 불필요하다는 주장은 원논문의 실험 범위에서 뒷받침된 가설이다. 이후 대형 모델의 선택도 이 방향과 맞는다. ViT-22B는 LayerNorm에서 bias와 중심화를 빼고도 품질 저하 없이 가속기 활용률을 3% 높였다고 보고하고,[^vit22b] OLMo 2는 비모수(nonparametric) LayerNorm과 RMSNorm 사이에 차이가 없었다는 ablation을 보고했다.[^olmo2] [02a](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/)의 기준 모델 Llama 3 8B도 RMSNorm을 쓴다.
 
@@ -58,9 +58,9 @@ $$
 | $(-3, -1, 1, 3)$ (평균 0) | 0 | $(-1.342, -0.447, 0.447, 1.342)$ | 2.236 | $(-1.342, -0.447, 0.447, 1.342)$ |
 
 - 첫 행에서 $\sigma=\sqrt{5}\approx2.236$이므로 LayerNorm 출력의 첫 성분은 $(2-5)/2.236\approx-1.342$다. RMSNorm은 $\sqrt{(4+16+36+64)/4}=\sqrt{30}\approx5.477$로 나누어 $2/5.477\approx0.365$가 된다.
-- 둘째 행처럼 입력을 2배 하면 두 연산 모두 출력이 그대로다. 둘 다 크기에는 불변이다.
+- 둘째 행처럼 입력을 2배 하면 두 연산 모두 출력이 그대로다. $\epsilon=0$이고 배율이 양수이므로 둘 다 크기에 정확히 불변이다.
 - 셋째 행처럼 모든 성분에 10을 더하면 LayerNorm은 그대로지만 RMSNorm 출력은 바뀐다. RMSNorm은 공통 이동을 제거하지 않는다.
-- 넷째 행처럼 평균이 0이면 두 출력이 같다.
+- 넷째 행처럼 평균이 0이면 두 출력이 같다. 이 예시에서 gain이 같고 $\beta=0$이기 때문이다.
 </Callout>
 
 RMSNorm을 쓴다는 것은 셋째 행의 차이, 즉 공통 이동을 제거하지 않는 차이를 모델이 나머지 층에서 감당할 수 있다고 보는 선택이다. 평균 계산 하나를 줄인 만큼 연산이 단순해진다.
@@ -174,7 +174,7 @@ Post-LN은 residual 경로 자체를 매번 정규화한다. Pre-LN과 Peri-LN�
 
 출력층 근처의 기울기가 큰 상태에서 처음부터 큰 learning rate를 쓰면 갱신이 과해진다. Warmup은 이 구간을 작은 learning rate로 지나가게 하는 장치로 볼 수 있다. 원논문 실험에서 Post-LN은 warmup 길이와 learning rate 선택에 민감했다. 같은 조건에서 warmup을 4,000 step 대신 500 step으로 줄이면 성능이 나빠졌다.
 
-반대로 Pre-LN은 초기 기울기가 잘 조절되어, 원논문은 IWSLT14 De-En·WMT14 En-De 번역과 BERT pre-training에서 warmup 없이 Pre-LN을 학습해 비슷한 성능에 더 빨리 도달했다고 보고한다. 이 결과로 Pre-LN이 이후 GPT-2, Llama 등 decoder-only LLM의 기본 배치가 되었다.
+Pre-LN 자체는 이 분석보다 먼저 쓰이고 있었다. GPT-2(2019)는 LayerNorm을 각 sub-block의 입력으로 옮기고 마지막 self-attention 블록 뒤에 LayerNorm을 하나 더 두었으며,[^gpt2] Xiong 등도 Pre-LN을 깊은 모델의 최적화 문제를 줄이려고 최근 여러 연구에서 제안된 구조로 소개한다. 이 논문의 기여는 이미 쓰이던 Pre-LN의 안정성을 이론적으로 설명한 데 있다. Pre-LN은 초기 기울기가 잘 조절되며, 원논문은 IWSLT14 De-En·WMT14 En-De 번역과 BERT pre-training에서 warmup 없이 Pre-LN을 학습해 비슷한 성능에 더 빨리 도달했다고 보고한다. 이후 Llama 등 많은 decoder-only LLM도 Pre-LN 배치를 쓰지만, 그 채택이 이 논문 하나의 결과라고 보기는 어렵다.
 
 <Callout type="warning">
 Xiong 등의 결과는 **초기화 시점의 기울기 분석과 원논문의 실험 설정**에서 warmup을 없앨 수 있음을 보인 것이다. "Pre-LN이면 warmup이 필요 없다"로 일반화하면 안 된다. 대형 Pre-LN 모델도 대부분 warmup을 쓴다. [02c](/lecture/2026f-advanced-deep-learning/02c-pre-training/)에서 본 DeepSeek-V3는 Pre-LN 배치의 RMSNorm을 쓰면서도 처음 2K step 동안 learning rate를 0에서 $2.2\times10^{-4}$까지 선형으로 올린다.[^deepseekv3] Warmup은 정규화 위치 외에도 optimizer 상태의 초기 추정, batch 크기 등 다른 이유와 함께 쓰인다.
@@ -186,16 +186,16 @@ Pre-LN은 residual 경로를 정규화하지 않는다. 기울기 전달에는 �
 
 첫째, **hidden state의 크기가 층을 따라 커진다.** Xiong 등은 초기화 시점에서 Pre-LN의 $\lVert x_\ell\rVert^2$ 기대값이 $\ell$에 대해 선형으로 증가함을 보였다(Lemma 2, 대략 $(1+\ell/2)d$와 $(1+3\ell/2)d$ 사이). Post-LN은 매 층 정규화하므로 이 값이 일정하다. Peri-LN 논문은 학습이 진행되면 Pre-LN의 hidden state 분산이 지수적으로 커질 수 있고, sub-layer가 한 번 큰 값을 내면 그 값이 residual 경로를 따라 끝까지 남는다고 관찰했다.[^peri]
 
-둘째, **깊은 층의 기여가 약해진다.** Residual 경로의 크기가 커지면 한 층이 더하는 $F(\operatorname{Norm}(x_\ell))$는 상대적으로 작아진다. 정규화된 입력을 받는 $F$의 출력 크기는 층이 깊어져도 커지지 않기 때문이다. Sun 등은 Llama, Mistral, DeepSeek, Qwen 계열 모델에서 깊은 쪽 층의 상당수가 기대보다 덜 효과적이며, 그 원인을 Pre-LN의 출력 분산 증가로 분석했다.[^curse]
+둘째, **깊은 층의 기여가 약해진다.** 각 층의 sub-layer 출력 크기가 서로 비슷하다는 가정 아래에서는, residual 경로의 크기가 커질수록 한 층이 더하는 $F_\ell(\operatorname{Norm}(x_\ell))$가 상대적으로 작아진다. 다만 입력 정규화만으로 이 가정이 보장되지는 않는다. 층마다 $F_\ell$의 가중치가 다르고, 학습 중 특정 sub-layer가 큰 출력을 낼 수 있다. Peri-LN 논문이 문제 삼은 것도 바로 Pre-LN에서 정규화되지 않은 큰 sub-layer 출력이다.[^peri] 학습된 모델의 관측으로는 Sun 등의 분석이 있다. 이들은 Llama, Mistral, DeepSeek, Qwen 계열 모델에서 깊은 쪽 층의 상당수가 기대보다 덜 효과적이며, 그 원인을 Pre-LN의 출력 분산 증가로 분석했다.[^curse]
 
 <Callout type="example">
-교육용 단순화로, 입력 $\lVert x_0\rVert^2=d$에서 시작해 각 sub-layer가 서로 무관한 방향으로 크기 $\lVert F\rVert^2=d/2$인 벡터를 더한다고 가정하자. 그러면 $\lVert x_\ell\rVert^2\approx(1+\ell/2)d$이고, $\ell$번째 층이 더하는 벡터의 상대 크기는 $\sqrt{(d/2)/\big((1+\ell/2)d\big)}$다.
+교육용 단순화로, 입력 $\lVert x_0\rVert^2=d$에서 시작해 모든 sub-layer가 서로 무관한 방향으로 같은 크기 $\lVert F\rVert^2=d/2$인 벡터를 더한다고 가정하자. 그러면 $\lVert x_\ell\rVert^2\approx(1+\ell/2)d$이고, $\ell$번째 층이 더하는 벡터의 상대 크기는 $\sqrt{(d/2)/\big((1+\ell/2)d\big)}$다.
 
 | 층 $\ell$ | 1 | 4 | 16 | 64 |
 |---|---|---|---|---|
 | 상대 크기 | 0.577 | 0.408 | 0.236 | 0.123 |
 
-64번째 층의 출력은 residual 경로 크기의 약 12%다. 같은 크기의 업데이트라도 깊은 층일수록 hidden state의 방향을 덜 바꾼다. 실제 학습된 모델의 값이 아니라 Xiong 등의 초기화 분석을 단순화한 계산이다.
+64번째 층의 출력은 residual 경로 크기의 약 12%다. 같은 크기의 업데이트라도 깊은 층일수록 hidden state의 방향을 덜 바꾼다. 실제 학습된 모델의 값이 아니라 Xiong 등의 초기화 분석을 단순화한 계산이며, 층마다 출력 크기가 다른 학습된 모델에서는 이 비율이 그대로 나타나지 않는다.
 </Callout>
 
 정리하면 Post-LN은 residual 경로의 크기를 묶어 두는 대신 깊은 모델에서 기울기가 불안정했고, Pre-LN은 기울기를 살리는 대신 residual 경로의 크기를 묶지 못한다. 다음 소절의 배치들은 이 둘 사이를 절충하려는 시도다.
@@ -236,7 +236,7 @@ $$
 \text{logit}_{ij}=\frac{\operatorname{Norm}(q_i)\cdot\operatorname{Norm}(k_j)}{\sqrt{d_h}}
 $$
 
-Gain이 1인 RMSNorm을 head 차원 $d_h$에 적용하면 정규화된 벡터의 노름은 $\sqrt{d_h}$다. Cauchy–Schwarz 부등식으로 $|\text{logit}|\le\sqrt{d_h}\cdot\sqrt{d_h}/\sqrt{d_h}=\sqrt{d_h}$이므로, $d_h=128$이면 logit의 절댓값이 약 11.3을 넘지 않는다. 학습되는 gain이 커지면 이 상한도 커지지만, logit의 규모가 $W_Q$·$W_K$와 입력 전체가 아니라 gain 파라미터를 통해서만 바뀐다는 점이 다르다.
+Gain이 1이고 $\epsilon=0$인 RMSNorm을 head 차원 $d_h$에 적용하면 정규화된 벡터의 노름은 $\sqrt{d_h}$다. 따라서 $q_i$와 $k_j$ 사이의 각도를 $\theta$라 하면 $\text{logit}=\sqrt{d_h}\cdot\sqrt{d_h}\cos\theta/\sqrt{d_h}=\sqrt{d_h}\cos\theta$이고, $d_h=128$이면 logit의 절댓값이 약 11.3을 넘지 않는다. QK-Norm이 막는 것은 $q$·$k$ 투영 벡터의 **노름**이 커져 logit이 제한 없이 증폭되는 경로다. Logit의 상한은 학습되는 gain으로 조절되며, gain이 커지면 상한도 커진다. 반면 $W_Q$·$W_K$가 query와 key의 **방향**을 바꾸면 $\cos\theta$가 달라지므로, gain이 고정되어도 logit은 이 범위 안에서 계속 학습된다.
 
 구현 세부는 모델마다 다르다. Qwen3와 Gemma 3의 공개 구현은 head마다 $d_h$ 차원에 정규화를 적용하고, OLMo 2는 여러 head를 합친 query·key 투영 전체에 적용한다.[^hfimpl] 이 구현들은 모두 RoPE를 적용하기 전에 정규화한다.
 
@@ -346,6 +346,7 @@ Sink를 어떻게 다루든, 이미 sink에 의존하도록 학습된 모델에�
 [^vit22b]: Dehghani, M., et al. (2023). *Scaling Vision Transformers to 22 Billion Parameters*. ICML 2023. [arXiv:2302.05442](https://arxiv.org/abs/2302.05442).
 [^olmo2]: OLMo Team, et al. (2025). *2 OLMo 2 Furious*. COLM 2025. [arXiv:2501.00656](https://arxiv.org/abs/2501.00656).
 [^peri]: Kim, J., et al. (2025). *Peri-LN: Revisiting Normalization Layer in the Transformer Architecture*. ICML 2025. [arXiv:2502.02732](https://arxiv.org/abs/2502.02732).
+[^gpt2]: Radford, A., Wu, J., Child, R., Luan, D., Amodei, D., & Sutskever, I. (2019). *Language Models are Unsupervised Multitask Learners*. OpenAI. [PDF](https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf).
 [^xiong]: Xiong, R., et al. (2020). *On Layer Normalization in the Transformer Architecture*. ICML 2020. [arXiv:2002.04745](https://arxiv.org/abs/2002.04745).
 [^deepseekv3]: DeepSeek-AI. (2024). *DeepSeek-V3 Technical Report*. [arXiv:2412.19437](https://arxiv.org/abs/2412.19437).
 [^curse]: Sun, W., Song, X., Li, P., Yin, L., Zheng, Y., & Liu, S. (2025). *The Curse of Depth in Large Language Models*. NeurIPS 2025. [arXiv:2502.05795](https://arxiv.org/abs/2502.05795).
