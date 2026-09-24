@@ -4,7 +4,7 @@ week: 3
 order: 3
 ---
 
-원래 Transformer의 FFN(feed-forward network)은 행렬 두 개 사이에 ReLU(rectified linear unit)를 둔 구조였다. Llama 3 8B의 FFN은 두 가지 점에서 다르다. 가운데 활성화 함수가 매끄러운 모양으로 바뀌었고(GELU(Gaussian error linear unit)·SiLU(sigmoid linear unit) 계열, Llama 3는 SiLU), 한 입력 투영의 출력으로 다른 투영의 출력을 원소별로 조절하는 **곱셈 gating**이 들어왔다(GLU(gated linear unit) 계열, Llama 3는 SwiGLU(Swish-gated linear unit)). 활성화 함수 전반은 Kunc와 Kléma가 2024년에 400개를 정리한 서베이[^survey]로 조망할 수 있는데, 이 노트와 겹치는 범위는 §3.3(SiLU와 GELU), §3.4(GLU 계열), §3.6(ReLU)이다.
+원래 Transformer의 FFN(feed-forward network)은 행렬 두 개 사이에 ReLU(rectified linear unit)를 둔 구조였다. Llama 3 8B의 FFN은 두 가지 점에서 다르다. 가운데 활성화 함수가 매끄러운 모양으로 바뀌었고, 한 입력 투영의 출력으로 다른 투영의 출력을 원소별로 조절하는 **곱셈 gating**이 들어왔다. 앞의 변화가 GELU(Gaussian error linear unit)·SiLU(sigmoid linear unit) 계열이고 Llama 3는 SiLU를 쓴다. 뒤의 변화가 GLU(gated linear unit) 계열이고 Llama 3는 SwiGLU(Swish-gated linear unit)를 쓴다. 활성화 함수 전반은 Kunc와 Kléma가 2024년에 400개를 정리한 서베이[^survey]로 조망할 수 있는데, 이 노트와 겹치는 범위는 §3.3(SiLU와 GELU), §3.4(GLU 계열), §3.6(ReLU)이다.
 
 두 변화는 동기가 다르다. 앞의 것은 "같은 값으로 만든 gate의 모양"을, 뒤의 것은 "gate를 별도 투영으로 만드는 구조"를 바꾼다. 이 노트는 두 축을 따로 따라간 뒤 SwiGLU에서 만나는 지점을 보고, 행렬이 셋으로 늘면서 생긴 폭 조정 문제를 Llama 3 8B의 실제 중간 폭 14336으로 계산한다.
 
@@ -78,7 +78,7 @@ FFN은 LLM(large language model) 파라미터의 큰 몫을 차지한다. Llama 
 
 FFN이 전체의 약 70%, embedding을 뺀 블록 파라미터의 약 81%다. 행렬 곱의 연산량도 토큰당 가중치 하나에 곱셈·덧셈 두 번이므로 파라미터 수에 비례한다(시퀀스 길이에 따라 늘어나는 attention score 계산은 따로다). FFN 설계의 작은 선택이 모델 전체의 크기와 연산량에 직접 반영되는 이유다. 표의 FFN이 행렬 세 개로 계산된 까닭은 §3에서, 14336이라는 값은 §4에서 다룬다.
 
-## 2. ReLU와 GELU
+## 2. ReLU, GELU, SiLU
 
 첫 번째 축은 가운데 활성화 함수의 모양이다. 여기서는 모든 함수를 "입력 $x$에 gate 값 $g(x)\in[0,1]$을 곱한다"는 한 형식으로 읽는다. 이 형식은 GELU 논문이 ReLU와 GELU를 비교할 때 쓴 관점이다.[^gelu]
 
@@ -216,7 +216,9 @@ $$
 \frac{\partial L}{\partial v}=g\otimes\sigma(u),\qquad \frac{\partial L}{\partial u}=g\otimes v\otimes\sigma'(u)
 $$
 
-$v$ 경로에는 활성화 함수의 도함수가 곱해지지 않는다. 0과 1 사이의 gate 값만 곱해지므로, gate가 열린 단위에서는 $g$가 거의 그대로 $v$까지 전달된다. 원논문은 이를 곱셈 형태의 skip connection에 비유했다. 반면 $u$ 경로에는 $\sigma'(u)\le0.25$가 곱해진다($v$도 곱해지므로 크기가 반드시 줄어드는 것은 아니지만, 층을 쌓을수록 sigmoid 도함수가 거듭 곱해지는 경로다). 비교 대상인 LSTM식 gate $\tanh(u)\otimes\sigma(v)$에는 도함수가 곱해지지 않는 경로가 없어서, 두 경로 모두 $\tanh'$이나 $\sigma'$가 거듭 곱해진다. 비교 실험에서 GLU는 WikiText-103에서 tanh, ReLU, tanh 기반 gate보다 빨리 수렴하고 더 낮은 perplexity에 도달했으며, Google Billion Word에서도 가장 좋았고 ReLU와는 약 5 perplexity 차이가 났다(원논문 Figure 3). Gate의 비선형을 뺀 bilinear 층 $xW\otimes xV$도 선형 층보다는 크게 나았지만 GLU에는 못 미쳤다(Figure 5).
+$v$ 경로에는 활성화 함수의 도함수가 곱해지지 않는다. 0과 1 사이의 gate 값만 곱해지므로, gate가 열린 단위에서는 $g$가 거의 그대로 $v$까지 전달된다. 원논문은 이를 곱셈 형태의 skip connection에 비유했다. 반면 $u$ 경로에는 $\sigma'(u)\le0.25$가 곱해진다($v$도 곱해지므로 크기가 반드시 줄어드는 것은 아니지만, 층을 쌓을수록 sigmoid 도함수가 거듭 곱해지는 경로다). 비교 대상인 LSTM식 gate $\tanh(u)\otimes\sigma(v)$에는 도함수가 곱해지지 않는 경로가 없어서, 두 경로 모두 $\tanh'$이나 $\sigma'$가 거듭 곱해진다.
+
+비교 실험에서 GLU는 WikiText-103에서 tanh, ReLU, tanh 기반 gate보다 빨리 수렴하고 더 낮은 perplexity에 도달했으며, Google Billion Word에서도 가장 좋았고 ReLU와는 약 5 perplexity 차이가 났다(원논문 Figure 3). Gate의 비선형을 뺀 bilinear 층 $xW\otimes xV$도 선형 층보다는 크게 나았지만 GLU에는 못 미쳤다(Figure 5).
 
 작은 수치로 비교해 보자. 은닉 단위가 2개이고, 두 토큰 A와 B의 gate 투영 $u=xW$는 같지만 값 투영 $v=xV$는 다르다고 하자(설명용 가정 값).
 
@@ -238,7 +240,7 @@ $$
 \operatorname{FFN}_{\text{SwiGLU}}(x)=\big(\operatorname{Swish}_1(xW)\otimes xV\big)W_2,\qquad \operatorname{FFN}_{\text{GeGLU}}(x)=\big(\operatorname{GELU}(xW)\otimes xV\big)W_2
 $$
 
-ReGLU는 $\max(0,\cdot)$, bilinear는 항등 함수를 넣은 경우다. 이 변형들은 앞뒤로 이어진 발전이 아니라, GLU라는 같은 구조에서 gate 함수만 달리 고른 **병렬 변형**이다. 축 1에서 고른 모양이 축 2의 gate 자리에 들어가는 합류 지점이 여기다.
+ReGLU(ReLU-gated linear unit)는 $\max(0,\cdot)$, bilinear는 항등 함수를 넣은 경우다. 이 변형들은 앞뒤로 이어진 발전이 아니라, GLU라는 같은 구조에서 gate 함수만 달리 고른 **병렬 변형**이다. 축 1에서 고른 모양이 축 2의 gate 자리에 들어가는 합류 지점이 여기다.
 
 앞의 예제에서 $\sigma(u)$를 $\operatorname{SiLU}(u)=u\,\sigma(u)$로 바꾸면 토큰 A에서 SiLU를 적용한 gate 투영값은 $(1.762,\,-0.269)$, 은닉값은 $(5.285,\,-0.807)$이 된다. SwiGLU의 "gate"는 0과 1 사이에 갇히지 않고 음수도 될 수 있다. 은닉값은 $u$의 부호와 크기, $\sigma(u)$, $v$ 세 요소의 곱이다.
 
