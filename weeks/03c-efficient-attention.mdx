@@ -95,7 +95,7 @@ $M$은 causal mask다. 문제는 가운데의 $QK^\top$가 $n\times n$ 행렬이
 
 $n\times n$ 행렬은 계산량뿐 아니라 메모리 문제도 만든다. [FlashAttention](/lecture/2026f-advanced-deep-learning/02e-training-engineering/)은 score 행렬을 블록 단위로 계산하고 버려 **메모리와 데이터 이동**을 줄이지만, 결과가 정확한 attention과 같으므로 계산하는 위치 쌍의 수는 그대로다. 이 노트가 다루는 방법은 위치 쌍의 수 자체를 줄이거나 없앤다.
 
-생성(decode)에서는 비용의 구조가 달라진다. 새 토큰 하나는 저장해 둔 과거 key $n$개와 점수를 계산하므로 토큰당 계산이 $O(n)$이고, KV cache도 $n$에 비례해 자란다. 이 비용의 정밀한 계산은 6주차에서 다룬다. 여기서는 학습과 긴 입력 처리(prefill)의 $O(n^2)$ 계산을 출발점으로 삼는다.
+생성(decode)에서는 비용의 구조가 달라진다. 새 토큰 하나는 저장해 둔 과거 key $n$개와 점수를 계산하므로 토큰당 계산이 $O(n)$이고, KV(key–value) cache도 $n$에 비례해 자란다. 이 비용의 정밀한 계산은 6주차에서 다룬다. 여기서는 학습과 긴 입력 처리(prefill)의 $O(n^2)$ 계산을 출발점으로 삼는다.
 
 ### 1-3. 두 가지 대응
 
@@ -181,13 +181,13 @@ $$
 =\phi(Q)\underbrace{\left(\phi(K)^\top V\right)}_{d_k\times d_v}
 $$
 
-왼쪽은 $n\times n$ 행렬을 만든 뒤 $V$를 곱하고, 오른쪽은 $d_k\times d_v$ 크기의 요약을 먼저 만든 뒤 각 query에 곱한다. 정규화 분모도 같은 방식으로 $d_k$차원 벡터 하나에 누적된다. 계산량은 $O(n^2d)$에서 $O(n\,d_k d_v)$로 바뀐다. 원논문은 음수가 나오지 않도록 $\phi(x)=\operatorname{elu}(x)+1$을 썼다(ELU는 exponential linear unit).
+왼쪽은 $n\times n$ 행렬을 만든 뒤 $V$를 곱하고, 오른쪽은 $d_k\times d_v$ 크기의 요약을 먼저 만든 뒤 각 query에 곱한다. 정규화 분모도 같은 방식으로 $d_k$차원 벡터 하나에 누적된다. 계산량은 $O(n^2d)$에서 $O(n\,d_k d_v)$로 바뀐다. 원논문은 음수가 나오지 않도록 $\phi(x)=\operatorname{elu}(x)+1$을 썼다(ELU는 exponential linear unit). 이 feature map은 원소별로 적용되어 차원을 보존하므로 요약 행렬이 $d_k\times d_v$다. 출력 차원이 $d_\phi$인 일반적인 $\phi$에서는 위의 $d_k$ 자리에 $d_\phi$가 들어간다.
 
 여기서 "linear"는 **시퀀스 길이에 대한 복잡도**를 가리킨다. $\phi$ 자체는 비선형 함수여도 된다. 재결합이 가능한 조건은 **유사도를 유한 차원 feature의 내적으로 쓸 수 있느냐**다. $\exp(q^\top k)$는 유한 차원 feature의 내적으로 정확히 분해되지 않으므로 softmax attention에는 이 재결합을 그대로 쓸 수 없다. 그래서 linear attention은 softmax attention을 정확히 다시 계산하는 방법이라기보다, 지수 유사도 대신 선택한 kernel을 쓰는 별도의 연산으로 보는 편이 정확하다.
 
 ### 3-2. 누적 상태와 query readout
 
-Causal 설정에서는 위치 $t$까지의 요약만 쓰면 된다. 이 노트에서는 뒤의 DeltaNet 계열 논문과 같은 표기로, 상태를 $S_t\in\mathbb{R}^{d_v\times d_k}$로 두고 feature map을 적용한 뒤의 key를 그냥 $k_t$라 쓴다.
+Causal 설정에서는 위치 $t$까지의 요약만 쓰면 된다. 이 노트에서는 뒤의 DeltaNet 계열 논문과 같은 표기로, 상태를 $S_t\in\mathbb{R}^{d_v\times d_k}$로 두고 feature map을 적용한 뒤의 query와 key를 그냥 $q_t$, $k_t$라 쓴다.
 
 $$
 S_t=S_{t-1}+v_t k_t^\top,\qquad o_t=S_t\,q_t
@@ -334,7 +334,7 @@ S4 같은 이전 SSM은 $A,B,C,\Delta$가 입력과 무관한 LTI(linear time-in
 
 ### 5-3. Mamba-2와 state space duality
 
-Mamba-2는 SSM과 attention의 관계를 구조적인 조건에서 정리했다.[^mamba2] 핵심 조건은 **$A_t$를 스칼라 곱하기 단위행렬 $a_tI$로 제한**하는 것이다. Mamba의 대각 행렬 $A$보다 표현력은 조금 줄지만, 이때 전체 시퀀스 변환을 하나의 행렬로 쓸 수 있다.
+Mamba-2는 SSM과 attention의 관계를 구조적인 조건에서 정리했다.[^mamba2] 핵심 조건은 **$A_t$를 스칼라 곱하기 단위행렬 $a_tI$로 제한**하는 것이다. 이 절의 $A_t$, $B_t$, $C_t$는 §5-1의 $\bar A$, $\bar B$, $C$처럼 이산화를 거친 계수이고, Mamba-2 논문을 따라 bar를 생략한다. 즉 $a_t$는 §5-1의 $\bar A$에 해당하는 스칼라다. Mamba의 대각 행렬 $A$보다 표현력은 조금 줄지만, 이때 전체 시퀀스 변환을 하나의 행렬로 쓸 수 있다.
 
 $$
 Y=\left(L\circ CB^\top\right)X,\qquad
@@ -373,7 +373,7 @@ Mamba나 Mamba-2 층만 쌓은 순수 SSM 언어 모델은 attention 없이 시�
 
 첫째는 **softmax attention 안에서의 조합**이다. 대부분의 층은 sliding window(local)로 두고, 몇 층만 전체(global) attention을 계산한다. Gemma 3는 local 층 5개마다 global 층 1개를 두고(첫 층은 local), local window를 1024 토큰으로 짧게 잡았다.[^gemma3] 보고서가 밝힌 동기는 긴 문맥에서 커지는 KV cache다. Global 층만 긴 문맥을 직접 보고, local 층은 가까운 문맥을 싸게 처리한다.
 
-보고서의 ablation(그림 3·4)에서 local:global 비율을 1:1에서 7:1까지 바꿔도 perplexity 변화는 작았고, window도 크게 줄일 수 있었다. 2B 모델, 32K 문맥 기준으로 global만 쓰는 구성은 KV cache가 모델 메모리 대비 60%의 추가 부담을 만들었고, local 층을 섞고 window를 1024로 줄인 구성("1:3, sw=1024")에서는 15% 미만이었다(그림 5).[^gemma3] 다만 보고서는 같은 절 안에서 local:global과 global:local 표기를 섞어 쓰고, 그림 4 캡션은 이 "1:3"을 local:global로 적는다. 그 방향이면 global 층이 3/4이라 60% 중 약 45%가 global 몫만으로 남으므로 15% 미만이 될 수 없다. 수치로는 local 3 : global 1로 읽는 편이 맞지만 원문 표기로는 확정할 수 없다. Local 층과 global 층은 RoPE(rotary position embedding) base도 다르게 쓰는데(10K와 1M), 이는 [Positional encoding and long context](/lecture/2026f-advanced-deep-learning/03a-positional-encoding/)에서 다룬다.
+보고서의 ablation(그림 3·4)에서 local:global 비율을 1:1에서 7:1까지 바꿔도 perplexity 변화는 작았고, window도 크게 줄일 수 있었다. 2B 모델, 32K 문맥 기준으로 global만 쓰는 구성의 memory overhead는 60%, local 층을 섞고 window를 1024로 줄인 구성("1:3, sw=1024")에서는 15% 미만으로 보고한다(그림 5).[^gemma3] 그림 5가 모델 메모리와 KV cache 메모리를 나란히 그리므로 이 비율을 모델 메모리 대비 KV cache로 읽었지만, 본문이 분모를 명시하지는 않는다. 또한 보고서는 같은 절 안에서 local:global과 global:local 표기를 섞어 쓰고, 그림 4 캡션은 이 "1:3"을 local:global로 적는다. 그 방향이면 global 층이 3/4이라 60% 중 약 45%가 global 몫만으로 남으므로 15% 미만이 될 수 없다. 반대로 local 3 : global 1로 읽으면 층마다 head 구성이 같다는 가정에서 $0.60\times(\tfrac14+\tfrac34\cdot\tfrac{1024}{32768})\approx16\%$로 보고값에 가깝지만 정확히 재현되지는 않는다. 어느 쪽인지 원문 표기로는 확정할 수 없다. Local 층과 global 층은 RoPE(rotary position embedding) base도 다르게 쓰는데(10K와 1M), 이는 [Positional encoding and long context](/lecture/2026f-advanced-deep-learning/03a-positional-encoding/)에서 다룬다.
 
 ### 6-2. Linear attention과 attention
 
@@ -399,7 +399,7 @@ Jamba 논문은 attention이 왜 필요한지도 실험으로 보여 준다(§6.
 Qwen3.5의 config로 고정 크기 상태를 직접 세어 보면, Gated DeltaNet 층 하나의 recurrent 상태 행렬만 세면 value head 64개 × $128\times128$ = 약 105만 원소다(짧은 convolution의 상태는 제외했다). 같은 모델의 full attention 층은 KV head 2개 × head 차원 256 × (K, V) = 토큰당 1,024 원소를 저장하므로, 약 1,024 토큰부터는 attention 층 하나의 캐시가 recurrent 상태보다 커진다. 128K 토큰이면 attention 층 하나가 약 1.34억 원소를 저장한다.
 </Callout>
 
-세 종류는 섞는 부품이 다르지만, 여기 든 세 모델은 같은 설계 가정을 깔고 있다. 대부분의 층에서는 가까운 문맥이나 압축된 요약으로 충분하고, **정확한 검색이 필요한 몇 층만 전체 문맥을 직접 보면 된다**는 판단이다. 연구용 hybrid에는 DeltaNet 계열의 H1처럼 전체 attention 없이 sliding window attention만 섞어 가까운 문맥의 비교를 보완하는 구성도 있다. 어떤 비율과 배치가 최선인지는 모델 규모와 작업에 따라 다르게 보고되며, 위의 모델들도 서로 다른 선택을 했다.
+세 종류는 섞는 부품이 다르지만, 여기 든 세 모델은 같은 설계 가정을 깔고 있다. 대부분의 층에서는 가까운 문맥이나 압축된 요약으로 충분하고, **정확한 검색이 필요한 몇 층만 전체 문맥을 직접 보면 된다**는 판단이다. 어떤 비율과 배치가 최선인지는 모델 규모와 작업에 따라 다르게 보고되며, 위의 모델들도 서로 다른 선택을 했다.
 
 ## 7. 최근 모델의 선택
 
@@ -418,18 +418,18 @@ Qwen3.5의 config에서는 `layer_types`가 `linear_attention` 세 번과 `full_
 
 Qwen3.5 한 모델 안에서도 "gate"는 두 가지 뜻으로 쓰인다. Gated DeltaNet의 $\alpha_t$는 **recurrent 상태를 얼마나 남길지** 정하는 감쇠 gate이고, gated attention의 gate는 softmax attention의 **출력에 원소별로 곱하는** gate로 [Normalization and attention sink](/lecture/2026f-advanced-deep-learning/03e-normalization/)에서 다룬다.
 
-[^tay]: Tay, Y., Dehghani, M., Bahri, D., & Metzler, D. (2022). *Efficient Transformers: A Survey*. ACM Computing Surveys, 55(6), 109. [arXiv:2009.06732](https://arxiv.org/abs/2009.06732).
+[^tay]: Tay, Y., Dehghani, M., Bahri, D., & Metzler, D. (2022). *Efficient Transformers: A Survey*. ACM Computing Surveys, 55(6), Article 109. [arXiv:2009.06732](https://arxiv.org/abs/2009.06732), [doi:10.1145/3530811](https://doi.org/10.1145/3530811).
 [^mistral]: Jiang, A. Q., et al. (2023). *Mistral 7B*. [arXiv:2310.06825](https://arxiv.org/abs/2310.06825).
 [^streaming]: Xiao, G., Tian, Y., Chen, B., Han, S., & Lewis, M. (2024). *Efficient Streaming Language Models with Attention Sinks*. ICLR 2024. [arXiv:2309.17453](https://arxiv.org/abs/2309.17453).
 [^longformer]: Beltagy, I., Peters, M. E., & Cohan, A. (2020). *Longformer: The Long-Document Transformer*. [arXiv:2004.05150](https://arxiv.org/abs/2004.05150).
 [^bigbird]: Zaheer, M., et al. (2020). *Big Bird: Transformers for Longer Sequences*. NeurIPS 2020. [arXiv:2007.14062](https://arxiv.org/abs/2007.14062).
 [^dsv32]: DeepSeek-AI. (2025). *DeepSeek-V3.2: Pushing the Frontier of Open Large Language Models*. [arXiv:2512.02556](https://arxiv.org/abs/2512.02556).
-[^linear]: Katharopoulos, A., Vyas, A., Pappas, N., & Fleuret, F. (2020). *Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention*. ICML 2020. [arXiv:2006.16236](https://arxiv.org/abs/2006.16236).
-[^fwp]: Schlag, I., Irie, K., & Schmidhuber, J. (2021). *Linear Transformers Are Secretly Fast Weight Programmers*. ICML 2021. [arXiv:2102.11174](https://arxiv.org/abs/2102.11174).
+[^linear]: Katharopoulos, A., Vyas, A., Pappas, N., & Fleuret, F. (2020). *Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention*. ICML 2020, PMLR 119, 5156–5165. [arXiv:2006.16236](https://arxiv.org/abs/2006.16236).
+[^fwp]: Schlag, I., Irie, K., & Schmidhuber, J. (2021). *Linear Transformers Are Secretly Fast Weight Programmers*. ICML 2021, PMLR 139, 9355–9366. [arXiv:2102.11174](https://arxiv.org/abs/2102.11174).
 [^mamba]: Gu, A., & Dao, T. (2024). *Mamba: Linear-Time Sequence Modeling with Selective State Spaces*. COLM 2024. [arXiv:2312.00752](https://arxiv.org/abs/2312.00752).
 [^gdn]: Yang, S., Kautz, J., & Hatamizadeh, A. (2025). *Gated Delta Networks: Improving Mamba2 with Delta Rule*. ICLR 2025. [arXiv:2412.06464](https://arxiv.org/abs/2412.06464).
 [^deltanet]: Yang, S., Wang, B., Zhang, Y., Shen, Y., & Kim, Y. (2024). *Parallelizing Linear Transformers with the Delta Rule over Sequence Length*. NeurIPS 2024. [arXiv:2406.06484](https://arxiv.org/abs/2406.06484).
-[^mamba2]: Dao, T., & Gu, A. (2024). *Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured State Space Duality*. ICML 2024. [arXiv:2405.21060](https://arxiv.org/abs/2405.21060).
+[^mamba2]: Dao, T., & Gu, A. (2024). *Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured State Space Duality*. ICML 2024, PMLR 235, 10041–10071. [arXiv:2405.21060](https://arxiv.org/abs/2405.21060).
 [^gemma3]: Gemma Team. (2025). *Gemma 3 Technical Report*. [arXiv:2503.19786](https://arxiv.org/abs/2503.19786).
 [^qwen3next]: Qwen Team. (2025). *Qwen3-Next: Towards Ultimate Training & Inference Efficiency*. [Qwen 블로그](https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd), [Alibaba Cloud Community 재게재](https://www.alibabacloud.com/blog/602580).
 [^qwen3next-card]: Qwen Team. (2025). *Qwen3-Next-80B-A3B-Instruct*. Hugging Face. [모델 카드](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct).
