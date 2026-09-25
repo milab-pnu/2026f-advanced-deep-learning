@@ -69,7 +69,7 @@ $$
 \mathcal{L}_{\mathrm{DPO}}(\theta)=-\mathbb{E}_{(x,y_w,y_l)\sim\mathcal{D}}\Big[\log\sigma\Big(\beta\log\frac{\pi_\theta(y_w\mid x)}{\pi_{\mathrm{ref}}(y_w\mid x)}-\beta\log\frac{\pi_\theta(y_l\mid x)}{\pi_{\mathrm{ref}}(y_l\mid x)}\Big)\Big]
 $$
 
-$\hat r_\theta(x,y)=\beta\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}$를 **implicit reward**라고 부른다. 명시적 reward model은 없지만, 정책 자체가 보상 함수의 역할을 한다. 이 손실을 최소화하는 것은 "정책이 정의하는 implicit reward로 관측된 선호의 likelihood를 최대화"하는 것이며, 그 최적점이 §1-2의 $\pi^*$에 대응한다. 학습에 필요한 것은 선호쌍 데이터셋 $\mathcal{D}$, 갱신되는 정책, 그리고 고정된 reference model 둘뿐이다. 응답의 log 확률은 [04a §2-3](/lecture/2026f-advanced-deep-learning/04a-sft/)의 토큰별 log 확률을 응답 구간에서 합한 값이다.
+$\hat r_\theta(x,y)=\beta\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}$를 **implicit reward**라고 부른다. 명시적 reward model은 없지만, 정책 자체가 보상 함수의 역할을 한다. 이 손실을 최소화하는 것은 "정책이 정의하는 implicit reward로 관측된 선호의 likelihood를 최대화"하는 것이다. 선호가 실제로 어떤 보상 $r$의 Bradley–Terry 모형에서 나왔고 비교가 충분히 넓게 덮여 있으며 정책의 표현력이 충분하다면, 모집단 손실의 최적점은 §1-2의 $\pi^*$다. 유한한 데이터로 하는 학습은 이를 추정하는 것이며, 그 간격이 §4의 IPO와 §5의 문제로 이어진다. 학습에 필요한 것은 선호쌍 데이터셋 $\mathcal{D}$, 갱신되는 정책, 그리고 고정된 reference model 둘뿐이다. 응답의 log 확률은 [04a §2-3](/lecture/2026f-advanced-deep-learning/04a-sft/)의 토큰별 log 확률을 응답 구간에서 합한 값이다.
 
 ### 2-2. Gradient가 하는 일
 
@@ -106,7 +106,7 @@ Rafailov 등은 과제별로 다른 방식으로 DPO를 PPO 기반 RLHF와 비�
 
 ### 3-1. On-policy와 off-policy
 
-먼저 용어를 정한다. 강화학습 교재의 구분을 따르면, 학습 데이터를 생성한 정책을 **behavior policy**, 학습으로 개선하려는 정책을 **target policy**라고 부르고, 둘이 같으면 on-policy, 다르면 off-policy다.[^sutton] 여기에 KL 벌점의 기준이 되는 고정된 **reference policy**(SFT 모델)가 하나 더 있는데, 이것은 데이터를 생성하지 않으므로 앞의 둘과 다른 역할이다.
+먼저 용어를 정한다. 강화학습 교재의 구분을 따르면, 학습 데이터를 생성한 정책을 **behavior policy**, 학습으로 개선하려는 정책을 **target policy**라고 부르고, 둘이 같으면 on-policy, 다르면 off-policy다.[^sutton] 여기에 KL 벌점의 기준이 되는 고정된 **reference policy**(SFT 모델)가 하나 더 있다. 이것은 역할의 이름이라 behavior policy나 초기 target policy와 같은 분포일 수 있다. 원래 DPO 절차에서는 reference policy에서 응답을 뽑아 선호쌍을 만들고, 고정 데이터로 최적화하는 동안에는 확률 계산에만 쓴다.
 
 언어 모델의 post-training에서는 이렇게 읽으면 된다. 학습에 쓰는 응답을 **지금 갱신 중인 정책이 방금 생성했으면** on-policy이고, 사람이 썼거나 다른 모델이 만들었거나 자신의 과거 checkpoint가 만들었으면 off-policy다. 엄밀히는 같은 가중치라도 temperature 같은 decoding 설정이 다르면 표집 분포가 달라지므로, 기준은 "누가 만들었는가"보다 **표집 분포가 target policy와 같은가**다. [04a](/lecture/2026f-advanced-deep-learning/04a-sft/)의 SFT는 남이 쓴 시연으로 학습하므로 이 노트에서는 데이터 분포의 관점에서 off-policy라고 부른다. RL 알고리즘의 분류를 SFT까지 넓혀 쓰는 용례이며, 5주차에서 같은 뜻으로 쓴다.
 
@@ -134,13 +134,13 @@ DPO의 손실에는 여러 가정이 들어 있다. 선호가 Bradley–Terry �
 | ORPO(odds ratio preference optimization)[^orpo] | SFT와 선호 학습이 별도 단계라는 가정, reference model | 두 단계의 비용 |
 | 길이 정규화 DPO[^tulu3] | 응답 전체 log 확률 | 길이 편향 |
 
-**IPO.** $\mathcal{L}_{\mathrm{IPO}}=\mathbb{E}\big[(h_\theta(y_w,y_l)-\tfrac{1}{2\tau})^2\big]$. DPO의 sigmoid 손실은 $h_\theta$가 커질수록 계속 줄어들므로, 데이터에서 $y_w$가 항상 이기는 쌍이 있으면 $h_\theta\to\infty$가 최적이 되어 reference model에서 무한히 멀어진다. IPO는 $h_\theta$를 유한한 목표값 $\frac{1}{2\tau}$에 맞추는 회귀 손실이라 같은 상황에서도 정해진 거리에서 멈춘다.[^ipo] 위 §2-2 예시의 $h_\theta=2$는 $\tau=0.25$일 때 목표값 2와 일치해 IPO 손실이 0이지만, DPO 손실 0.598은 $h_\theta$를 더 키우라고 요구한다.
+**IPO.** $\mathcal{L}_{\mathrm{IPO}}=\mathbb{E}\big[(h_\theta(y_w,y_l)-\tfrac{1}{2\tau})^2\big]$. DPO의 sigmoid 손실은 $h_\theta$가 커질수록 계속 줄어들므로, 데이터에서 $y_w$가 항상 이기는 쌍이 있으면 $h_\theta\to\infty$가 최적이 되어 탈락 응답의 확률을 0으로 몰고, 그 과정에서 $\beta$의 제어 효과가 약해진다. IPO는 $h_\theta$를 유한한 목표값 $\frac{1}{2\tau}$에 맞추는 회귀 손실이라($\tau>0$은 정규화 강도) 같은 상황에서도 유한한 log 확률비 차이에서 멈춘다.[^ipo] 위 §2-2 예시의 $h_\theta=2$는 $\tau=0.25$일 때 목표값 2와 일치해 IPO 손실이 0이지만, DPO 손실 0.598은 $h_\theta$를 더 키우라고 요구한다.
 
-**KTO.** 응답 하나에 대한 desirable/undesirable 표시만 있을 때, implicit reward $\hat r_\theta$를 배치에서 추정한 기준점 $z_0\approx\mathrm{KL}(\pi_\theta\,\|\,\pi_{\mathrm{ref}})$과 비교한다. 좋은 응답의 가치는 $\lambda_D\,\sigma(\beta(\hat r_\theta-z_0))$, 나쁜 응답의 가치는 $\lambda_U\,\sigma(\beta(z_0-\hat r_\theta))$이고, 손실은 이 가치를 최대화한다. 좋은 것을 얻는 것보다 나쁜 것을 피하는 데 더 민감한 사람의 효용(prospect theory)을 본떠 $\lambda_D$와 $\lambda_U$를 다르게 둘 수 있다.[^kto]
+**KTO.** 응답 하나에 대한 desirable/undesirable 표시만 있을 때, $\beta$를 곱하지 않은 log 확률비 $u_\theta(x,y)=\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}$를 배치에서 추정한 기준점 $z_0\approx\mathrm{KL}(\pi_\theta\,\|\,\pi_{\mathrm{ref}})$과 비교한다. 좋은 응답의 가치는 $\lambda_D\,\sigma(\beta(u_\theta-z_0))$, 나쁜 응답의 가치는 $\lambda_U\,\sigma(\beta(z_0-u_\theta))$이고, 손실은 이 가치를 최대화한다. 기준점 $z_0$에는 gradient를 흘리지 않는다. 좋은 것을 얻는 것보다 나쁜 것을 피하는 데 더 민감한 사람의 효용(prospect theory)을 본떠 $\lambda_D$와 $\lambda_U$를 다르게 둘 수 있다.[^kto]
 
-**SimPO.** Reference model을 없애고 토큰당 평균 log 확률을 보상으로 쓴다. $r_{\mathrm{SimPO}}(x,y)=\frac{\beta}{\lvert y\rvert}\log\pi_\theta(y\mid x)$이고, 손실은 $-\log\sigma\big(r_{\mathrm{SimPO}}(x,y_w)-r_{\mathrm{SimPO}}(x,y_l)-\gamma\big)$로 목표 여백 $\gamma$를 둔다. 길이로 나누므로 긴 응답이 log 확률 합에서 불리해지거나 유리해지는 효과가 사라지고, 평균 log 확률은 생성 때 쓰는 척도와 같다.[^simpo] Llama 3 8B Instruct에서 출발한 비교에서 AlpacaEval 2의 길이 보정 승률이 DPO 40.3%에서 44.7%로 올랐다고 보고했다.[^simpo]
+**SimPO.** Reference model을 없애고 토큰당 평균 log 확률을 보상으로 쓴다. $r_{\mathrm{SimPO}}(x,y)=\frac{\beta}{\lvert y\rvert}\log\pi_\theta(y\mid x)$이고, 손실은 $-\log\sigma\big(r_{\mathrm{SimPO}}(x,y_w)-r_{\mathrm{SimPO}}(x,y_l)-\gamma\big)$로 목표 여백 $\gamma$를 둔다. 길이로 나누어 응답 길이가 보상에 섞여 드는 효과를 줄이고, 보상을 생성 때 후보를 고르는 척도(평균 log 확률)와 맞춘다.[^simpo] Llama 3 8B Instruct에서 출발한 비교에서 AlpacaEval 2의 길이 보정 승률이 DPO 40.3%에서 44.7%로 올랐다고 보고했다.[^simpo]
 
-**ORPO.** 응답의 odds를 $\mathrm{odds}_\theta(y\mid x)=\frac{\pi_\theta(y\mid x)}{1-\pi_\theta(y\mid x)}$로 두고, 두 응답의 odds ratio에 $-\log\sigma\big(\log\frac{\mathrm{odds}_\theta(y_w\mid x)}{\mathrm{odds}_\theta(y_l\mid x)}\big)$를 걸어 SFT 손실에 $\lambda$배로 더한다. Reference model 없이 SFT 한 단계 안에서 선호를 학습한다.[^orpo]
+**ORPO.** 응답의 토큰 확률의 기하평균 $q_\theta(y\mid x)=\exp\big(\log\pi_\theta(y\mid x)/\lvert y\rvert\big)$로 odds를 $\mathrm{odds}_\theta(y\mid x)=\frac{q_\theta(y\mid x)}{1-q_\theta(y\mid x)}$로 두고($q_\theta$는 응답 전체의 확률이 아니라 토큰당 평균 확률이다), 두 응답의 odds ratio에 $-\log\sigma\big(\log\frac{\mathrm{odds}_\theta(y_w\mid x)}{\mathrm{odds}_\theta(y_l\mid x)}\big)$를 걸어 SFT 손실에 $\lambda$배로 더한다. Reference model 없이 SFT 한 단계 안에서 선호를 학습한다.[^orpo]
 
 **길이 정규화 DPO.** DPO의 두 log 확률비를 각각 응답 길이로 나눈 $\frac{\beta}{\lvert y\rvert}\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}$를 쓴다. Tülu 3는 UltraFeedback으로 같은 SFT 모델을 학습한 ablation에서 이 변형의 최고 설정(57.3)이 원래 DPO(55.2)와 SimPO(최고 52.9)보다 높았고, 최종 recipe에 채택했다. 다만 같은 표에서 $\beta$와 epoch에 따라 46.8까지 떨어지므로 하이퍼파라미터에 민감하다(원논문 Table 18).[^tulu3] 길이 정규화는 [04d](/lecture/2026f-advanced-deep-learning/04d-reward-hacking/)에서 다룰 길이 편향에 대한 손실 쪽의 대응이다.
 
@@ -163,7 +163,7 @@ DPO의 손실에는 여러 가정이 들어 있다. 선호가 Bradley–Terry �
 | Recipe | 응답을 만든 정책 | 데이터 갱신 주기 | §3-1의 축으로 |
 |---|---|---|---|
 | OAIF[^oaif] | 갱신 중인 현재 정책 | 매 반복 | Online, on-policy |
-| Llama 3[^llama] | 주로 직전 라운드의 가장 좋은 모델들이 만든 최근 배치 | 라운드마다(6라운드) | 라운드 단위 online, 라운드 안에서는 off-policy |
+| Llama 3[^llama] | 주로 이전 라운드들의 가장 좋은 모델들이 만든 최근 배치 | 라운드마다(6라운드) | 라운드 단위 online, 라운드 안에서는 off-policy |
 | Tülu 3[^tulu3] | 선호 학습의 출발점인 SFT 모델(과 다른 모델들) | 한 번 수집 | Offline. 원논문은 SFT 모델에서 뽑은 응답을 "on-policy 데이터"라고 부르지만, 고정 데이터로 DPO를 진행하면 현재 정책과는 어긋난다 |
 
 Tülu 3는 그 기준으로 on-policy 응답과 다른 모델의 off-policy 응답을 GPT-4o가 네 측면에서 비교한 데이터를 섞었고, SFT 모델의 응답을 포함하면 완전히 다른 모델의 응답만 쓴 경우보다 DPO 성능이 올랐다고 보고했다(원논문 Figure 11).[^tulu3] 같은 팀은 매 스텝 갱신하는 online DPO도 시도했지만 이득이 없어 최종 recipe에서 뺐다고 밝혔다(원논문 §8.2).[^tulu3] Llama 3처럼 라운드 단위로 데이터를 새로 만드는 iterative 방식이 실무의 절충점 중 하나다.
