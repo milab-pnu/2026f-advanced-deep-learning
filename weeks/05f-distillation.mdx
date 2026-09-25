@@ -102,9 +102,9 @@ Ma 등의 MOPD(multi-teacher on-policy distillation)는 이 문제를 on-policy 
 
 ## 4. 실패 양상과 한계
 
-서베이 §7은 on-policy distillation의 실패 양상을 대표적인 다섯 축으로 정리한다.[^survey] 학생이 이미 틀린 prefix 위에서 teacher의 피드백을 받으면 그 문맥에서 teacher도 좋은 다음 토큰을 모를 수 있어 잘못된 신호가 되는 문제(flawed prefix trap), 학생 자신을 teacher로 쓰는 self-distillation의 개선이 금방 멈추는 문제, reverse KL 같은 mode-seeking 목적함수가 유효한 대안을 억눌러 다양성이 무너질 수 있는 문제, 증류된 학생의 확신과 실제 정확도가 어긋나는 문제, 그리고 다중 턴 agent 궤적에서 teacher가 갱신되지 않거나 턴 구조가 무너지거나 응답이 폭주하는 문제다. 세 번째는 GKD가 관찰한 다양성 감소의 다른 이름이고, [05b §4](/lecture/2026f-advanced-deep-learning/05b-long-cot/)의 pass@$k$ 논쟁과도 이어진다. Teacher의 봉우리 하나를 따르는 학생은 넓은 $k$에서의 커버리지가 줄 수 있으며, 이것은 reverse KL 계열의 가능한 실패이지 필연은 아니다.
+서베이 §7은 on-policy distillation의 실패 양상을 대표적인 다섯 축으로 정리한다.[^survey] 학생이 이미 틀린 prefix 위에서 teacher의 피드백을 받으면 그 문맥에서 teacher도 좋은 다음 토큰을 모를 수 있어 잘못된 신호가 되는 문제(flawed prefix trap), 학생 자신을 teacher로 쓰는 self-distillation의 개선이 금방 멈추는 문제, reverse KL 같은 mode-seeking 목적함수가 유효한 대안을 억눌러 다양성이 무너질 수 있는 문제, 증류된 학생의 확신과 실제 정확도가 어긋나는 문제, 그리고 다중 턴 agent 궤적에서 teacher를 주기적으로 학생의 복사본으로 갱신할 때 KL과 학습 신호가 무너지거나, 턴 구조가 무너지거나, 응답이 폭주하는 문제다. 세 번째는 GKD가 관찰한 다양성 감소의 다른 이름이고, [05b §4](/lecture/2026f-advanced-deep-learning/05b-long-cot/)의 pass@$k$ 논쟁과도 이어진다. Teacher의 봉우리 하나를 따르는 학생은 넓은 $k$에서의 커버리지가 줄 수 있으며, 이것은 reverse KL 계열의 가능한 실패이지 필연은 아니다.
 
-그리고 모든 distillation은 teacher를 전제한다. Teacher를 만드는 비용과 teacher의 편향이 조건이고, teacher에게서 무엇을 받아야 하는지도 방식마다 다르다. §1-2의 응답 기반 방식은 응답 텍스트만 있으면 되고, Thinking Machines의 구현은 표집한 토큰의 log 확률만 필요해 API로도 가능하며, GKD처럼 어휘 전체나 상위 $k$개의 분포를 맞추려면 logit에 접근해야 한다. 공개 가중치 여부와 필요한 확률에 접근할 수 있는가는 별개의 조건이다. R1과 Qwen3의 recipe에서는 RL로 개선한 teacher의 행동을 distillation으로 작은 모델에 전달하며, 적합한 teacher가 없으면 시연 데이터나 검증 보상 같은 다른 감독 신호가 필요하다. 두 방법은 대체 관계가 아니라 [05a §3-2](/lecture/2026f-advanced-deep-learning/05a-rlvr/)의 recipe 안에서 역할을 나눈다.
+그리고 모든 distillation은 teacher를 전제한다. Teacher를 만드는 비용과 teacher의 편향이 조건이고, teacher에게서 무엇을 받아야 하는지도 방식마다 다르다. §1-2의 응답 기반 방식은 응답 텍스트만 있으면 되고, Thinking Machines의 구현은 표집한 토큰의 log 확률만 필요해 API로도 가능하며, GKD처럼 어휘 전체나 상위 $k$개의 분포를 맞추려면 그 토큰들의 확률 또는 log 확률에 접근해야 한다. 공개 가중치 여부와 필요한 확률에 접근할 수 있는가는 별개의 조건이다. R1과 Qwen3의 recipe에서는 RL로 개선한 teacher의 행동을 distillation으로 작은 모델에 전달하며, 적합한 teacher가 없으면 시연 데이터나 검증 보상 같은 다른 감독 신호가 필요하다. 두 방법은 대체 관계가 아니라 [05a §3-2](/lecture/2026f-advanced-deep-learning/05a-rlvr/)의 recipe 안에서 역할을 나눈다.
 
 ## 5. 4·5주차의 정리
 
