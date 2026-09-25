@@ -4,7 +4,7 @@ week: 5
 order: 0
 ---
 
-4주차의 보상은 모두 사람의 판단에서 왔다. [04b](/lecture/2026f-advanced-deep-learning/04b-rlhf/)의 reward model은 사람의 비교를 근사했고, [04d](/lecture/2026f-advanced-deep-learning/04d-reward-hacking/)에서 그 근사가 어떻게 틀리는지 보았다. 수학 문제와 코드처럼 정답이 있는 과제에서는 다른 길이 있다. 응답을 사람이나 모델이 평가하는 대신 **프로그램으로 검증**하고, 그 결과를 보상으로 쓰는 것이다. 이 방법이 <strong>RLVR(reinforcement learning with verifiable rewards)</strong>이고, 2025년 초 DeepSeek-R1이 이 방법만으로 base model에서 긴 추론을 이끌어 내면서 post-training의 중심이 되었다. 이 노트는 보상의 출처를 바꾼 이 계보를 따라간다. 5주차의 나머지 노트는 이 노트에서 갈라진다. RL이 만든 긴 사고 사슬의 행동과 비용은 [05b](/lecture/2026f-advanced-deep-learning/05b-long-cot/), 정책 최적화 알고리즘은 [05c](/lecture/2026f-advanced-deep-learning/05c-policy-optimization/), 학습 시스템은 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)에서 다룬다.
+4주차의 보상은 모두 사람 또는 모델의 선호 판정에서 왔다. [04b](/lecture/2026f-advanced-deep-learning/04b-rlhf/)의 reward model은 그 판정을 근사했고, [04d](/lecture/2026f-advanced-deep-learning/04d-reward-hacking/)에서 그 근사가 어떻게 틀리는지 보았다. 수학 문제와 코드처럼 정답이 있는 과제에서는 다른 길이 있다. 응답을 사람이나 모델이 평가하는 대신 **프로그램으로 검증**하고, 그 결과를 보상으로 쓰는 것이다. 이 방법이 <strong>RLVR(reinforcement learning with verifiable rewards)</strong>이고, 2025년 초 DeepSeek-R1-Zero가 추론 시연의 SFT(supervised fine-tuning) 없이 이 보상만으로 base model에서 긴 추론을 이끌어 내면서 post-training의 중심이 되었다. 이 노트는 보상의 출처를 바꾼 이 계보를 따라간다. 5주차의 나머지 노트는 이 노트에서 갈라진다. RL이 만든 긴 사고 사슬의 행동과 비용은 [05b](/lecture/2026f-advanced-deep-learning/05b-long-cot/), 정책 최적화 알고리즘은 [05c](/lecture/2026f-advanced-deep-learning/05c-policy-optimization/), 학습 시스템은 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)에서 다룬다.
 
 전체 지도는 Zhang 등이 2025년에 정리한 추론 모델을 위한 강화학습 서베이[^survey]로 잡는다. §3.1이 보상 설계(검증 가능한 보상, 생성형 보상, 밀집 보상, 비지도 보상, 보상 조형)를, §4.5가 outcome 보상과 process 보상의 문제를 다루며 이 노트의 §2–5에 대응한다. 같은 서베이의 §3.2(정책 최적화)와 §5(학습 자원)는 05c·05d의 지도다.
 
@@ -12,13 +12,13 @@ order: 0
 
 ### 1-1. 선호 보상의 한계
 
-04b §5-3에서 정리했듯이, 선호 비교로 학습한 보상은 "더 마음에 드는가"를 재지 "맞는가"를 재지 않는다. 04d에서 본 것처럼 그 보상은 최적화될수록 실제 목표와 어긋나고, 판정자는 길이와 말투에 끌린다. 수학 문제의 풀이에서 이 문제는 특히 크다. 틀린 풀이도 자신 있게 쓰면 선호될 수 있고, reward model이 풀이의 정오를 판정하려면 문제를 풀 수 있어야 한다.
+04b §5-3에서 정리했듯이, 선호 비교로 학습한 보상은 정확성을 반영할 수는 있지만 정답을 직접 검증해 주지는 않는다. 04d에서 본 것처럼 그 보상은 최적화될수록 실제 목표와 어긋날 수 있고, 판정자는 길이와 말투에 끌린다. 수학 문제의 풀이에서 이 문제는 특히 크다. 틀린 풀이도 자신 있게 쓰면 선호될 수 있고, reward model이 풀이의 정오를 판정하려면 문제를 풀 수 있어야 한다.
 
 정답이 있는 과제에서는 보상을 학습하지 않아도 된다. 최종 답이 정답과 같은지, 코드가 테스트를 통과하는지를 프로그램이 확인하면 된다. 이 보상은 사람의 선호 데이터가 필요 없고, 최적화해도 04d §2의 의미로 over-optimization되지 않는다. 검증기가 정답을 확인하는 한, 검증기 점수가 오르는 것은 정답률이 오르는 것이다. 다만 04d §5에서 본 것처럼 검증기가 확인하는 것과 우리가 원하는 것이 다르면 문제는 다시 생긴다. 이 노트 §5에서 그 조건을 다시 본다.
 
 ### 1-2. 두 출발점
 
-이 방향의 실험은 2024년에 두 곳에서 나왔다. DeepSeek의 DeepSeekMath는 수학 특화 7B 모델에 규칙 기반 정답 보상으로 RL을 돌리면서, PPO(proximal policy optimization)의 value model을 없앤 GRPO(group relative policy optimization)를 제안했다.[^deepseekmath] Allen AI의 Tülu 3는 SFT(supervised fine-tuning)와 DPO(direct preference optimization) 뒤의 마지막 단계로, 정답을 검증할 수 있는 프롬프트에서 검증 통과 시에만 보상을 주는 단계를 두고 이를 RLVR이라고 이름 붙였다.[^tulu3] 두 연구의 보상은 같은 원리이지만 목적이 달랐다. DeepSeekMath는 수학 성능 자체를, Tülu 3는 chat model의 마지막 다듬기를 겨냥했다. 2025년 1월의 DeepSeek-R1이 이 원리를 base model에서 직접, 훨씬 큰 규모로 적용하면서 세 번째 목적이 드러났다. **긴 추론 행동을 RL로 만들어 내는 것**이다.[^r1]
+이 계보에는 두 갈래의 선행 연구가 있다. 알고리즘 쪽에서는 2024년 DeepSeek의 DeepSeekMath가 수학 특화 7B 모델의 RL에서 PPO(proximal policy optimization)의 value model을 없앤 GRPO(group relative policy optimization)를 제안했다. 다만 그 보상은 검증기가 아니라 DeepSeekMath-Base 7B로 학습한 reward model이었다.[^deepseekmath] 보상 쪽에서는 Allen AI의 Tülu 3가 SFT와 DPO(direct preference optimization) 뒤의 마지막 단계로, 정답을 검증할 수 있는 프롬프트에서 검증 통과 시에만 보상을 주는 단계를 두고 이를 RLVR이라고 이름 붙였다.[^tulu3] Tülu 3의 목적은 chat model의 마지막 다듬기였다. 2025년 1월의 DeepSeek-R1-Zero가 GRPO와 검증 보상을 base model에서 직접, 훨씬 큰 규모로 결합하면서 다른 목적이 드러났다. **긴 추론 행동을 RL로 만들어 내는 것**이다.[^r1]
 
 ## 2. 검증 가능한 보상
 
@@ -30,9 +30,20 @@ $$
 r(x,y)=\begin{cases}\alpha & \text{검증기가 } y \text{를 정답으로 판정}\\ 0 & \text{그 외}\end{cases}
 $$
 
-이고, Tülu 3는 $\alpha=10$을 썼으며 04b §3-1과 같은 KL(Kullback–Leibler) 벌점을 더해 PPO로 최적화했다.[^tulu3] DeepSeek-R1-Zero는 두 가지 규칙 보상을 썼다. 최종 답이 정답과 같은지(수학은 지정 형식의 답을 대조, 코드는 컴파일러와 테스트 케이스), 그리고 사고 과정을 `<think>` 태그 안에 쓰는 형식을 지켰는지다. 신경망 reward model은 쓰지 않았는데, 저자들은 대규모 RL에서 reward model이 reward hacking에 취약하고 다시 학습하는 비용이 크기 때문이라고 밝혔다.[^r1] 04d의 논의를 설계 결정으로 옮긴 것이다.
+이고, Tülu 3는 $\alpha=10$을 썼으며 04b §3-1과 같은 KL(Kullback–Leibler) 벌점을 더해 PPO로 최적화했다.[^tulu3] DeepSeek-R1-Zero는 두 가지 규칙 보상을 같은 가중치로 더했다. 최종 답이 정답과 같은지를 보는 정확성 보상(수학은 지정 형식의 답을 대조, 코드는 컴파일러와 테스트 케이스)과, 사고 과정을 `<think>` 태그 안에 쓰는 형식을 지켰는지를 보는 형식 보상이다(원논문 §2.2).[^r1] 신경망 reward model은 쓰지 않았는데, 저자들은 대규모 RL에서 reward model이 reward hacking에 취약하고 다시 학습하는 비용이 크기 때문이라고 밝혔다.[^r1] 04d의 논의를 설계 결정으로 옮긴 것이다.
 
-### 2-2. 검증기의 종류
+### 2-2. 학습 절차
+
+보상의 출처만 바뀌었을 뿐 정책을 갱신하는 틀은 04b §3과 같다. 한 반복은 다음과 같다.
+
+1. 문제와 정답 정보를 준비한다. 문제는 정책에 주고, 정답 정보는 검증기만 본다.
+2. 현재 정책이 문제마다 응답을 여러 개 생성한다. 프롬프트 집합은 고정이어도 응답은 매 반복 새로 만들므로, [04c §3-1](/lecture/2026f-advanced-deep-learning/04c-dpo/)의 구분으로 online이며 on-policy다.
+3. 검증기가 응답마다 보상을 매긴다.
+4. 보상(과 KL 벌점)으로 policy gradient를 계산해 정책을 갱신하고 1로 돌아간다.
+
+Reward model이 없으므로 04b §3-4의 네 모델 중 reward model이 프로그램으로 바뀌고, GRPO를 쓰면 value model도 없어진다. 그 갱신식과 04b의 PPO와의 차이는 [05c](/lecture/2026f-advanced-deep-learning/05c-policy-optimization/)에서, 2단계의 생성 비용은 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)에서 다룬다.
+
+### 2-3. 검증기의 종류
 
 검증 가능하다는 것은 과제마다 다른 뜻이다.
 
@@ -46,20 +57,20 @@ $$
 수학의 동치 판정은 보기보다 어렵다. Hugging Face의 Math-Verify는 LaTeX와 일반 표기를 파싱해 수치·기호(SymPy)·집합·구간·행렬의 동치를 판정하는 라이브러리로, 같은 MATH 데이터셋 채점에서 단순 문자열 대조 기반 채점기보다 더 많은 정답을 정답으로 인정했다.[^mathverify] 검증기가 정답을 오답으로 판정하면 그 응답은 보상을 못 받고, 정책은 검증기가 알아보는 형식으로 답을 쓰는 법을 함께 배운다.
 
 <Callout type="example">
-**검증기의 판정 세 가지.** 정답이 $\frac{1}{2}$인 문제에 대한 응답 세 개를 보자.
+**검증기의 판정 세 가지.** 교육용으로 `\boxed{}` 안의 내용만 답으로 추출하고 수치 동치를 판정하는 단순한 검증기를 가정한다(위의 Math-Verify는 더 넓은 형식을 다룬다). 정답이 $\frac{1}{2}$인 문제에 대한 응답 세 개를 보자.
 
 | 응답의 마지막 줄 | 추출된 답 | 판정 | 보상 |
 |---|---|---|---|
 | "따라서 답은 $\boxed{0.5}$이다." | $0.5$ | $\frac{1}{2}$와 수치 동치 | $\alpha$ |
 | "따라서 답은 $\boxed{\frac{2}{3}}$이다." | $\frac{2}{3}$ | 불일치 | 0 |
-| "따라서 확률은 1/2, 즉 50%다." | 추출 실패 또는 $50$ | 판정 불가 또는 불일치 | 0 |
+| "따라서 확률은 1/2, 즉 50%다." | 추출 실패 | 판정 불가 | 0 |
 
-셋째 응답은 풀이가 맞지만 검증기가 정한 형식(`\boxed{}`)이 없어 보상을 받지 못한다. 이런 응답이 많으면 정책은 형식을 배우고, 검증기가 형식에 관대하면 다른 허점이 생긴다. 검증기의 설계는 보상의 설계다.
+셋째 응답은 풀이가 맞지만 이 검증기가 정한 형식이 없어 보상을 받지 못한다. 이런 응답이 많으면 정책은 형식을 배우고, 검증기가 형식에 관대하면 다른 허점이 생긴다. 검증기의 설계는 보상의 설계다.
 </Callout>
 
-### 2-3. Outcome 보상과 process 보상
+### 2-4. Outcome 보상과 process 보상
 
-위의 보상은 응답 전체에 한 번 주어지는 **outcome 보상**이다. 풀이의 중간 단계가 틀렸어도 최종 답만 맞으면 보상을 받고, 긴 풀이의 어느 단계가 기여했는지는 알 수 없다. Lightman 등은 2023년에 풀이의 각 단계에 사람이 정오를 표시한 PRM800K 데이터로 <strong>process reward model(PRM)</strong>을 학습해, MATH 테스트 부분집합에서 outcome 감독보다 높은 78%의 정답률을 보고했다.[^prm] 단계별 보상은 더 조밀한 학습 신호를 주고 틀린 중간 과정에 벌점을 줄 수 있다.
+보상은 출처(검증기인가 학습된 모델인가)와 별개로 **부여 단위**로도 나뉜다. 위의 보상은 응답 전체에 한 번 주어지는 **outcome 보상**이다. 풀이의 중간 단계가 틀렸어도 최종 답만 맞으면 보상을 받고, 긴 풀이의 어느 단계가 기여했는지는 알 수 없다. Lightman 등은 2023년에 풀이의 각 단계에 사람이 정오를 표시한 PRM800K 데이터로 <strong>process reward model(PRM)</strong>을 학습했다. 문제마다 생성한 후보 풀이 1,860개 중 reward model 점수가 가장 높은 것을 고르는 평가에서 PRM은 MATH 테스트 부분집합의 78.2%를 맞혔고, 같은 방식의 outcome reward model은 72.4%였다(원논문 Figure 3).[^prm] 이것은 추론 시 후보 선택의 결과이지 RL로 정책을 학습한 결과가 아니지만, 단계별 보상이 더 조밀한 학습 신호가 될 수 있고 틀린 중간 과정에 벌점을 줄 수 있다는 기대의 근거가 되었다.
 
 그런데 DeepSeek-R1 팀은 대규모 RL에서 PRM을 시도한 결과를 실패 사례로 보고했다. 일반적인 추론에서 "단계"를 어떻게 나눌지 정하기 어렵고, 중간 단계의 정오를 자동으로 판정하기 어려우며, PRM이 reward hacking을 부르면 다시 학습해야 해서 파이프라인이 복잡해진다는 세 가지 이유였다(원논문 부록의 unsuccessful attempts).[^r1] R1 계열은 outcome 보상만 쓰고, 긴 사고 과정은 보상이 아니라 RL의 결과로 나타나게 두었다. Outcome과 process 중 어느 쪽이 나은가는 서베이 §4.5가 열린 문제로 정리하며, 이 노트는 outcome 보상으로 무엇이 가능했는지를 §3에서 본다.
 
@@ -67,9 +78,9 @@ $$
 
 ### 3-1. R1-Zero: SFT 없이 RL만으로
 
-DeepSeek-R1-Zero는 DeepSeek-V3-Base에서 출발해 SFT 없이 §2-1의 규칙 보상과 GRPO로 학습한 모델이다. 프롬프트 템플릿은 사고 과정을 `<think>` 태그에, 답을 `<answer>` 태그에 쓰라는 지시뿐이었고, 어떻게 추론하라는 예시는 주지 않았다.[^r1] 학습이 진행되면서 AIME 2024의 pass@1이 15.6%에서 77.9%로 올랐고, 응답 16개의 다수결(self-consistency)로는 86.7%였다(원논문 v2 Figure 1(a)).[^r1] 같은 기간 응답의 길이가 계속 늘었고(Figure 1(b)), 모델은 앞의 풀이를 되돌아보고 다른 접근을 시도하는 행동을 스스로 보이기 시작했다. 저자들은 이를 "aha moment"라고 불렀다. 어느 것도 데이터로 가르치지 않았고, 정답에 보상을 주자 나타났다.<Sidenote>arXiv v1(2025년 1월)의 같은 곡선은 71.0%까지였다. v2(2026년 1월, Nature 게재판)는 학습을 더 진행한 결과를 실었으므로 두 값을 한 곡선으로 합치지 않는다.</Sidenote>
+DeepSeek-R1-Zero는 DeepSeek-V3-Base에서 출발해 추론 시연의 SFT 없이 §2-1의 규칙 보상과 GRPO로 학습한 모델이다. 프롬프트 템플릿은 사고 과정을 `<think>` 태그에, 답을 `<answer>` 태그에 쓰라는 구조 지시뿐이었고 형식 보상이 그 구조를 강화했으며, 어떻게 추론하라는 예시는 주지 않았다.[^r1] 학습이 진행되면서 AIME 2024의 pass@1이 15.6%에서 77.9%로 올랐고, 응답 16개의 다수결(self-consistency)로는 86.7%였다(원논문 v2 Figure 1(a)).[^r1] 같은 기간 응답의 길이가 계속 늘었고(Figure 1(b)), 모델은 앞의 풀이를 되돌아보고 다른 접근을 시도하는 행동을 스스로 보이기 시작했다. 저자들은 이를 "aha moment"라고 불렀다. 추론 시연을 데이터로 가르치지 않았는데, 구조 지시와 규칙 보상만으로 이런 행동이 늘어난 것이다. 다만 base model이 pre-training에서 관련 행동을 전혀 배우지 않았다는 뜻은 아니며, [04a §1-2](/lecture/2026f-advanced-deep-learning/04a-sft/)에서 본 것처럼 출발점의 차이는 결과에 들어 있다.<Sidenote>arXiv v1(2025년 1월)의 같은 곡선은 71.0%까지였다. v2(2026년 1월, Nature 게재판)는 학습을 더 진행한 결과를 실었으므로 두 값을 한 곡선으로 합치지 않는다.</Sidenote>
 
-이것이 R1이 "혁신"으로 불리는 이유다. [04a §5-3](/lecture/2026f-advanced-deep-learning/04a-sft/)에서 SFT는 긴 사고 과정의 형식을 가르치는 cold start 역할이라고 했는데, R1-Zero는 그 형식조차 가르치지 않은 base model이 검증 가능한 보상만으로 긴 추론에 도달함을 보였다. 무엇이 어떻게 달라졌는지, 즉 길이의 증가와 반성·검증 행동이 정말 능력의 증가인지는 [05b](/lecture/2026f-advanced-deep-learning/05b-long-cot/)에서 따로 다룬다.
+이것이 R1이 "혁신"으로 불리는 이유다. [04a §5-3](/lecture/2026f-advanced-deep-learning/04a-sft/)에서 SFT는 긴 사고 과정의 형식을 가르치는 cold start 역할이라고 했는데, R1-Zero는 그 SFT 없이도 base model이 구조 지시와 검증 가능한 보상만으로 긴 추론에 도달함을 보였다. 무엇이 어떻게 달라졌는지, 즉 길이의 증가와 반성·검증 행동이 정말 능력의 증가인지는 [05b](/lecture/2026f-advanced-deep-learning/05b-long-cot/)에서 따로 다룬다.
 
 ### 3-2. R1-Zero의 문제와 R1의 네 단계
 
@@ -78,7 +89,7 @@ R1-Zero의 출력은 읽기 어려웠다. 사고 과정에 영어와 중국어�
 | 단계 | 내용 | 역할 |
 |---|---|---|
 | 1. Cold start SFT | 읽기 좋은 긴 추론 예시 수천 개로 base model을 SFT | 형식과 가독성의 출발점 (04a §5-3) |
-| 2. 추론 RL | §2-1의 보상에 언어 일관성 보상을 더해 RL | 추론 능력, 언어 섞임 억제 |
+| 2. 추론 RL | §2-1의 보상에 언어 일관성 보상(사고 과정의 단어 중 목표 언어 단어의 비율)을 더해 RL | 추론 능력, 언어 섞임 억제 |
 | 3. Rejection sampling과 SFT | 2단계 모델로 추론 데이터 약 60만 건을 생성해 고르고, 일반 과제 데이터 약 20만 건과 합쳐 base model을 다시 SFT | 추론 능력을 일반 과제와 합침 |
 | 4. 전 과제 RL | 추론 과제는 규칙 보상, 일반 과제는 reward model 보상으로 RL | 사람의 선호와 안전성 |
 
@@ -86,7 +97,7 @@ R1-Zero의 출력은 읽기 어려웠다. 사고 과정에 영어와 중국어�
 
 ### 3-3. 데이터의 규모
 
-RLVR의 프롬프트는 SFT 데이터보다 훨씬 적다. Qwen3의 reasoning RL은 학습 가능성과 난이도로 걸러 낸 3,995개의 문제·검증기 쌍으로 진행되었고, Qwen3-235B-A22B의 AIME 2024 점수는 170 스텝 동안 70.1에서 85.1로 올랐다.[^qwen3] Tülu 3의 RLVR도 GSM8K·MATH·IFEval 세 과제의 프롬프트만 썼다.[^tulu3] 프롬프트 하나에서 응답을 여러 개 생성해 검증하므로, 데이터의 양보다 **문제가 현재 모델에게 풀 수 있으면서 어려운가**가 중요하다. 너무 쉬우면 모든 응답이 보상을 받아 학습 신호가 없고, 너무 어려우면 아무 응답도 받지 못한다. 이 조건이 05c의 GRPO 그룹 구성과 곧바로 이어진다.
+RLVR의 프롬프트는 SFT 데이터보다 훨씬 적다. Qwen3의 reasoning RL은 학습 가능성과 난이도로 걸러 낸 3,995개의 문제·검증기 쌍으로 진행되었고, Qwen3-235B-A22B의 AIME 2024 점수는 170 스텝 동안 70.1에서 85.1로 올랐다.[^qwen3] Tülu 3의 RLVR도 GSM8K·MATH·IFEval 세 과제의 프롬프트만 썼다.[^tulu3] 프롬프트 하나에서 응답을 여러 개 생성해 검증하므로, 데이터의 양보다 **문제가 현재 모델에게 풀 수 있으면서 어려운가**가 중요하다. 정확성 보상만으로 같은 문제의 응답들 사이의 상대적 advantage를 계산하는 GRPO 계열에서는 이것이 직접 보인다. 응답 넷의 보상이 $[1,1,1,1]$이거나 $[0,0,0,0]$이면 응답 사이에 차이가 없어 학습 신호가 없고, $[1,0,1,0]$이어야 어느 응답이 나은지가 드러난다. 계산은 [05c](/lecture/2026f-advanced-deep-learning/05c-policy-optimization/)에서 하고, Tülu 3처럼 value model을 쓰는 PPO에서는 사정이 다르다.
 
 ## 4. RLVR의 자리
 
@@ -96,7 +107,7 @@ Tülu 3 8B에서 DPO checkpoint에 RLVR을 더하자 GSM8K가 84.3에서 87.6으
 
 ### 4-2. Base model에서 직접
 
-R1-Zero의 경로, 즉 SFT 없이 base model에 RLVR을 적용하는 실험은 이후 "RL-Zero"라는 이름으로 이어졌다. Olmo 3 RL-Zero는 pre-training과 mid-training 데이터가 모두 공개된 base model에서 수학·코드·지시 따르기·일반 추론의 네 영역에 대해 이 실험을 했다. 저자들이 밝힌 목적은 RLVR의 과학이다. 공개 가중치 모델은 pre-training 데이터를 공개하지 않으므로, RL 뒤의 성능이 RL의 효과인지 pre-training에 이미 들어 있던 능력이 드러난 것인지 구분할 수 없었다.[^olmo3] 이 질문은 [05b](/lecture/2026f-advanced-deep-learning/05b-long-cot/)에서 "RL이 새 능력을 만드는가"라는 논쟁으로 이어진다.
+R1-Zero의 경로, 즉 SFT 없이 base model에 RLVR을 적용하는 실험은 이후 "RL-Zero"라는 이름으로 이어졌다. Olmo 3 RL-Zero는 pre-training과 mid-training 데이터가 모두 공개된 base model에서 수학·코드·정밀한 지시 따르기·일반 대화의 네 영역과 그 혼합에 대해 이 실험을 했다(원논문 §6.1). 저자들이 밝힌 목적은 RLVR의 과학이다. 공개 가중치 모델은 pre-training 데이터를 공개하지 않으므로, RL 뒤의 성능이 RL의 효과인지 pre-training에 이미 들어 있던 능력이 드러난 것인지 구분할 수 없었다.[^olmo3] 이 질문은 [05b](/lecture/2026f-advanced-deep-learning/05b-long-cot/)에서 "RL이 새 능력을 만드는가"라는 논쟁으로 이어진다.
 
 ### 4-3. 보상이 정말 정답에서 오는가
 
@@ -108,7 +119,7 @@ RLVR의 효과가 검증기의 정답 신호에서 온다는 가정에 대한 �
 
 - **검증기가 정답을 정답으로 알아보는가.** §2-2의 추출·동치 문제다. 못 알아보면 정책은 검증기의 형식을 배운다.
 - **검증기가 확인하는 것이 원하는 것과 같은가.** 04d §5의 IFEval 형식 조건과 규칙 귀납 과제가 반례다. 조건만 확인하면 조건만 만족하는 응답이 나온다.
-- **문제와 정답이 학습 데이터에 없는가.** 검증기는 정답을 알고 있으므로, 정답이 유출된 문제에서는 검증이 암기를 보상한다.
+- **평가 문제가 학습 데이터와 겹치지 않는가, 정답 정보가 정책의 입력에 새지 않는가.** RLVR의 학습 문제·정답은 당연히 학습 데이터다. 문제는 평가 문제가 pre-training·SFT·RL 데이터에 들어 있어 검증이 암기를 보상하는 경우와, 정답 정보가 프롬프트에 노출되는 경우다. 보상이 정답 여부를 정확히 재는 것과 평가가 일반화를 입증하는 것은 다른 조건이다.
 - **보상이 실제로 학습 신호를 주는가.** §4-3의 무작위 보상 결과는 점수 상승의 일부가 보상과 무관한 최적화 효과일 수 있음을 보여 준다.
 
 검증기는 보상의 출처를 사람의 판단에서 프로그램으로 옮겼다. 04d의 결론대로 그것은 대리 지표를 바꾼 것이지 없앤 것이 아니다. 다만 수학과 코드에서는 그 대리 지표가 충분히 정확해, 정책이 base model에서 긴 추론에 이르기까지 최적화를 밀어붙일 수 있었다. 그 최적화가 무엇을 만들었는지가 다음 노트다.
