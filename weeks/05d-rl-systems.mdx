@@ -4,7 +4,7 @@ week: 5
 order: 3
 ---
 
-[05c](/lecture/2026f-advanced-deep-learning/05c-policy-optimization/)의 목적함수는 응답을 생성한 정책과 갱신 중인 정책이 같다고 가정하거나, 그 차이를 확률비로 보정한다. 실제 학습 시스템에서 이 가정은 두 가지 이유로 깨진다. 응답 생성이 학습보다 훨씬 오래 걸려서 생성과 학습을 분리하고 겹치게 되면 응답을 만든 정책이 몇 스텝 전의 것이 되고, 생성을 맡는 inference engine과 학습 커널이 같은 가중치로 다른 확률을 계산한다. 이 노트는 RLVR(reinforcement learning with verifiable rewards) 학습의 시간이 어디에 쓰이는지에서 출발해, 그 시간을 줄이려는 시스템 설계가 어떤 순서로 발전했고 그 과정에서 통계적 정확성과 처리량이 어떻게 충돌하는지를 따라간다. [2주차 Training engineering 노트](/lecture/2026f-advanced-deep-learning/02e-training-engineering/)가 학습 한 스텝의 병렬화를 다뤘다면, 이 노트는 그 스텝 앞에 붙는 생성 단계가 만드는 문제를 다룬다. Inference engine 내부(KV cache 관리, batching, 커널)는 [6주차](/lecture/2026f-advanced-deep-learning/06a-llm-inference/)에서 보고, 여기서는 그것을 RL 학습에 어떻게 끼워 넣는지만 본다.
+[05c](/lecture/2026f-advanced-deep-learning/05c-policy-optimization/)의 목적함수는 응답을 생성한 정책과 갱신 중인 정책이 같다고 가정하거나, 그 차이를 확률비로 보정한다. 실제 학습 시스템에서 이 가정은 두 가지 이유로 깨진다. 응답 생성이 학습보다 훨씬 오래 걸려서 생성과 학습을 분리하고 겹치는 일반적인 비동기 설계에서는 응답을 만든 정책이 몇 스텝 전의 것이 되고, 생성을 맡는 inference engine과 학습 커널이 같은 가중치로 다른 확률을 계산한다. 이 노트는 RLVR(reinforcement learning with verifiable rewards) 학습의 시간이 어디에 쓰이는지에서 출발해, 그 시간을 줄이려는 시스템 설계가 어떤 순서로 발전했고 그 과정에서 통계적 정확성과 처리량이 어떻게 충돌하는지를 따라간다. [2주차 Training engineering 노트](/lecture/2026f-advanced-deep-learning/02e-training-engineering/)가 학습 한 스텝의 병렬화를 다뤘다면, 이 노트는 그 스텝 앞에 붙는 생성 단계가 만드는 문제를 다룬다. Inference engine 내부(KV cache 관리, batching, 커널)는 [6주차](/lecture/2026f-advanced-deep-learning/06a-llm-inference/)에서 보고, 여기서는 그것을 RL 학습에 어떻게 끼워 넣는지만 본다.
 
 전체 지도는 Gholipour 등이 2026년에 정리한 rollout 효율 서베이[^survey]로 잡는다. §3이 학습용 rollout이 서비스용 추론과 어떻게 다른지, §5가 프레임워크·비동기 분리·자원 배치·스케줄링을, §6.3이 바뀐 rollout 과정에서 추정량이 여전히 맞는지를 다룬다. [05a](/lecture/2026f-advanced-deep-learning/05a-rlvr/)의 Zhang 등 서베이 §5.3도 학습 자원을 정리하며 보조 지도가 된다.[^rlsurvey]
 
@@ -12,7 +12,7 @@ order: 3
 
 ### 1-1. 한 스텝의 구조
 
-[05a §2-2](/lecture/2026f-advanced-deep-learning/05a-rlvr/)의 학습 절차를 시간 축으로 다시 보자. 한 스텝은 프롬프트 배치에 대해 (1) 응답을 생성하고, (2) 검증기나 reward model로 보상을 매기고, (3) 정책의 forward·backward로 gradient를 계산해 갱신하고, (4) 갱신된 가중치를 생성 쪽에 반영하는 네 단계다. [04b §3-4](/lecture/2026f-advanced-deep-learning/04b-rlhf/)의 흐름과 같지만, 긴 추론에서는 (1)의 비중이 압도적이다. 응답 하나가 수천에서 수만 토큰이고, 토큰 하나를 만드는 decode 스텝은 가중치 전체를 읽는 memory-bound 연산이기 때문이다(06a §6).
+[05a §2-2](/lecture/2026f-advanced-deep-learning/05a-rlvr/)의 학습 절차를 시간 축으로 다시 보자. 한 스텝은 프롬프트 배치에 대해 (1) 응답을 생성하고, (2) 검증기나 reward model로 보상을 매기고, (3) 정책의 forward·backward로 gradient를 계산해 갱신하고, (4) 갱신된 가중치를 생성 쪽에 반영하는 네 단계다. [04b §3-4](/lecture/2026f-advanced-deep-learning/04b-rlhf/)의 흐름과 같지만, 긴 추론에서는 (1)의 비중이 압도적이다. 응답 하나가 수천에서 수만 토큰이고, 토큰 하나를 만드는 decode 스텝은 배치가 충분히 크지 않은 한 가중치 전체를 읽는 memory-bound 연산이기 때문이다(06a §6).
 
 서베이는 여러 측정을 모아 rollout 생성이 스텝 시간의 약 70%, 85%, 긴 출력에서는 90% 이상을 차지한다는 앞선 보고와, 저자들 자신의 측정에서 기본 작업의 49%, 긴 사고 사슬 작업의 58%를 차지했다는 결과를 함께 전한다.[^survey] 비율은 모델·응답 길이·하드웨어에 따라 다르지만, 어느 경우든 생성이 학습보다 짧지 않다.
 
@@ -30,7 +30,7 @@ order: 3
 
 가장 단순한 설계는 같은 GPU들이 생성과 학습을 번갈아 하는 것이다. 생성 단계에서는 정책 가중치를 inference engine에 싣고, 학습 단계에서는 같은 가중치로 gradient를 계산한다. 문제는 두 단계의 병렬화가 다르다는 점이다. 학습은 02e에서 본 것처럼 메모리를 위해 가중치를 잘게 나누고(FSDP·tensor parallel), 생성은 지연을 위해 다르게 나눈다. 스텝마다 가중치를 한 배치에서 다른 배치로 옮기면 그 통신과 메모리 복사가 비용이 된다.
 
-Sheng 등의 HybridFlow는 이 문제를 프로그래밍 모델과 엔진 두 층에서 풀었다.[^hybridflow] RLHF의 dataflow는 정책·value·reference·reward model 여러 개가 생성·추론·학습 단계를 오가는 구조인데, 전체 흐름을 하나의 제어기가 조율하는 single-controller 방식은 유연하지만 분산 실행의 지시 비용이 크고, 각 GPU가 스스로 실행하는 multi-controller 방식은 빠르지만 새 알고리즘을 짜기 어렵다. HybridFlow는 모델 사이의 데이터 이동과 실행 순서는 single-controller가, 모델 안의 병렬 실행은 multi-controller가 맡게 했다. 그리고 3D-HybridEngine이 정책 모델을 학습용 병렬화와 생성용 병렬화 사이에서 메모리 중복 없이 재분할(reshard)하도록 했다. 기존 프레임워크 대비 처리량이 1.53배에서 20.57배 올랐고, 이 시스템이 verl이라는 이름으로 공개되어 [05c](/lecture/2026f-advanced-deep-learning/05c-policy-optimization/)의 DAPO를 비롯한 많은 RLVR 연구의 기반이 되었다.[^hybridflow][^dapo]
+Sheng 등의 HybridFlow는 이 문제를 프로그래밍 모델과 엔진 두 층에서 풀었다.[^hybridflow] RLHF의 dataflow는 정책·value·reference·reward model 여러 개가 생성·추론·학습 단계를 오가는 구조인데, 전체 흐름을 하나의 제어기가 조율하는 single-controller 방식은 유연하지만 분산 실행의 지시 비용이 크고, 각 GPU가 스스로 실행하는 multi-controller 방식은 빠르지만 새 알고리즘을 짜기 어렵다. HybridFlow는 모델 사이의 데이터 이동과 실행 순서는 single-controller가, 모델 안의 병렬 실행은 multi-controller가 맡게 했다. 그리고 3D-HybridEngine이 정책 모델을 학습용 병렬화와 생성용 병렬화 사이에서 메모리 중복 없이 재분할(reshard)하도록 했다. 기존 프레임워크 대비 처리량이 1.53배에서 20.57배 올랐고, 이 시스템이 verl이라는 이름으로 공개되었고, [05c](/lecture/2026f-advanced-deep-learning/05c-policy-optimization/)의 DAPO도 verl 위에서 구현되었다.[^hybridflow][^dapo]
 
 ### 2-2. 동기식의 한계
 
@@ -42,7 +42,7 @@ Sheng 등의 HybridFlow는 이 문제를 프로그래밍 모델과 엔진 두 �
 
 다음 단계는 생성과 학습을 다른 GPU에 두고 동시에 돌리는 것이다. 생성 worker는 쉬지 않고 응답을 만들고, 학습 worker는 응답이 충분히 모이면 갱신하며, 새 가중치를 생성 쪽에 주기적으로 보낸다. Noukhovitch 등은 이 분리가 8B 모델의 RLHF를 성능 저하 없이 약 40% 빠르게 했고, 갱신 알고리즘 중 online DPO(direct preference optimization)가 오래된 데이터에 가장 강건했다고 보고했다.[^async-rlhf]
 
-Fu 등의 AReaL은 이 설계를 긴 추론에 맞춰 밀어붙였다.[^areal] 생성 worker는 요청이 끝날 때마다 새 요청을 받으므로 긴 응답 하나가 배치를 붙잡지 않고, 학습 worker는 완성된 응답이 배치만큼 모이면 바로 갱신한다. 새 가중치는 생성 중인 요청에도 반영되어, 한 응답 안에 서로 다른 정책 버전이 만든 구간이 섞일 수 있다. 수학과 코드 과제에서 동기식 대비 최대 2.77배 빨랐고 정확도는 같거나 높았다.[^areal] Allen AI의 Olmo 3도 vLLM 생성 worker와 학습기를 분리한 비동기 구조에 continuous batching과 in-flight 가중치 갱신을 결합했고, 보상이 모두 같아 gradient가 0인 프롬프트를 걸러 배치를 채우는 active sampling으로 동기식 대비 4배 속도를 보고했다.[^olmo3] StaleFlow처럼 생성·보상 계산·학습을 세 종류의 자원으로 완전히 분리한 설계도 있다.[^staleflow]
+Fu 등의 AReaL은 이 설계를 긴 추론에 맞춰 밀어붙였다.[^areal] 생성 worker는 요청이 끝날 때마다 새 요청을 받으므로 긴 응답 하나가 배치를 붙잡지 않고, 학습 worker는 완성된 응답이 배치만큼 모이면 바로 갱신한다. 새 가중치는 생성 중인 요청에도 반영되어, 한 응답 안에 서로 다른 정책 버전이 만든 구간이 섞일 수 있다. 수학과 코드 과제에서 동기식 대비 최대 2.77배 빨랐고 정확도는 같거나 높았다.[^areal] Allen AI의 Olmo 3도 vLLM 생성 worker와 학습기를 분리한 비동기 구조에 continuous batching과 in-flight 가중치 갱신을 결합했고, 보상이 모두 같아 gradient가 0인 프롬프트를 걸러 배치를 채우는 active sampling을 더해, 같은 자원에서 생성 완료를 기다리고 가중치를 동기식으로 갱신하는 구성 대비 최대 4배의 속도를 보고했다.[^olmo3] StaleFlow처럼 생성·보상 계산·학습을 세 종류의 자원으로 완전히 분리한 설계도 있다.[^staleflow]
 
 ### 3-2. 오래된 데이터라는 대가
 
@@ -53,7 +53,7 @@ Fu 등의 AReaL은 이 설계를 긴 추론에 맞춰 밀어붙였다.[^areal] �
 | 동기식, 같은 GPU | 번갈아 실행, 매 스텝 재분할 | 직전 정책 하나 | HybridFlow(verl)[^hybridflow] |
 | 동기식, 분리 | 번갈아 실행, 한쪽이 놂 | 직전 정책 하나 | 초기 RLHF 구현 |
 | 한 스텝 지연 | 다음 배치 생성과 현재 배치 학습을 겹침 | 한 스텝 전 정책 | 서베이 §5.2의 one-step lag[^survey] |
-| 완전 비동기 | 독립 실행, staleness 상한 | 여러 버전, 한 응답 안에서도 섞임 | AReaL[^areal], Olmo 3[^olmo3] |
+| 완전 비동기 | 독립 실행. AReaL은 staleness 상한을 둠 | 여러 버전, 한 응답 안에서도 섞임 | AReaL[^areal], Olmo 3[^olmo3] |
 
 ## 4. 같은 가중치, 다른 확률
 
@@ -63,12 +63,12 @@ Staleness가 없어도 off-policy가 생기는 경로가 하나 더 있다. 생�
 
 ### 4-2. 보정과 근본 대응
 
-첫째 대응은 05c의 도구다. 갱신 비율 $\pi_\theta/\pi_{\theta_{\mathrm{old}}}$와 별도로, 학습기가 계산한 옛 정책 확률과 엔진이 생성 때 기록한 확률의 비 $\pi_{\theta_{\mathrm{old}}}^{\mathrm{trainer}}/\pi_{\theta_{\mathrm{old}}}^{\mathrm{engine}}$를 importance sampling 가중치로 곱하되 상한에서 자르는 truncated importance sampling이다. Olmo 3는 RL 목적함수에 이 두 비율을 따로 두고 vLLM과 학습기 사이의 잘린 확률비를 명시했다(원논문 식 (1)).[^olmo3] Qi 등은 이런 보정이 편향을 줄이지만 분산을 키우고, 그들이 분석한 GRPO 보정 구현에서는 옛 정책의 학습기 확률을 얻는 추가 forward 때문에 학습 계산이 약 25% 늘며(backward를 forward의 두 배로 둔 추산), 학습기에 맞춰 최적화된 파라미터가 엔진에서는 최적이 아닌 "배포 간격"을 닫지 못한다고 지적했다.[^fp16]
+첫째 대응은 05c의 도구다. 갱신 비율 $\pi_\theta/\pi_{\theta_{\mathrm{old}}}$와 별도로, 학습기가 계산한 옛 정책 확률과 엔진이 생성 때 기록한 확률의 비 $\pi_{\theta_{\mathrm{old}}}^{\mathrm{trainer}}/\pi_{\theta_{\mathrm{old}}}^{\mathrm{engine}}$를 importance sampling 가중치로 곱하되 상한에서 자르는 truncated importance sampling이다. Olmo 3는 RL 목적함수에 이 두 비율을 따로 두고 vLLM과 학습기 사이의 잘린 확률비를 명시했다(원논문 식 (1)).[^olmo3] Qi 등은 정확한 importance sampling은 분산이 커서 쓰기 어렵고 상한에서 자르는 truncation은 분산을 줄이는 대신 편향을 남기며, 그들이 분석한 GRPO 보정 구현에서는 옛 정책의 학습기 확률을 얻는 추가 forward 때문에 학습 계산이 약 25% 늘며(backward를 forward의 두 배로 둔 추산), 학습기에 맞춰 최적화된 파라미터가 엔진에서는 최적이 아닌 "배포 간격"을 닫지 못한다고 지적했다.[^fp16]
 
-둘째 대응은 불일치의 원인인 정밀도를 바꾸는 것이다. Qi 등은 학습과 생성 모두를 가수부가 10비트인 FP16으로 바꾸면 응답 단위 확률의 불일치가 BF16 대비 약 24분의 1로 줄고, 여러 알고리즘·모델·MoE(mixture of experts)·LoRA(low-rank adaptation) 설정에서 학습이 더 안정적이고 빠르게 수렴했다고 보고했다. 모델이 모든 문제를 맞힐 수 있는 MATH 부분집합으로 만든 sanity test에서 FP16은 학습 정확도 약 99%에 이른 반면 BF16 기반은 73–88%에서 무너졌다.[^fp16] [02e](/lecture/2026f-advanced-deep-learning/02e-training-engineering/)에서 BF16을 학습의 기본 정밀도로 본 이유가 넓은 지수 범위였는데, RL의 생성·학습 일치라는 새 조건에서는 다른 선택이 나올 수 있다는 사례다.
+둘째 대응은 불일치의 원인인 정밀도를 바꾸는 것이다. Qi 등은 학습과 생성 모두를 가수부가 10비트인 FP16으로 바꾸면 응답 단위 확률의 불일치가 BF16 대비 약 24분의 1로 줄고, 여러 알고리즘·모델·MoE(mixture of experts)·LoRA(low-rank adaptation) 설정에서 학습이 더 안정적이고 빠르게 수렴했다고 보고했다. 모델이 모든 문제를 맞힐 수 있는 MATH 부분집합으로 만든 sanity test에서 FP16은 학습 정확도 약 99%에 이른 반면, BF16의 GRPO와 토큰 단위 truncated importance sampling은 73–88%에서 무너졌고 BF16에서도 응답 단위 보정(sequence-MIS)은 약 95%로 안정적이었다.[^fp16] [02e](/lecture/2026f-advanced-deep-learning/02e-training-engineering/)에서 BF16을 학습의 기본 정밀도로 본 이유가 넓은 지수 범위였는데, RL의 생성·학습 일치라는 새 조건에서는 다른 선택이 나올 수 있다는 사례다.
 
 <Callout type="warning">
-§3의 staleness와 §4의 수치 불일치는 다른 원인이다. 전자는 응답을 만든 정책이 **다른 버전**이고, 후자는 **같은 버전**인데 확률 계산이 다르다. 둘 다 05c의 확률비로 보정할 수 있지만, 전자는 시스템의 겹치기 정도로, 후자는 정밀도와 커널로 조절한다. 학습 곡선이 무너졌을 때 어느 쪽인지 가르려면 두 가지를 따로 재야 한다. 수치 불일치는 같은 checkpoint·같은 prefix·같은 확률 정의로 엔진과 학습기의 토큰 확률을 비교해서, 정책 변화는 같은 계산 경로에서 응답을 만든 버전과 현재 checkpoint의 확률을 비교해서 잰다. 그러려면 생성 당시의 정책 버전과 토큰 log 확률을 기록해 두어야 한다.
+§3의 staleness와 §4의 수치 불일치는 다른 원인이다. 전자는 응답을 만든 정책이 **다른 버전**이고, 후자는 **같은 버전**인데 확률 계산이 다르다. 둘 다 05c의 확률비로 보정할 수 있지만, 전자는 시스템의 겹치기 정도로, 후자는 정밀도와 커널로 조절한다. 학습 곡선이 무너졌을 때 어느 쪽인지 가르려면 두 가지를 따로 재야 한다. 수치 불일치는 같은 가중치 버전·같은 prefix·같은 확률 정의로 엔진과 학습기의 토큰 확률을 비교해서, 정책 변화는 같은 계산 경로에서 응답을 만든 버전과 현재 checkpoint의 확률을 비교해서 잰다. 그러려면 생성 당시의 정책 버전과 토큰 log 확률을 기록해 두어야 한다.
 </Callout>
 
 ## 5. 정리
