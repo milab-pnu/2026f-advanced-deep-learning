@@ -22,7 +22,7 @@ Distillation은 Hinton 등이 2015년에 정리한 개념이다. 큰 모델(또�
 
 ### 1-3. 노출 편향
 
-Off-policy distillation의 문제는 04a §5-2에서 예고했다. 학생은 teacher가 쓴 응답의 앞부분을 조건으로 다음 토큰을 배우므로, 자기가 실제로 생성했을 법한 문맥, 특히 자기가 실수한 뒤의 문맥은 학습 때 보지 못한다. 추론 때 한 번 teacher와 다른 길로 가면 그 뒤는 학습하지 않은 영역이고, 오류가 오류를 부른다. 서베이 §2는 이 노출 편향으로 응답 길이 $T$에 대해 오류가 $O(\epsilon T^2)$로 누적될 수 있는 반면, 학생이 생성한 문맥에서 학습하면 $O(\epsilon T)$로 억제된다는 모방 학습(imitation learning)의 분석을 언어 모델에 옮긴다.[^survey] 긴 추론일수록 $T$가 크므로 이 차이가 커진다.
+Off-policy distillation의 문제는 04a §5-2에서 예고했다. 학생은 teacher가 쓴 응답의 앞부분을 조건으로 다음 토큰을 배우므로, 자기가 실제로 생성했을 법한 문맥, 특히 자기가 실수한 뒤의 문맥은 학습 때 보지 못한다. 추론 때 한 번 teacher와 다른 길로 가면 그 뒤는 학습하지 않은 영역이고, 오류가 오류를 부른다. 서베이 §2는 모방 학습(imitation learning)의 이론적 결과를 언어 모델에 옮긴다. 단계별 모방 오류를 $\epsilon$(학생이 놓이는 상태 분포에서 teacher와 다른 행동을 낼 확률)이라 할 때, teacher의 문맥만 학습하면 길이 $T$의 응답에서 오류가 $O(\epsilon T^2)$까지 누적될 수 있는 반면, 학생이 생성한 문맥에서 teacher가 그 상태에서도 적절한 행동을 알려 줄 수 있다는 조건 아래서는 $O(\epsilon T)$로 억제된다는 것이다.[^survey] 조건부 결과이지 LLM에서 보장된 효과는 아니지만, 긴 추론일수록 $T$가 크므로 이 차이의 의미가 커진다.
 
 두 번째 문제는 신호의 밀도다. Teacher가 쓴 응답 하나는 "이렇게 쓰라"는 한 경로만 보여 준다. 학생이 다른 길로 갔을 때 그 길이 얼마나 나쁜지, 어느 토큰에서 갈렸는지는 알려 주지 않는다.
 
@@ -30,7 +30,7 @@ Off-policy distillation의 문제는 04a §5-2에서 예고했다. 학생은 tea
 
 ### 2-1. 학생이 만든 문맥에서 teacher의 분포를 맞추기
 
-Agarwal 등의 GKD(generalized knowledge distillation)는 이 두 문제를 한 번에 겨냥했다.[^gkd] 학생이 프롬프트에 대해 응답을 **직접 생성**하고, 그 응답의 각 위치에서 teacher의 다음 토큰 분포를 계산해, 학생의 분포가 teacher의 분포에 가까워지도록 학습한다. 표집 과정을 통해 역전파하지는 않으며, 손실은 토큰마다 두 분포 사이의 divergence다. 학생이 만든 문맥이므로 노출 편향이 없고, 토큰마다 teacher의 전체 분포를 받으므로 신호가 조밀하다. 04b·05a의 RL과 비교하면 응답 끝에 한 번 오는 스칼라 보상 대신 매 토큰에 벡터 신호가 온다.
+Agarwal 등의 GKD(generalized knowledge distillation)는 이 두 문제를 한 번에 겨냥했다.[^gkd] 학생이 프롬프트에 대해 응답을 **직접 생성**하고, 그 응답의 각 위치에서 teacher의 다음 토큰 분포를 계산해, 학생의 분포가 teacher의 분포에 가까워지도록 학습한다. 표집 과정을 통해 역전파하지는 않으며, 손실은 토큰마다 두 분포 사이의 divergence다. 학생이 만든 문맥이므로 teacher의 문맥만 학습하는 데서 오는 분포 불일치가 줄고, 토큰마다 teacher의 전체 분포를 받으므로 신호가 조밀하다. 04b·05a의 outcome 보상 RL과 비교하면 응답 끝에 한 번 오는 스칼라 보상 대신 매 토큰에 분포 전체의 신호가 온다.
 
 GKD는 두 축을 열어 두었다. 하나는 데이터의 혼합 비율 $\lambda$로, 학생 표본만 쓰면($\lambda=1$) on-policy이고 teacher 표본을 섞으면 그 사이다. 다른 하나는 divergence의 선택으로, forward KL(Kullback–Leibler) $\mathrm{KL}(\pi_T\,\|\,\pi_S)$, reverse KL $\mathrm{KL}(\pi_S\,\|\,\pi_T)$, 그 사이의 Jensen–Shannon divergence다. Reverse KL은 학생이 teacher의 한 봉우리를 골라 따라가는 mode-seeking 성질이라 높은 temperature에서 품질이 좋았고 다양성은 줄었으며, forward KL은 teacher의 분포 전체를 덮으려 해 다양성이 유지되는 대신 확률이 낮은 영역까지 퍼졌다.[^gkd] T5 계열 실험에서 on-policy GKD는 요약·번역·산술 추론 모두에서 teacher 응답을 SFT하는 방식을 앞섰다.[^gkd]
 
@@ -48,7 +48,7 @@ $$
 
 Qwen3는 작은 모델의 post-training을 이 방식으로 했다.[^qwen3] 먼저 teacher(Qwen3-32B와 235B-A22B)가 thinking·non-thinking 두 모드로 만든 응답을 SFT하는 **off-policy** 단계로 기본 추론과 모드 전환을 익히고, 다음으로 학생이 생성한 응답에서 teacher의 logit을 맞추는 **on-policy** 단계를 둔다. 같은 off-policy 단계를 거친 8B 모델에서 출발해 비교하면, RL을 한 경우 AIME 2024 67.6에 GPU 시간 17,920이었고, on-policy distillation을 한 경우 74.4에 1,800이었다(원논문 Table 21).[^qwen3] 이 비교는 보고서가 명시한 수학·코드 질의 실험에 한정되며, teacher가 이미 있는 상황의 비교다. Teacher를 만드는 RL 비용은 따로 든다.
 
-Thinking Machines의 2025년 글은 같은 방법을 세 학습 방식의 비교로 설명한다.[^tm] RL은 on-policy이지만 응답 끝에 한 번 오는 희소한 보상이고, off-policy distillation(teacher 응답의 SFT)은 조밀하지만 학생의 문맥이 아니며, on-policy distillation은 학생의 문맥에서 토큰마다 teacher의 신호를 받으므로 둘의 장점을 합친다. 그들의 구현은 토큰별 reverse KL로, 05c의 확률비 자리에 학생과 teacher의 log 확률 차이가 들어가는 형태다. 04c §3-1의 표현으로 정리하면, on-policy distillation은 **behavior policy가 학생 자신이고 감독 신호가 teacher의 분포**인 학습이다.
+Thinking Machines의 2025년 글은 같은 방법을 세 학습 방식의 비교로 설명한다.[^tm] 그 글이 비교하는 outcome 보상 RL은 on-policy이지만 응답 끝에 한 번 오는 희소한 보상이고, off-policy distillation(teacher 응답의 SFT)은 조밀하지만 학생의 문맥이 아니며, on-policy distillation은 학생의 문맥에서 토큰마다 teacher의 신호를 받으므로 둘의 장점을 합친다. 그들의 구현은 05c의 importance sampling 손실을 그대로 두고, 응답 단위 보상에서 계산하던 advantage 자리에 표집한 토큰의 $\log\pi_T-\log\pi_S$를 토큰별 advantage로 넣는다. §2-1의 예시가 어휘 전체의 KL을 계산한 것과 달리 여기서는 실제로 뽑힌 토큰 하나의 신호를 쓴다. 04c §3-1의 표현으로 정리하면, on-policy distillation은 **behavior policy가 학생 자신이고 감독 신호가 teacher의 분포**인 학습이다.
 
 ## 3. Multi-teacher distillation
 
@@ -58,46 +58,53 @@ Thinking Machines의 2025년 글은 같은 방법을 세 학습 방식의 비교
 
 ### 3-2. 영역별 teacher에게 라우팅
 
-Ma 등의 MOPD(multi-teacher on-policy distillation)는 이 문제를 on-policy distillation으로 푼다.[^mopd] 절차는 세 단계다. 일반 SFT로 공통 출발점을 만들고, 그 출발점에서 영역마다(수학은 검증 가능한 보상, 소프트웨어 공학은 sandbox agent 보상 등) 별도의 RL로 전문 teacher를 만든 뒤, 같은 출발점의 학생이 프롬프트마다 응답을 생성하면 그 프롬프트의 영역에 맞는 **고정된** teacher가 토큰별 reverse KL 신호를 준다. Teacher들은 서로 독립적으로, 병렬로 만들 수 있고, 학생은 가중치 평균이 아니라 정책 공간에서 영역별로 다른 teacher를 따른다. Qwen3-30B-A3B 실험에서 수학·지시 따르기·소프트웨어 공학의 정규화 점수는 MOPD 0.937로, 영역을 섞어 RL한 경우(0.882), 차례로 RL한 경우(0.775), teacher 응답을 off-policy로 SFT한 경우(0.824)보다 높았고, 세 영역 모두에서 teacher와의 격차를 91–95% 메웠다. 지시 따르기와 소프트웨어 공학에서는 각각 약 2.5만·3만 샘플로 teacher 수준에 도달한 반면 혼합 RL은 15만–18만 샘플이 필요했다.[^mopd] 토큰마다 오는 조밀한 신호가 궤적당 한 번 오는 보상보다 표본 효율이 높다는 것이 저자들의 설명이다.
+Ma 등의 MOPD(multi-teacher on-policy distillation)는 이 문제를 on-policy distillation으로 푼다.[^mopd] 절차는 세 단계다. 일반 SFT로 공통 출발점을 만들고, 그 출발점에서 영역마다(수학은 검증 가능한 보상, 소프트웨어 공학은 sandbox agent 보상 등) 별도의 RL로 전문 teacher를 만든 뒤, 같은 출발점의 학생이 프롬프트마다 응답을 생성하면 그 프롬프트의 영역에 맞는 **고정된** teacher가 토큰별 reverse KL 신호를 준다. Teacher들은 서로 독립적으로, 병렬로 만들 수 있고, 학생은 가중치 평균이 아니라 정책 공간에서 영역별로 다른 teacher를 따른다. Qwen3-30B-A3B 실험에서 영역별 점수를 SFT 출발점과 teacher 사이의 위치 $(s-s_{\mathrm{SFT}})/(s_{\mathrm{teacher}}-s_{\mathrm{SFT}})$로 정규화해 평균한 값은 MOPD 0.937로, 영역을 섞어 RL한 경우(0.882), 차례로 RL한 경우(0.775), teacher 응답을 off-policy로 SFT한 경우(0.824)보다 높았고, 세 영역 모두에서 출발점과 teacher 사이 격차의 91–95%를 메웠다(원논문 Table 2). 지시 따르기와 소프트웨어 공학에서는 학생의 학습 샘플 약 2.5만·3만 개로 teacher 수준에 도달한 반면 혼합 RL은 15만–18만 개가 필요했다(학습 곡선 기준이며, 전문 teacher를 만드는 비용은 제외한 비교다).[^mopd] 토큰마다 오는 조밀한 신호가 궤적당 한 번 오는 보상보다 표본 효율이 높다는 것이 저자들의 설명이다.
 
 <figure>
-<svg viewBox="0 0 560 300" role="img" aria-label="MOPD의 세 단계. 왼쪽 상자는 base model에서 일반 SFT로 만든 공통 출발점이다. 가운데에는 그 출발점에서 영역별 RL로 만든 세 teacher(수학 teacher, 지시 따르기 teacher, 소프트웨어 공학 teacher)가 위아래로 놓여 있고 각각 고정이라고 표시되어 있다. 오른쪽 상자는 같은 출발점에서 시작한 학생이다. 학생은 프롬프트에 대해 응답을 생성하고, 프롬프트의 영역에 따라 해당 teacher로 라우팅되어 토큰별 reverse KL 신호를 받는다. 화살표는 출발점에서 teacher들과 학생으로, 학생의 응답에서 teacher로, teacher의 신호에서 학생으로 이어진다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
-<text x="280" y="24" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">MOPD의 세 단계 (MOPD §3을 바탕으로 직접 구성)</text>
-<rect x="20" y="120" width="120" height="60" rx="8" fill="#f8fafc" stroke="#0f172a"/>
-<text x="80" y="145" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">1. 공통 출발점</text>
-<text x="80" y="165" font-size="12" text-anchor="middle" fill="#64748b">base → 일반 SFT</text>
-<rect x="220" y="50" width="130" height="44" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
-<text x="285" y="69" font-size="12" text-anchor="middle" fill="#0f172a">2. 수학 teacher</text>
-<text x="285" y="85" font-size="11" text-anchor="middle" fill="#64748b">검증 보상 RL · 고정</text>
-<rect x="220" y="128" width="130" height="44" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
-<text x="285" y="147" font-size="12" text-anchor="middle" fill="#0f172a">2. 지시 따르기 teacher</text>
-<text x="285" y="163" font-size="11" text-anchor="middle" fill="#64748b">규칙 보상 RL · 고정</text>
-<rect x="220" y="206" width="130" height="44" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
-<text x="285" y="225" font-size="12" text-anchor="middle" fill="#0f172a">2. 소프트웨어 teacher</text>
-<text x="285" y="241" font-size="11" text-anchor="middle" fill="#64748b">sandbox 보상 RL · 고정</text>
-<rect x="420" y="105" width="120" height="90" rx="8" fill="#f8fafc" stroke="#0f172a" stroke-width="2"/>
-<text x="480" y="130" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">3. 학생</text>
-<text x="480" y="150" font-size="11" text-anchor="middle" fill="#64748b">같은 출발점에서 시작</text>
-<text x="480" y="166" font-size="11" text-anchor="middle" fill="#64748b">응답을 직접 생성</text>
-<text x="480" y="182" font-size="11" text-anchor="middle" fill="#64748b">영역별 teacher의 KL 신호</text>
-<path d="M140 150 C180 150 180 72 220 72" stroke="#94a3b8" fill="none"/>
-<path d="M140 150 L220 150" stroke="#94a3b8" fill="none"/>
-<path d="M140 150 C180 150 180 228 220 228" stroke="#94a3b8" fill="none"/>
-<path d="M140 150 C280 290 380 290 420 190" stroke="#94a3b8" fill="none" stroke-dasharray="4 3"/>
-<path d="M350 72 C390 72 390 140 420 140" stroke="#0f172a" fill="none"/><polygon points="420,140 413,136 413,144" fill="#0f172a"/>
-<path d="M350 150 L420 150" stroke="#0f172a" fill="none"/><polygon points="420,150 413,146 413,154" fill="#0f172a"/>
-<path d="M350 228 C390 228 390 160 420 160" stroke="#0f172a" fill="none"/><polygon points="420,160 413,156 413,164" fill="#0f172a"/>
-<text x="385" y="112" font-size="11" text-anchor="middle" fill="#64748b">프롬프트 영역에 따라 라우팅</text>
-<text x="280" y="285" font-size="11" text-anchor="middle" fill="#64748b">점선: 출발점에서 학생 초기화 · 실선: 학생 응답에 대한 토큰별 reverse KL 신호</text>
+<svg viewBox="0 0 600 340" role="img" aria-label="MOPD의 세 단계. 왼쪽의 공통 출발점(base model을 일반 SFT한 모델)에서 점선 화살표가 가운데의 세 teacher(수학, 지시 따르기, 소프트웨어 공학)와 오른쪽의 학생으로 나간다. 세 teacher는 각각 영역별 RL로 학습한 뒤 고정된다. 학생은 프롬프트 x에 대해 응답 y를 직접 생성하고, 실선 화살표로 응답과 프롬프트 영역을 라우터에 보내며, 라우터는 영역에 맞는 teacher 하나에 그 응답을 전달한다. 그 teacher에서 학생으로 돌아오는 굵은 화살표가 응답의 토큰마다 계산한 reverse KL 신호다. 범례는 점선을 초기화, 가는 실선을 학생 응답의 전달, 굵은 실선을 teacher의 토큰별 신호로 표시한다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<text x="300" y="22" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">MOPD의 세 단계 (MOPD §3을 바탕으로 직접 구성)</text>
+<rect x="16" y="130" width="112" height="60" rx="8" fill="#f8fafc" stroke="#0f172a"/>
+<text x="72" y="154" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">1. 공통 출발점</text>
+<text x="72" y="174" font-size="11" text-anchor="middle" fill="#64748b">base → 일반 SFT</text>
+<rect x="200" y="46" width="132" height="46" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="266" y="65" font-size="12" text-anchor="middle" fill="#0f172a">2. 수학 teacher</text>
+<text x="266" y="82" font-size="11" text-anchor="middle" fill="#64748b">검증 보상 RL 뒤 고정</text>
+<rect x="200" y="137" width="132" height="46" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="266" y="156" font-size="12" text-anchor="middle" fill="#0f172a">2. 지시 따르기 teacher</text>
+<text x="266" y="173" font-size="11" text-anchor="middle" fill="#64748b">규칙 보상 RL 뒤 고정</text>
+<rect x="200" y="228" width="132" height="46" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="266" y="247" font-size="12" text-anchor="middle" fill="#0f172a">2. 소프트웨어 teacher</text>
+<text x="266" y="264" font-size="11" text-anchor="middle" fill="#64748b">sandbox 보상 RL 뒤 고정</text>
+<rect x="372" y="137" width="64" height="46" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="404" y="156" font-size="12" text-anchor="middle" fill="#0f172a">라우터</text>
+<text x="404" y="173" font-size="10" text-anchor="middle" fill="#64748b">x의 영역</text>
+<rect x="472" y="118" width="112" height="84" rx="8" fill="#f8fafc" stroke="#0f172a" stroke-width="2"/>
+<text x="528" y="142" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">3. 학생</text>
+<text x="528" y="161" font-size="11" text-anchor="middle" fill="#64748b">x를 받아 y를 생성</text>
+<text x="528" y="177" font-size="11" text-anchor="middle" fill="#64748b">y의 토큰마다</text>
+<text x="528" y="192" font-size="11" text-anchor="middle" fill="#64748b">teacher 분포로 갱신</text>
+<path d="M128 160 C160 160 160 69 200 69" stroke="#94a3b8" fill="none" stroke-dasharray="4 3"/>
+<path d="M128 160 L200 160" stroke="#94a3b8" fill="none" stroke-dasharray="4 3"/>
+<path d="M128 160 C160 160 160 251 200 251" stroke="#94a3b8" fill="none" stroke-dasharray="4 3"/>
+<path d="M72 190 C72 310 528 310 528 202" stroke="#94a3b8" fill="none" stroke-dasharray="4 3"/>
+<polygon points="528,202 524,209 532,209" fill="#94a3b8"/>
+<path d="M472 150 L436 150" stroke="#0f172a" fill="none"/><polygon points="436,150 443,146 443,154" fill="#0f172a"/>
+<text x="454" y="140" font-size="10" text-anchor="middle" fill="#64748b">(x, y)</text>
+<path d="M372 160 C350 160 350 80 332 80" stroke="#0f172a" fill="none"/><polygon points="332,80 339,76 339,84" fill="#0f172a"/>
+<path d="M372 160 L332 160" stroke="#0f172a" fill="none"/><polygon points="332,160 339,156 339,164" fill="#0f172a"/>
+<path d="M372 160 C350 160 350 240 332 240" stroke="#0f172a" fill="none"/><polygon points="332,240 339,236 339,244" fill="#0f172a"/>
+<path d="M266 92 C266 112 440 112 472 128" stroke="#0f172a" stroke-width="2.5" fill="none"/><polygon points="472,128 463,128 466,121" fill="#0f172a"/>
+<text x="380" y="106" font-size="10" text-anchor="middle" fill="#0f172a">π_T(·|x, y_&lt;t) → 토큰별 reverse KL</text>
+<text x="300" y="322" font-size="11" text-anchor="middle" fill="#64748b">점선: 출발점에서 초기화 · 가는 실선: 학생 응답의 전달과 라우팅 · 굵은 실선: 선택된 teacher의 토큰별 신호(수학 예시)</text>
 </svg>
-<figcaption>MOPD의 세 단계. 영역별 teacher를 병렬로 만들고, 학생은 자기 응답 위에서 프롬프트 영역에 맞는 teacher의 분포를 따른다. 원논문 그림은 재사용 조건이 확인되지 않아 §3의 설명을 바탕으로 직접 구성했다.</figcaption>
+<figcaption>MOPD의 세 단계. 영역별 teacher를 같은 출발점에서 병렬로 만들고, 학생은 자기가 생성한 응답의 토큰마다 프롬프트 영역에 맞는 teacher의 분포를 따른다. 그림은 수학 프롬프트가 수학 teacher로 라우팅된 경우를 보인다. 원논문 그림은 재사용 조건이 확인되지 않아 §3의 절차 설명을 바탕으로 직접 구성했다.</figcaption>
 </figure>
 
 ## 4. 실패 양상과 한계
 
 서베이 §7은 on-policy distillation의 실패 양상을 다섯 가지로 정리한다.[^survey] 학생이 이미 틀린 prefix 위에서 teacher의 피드백을 받으면 그 문맥에서 teacher도 좋은 다음 토큰을 모를 수 있어 잘못된 신호가 되는 문제(flawed prefix trap), 학생 자신을 teacher로 쓰는 self-distillation의 개선이 금방 멈추는 문제, reverse KL 같은 mode-seeking 목적함수가 유효한 대안을 억눌러 다양성이 무너지는 문제, teacher의 확신과 실제 정확도가 어긋나는 문제, 그리고 다중 턴 agent 궤적에서 오류가 누적되는 문제다. 세 번째는 GKD가 관찰한 다양성 감소의 다른 이름이고, [05b §4](/lecture/2026f-advanced-deep-learning/05b-long-cot/)의 pass@$k$ 논쟁과도 이어진다. Teacher를 따르는 학생은 teacher의 봉우리 하나를 배우므로, 넓은 $k$에서의 커버리지는 오히려 줄 수 있다.
 
-그리고 모든 distillation은 teacher를 전제한다. Teacher를 만드는 비용, teacher의 편향, teacher의 logit을 볼 수 있는가(공개 가중치인가)가 조건이다. Teacher가 없는 영역에서는 5주차 앞의 RL이 유일한 길이고, 그래서 두 방법은 대체 관계가 아니라 [05a §3-2](/lecture/2026f-advanced-deep-learning/05a-rlvr/)의 recipe 안에서 역할을 나눈다. 큰 모델은 RL로 능력을 만들고, 작은 모델은 distillation으로 그것을 받는다.
+그리고 모든 distillation은 teacher를 전제한다. Teacher를 만드는 비용과 teacher의 편향이 조건이고, teacher에게서 무엇을 받아야 하는지도 방식마다 다르다. §1-2의 응답 기반 방식은 응답 텍스트만 있으면 되고, Thinking Machines의 구현은 표집한 토큰의 log 확률만 필요해 API로도 가능하며, GKD처럼 어휘 전체나 상위 $k$개의 분포를 맞추려면 logit에 접근해야 한다. 공개 가중치 여부와 필요한 확률에 접근할 수 있는가는 별개의 조건이다. R1과 Qwen3의 recipe에서는 RL로 개선한 teacher의 행동을 distillation으로 작은 모델에 전달하며, 적합한 teacher가 없으면 시연 데이터나 검증 보상 같은 다른 감독 신호가 필요하다. 두 방법은 대체 관계가 아니라 [05a §3-2](/lecture/2026f-advanced-deep-learning/05a-rlvr/)의 recipe 안에서 역할을 나눈다.
 
 ## 5. 4·5주차의 정리
 
