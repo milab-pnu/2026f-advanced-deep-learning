@@ -1,0 +1,119 @@
+---
+title: "Policy optimization for RLVR"
+week: 5
+order: 2
+---
+
+[05a](/lecture/2026f-advanced-deep-learning/05a-rlvr/)의 학습 절차에서 "보상으로 정책을 갱신한다"는 한 줄이 이 노트의 전부다. [04b §3](/lecture/2026f-advanced-deep-learning/04b-rlhf/)에서 본 PPO(proximal policy optimization)는 value model로 advantage를 추정했다. 검증 가능한 보상으로 긴 추론을 학습할 때는 사정이 다르다. 응답이 수천 토큰이고 보상은 끝에 한 번뿐이며, 같은 문제의 응답을 여러 개 뽑는 것이 자연스럽다. 이 노트는 그 조건에서 PPO의 부품을 하나씩 떼어 내고 바꾼 계보를 따라간다. Value model을 그룹 평균으로 대신한 GRPO(group relative policy optimization)에서 출발해, GRPO의 목적함수가 만드는 세 가지 문제(길이·난이도 편향, 탐색의 붕괴, 토큰 단위 비율의 잡음)를 각각 푼 Dr. GRPO, DAPO, GSPO로 갈라지고, 그 옆에 처음부터 value model 없이 가는 RLOO·REINFORCE++의 갈래가 있다.
+
+전체 지도는 [05a](/lecture/2026f-advanced-deep-learning/05a-rlvr/)와 같은 Zhang 등의 서베이[^survey]로 잡되, 이 노트에는 §3.2(정책 최적화: critic 기반, critic 없는 알고리즘, off-policy 최적화, 정규화 항)와 §3.3(표집 전략)이 대응한다. 학습 시스템이 만드는 off-policy 문제는 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)에서 따로 다루며, 이 노트는 정책 갱신식 자체에 집중한다.
+
+## 1. PPO에서 GRPO로
+
+### 1-1. Value model이 부담이 되는 이유
+
+04b §3-2의 policy gradient는 토큰마다 advantage $\hat A_t$가 필요했고, PPO는 그것을 value model $V(x,y_{<t})$로 추정했다. 언어 모델의 RLVR(reinforcement learning with verifiable rewards)에서 이 설계에는 두 가지 부담이 있다. 첫째, value model은 정책과 비슷한 크기의 모델이라 메모리와 계산이 정책 학습만큼 든다. 둘째, 보상이 응답 끝에 한 번만 주어지는 긴 응답에서 토큰마다 "앞으로 받을 보상의 기대값"을 정확히 배우기는 어렵고, 부정확한 value는 advantage에 편향을 넣는다.
+
+Ahmadian 등은 이 설정이 사실상 bandit 문제에 가깝다고 지적했다. 보상이 응답 전체에 한 번 오므로 응답 하나를 행동 하나로 보면 상태 전이가 없고, 강한 사전학습 모델에서 출발하므로 policy gradient의 분산이 걱정만큼 크지 않다는 것이다. 그래서 value model·clipping·GAE(generalized advantage estimation) 없이 REINFORCE에 간단한 baseline만 붙인 RLOO(REINFORCE leave-one-out)가 요약과 대화 과제에서 PPO를 앞섰다고 보고했다.[^rloo] Baseline은 같은 프롬프트에서 뽑은 $k$개 응답 중 자기를 뺀 나머지 $k-1$개의 보상 평균이다.
+
+### 1-2. GRPO의 목적함수
+
+DeepSeekMath의 GRPO는 같은 발상을 PPO의 틀 안에서 구현했다.[^deepseekmath] 프롬프트 $q$마다 옛 정책 $\pi_{\theta_{\mathrm{old}}}$에서 응답 $G$개 $\{o_1,\dots,o_G\}$를 뽑고, 각 응답의 보상 $r_i$를 그룹 안에서 정규화해 advantage로 쓴다.
+
+$$
+\hat A_i=\frac{r_i-\operatorname{mean}(r_1,\dots,r_G)}{\operatorname{std}(r_1,\dots,r_G)}
+$$
+
+Outcome 보상에서는 응답 $o_i$의 모든 토큰이 같은 $\hat A_i$를 받는다. 목적함수는 PPO의 clipped surrogate에 KL 항을 더한 것이다.
+
+$$
+\mathcal{J}_{\mathrm{GRPO}}(\theta)=\mathbb{E}\Bigg[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{\lvert o_i\rvert}\sum_{t=1}^{\lvert o_i\rvert}\Big(\min\big(\rho_{i,t}\hat A_i,\ \operatorname{clip}(\rho_{i,t},1-\varepsilon,1+\varepsilon)\hat A_i\big)-\beta\,\mathbb{D}_{\mathrm{KL}}[\pi_\theta\,\|\,\pi_{\mathrm{ref}}]\Big)\Bigg]
+$$
+
+$\rho_{i,t}=\pi_\theta(o_{i,t}\mid q,o_{i,<t})/\pi_{\theta_{\mathrm{old}}}(o_{i,t}\mid q,o_{i,<t})$는 04b §3-3의 토큰 확률비다. KL 항은 04b처럼 보상에 섞지 않고 목적함수에 직접 더하며, 토큰마다 $\frac{\pi_{\mathrm{ref}}}{\pi_\theta}-\log\frac{\pi_{\mathrm{ref}}}{\pi_\theta}-1$로 추정한다. 이 추정량은 항상 0 이상이다.[^deepseekmath] Value model이 없으므로 04b §3-4의 네 모델이 정책·reference·(reward model 또는 검증기)의 셋으로 준다.
+
+<Callout type="example">
+**응답 네 개의 GRPO advantage.** 한 문제에 대한 응답 네 개의 보상이 $[1,0,1,0]$이라고 하자. 평균은 0.5, 표준편차는 0.5이므로 advantage는 $[+1,-1,+1,-1]$이다. 정답 응답의 모든 토큰은 확률이 오르는 방향의 신호를, 오답 응답의 모든 토큰은 내리는 방향의 신호를 받는다.
+
+보상이 $[1,1,1,1]$이면 평균 1, 표준편차 0이라 advantage가 모두 0(구현에서는 0으로 나누기를 피하는 작은 상수를 더한다)이고, $[0,0,0,0]$도 마찬가지다. [05a §3-3](/lecture/2026f-advanced-deep-learning/05a-rlvr/)에서 "너무 쉽거나 어려운 문제는 학습 신호가 없다"고 한 이유가 이 식이다.
+
+보상이 $[1,0,0,0]$이면 평균 0.25, 표준편차 0.433이므로 advantage는 $[+1.73,-0.58,-0.58,-0.58]$이다. 하나만 맞힌 어려운 문제에서 그 정답 응답은 큰 양의 신호를 받는다.
+</Callout>
+
+## 2. GRPO의 세 가지 문제와 분기
+
+GRPO는 R1-Zero의 알고리즘이었고 이후 대부분의 RLVR 연구가 여기서 출발했다. 그런데 위 식의 두 정규화 항과 clipping, 그리고 토큰 단위 확률비가 각각 문제를 일으킨다는 분석이 2025년에 잇달아 나왔다. 세 분기는 서로 다른 문제를 겨냥하므로 한 줄로 잇지 않는다.
+
+### 2-1. 길이·난이도 편향: Dr. GRPO
+
+Liu 등은 GRPO 목적함수의 두 정규화 항이 표준 policy gradient에 없는 편향을 만든다고 분석했다.[^drgrpo] 첫째는 응답 길이로 나누는 $\frac{1}{\lvert o_i\rvert}$이다. 이 항 때문에 응답의 토큰 하나가 받는 gradient가 응답이 길수록 작아진다. 정답 응답은 짧을수록 토큰당 보상이 커서 짧은 정답이 유리하고, 오답 응답은 길수록 토큰당 벌점이 작아서 긴 오답이 덜 불리하다. 학습이 진행되면 오답이 점점 길어지며, [05b §1-2](/lecture/2026f-advanced-deep-learning/05b-long-cot/)에서 예고한 "길이 증가에는 목적함수의 몫이 있다"가 이것이다. 둘째는 그룹 표준편차로 나누는 것이다. 정답률이 0이나 1에 가까운 문제는 보상의 표준편차가 작아 advantage가 크게 부풀려지고, 정답률이 중간인 문제는 상대적으로 작은 가중치를 받는다. 문제 난이도에 따른 가중이 의도치 않게 들어가는 것이다.
+
+Dr. GRPO(GRPO done right)는 두 항을 모두 지운다. 응답의 토큰 손실을 길이로 나누지 않고 그대로 더하며, advantage는 평균만 빼고 표준편차로 나누지 않는다. 그러면 목적함수가 PPO의 원래 형태로 돌아간다. 같은 설정에서 Dr. GRPO는 정답률을 유지하면서 오답의 길이 증가를 억제했고, 7B 모델(Oat-Zero-7B)로 AIME 2024에서 43.3%를 냈다.[^drgrpo] 같은 논문이 base model이 이미 자기 점검 표현을 낸다고 보고한 것은 05b에서 보았다.
+
+<Callout type="example">
+**길이 정규화가 만드는 차이.** 위 예시의 보상 $[1,0,1,0]$에서 응답 길이가 각각 100, 400, 100, 400 토큰이라고 하자. GRPO에서 오답 응답 2(400토큰)의 토큰 하나가 받는 가중치는 $-1/400$이고, 응답 4도 같다. 만약 응답 2가 100토큰이었다면 $-1/100$으로 4배 큰 벌점이다. 오답은 길수록 토큰당 벌점이 작다. Dr. GRPO에서는 두 경우 모두 토큰당 $-1$(배치 전체의 토큰 수로 한 번 나눈 값)로 같다. 정답 쪽도 마찬가지여서, GRPO에서는 100토큰 정답의 토큰이 400토큰 정답의 토큰보다 4배 큰 보상을 받는다.
+</Callout>
+
+### 2-2. 탐색의 붕괴: DAPO
+
+두 번째 문제는 학습이 길어질수록 정책의 entropy가 떨어져 같은 응답만 내게 되는 **entropy collapse**다. Cui 등은 여러 모델·과제에서 성능 $R$과 entropy $H$ 사이에 $R=-a\,e^{H}+b$ 꼴의 관계가 경험적으로 성립함을 보였다. Entropy가 0에 가까워질수록 성능의 상한이 정해지고, 그 뒤로는 학습을 계속해도 오르지 않는다는 뜻이다. 그들의 분석에서 entropy 변화는 토큰 확률과 logit 변화의 공분산에 비례하며, 이 공분산이 큰 소수의 토큰이 entropy를 빠르게 깎는다.[^entropy]
+
+DAPO(decoupled clip and dynamic sampling policy optimization)는 이 문제를 GRPO의 clipping과 표집에서 찾았다.[^dapo] 네 가지 수정이 있다.
+
+| 수정 | 무엇을 바꾸나 | 겨냥한 문제 |
+|---|---|---|
+| Clip-Higher | Clipping의 상한과 하한을 분리해 $\varepsilon_{\mathrm{low}}=0.2$, $\varepsilon_{\mathrm{high}}=0.28$ | 확률이 낮은 토큰은 $1+\varepsilon$의 상한 때문에 확률을 조금밖에 못 올린다. 상한을 올려 드문 토큰의 탐색을 허용 |
+| Dynamic sampling | 보상이 모두 같은 그룹(전부 정답 또는 전부 오답)을 버리고 다시 뽑아 배치를 채움 | §1-2 예시의 advantage 0인 그룹이 배치를 차지하는 낭비 |
+| Token-level loss | 응답별로 평균한 뒤 다시 평균하지 않고 배치의 모든 토큰을 한 번에 평균 | 긴 응답의 토큰이 과소 가중되는 문제. Dr. GRPO의 길이 항 제거와 같은 방향 |
+| Overlong reward shaping | 최대 길이에 잘린 응답에 고정 벌점 대신 길이에 따라 부드럽게 커지는 벌점 | 잘린 응답 전체를 오답으로 처리할 때 생기는 보상 잡음 |
+
+DAPO는 KL 항도 뺐다. 긴 추론을 학습하는 동안 정책이 초기 모델에서 크게 멀어지는 것이 정상이므로 그 제약이 필요 없다는 이유다.[^dapo] Qwen2.5-32B base에서 AIME 2024 50점으로 DeepSeek-R1-Zero-Qwen-32B의 47점을 절반의 스텝으로 넘었고, ablation은 기본 GRPO 30점에서 overlong filtering 36, clip-higher 38, soft overlong punishment 41, token-level loss 42, dynamic sampling 50으로 각 수정의 몫을 보였다(원논문 Table 1).[^dapo]
+
+Clipping의 역할을 다시 생각한 변형도 있다. MiniMax-M1의 CISPO(clipped importance sampling policy optimization)는 확률비가 구간을 벗어난 토큰의 gradient를 0으로 만드는 대신, 확률비 자체를 잘라 고정한 가중치로 쓰고 모든 토큰의 gradient를 살린다. "However"나 "Wait"처럼 확률은 낮지만 추론의 분기를 만드는 토큰이 clipping에 걸려 학습에서 빠지는 것을 막기 위해서다. Qwen2.5-32B에서 DAPO와 같은 AIME 성능에 절반의 스텝으로 도달했다고 보고했다.[^cispo] 04b §3-3의 예시로 말하면, 확률이 1.3배로 오른 토큰에 advantage가 양수일 때 PPO는 gradient를 0으로 만들지만 CISPO는 가중치 1.2로 계속 밀어 준다.
+
+### 2-3. 토큰 단위 비율의 잡음: GSPO
+
+세 번째 문제는 확률비를 토큰마다 계산하는 것 자체에 있다. Zheng 등은 importance sampling이 여러 표본의 평균으로 분포 차이를 보정하는 도구인데, GRPO는 위치마다 표본이 하나뿐인 토큰 확률비를 쓰므로 보정이 아니라 잡음이 되고, 긴 응답에서 그 잡음이 누적된다고 지적했다. 특히 MoE(mixture of experts) 모델에서는 갱신 전후로 같은 토큰에 활성화되는 expert가 바뀌어 토큰 확률비가 크게 흔들리며, Qwen 팀은 GRPO를 쓰던 시절 옛 정책의 routing을 저장해 재사용하는 routing replay로 이를 억눌러야 했다.[^gspo]
+
+GSPO(group sequence policy optimization)는 확률비를 응답 단위로 정의한다.
+
+$$
+s_i(\theta)=\Big(\frac{\pi_\theta(o_i\mid q)}{\pi_{\theta_{\mathrm{old}}}(o_i\mid q)}\Big)^{1/\lvert o_i\rvert}
+$$
+
+응답 전체의 확률비를 길이로 기하평균한 값이며, clipping도 이 값에 건다. 보상이 응답 단위이므로 최적화 단위도 응답이어야 한다는 것이 논리다. Clipping 구간이 $3\times10^{-4}$에서 $4\times10^{-4}$ 정도로 GRPO의 0.2보다 세 자릿수 작은데도 학습이 더 안정적이고 효율적이었고, MoE에서 routing replay 없이 학습할 수 있었다. Qwen3의 RL이 이 방법으로 학습되었다.[^gspo] Clipping 구간이 작은 이유는 $s_i$가 토큰 평균이라 응답 사이의 차이가 작기 때문이다.
+
+### 2-4. 세 분기의 정리
+
+| 방법 | 문제 | 바꾼 것 | KL 항 |
+|---|---|---|---|
+| GRPO[^deepseekmath] | PPO의 value model 비용 | 그룹 정규화 advantage | 목적함수에 직접 |
+| Dr. GRPO[^drgrpo] | 길이·난이도 편향 | 길이 정규화와 std 정규화 제거 | 없음 |
+| DAPO[^dapo] | Entropy collapse, 무효 그룹, 잘린 응답 | 비대칭 clipping, dynamic sampling, token-level loss, overlong shaping | 없음 |
+| CISPO[^cispo] | Clipping이 드문 토큰을 버림 | 확률비를 잘라 가중치로 쓰고 gradient는 유지 | 없음 |
+| GSPO[^gspo] | 토큰 단위 비율의 잡음, MoE 불안정 | 응답 단위 확률비와 clipping | 없음 |
+| RLOO[^rloo]·REINFORCE++[^rpp] | PPO의 부품이 불필요 | Leave-one-out 또는 배치 전체 정규화 baseline, value model 없음 | REINFORCE++는 토큰별 KL |
+
+실제 recipe는 이 중 여러 개를 섞는다. Olmo 3의 RL은 GRPO를 바탕으로 DAPO의 clip-higher·dynamic sampling·token-level loss, Dr. GRPO의 정규화, KL 항 제거를 함께 채택했다.[^olmo3] REINFORCE++는 그룹 대신 배치 전체로 advantage를 정규화해 프롬프트 집합이나 보상이 바뀔 때 GRPO보다 안정적이라고 보고했다.[^rpp] 서베이 §3.2는 이 알고리즘들을 critic 유무와 off-policy 보정 방식으로 분류하며, KL 항이 대규모 학습에서 필요한지에 대한 논쟁이 진행 중이라고 정리한다.[^survey]
+
+## 3. 남는 문제
+
+### 3-1. 보상이 정말 신호인가
+
+[05a §4-3](/lecture/2026f-advanced-deep-learning/05a-rlvr/)의 무작위 보상 결과는 이 노트의 clipping으로 돌아온다. Shao 등은 무작위 보상으로도 Qwen2.5-Math의 점수가 오른 원인을 GRPO의 clipping 편향에서 찾았다. 보상이 정보를 담지 않아도 clipping이 확률이 이미 높은 행동(이 모델의 경우 코드 형식의 추론)을 더 강화하는 방향으로 작용한다는 것이다.[^spurious] 알고리즘의 구성 요소 하나가 base model의 사전 행동을 증폭할 수 있으므로, 새 알고리즘의 개선폭을 읽을 때는 05b §4의 논쟁과 같은 주의가 필요하다.
+
+### 3-2. 옛 정책과 현재 정책의 거리
+
+이 노트의 모든 목적함수는 응답을 생성한 $\pi_{\theta_{\mathrm{old}}}$와 갱신 중인 $\pi_\theta$의 확률비를 쓴다. [04c §3-1](/lecture/2026f-advanced-deep-learning/04c-dpo/)의 구분으로 두 정책이 같으면 on-policy이고, 배치를 여러 번 갱신하거나 생성과 학습을 분리하면 off-policy가 된다. 확률비는 그 차이를 보정하는 장치이지만, 차이가 커지면 clipping이 대부분의 토큰을 잘라 학습이 멈추거나 잡음이 커진다. 실제 시스템에서 이 차이가 어디서 생기는지, 즉 응답을 만드는 inference engine과 학습 커널의 수치 차이, 그리고 비동기 학습의 정책 지연이 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)의 주제다.
+
+[^survey]: Zhang, K., et al. (2025). *A Survey of Reinforcement Learning for Large Reasoning Models*. [arXiv:2509.08827v3](https://arxiv.org/abs/2509.08827v3).
+[^rloo]: Ahmadian, A., et al. (2024). *Back to Basics: Revisiting REINFORCE Style Optimization for Learning from Human Feedback in LLMs*. ACL 2024. [arXiv:2402.14740](https://arxiv.org/abs/2402.14740).
+[^deepseekmath]: Shao, Z., et al. (2024). *DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models*. [arXiv:2402.03300](https://arxiv.org/abs/2402.03300).
+[^drgrpo]: Liu, Z., et al. (2025). *Understanding R1-Zero-Like Training: A Critical Perspective*. [arXiv:2503.20783v2](https://arxiv.org/abs/2503.20783v2).
+[^entropy]: Cui, G., et al. (2025). *The Entropy Mechanism of Reinforcement Learning for Reasoning Language Models*. [arXiv:2505.22617](https://arxiv.org/abs/2505.22617).
+[^dapo]: Yu, Q., et al. (2025). *DAPO: An Open-Source LLM Reinforcement Learning System at Scale*. [arXiv:2503.14476v2](https://arxiv.org/abs/2503.14476v2).
+[^cispo]: MiniMax. (2025). *MiniMax-M1: Scaling Test-Time Compute Efficiently with Lightning Attention*. [arXiv:2506.13585](https://arxiv.org/abs/2506.13585).
+[^gspo]: Zheng, C., et al. (2025). *Group Sequence Policy Optimization*. [arXiv:2507.18071v2](https://arxiv.org/abs/2507.18071v2).
+[^rpp]: Hu, J., et al. (2025). *REINFORCE++: Stabilizing Critic-Free Policy Optimization with Global Advantage Normalization*. [arXiv:2501.03262v9](https://arxiv.org/abs/2501.03262v9).
+[^olmo3]: Team Olmo. (2025). *Olmo 3*. [arXiv:2512.13961v2](https://arxiv.org/abs/2512.13961v2).
+[^spurious]: Shao, R., et al. (2025). *Spurious Rewards: Rethinking Training Signals in RLVR*. [arXiv:2506.10947](https://arxiv.org/abs/2506.10947).
