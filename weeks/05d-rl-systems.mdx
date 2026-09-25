@@ -68,12 +68,12 @@ Staleness가 없어도 off-policy가 생기는 경로가 하나 더 있다. 생�
 둘째 대응은 불일치의 원인인 정밀도를 바꾸는 것이다. Qi 등은 학습과 생성 모두를 가수부가 10비트인 FP16으로 바꾸면 응답 단위 확률의 불일치가 BF16 대비 약 24분의 1로 줄고, 여러 알고리즘·모델·MoE(mixture of experts)·LoRA(low-rank adaptation) 설정에서 학습이 더 안정적이고 빠르게 수렴했다고 보고했다. 모델이 모든 문제를 맞힐 수 있는 MATH 부분집합으로 만든 sanity test에서 FP16은 학습 정확도 약 99%에 이른 반면, BF16의 GRPO와 토큰 단위 truncated importance sampling은 73–88%에서 무너졌고 BF16에서도 응답 단위 보정(sequence-MIS)은 약 95%로 안정적이었다.[^fp16] [02e](/lecture/2026f-advanced-deep-learning/02e-training-engineering/)에서 BF16을 학습의 기본 정밀도로 본 이유가 넓은 지수 범위였는데, RL의 생성·학습 일치라는 새 조건에서는 다른 선택이 나올 수 있다는 사례다.
 
 <Callout type="warning">
-§3의 staleness와 §4의 수치 불일치는 다른 원인이다. 전자는 응답을 만든 정책이 **다른 버전**이고, 후자는 **같은 버전**인데 확률 계산이 다르다. 둘 다 05c의 확률비로 보정할 수 있지만, 전자는 시스템의 겹치기 정도로, 후자는 정밀도와 커널로 조절한다. 학습 곡선이 무너졌을 때 어느 쪽인지 가르려면 두 가지를 따로 재야 한다. 수치 불일치는 같은 가중치 버전·같은 prefix·같은 확률 정의로 엔진과 학습기의 토큰 확률을 비교해서, 정책 변화는 같은 계산 경로에서 응답을 만든 버전과 현재 checkpoint의 확률을 비교해서 잰다. 그러려면 생성 당시의 정책 버전과 토큰 log 확률을 기록해 두어야 한다.
+§3의 staleness와 §4의 수치 불일치는 다른 원인이다. 전자는 응답을 만든 정책이 **다른 버전**이고, 후자는 **같은 버전**인데 확률 계산이 다르다. 각 원인에 맞는 확률비로 보정하되, 전자는 시스템의 겹치기 정도로, 후자는 정밀도와 커널로 조절한다. 학습 곡선이 무너졌을 때 어느 쪽인지 가르려면 두 가지를 따로 재야 한다. 수치 불일치는 같은 가중치 버전·같은 prefix·같은 확률 정의로 엔진과 학습기의 토큰 확률을 비교해서, 정책 변화는 같은 계산 경로에서 응답을 만든 버전과 현재 checkpoint의 확률을 비교해서 잰다. 그러려면 생성 당시의 정책 버전과 토큰 log 확률을 기록해 두어야 한다.
 </Callout>
 
 ## 5. 정리
 
-RLVR 학습의 시간은 생성이 지배하고, 동기식 생성은 가장 긴 응답에 묶인다(§1-1의 예시는 단순화한 것이며 실제 straggler 효과는 동시 실행 수와 스케줄링에 따라 다르다). 동기식 설계는 이 낭비를 재분할과 배치 관리로 줄였고, 비동기식 설계는 생성과 학습을 분리해 처리량을 몇 배 올리는 대신 오래된 데이터를 다루어야 했다. 분리하지 않아도 엔진과 학습기의 수치 차이가 같은 문제를 만든다. 두 경우 모두 [05c](/lecture/2026f-advanced-deep-learning/05c-policy-optimization/)의 확률비와 clipping이 보정 장치이며, 그래서 알고리즘과 시스템은 따로 설계할 수 없다. 이 절충이 정책과 환경이 여러 번 주고받는 [05e Agentic RL](/lecture/2026f-advanced-deep-learning/05e-agentic-rl/)에서 어떻게 더 어려워지는지가 다음 노트다.
+RLVR 학습의 시간은 생성이 지배하고, 동기식 생성은 가장 긴 응답에 묶인다(§1-1의 예시는 단순화한 것이며 실제 straggler 효과는 동시 실행 수와 스케줄링에 따라 다르다). 동기식 설계는 이 낭비를 재분할과 배치 관리로 줄였고, 비동기식 설계는 생성과 학습을 분리해 처리량을 몇 배 올리는 대신 오래된 데이터를 다루어야 했다. 분리하지 않아도 엔진과 학습기의 수치 차이가 같은 문제를 만든다. Staleness에는 behavior와 proximal을 구분한 확률비를, 엔진 불일치에는 같은 가중치 버전의 학습기·엔진 확률비를 쓰며, PPO clipping은 정책 갱신을 제약하고 보정 가중치의 truncation은 큰 가중치를 제한한다. 원인마다 다른 확률비가 필요하므로 알고리즘과 시스템은 따로 설계할 수 없다. 이 절충이 정책과 환경이 여러 번 주고받는 [05e Agentic RL](/lecture/2026f-advanced-deep-learning/05e-agentic-rl/)에서 어떻게 더 어려워지는지가 다음 노트다.
 
 [^survey]: Gholipour, N., et al. (2026). *Rollout Efficiency in Reinforcement Learning for Reasoning Large Language Models: A Taxonomy and Future Directions*. [arXiv:2609.25463v1](https://arxiv.org/abs/2609.25463v1).
 [^rlsurvey]: Zhang, K., et al. (2025). *A Survey of Reinforcement Learning for Large Reasoning Models*. [arXiv:2509.08827v3](https://arxiv.org/abs/2509.08827v3).

@@ -81,7 +81,7 @@ $$
 s_i(\theta)=\Big(\frac{\pi_\theta(o_i\mid q)}{\pi_{\theta_{\mathrm{old}}}(o_i\mid q)}\Big)^{1/\lvert o_i\rvert}
 $$
 
-응답 전체의 확률비를 길이로 기하평균한 값이며, 목적함수는 $\frac{1}{G}\sum_i\min(s_i\hat A_i,\operatorname{clip}(s_i,1-\varepsilon,1+\varepsilon)\hat A_i)$로 clipping도 이 값에 건다. Gradient를 풀어 쓰면 응답의 토큰들이 같은 계수를 받고 길이로 평균되는 형태다. 보상이 응답 단위이므로 최적화 단위도 응답이어야 한다는 것이 논리다. GSPO는 그룹 표준편차 정규화를 유지하고 gradient에 길이 평균이 남으므로, Dr. GRPO의 편향 제거를 잇는 방법이 아니라 토큰별 비율의 변동이라는 별개의 문제를 겨냥한다. Clipping 여유폭이 $3\times10^{-4}$와 $4\times10^{-4}$로 GRPO의 0.2와 0.27보다 세 자릿수 작은데도 학습이 더 안정적이고 효율적이었고, MoE에서 routing replay 없이 학습할 수 있었다. 저자들은 최신 Qwen3 모델의 학습에 이 방법이 기여했다고 밝혔다.[^gspo] 여유폭이 작은 이유는 $s_i$가 길이로 정규화된 기하평균이라 토큰 비율보다 분산이 훨씬 작기 때문이다.
+응답 전체의 확률비를 길이로 기하평균한 값이며, 목적함수는 $\frac{1}{G}\sum_i\min(s_i\hat A_i,\operatorname{clip}(s_i,1-\varepsilon,1+\varepsilon)\hat A_i)$로 clipping도 이 값에 건다. Gradient를 풀어 쓰면 응답의 토큰들이 같은 계수를 받고 길이로 평균되는 형태다. 보상이 응답 단위이므로 최적화 단위도 응답이어야 한다는 것이 논리다. GSPO는 그룹 표준편차 정규화를 유지하고 gradient에 길이 평균이 남으므로, Dr. GRPO의 편향 제거를 잇는 방법이 아니라 토큰별 비율의 변동이라는 별개의 문제를 겨냥한다. Clipping 여유폭이 $3\times10^{-4}$와 $4\times10^{-4}$로 GRPO의 0.2와 0.27보다 세 자릿수 작은데도 학습이 더 안정적이고 효율적이었고, MoE에서 routing replay 없이 학습할 수 있었다. 저자들은 최신 Qwen3 모델의 학습에 이 방법이 기여했다고 밝혔다.[^gspo] 여유폭이 다른 이유는 $s_i$가 길이로 정규화된 기하평균이라 비율의 수치 범위 자체가 토큰 비율과 다르기 때문이며, 제시한 여유폭은 해당 실험의 설정이다.
 
 ### 2-4. 세 분기의 정리
 
@@ -93,7 +93,7 @@ $$
 | CISPO[^cispo] | Clipping이 드문 토큰을 버림 | 확률비를 잘라 가중치로 쓰고 gradient는 유지 | 없음 |
 | GSPO[^gspo] | 토큰 단위 비율의 잡음, MoE 불안정 | 응답 단위 확률비와 clipping | 논문 수식에서는 생략(실제 사용 여부는 미확인) |
 | RLOO[^rloo] | PPO의 부품이 불필요 | REINFORCE에 leave-one-out baseline, clipping 없음 | 응답 단위 KL을 보상에 포함 |
-| REINFORCE++[^rpp] | GRPO의 그룹 정규화가 프롬프트·보상 변화에 불안정 | PPO clipping 유지, advantage를 배치 전체로 정규화(기본형) 또는 그룹 평균을 뺀 뒤 배치 정규화(baseline형), value model 없음 | 토큰별 KL |
+| REINFORCE++[^rpp] | GRPO의 그룹 정규화가 프롬프트·보상 변화에 불안정 | PPO clipping 유지, advantage를 배치 전체로 정규화(기본형) 또는 그룹 평균을 뺀 뒤 배치 정규화(baseline형), value model 없음 | 기본형은 토큰별 KL을 보상에 포함, baseline형은 별도 KL 손실($k_2$) |
 
 실제 recipe는 이 중 여러 개를 섞는다. Olmo 3의 RL은 GRPO를 바탕으로 DAPO의 clip-higher·token-level loss, Dr. GRPO의 표준편차 정규화 제거, KL 항 제거에 더해, 보상이 모두 같은 프롬프트를 걸러 배치를 채우는 active sampling과 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)에서 볼 truncated importance sampling을 함께 채택했다.[^olmo3] REINFORCE++는 그룹 대신 배치 전체로 advantage를 정규화하며(baseline형은 그룹 평균을 먼저 뺀다), 프롬프트 집합이나 보상이 바뀔 때 GRPO보다 안정적이라고 보고했다.[^rpp] 서베이 §3.2는 이 알고리즘들을 critic 유무와 off-policy 보정 방식으로 분류하며, KL 항이 대규모 학습에서 필요한지에 대한 논쟁이 진행 중이라고 정리한다.[^survey]
 
@@ -105,7 +105,7 @@ $$
 
 ### 3-2. 옛 정책과 현재 정책의 거리
 
-이 노트의 PPO 계열 목적함수(GRPO·DAPO·CISPO·GSPO·REINFORCE++)는 같은 배치로 여러 번 갱신하기 위해 응답을 생성한 $\pi_{\theta_{\mathrm{old}}}$와 갱신 중인 $\pi_\theta$의 확률비를 쓴다(원래의 RLOO는 on-policy REINFORCE 추정량이라 확률비가 필수가 아니다). [04c §3-1](/lecture/2026f-advanced-deep-learning/04c-dpo/)의 구분으로 두 정책의 표집 분포가 같으면 on-policy이고, 배치를 여러 번 갱신하거나 생성과 학습을 분리해 정책이나 실제 표집 분포가 어긋나면 off-policy가 된다. 확률비는 그 차이를 보정하는 장치이지만, 차이가 커지면 clipping이 대부분의 토큰을 잘라 학습이 멈추거나 잡음이 커진다. 실제 시스템에서 이 차이가 어디서 생기는지, 즉 응답을 만드는 inference engine과 학습 커널의 수치 차이, 그리고 비동기 학습의 정책 지연이 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)의 주제다.
+이 노트의 PPO 계열 목적함수(GRPO·DAPO·CISPO·GSPO·REINFORCE++)는 같은 배치로 여러 번 갱신하기 위해 응답을 생성한 $\pi_{\theta_{\mathrm{old}}}$와 갱신 중인 $\pi_\theta$의 확률비를 쓴다(원래의 RLOO는 on-policy REINFORCE 추정량이라 확률비가 필수가 아니다). [04c §3-1](/lecture/2026f-advanced-deep-learning/04c-dpo/)의 구분으로 두 정책의 표집 분포가 같으면 on-policy이고, 배치를 여러 번 갱신하거나 생성과 학습을 분리해 정책이나 실제 표집 분포가 어긋나면 off-policy가 된다. 확률비는 그 차이를 보정하는 장치이지만, 차이가 커지면 PPO식 clipped surrogate에서는 유효한 gradient가 줄고, CISPO처럼 가중치만 자르는 방식에서도 잘린 가중치가 만드는 보정 편향이 커진다. 실제 시스템에서 이 차이가 어디서 생기는지, 즉 응답을 만드는 inference engine과 학습 커널의 수치 차이, 그리고 비동기 학습의 정책 지연이 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)의 주제다.
 
 [^survey]: Zhang, K., et al. (2025). *A Survey of Reinforcement Learning for Large Reasoning Models*. [arXiv:2509.08827v3](https://arxiv.org/abs/2509.08827v3).
 [^rloo]: Ahmadian, A., et al. (2024). *Back to Basics: Revisiting REINFORCE-Style Optimization for Learning from Human Feedback in LLMs*. ACL 2024, pp. 12248–12267. [arXiv:2402.14740](https://arxiv.org/abs/2402.14740).
