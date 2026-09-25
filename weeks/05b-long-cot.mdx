@@ -1,0 +1,101 @@
+---
+title: "Long chain of thought and test-time compute"
+week: 5
+order: 1
+---
+
+[05a](/lecture/2026f-advanced-deep-learning/05a-rlvr/)에서 DeepSeek-R1-Zero는 검증 가능한 보상만으로 학습하는 동안 응답이 길어지고 앞의 풀이를 되돌아보는 행동을 보였다. 이 노트는 그 결과물, 즉 <strong>긴 사고 사슬(long chain of thought, long CoT)</strong>을 따로 본다. 학습 절차가 아니라 행동과 비용의 노트다. 짧은 CoT와 무엇이 다른지, 왜 길어지는지, 길어지면 무엇을 얻고 잃는지, 길이를 추론 시 계산(test-time compute)으로 얼마나 더 살 수 있는지, 그리고 이 모든 것이 능력의 증가인지 아니면 이미 있던 능력의 재배치인지를 따라간다. 마지막 질문은 2025년 이후 가장 뜨거운 논쟁 중 하나다.
+
+전체 지도는 [05a](/lecture/2026f-advanced-deep-learning/05a-rlvr/)와 같은 Zhang 등의 서베이[^survey]로 잡되, 이 노트의 주제에는 §4.1(RL의 역할: 날카롭게 하기인가 발견인가)과 §4.2(RL 대 SFT)가 대응한다. Long CoT 자체를 정리한 Chen 등의 서베이[^longcot]가 보조 지도다. §2가 short CoT와 long CoT의 차이를 세 능력(깊은 추론, 넓은 탐색, 되돌아보기)으로 정의하고, §3.1.1이 long CoT의 출현, 추론 경계, overthinking, 추론 시 계산 확장, aha moment 같은 현상을 모은다. 이 노트의 §1–4가 그 순서를 따른다.
+
+## 1. Short CoT에서 long CoT로
+
+### 1-1. 무엇이 다른가
+
+Chain of thought는 답 앞에 풀이를 쓰게 하는 것이다. 2022년의 CoT 프롬프팅 이후 널리 쓰인 형태는 문제를 몇 단계로 나눠 한 방향으로 풀고 답을 내는 **short CoT**다. Chen 등은 추론 모델의 **long CoT**를 세 가지 능력의 결합으로 구분한다.[^longcot] 더 많은 논리 단계를 이어 가는 깊은 추론(deep reasoning), 확신이 없을 때 여러 경로를 병렬로 시도하는 넓은 탐색(extensive exploration), 그리고 자기 풀이를 점검하고 고치는 되돌아보기(feasible reflection)다. Short CoT가 한 줄기의 풀이라면 long CoT는 가지를 뻗고 되돌아오는 탐색의 기록이며, 그래서 훨씬 길다.
+
+이 차이는 [04a §5-3](/lecture/2026f-advanced-deep-learning/04a-sft/)에서 본 사고 과정 SFT 데이터의 차이이기도 하다. Olmo 3 Think의 SFT 응답이 수천 토큰인 이유가 이것이다.
+
+### 1-2. RL 학습 중 나타나는 변화
+
+R1-Zero의 학습 곡선(원논문 v2 Figure 1)에서 정답률과 함께 오른 것이 응답 길이였다. 학습 초기 수백 토큰이던 평균 응답이 학습이 끝날 무렵 1만 토큰 안팎까지 늘었고, 그 사이에 "wait"처럼 앞의 풀이를 재검토하는 표현이 늘었다.[^r1] 저자들은 모델이 어려운 문제에 더 많은 사고 시간을 쓰는 법을 스스로 배웠다고 해석했다. 보상은 정답과 형식만 보았으므로, 길이와 되돌아보기는 보상이 직접 요구한 것이 아니라 정답률을 올리는 과정에서 선택된 행동이다.
+
+두 가지 주의가 필요하다. 첫째, 이 행동이 RL에서 처음 생긴 것인지는 분명하지 않다. Liu 등은 RL을 하기 전의 Qwen2.5-Math base model이 이미 자기 점검 표현을 내며, DeepSeek-V3-Base도 그런 표현을 낸다고 보고했다.[^drgrpo] R1-Zero의 "aha moment"는 없던 행동의 출현이라기보다 있던 행동의 빈도 증가로 읽는 편이 안전하다. 둘째, 길이 증가에는 목적함수의 몫도 있다. 같은 연구는 GRPO(group relative policy optimization)의 길이 정규화가 틀린 응답을 길게 만드는 편향을 갖는다고 분석했는데, 그 계산은 [05c](/lecture/2026f-advanced-deep-learning/05c-policy-optimization/)에서 한다. 여기서는 "길어졌다"를 "추론이 늘었다"와 같은 말로 읽지 않는다는 점만 기억해 둔다.
+
+## 2. 길이의 비용과 overthinking
+
+### 2-1. 성능은 길이에 단조 증가하지 않는다
+
+Chen 등의 서베이는 여러 연구를 모아 추론 길이와 성능의 관계를 정리한다. 길이가 늘수록 성능이 오르다가 어느 문턱을 넘으면 내려가며, 일부 연구는 길이와 정확도 사이에 직접적인 상관을 찾지 못했다.[^longcot] 저자들은 모델마다 처리할 수 있는 추론의 길이와 복잡도에 상한(reasoning boundary)이 있고, 그 너머에서는 오류가 누적된다고 본다.
+
+간단한 문제에서 이 비용이 두드러진다. Chen 등(다른 연구진)은 o1 계열 모델이 "2+3=?" 같은 문제에도 수백 토큰의 풀이와 여러 번의 재검토를 쓰는 **overthinking**을 측정하고, 정답에 이르기까지 쓴 토큰과 처음 정답에 도달한 뒤 추가로 쓴 토큰을 나누는 효율 지표를 제안했다. 자기 학습으로 응답을 줄이자 정확도를 유지하면서 토큰이 크게 줄었다.[^overthinking] 효율적 추론에 대한 Sui 등의 서베이는 이런 대응을 모델 학습, 출력 제어, 입력 프롬프트의 세 갈래로 분류한다.[^efficient]
+
+### 2-2. 길이를 제어하는 방법
+
+길이를 제어하는 방법은 학습 단계와 추론 단계로 나뉜다.
+
+**학습 단계.** Kimi k1.5는 보상에 길이 항을 넣었다. 같은 문제의 응답들 중 짧은 정답에 더 높은 보상을, 긴 오답에 벌점을 주는 식으로 정규화된 길이 벌점을 두고, 학습 초반에는 서서히 켰다.[^kimi] 긴 모델의 능력을 짧은 응답으로 옮기는 long2short 방법도 넷을 비교했다. 긴 모델과 짧은 모델의 가중치 평균, 여러 응답 중 가장 짧은 정답을 골라 SFT, 길이가 다른 쌍으로 DPO(direct preference optimization), 그리고 길이 벌점을 강화한 RL이다.[^kimi] 05c에서 볼 Dr. GRPO는 목적함수의 길이 편향 자체를 없앤다.[^drgrpo]
+
+**추론 단계.** Qwen3는 thinking mode fusion 단계에서 `/think`와 `/no_think` 표시로 사고 과정을 켜고 끄게 학습했고, 그 결과 **thinking budget**이 생겼다. 사고 과정이 정해진 토큰 수에 이르면 "시간이 제한되어 지금까지의 사고로 답한다"는 문장을 넣어 답으로 넘어가게 하는 방식이다. 저자들은 이 능력을 따로 학습하지 않았는데도 mode fusion에서 자연스럽게 나왔다고 밝혔고, 수학·코드·STEM(science, technology, engineering, mathematics) 벤치마크에서 예산을 늘릴수록 성능이 매끄럽게 올랐다(원논문 Figure 2).[^qwen3] 모드 전환의 정확도(ThinkFollow)는 general RL 뒤 88.7에서 98.9로 올랐다(원논문 Table 22).[^qwen3]
+
+## 3. 추론 시 계산
+
+### 3-1. 학습 시 계산과 추론 시 계산
+
+같은 모델이라도 추론에 계산을 더 쓰면 성능이 오른다. 이 축을 **test-time compute** 또는 inference-time scaling이라고 부르며, 모델 크기나 학습 데이터를 늘리는 [2주차의 scaling](/lecture/2026f-advanced-deep-learning/02d-scaling/)과 다른 축이다. 계산을 더 쓰는 방법은 크게 둘이다.
+
+| 방법 | 무엇을 늘리나 | 대표 |
+|---|---|---|
+| 더 길게 생각하기 | 응답 하나의 사고 과정 길이 | Long CoT, thinking budget, budget forcing |
+| 여러 번 생각하기 | 응답의 개수 | Self-consistency(다수결), best-of-$n$(검증기 선택), 탐색 |
+
+둘째 갈래가 먼저 있었다. Wang 등의 self-consistency는 풀이를 여러 개 뽑아 최종 답의 다수결을 취하는 방법으로, 2022년 당시 GSM8K에서 17.9%p를 올렸다.[^sc] 검증기나 reward model로 후보 중 하나를 고르는 best-of-$n$은 [04d §4-2](/lecture/2026f-advanced-deep-learning/04d-reward-hacking/)에서 보았다. Snell 등은 문제 난이도에 따라 두 갈래에 계산을 나눠 쓰는 compute-optimal 전략을 제안해, 같은 추론 계산으로 기본 방법보다 4배 넘는 효율을 얻고 FLOPs(floating-point operations)를 맞춘 비교에서 작은 모델이 14배 큰 모델을 일부 문제에서 앞선다고 보고했다.[^snell] R1-Zero의 AIME 2024 점수가 pass@1 77.9%에서 다수결로 86.7%가 된 것도 이 갈래다.[^r1]
+
+### 3-2. Budget forcing
+
+첫째 갈래를 가장 단순하게 보인 것이 s1이다. Muennighoff 등은 Gemini의 사고 과정으로 만든 1,000개의 문제·풀이(s1K)로 Qwen2.5-32B-Instruct를 26분(H100 16개) 동안 SFT한 뒤, 추론 때 사고 과정의 종료 토큰을 억제하고 "Wait"를 덧붙여 더 생각하게 하거나 반대로 강제로 끝내는 **budget forcing**을 썼다. 사고 예산을 늘릴수록 AIME 2024가 50%에서 57%로 올랐고, 경시 수학에서 o1-preview를 최대 27%p 앞섰다.[^s1] 1,000개의 SFT로 이 정도가 가능했다는 점은 [04a §3-4](/lecture/2026f-advanced-deep-learning/04a-sft/)의 LIMA와 같은 방향의 관찰이고, 모델이 "더 생각하라"는 지시에 실제로 더 나은 답을 낸다는 점은 long CoT가 단순한 길이가 아니라 활용 가능한 계산임을 보인다.
+
+<Callout type="warning">
+추론 시 계산은 공짜가 아니다. 응답이 10배 길어지면 [6주차](/lecture/2026f-advanced-deep-learning/06a-llm-inference/)에서 계산할 decode 비용과 KV cache가 그만큼 늘고, 응답을 16개 뽑으면 생성 비용이 16배다. §2의 overthinking은 이 비용을 불필요한 문제에 쓰는 것이다. 이 노트는 무엇을 얻는지를 보고, 그 비용의 구조는 6–7주차가 다룬다.
+</Callout>
+
+## 4. RL은 능력을 만드는가
+
+### 4-1. Pass@k로 본 경계
+
+가장 논쟁적인 질문은 이것이다. RLVR(reinforcement learning with verifiable rewards)이 base model에 **없던** 추론 능력을 만드는가, 아니면 base model이 이미 낼 수 있던 풀이를 더 자주 내게 하는가. Yue 등은 이 질문을 pass@$k$로 물었다.[^yue] pass@$k$는 응답을 $k$개 뽑았을 때 그중 하나라도 맞을 확률이다. $k=1$이면 평균 정답률이고, $k$가 크면 "이 모델이 어떤 식으로든 풀 수 있는 문제"의 비율에 가까워진다. Qwen2.5 7B·14B·32B와 Llama 3.1 8B의 base model을 여러 RLVR 방법으로 학습한 모델과 비교하자, $k$가 작을 때는 RLVR 모델이 앞섰지만 $k$가 커지면 base model이 앞섰다. 예를 들어 32B의 Minerva 수학 평가에서 $k=128$일 때 base model이 약 9%p 높았다. RLVR 모델이 낸 풀이의 perplexity를 base model로 재면 base model이 자연스럽게 냈을 법한 범위 안에 있었다. 저자들의 결론은 현재의 RLVR이 표집 효율을 높이되 풀 수 있는 문제의 범위(reasoning boundary)는 넓히지 않으며, 오히려 좁힌다는 것이다. 반면 더 강한 teacher에서 distillation한 모델은 base model이 내지 못하던 풀이를 냈다.[^yue] 이 마지막 관찰은 [05f](/lecture/2026f-advanced-deep-learning/05f-distillation/)로 이어진다.
+
+<Callout type="example">
+**pass@k 읽기.** 어떤 문제에서 base model이 낸 응답 100개 중 2개가 정답이고, RLVR 모델의 응답 100개 중 40개가 정답이라고 하자. pass@1은 각각 0.02와 0.40으로 RLVR 모델이 압도적이다. 그러나 pass@100은 둘 다 1에 가깝다. 이 문제는 base model도 "풀 수 있는" 문제였고, RLVR은 그 확률을 20배로 올린 것이다. 반대로 base model의 응답 100개가 모두 오답인 문제를 RLVR 모델이 맞히기 시작했다면 그것이 경계의 확장이다. Yue 등의 관찰은 첫 번째 종류가 대부분이고 두 번째 종류는 드물다는 것이다.
+</Callout>
+
+### 4-2. 반론과 지표의 문제
+
+이 결론에는 두 갈래의 반론이 있다. 하나는 학습을 더 길게 하면 다르다는 것이다. Liu 등의 ProRL은 KL 제어와 reference 정책 재설정으로 2천 스텝 이상 RL을 이어 가면, base model이 아무리 뽑아도 못 풀던 문제를 RL 모델이 푸는 경우가 생기며 pass@$k$가 큰 $k$에서도 base model을 앞선다고 보고했다.[^prorl] 다른 하나는 지표 자체에 대한 것이다. 답이 몇 개의 선택지나 작은 정수인 문제에서는 무작위로 여러 번 뽑기만 해도 언젠가 맞으므로, pass@$k$는 $k$가 커지면 1로 수렴한다. Dragoi 등은 문제마다 "정답 비율이 $\tau$ 이상인가"를 세는 cover@$\tau$를 제안해, 낮은 $\tau$에서는 base model의 폭이 넓어 보이지만 $\tau$를 올리면 base model의 성능이 빠르게 무너져 운에 의존하고 있었음이 드러난다고 보고했다.[^dragoi] Wen 등은 최종 답만 보는 pass@$k$가 틀린 풀이 끝의 운 좋은 정답까지 세는 문제를 지적하고, 풀이 과정까지 맞아야 세는 CoT-pass@$k$로 재면 RLVR이 수학과 코드에서 올바른 추론의 경계를 넓힌다고 보고했다.[^wen]
+
+세 연구는 서로 다른 모델·학습 길이·지표를 쓰므로 하나의 결론으로 합칠 수 없다. 현재 시점에서 말할 수 있는 것은 다음과 같다. 일반적인 규모의 RLVR은 주로 표집 효율을 높이며 그 효과는 pass@1에서 크게 보인다. 경계가 넓어지는지는 학습 길이와 지표에 따라 답이 갈리고, "풀 수 있다"의 정의(한 번이라도 맞히면 되는가, 안정적으로 맞혀야 하는가, 풀이까지 맞아야 하는가)가 결론을 좌우한다. 05a §4-3의 무작위 보상 결과도 같은 맥락이다. 점수 상승의 일부는 base model이 이미 가진 행동의 증폭이다.
+
+### 4-3. SFT와 RL의 일반화
+
+관련된 질문이 "RL은 일반화하고 SFT는 암기하는가"다. Chu 등은 규칙을 바꿀 수 있는 카드 게임(GeneralPoints)과 시각 내비게이션(V-IRL)에서, outcome 보상으로 학습한 RL은 학습 때 보지 않은 규칙·시각 변형으로 일반화한 반면 SFT는 학습 데이터를 암기하는 경향을 보였다고 보고했다. 동시에 RL 전에 출력 형식을 안정시키는 데는 SFT가 필요했다.[^chu] 이 결과는 두 과제에서 나온 것이므로 일반 명제로 넓히지 않지만, [04a §5-3](/lecture/2026f-advanced-deep-learning/04a-sft/)에서 본 "SFT는 초기화, RL은 그 위에서"라는 recipe의 구조와 맞아떨어진다. 서베이 §4.2는 이 질문을 열린 문제로 둔다.[^survey]
+
+## 5. 정리
+
+Long CoT는 검증 가능한 보상이 정답률을 올리는 과정에서 선택한 행동이며, 깊은 추론·넓은 탐색·되돌아보기의 결합으로 정의된다. 길이는 능력의 증거가 아니라 비용이기도 하므로 학습과 추론 양쪽에서 제어 대상이 되었고, 추론 시 계산은 더 길게 또는 여러 번 생각하는 두 갈래로 늘릴 수 있다. RL이 능력을 만드는지는 지표와 학습 길이에 따라 답이 갈리며, 확실한 것은 표집 효율의 증가다. 이 행동을 만든 최적화 알고리즘의 세부, 특히 길이 편향과 탐색의 붕괴가 목적함수 어디에서 오는지가 다음 노트의 주제다.
+
+[^survey]: Zhang, K., et al. (2025). *A Survey of Reinforcement Learning for Large Reasoning Models*. [arXiv:2509.08827v3](https://arxiv.org/abs/2509.08827v3).
+[^longcot]: Chen, Q., et al. (2025). *Towards Reasoning Era: A Survey of Long Chain-of-Thought for Reasoning Large Language Models*. [arXiv:2503.09567v5](https://arxiv.org/abs/2503.09567v5).
+[^r1]: DeepSeek-AI. (2026). *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning*. [arXiv:2501.12948v2](https://arxiv.org/abs/2501.12948v2).
+[^drgrpo]: Liu, Z., et al. (2025). *Understanding R1-Zero-Like Training: A Critical Perspective*. [arXiv:2503.20783v2](https://arxiv.org/abs/2503.20783v2).
+[^overthinking]: Chen, X., et al. (2025). *Do NOT Think That Much for 2+3=? On the Overthinking of o1-Like LLMs*. [arXiv:2412.21187v2](https://arxiv.org/abs/2412.21187v2).
+[^efficient]: Sui, Y., et al. (2025). *Stop Overthinking: A Survey on Efficient Reasoning for Large Language Models*. [arXiv:2503.16419v4](https://arxiv.org/abs/2503.16419v4).
+[^kimi]: Kimi Team. (2025). *Kimi k1.5: Scaling Reinforcement Learning with LLMs*. [arXiv:2501.12599](https://arxiv.org/abs/2501.12599).
+[^qwen3]: Qwen Team. (2025). *Qwen3 Technical Report*. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
+[^sc]: Wang, X., et al. (2023). *Self-Consistency Improves Chain of Thought Reasoning in Language Models*. ICLR 2023. [arXiv:2203.11171](https://arxiv.org/abs/2203.11171).
+[^snell]: Snell, C., Lee, J., Xu, K., & Kumar, A. (2024). *Scaling LLM Test-Time Compute Optimally can be More Effective than Scaling Model Parameters*. [arXiv:2408.03314](https://arxiv.org/abs/2408.03314).
+[^s1]: Muennighoff, N., et al. (2025). *s1: Simple test-time scaling*. [arXiv:2501.19393](https://arxiv.org/abs/2501.19393).
+[^yue]: Yue, Y., et al. (2025). *Does Reinforcement Learning Really Incentivize Reasoning Capacity in LLMs Beyond the Base Model?*. NeurIPS 2025. [arXiv:2504.13837v5](https://arxiv.org/abs/2504.13837v5).
+[^prorl]: Liu, M., et al. (2025). *ProRL: Prolonged Reinforcement Learning Expands Reasoning Boundaries in Large Language Models*. [arXiv:2505.24864](https://arxiv.org/abs/2505.24864).
+[^dragoi]: Dragoi, M., et al. (2025). *Beyond Pass@k: Breadth-Depth Metrics for Reasoning Boundaries*. [arXiv:2510.08325](https://arxiv.org/abs/2510.08325).
+[^wen]: Wen, X., et al. (2026). *Reinforcement Learning with Verifiable Rewards Implicitly Incentivizes Correct Reasoning in Base LLMs*. ICLR 2026. [arXiv:2506.14245](https://arxiv.org/abs/2506.14245).
+[^chu]: Chu, T., et al. (2025). *SFT Memorizes, RL Generalizes: A Comparative Study of Foundation Model Post-training*. [arXiv:2501.17161](https://arxiv.org/abs/2501.17161).
