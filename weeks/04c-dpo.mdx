@@ -4,42 +4,42 @@ week: 4
 order: 2
 ---
 
-[04b RLHF 노트](/lecture/2026f-advanced-deep-learning/04b-rlhf/)의 파이프라인은 reward model을 학습하고, 그 보상으로 정책이 생성한 응답을 PPO(proximal policy optimization)로 갱신한다. 모델 넷을 메모리에 올리고 학습 루프 안에서 응답을 생성해야 하며, 하이퍼파라미터에 민감하다. 이 노트는 그 비용 문제를 푸는 계보를 따라간다. 출발점은 2023년의 **DPO(direct preference optimization)**다. RLHF의 목적함수가 가진 닫힌 해를 이용해 reward model과 강화학습(reinforcement learning, RL) 루프를 없애고, 선호쌍에 바로 손실을 건다. 그 뒤로 DPO의 가정을 하나씩 바꾼 변형들과, 고정된 데이터의 한계를 넘으려는 online 확장이 이어진다.
+[04b RLHF 노트](/lecture/2026f-advanced-deep-learning/04b-rlhf/)의 파이프라인은 reward model을 학습하고, 그 보상으로 정책이 생성한 응답을 PPO(proximal policy optimization)로 갱신한다. 모델 넷을 관리하고 학습 루프 안에서 응답을 생성해야 하며, 하이퍼파라미터에 민감하다. 이 노트는 그 비용 문제를 푸는 계보를 따라간다. 출발점은 2023년의 <strong>DPO(direct preference optimization)</strong>다. RLHF(reinforcement learning from human feedback)의 목적함수가 가진 닫힌 해를 이용해 명시적 reward model과 강화학습(reinforcement learning, RL)의 정책 최적화 루프를 우회하고, 선호쌍에 바로 손실을 건다. 그 뒤로 DPO의 가정을 하나씩 바꾼 변형들과, 고정된 데이터의 한계를 넘으려는 online 확장이 이어진다.
 
-전체 지도는 Xiao 등이 DPO 연구를 정리한 서베이[^survey]로 잡는다. §II-A가 RLHF의 배경을, §II-B가 DPO의 유도를 다루고, §III은 여섯 개의 연구 질문으로 변형을 분류한다. 그중 implicit reward의 성질(RQ1), 피드백 형식(RQ2), KL 계수와 reference model(RQ3), online 방법(RQ4), reward hacking(RQ5)이 이 노트의 §2–5에 대응한다. 이 노트에서 처음 정의하는 **on-policy와 off-policy**는 5주차의 RLVR 노트들과 [05f Distillation](/lecture/2026f-advanced-deep-learning/05f-distillation/)에서 다시 쓴다.
+전체 지도는 Xiao 등이 DPO 연구를 정리한 서베이[^survey]로 잡는다. §II-A가 RLHF의 배경을, §II-B가 DPO의 유도를 다루고, §III은 RLHF와 DPO의 비교(RQ0)에 이어 여섯 개의 연구 질문으로 변형을 분류한다. 그중 implicit reward의 성질(RQ1), 피드백 형식(RQ2), KL(Kullback–Leibler) 계수와 reference model(RQ3), online 방법(RQ4), reward hacking(RQ5)이 이 노트의 §2–5에 대응한다. 이 노트에서 처음 정의하는 **on-policy와 off-policy**는 5주차의 RLVR(reinforcement learning with verifiable rewards) 노트들과 [05f Distillation](/lecture/2026f-advanced-deep-learning/05f-distillation/)에서 다시 쓴다.
 
 ## 1. RLHF 목적함수의 닫힌 해
 
 ### 1-1. 무엇을 최대화하는가
 
-04b §3-1의 목적함수를 다시 쓴다. 프롬프트 $x$에 대해 정책 $\pi_\theta$가 응답 $y$를 생성할 때, 보상의 기대값에서 reference model $\pi_{\mathrm{ref}}$(보통 SFT 모델)와의 KL divergence 벌점을 뺀 값을 최대화한다.
+04b §3-1의 목적함수를 다시 쓴다. 프롬프트 $x$마다 정책 $\pi_\theta(\cdot\mid x)$가 응답 $y$를 생성할 때, 보상의 기대값에서 reference model $\pi_{\mathrm{ref}}$(보통 SFT(supervised fine-tuning) 모델)와의 KL divergence 벌점을 뺀 값을 프롬프트 분포 전체에서 최대화한다.
 
 $$
-\max_{\pi_\theta}\ \mathbb{E}_{x\sim\mathcal{D},\,y\sim\pi_\theta(\cdot\mid x)}\big[r(x,y)\big]-\beta\,\mathrm{KL}\big(\pi_\theta(\cdot\mid x)\,\|\,\pi_{\mathrm{ref}}(\cdot\mid x)\big)
+\max_{\pi_\theta}\ \mathbb{E}_{x\sim\mathcal{D}}\Big[\mathbb{E}_{y\sim\pi_\theta(\cdot\mid x)}\big[r(x,y)\big]-\beta\,\mathrm{KL}\big(\pi_\theta(\cdot\mid x)\,\|\,\pi_{\mathrm{ref}}(\cdot\mid x)\big)\Big],\qquad\beta>0
 $$
 
 04b에서는 이 문제를 PPO로 풀었다. 즉 $\pi_\theta$에서 응답을 뽑고, reward model로 점수를 매기고, gradient로 조금씩 올렸다. DPO의 출발점은 이 최적화 문제가 **닫힌 해**를 가진다는 관찰이다.
 
 ### 1-2. 최적 정책의 형태
 
-보상 $r$이 주어졌을 때, 위 목적함수를 최대화하는 정책은 다음과 같다.[^dpo]
+보상 $r$이 주어졌을 때, 프롬프트 $x$마다 위 괄호 안을 최대화하는 분포는 다음과 같다.[^dpo]
 
 $$
 \pi^*(y\mid x)=\frac{1}{Z(x)}\,\pi_{\mathrm{ref}}(y\mid x)\exp\!\Big(\frac{1}{\beta}r(x,y)\Big),\qquad Z(x)=\sum_y\pi_{\mathrm{ref}}(y\mid x)\exp\!\Big(\frac{1}{\beta}r(x,y)\Big)
 $$
 
-Reference model의 확률에 보상의 지수를 곱하고, 프롬프트마다 정규화한 것이다. $\beta$가 작을수록 보상이 높은 응답으로 확률이 몰리고, $\beta$가 클수록 reference model에 가깝게 남는다. 직관은 단순하지만 이 식을 그대로 쓸 수는 없다. $Z(x)$는 가능한 모든 응답에 대한 합이라 계산할 수 없기 때문이다.
+Reference model의 확률에 보상의 지수를 곱하고, 프롬프트마다 정규화한 것이다. $\beta$가 작을수록 보상이 높은 응답으로 확률이 몰리고, $\beta$가 클수록 reference model에 가깝게 남는다. 이 해는 $Z(x)$가 유한하다는 조건 아래 **모든 확률분포** 중에서의 최적해이며, reference model이 확률 0을 준 응답에는 최적 정책도 확률 0을 준다. 신경망으로 표현할 수 있는 정책의 집합 안에 이 분포가 정확히 들어 있다는 보장은 없으므로, 실제 학습은 §2에서 $\pi_\theta$로 이 해를 근사한다. 그리고 이 식을 그대로 쓸 수도 없다. $Z(x)$는 가능한 모든 응답에 대한 합이라 계산할 수 없기 때문이다.
 
 <Details summary="유도">
 
-KL을 전개하면 목적함수는 $\mathbb{E}_{y\sim\pi_\theta}[r(x,y)-\beta\log\pi_\theta(y\mid x)+\beta\log\pi_{\mathrm{ref}}(y\mid x)]$이다. $\beta$로 나누고 부호를 바꾸면 최소화할 양은
+프롬프트 $x$를 고정하고 KL을 전개하면 최대화할 양은 $\mathbb{E}_{y\sim\pi_\theta}[r(x,y)-\beta\log\pi_\theta(y\mid x)+\beta\log\pi_{\mathrm{ref}}(y\mid x)]$이다. $\beta$로 나누고 부호를 바꾸면 최소화할 양은
 
 $$
 \mathbb{E}_{y\sim\pi_\theta}\Big[\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)\exp(r(x,y)/\beta)}\Big]
 =\mathbb{E}_{y\sim\pi_\theta}\Big[\log\frac{\pi_\theta(y\mid x)}{\pi^*(y\mid x)}\Big]-\log Z(x)
 $$
 
-이다. 둘째 등호는 분모에 $Z(x)$를 곱하고 나눈 것이다. 첫 항은 $\mathrm{KL}(\pi_\theta\,\|\,\pi^*)$이고 $\log Z(x)$는 $\theta$와 무관하므로, KL이 0이 되는 $\pi_\theta=\pi^*$가 최적이다.
+이다. 둘째 등호는 분모에 $Z(x)$를 곱하고 나눈 것이다. 첫 항은 $\mathrm{KL}(\pi_\theta\,\|\,\pi^*)$이고 $\log Z(x)$는 $\theta$와 무관하므로, KL이 0이 되는 $\pi_\theta=\pi^*$가 최적이다. 원래 목적함수의 값으로 쓰면 $\beta\log Z(x)-\beta\,\mathrm{KL}(\pi_\theta\,\|\,\pi^*)$이다.
 
 </Details>
 
@@ -63,13 +63,13 @@ $$
 
 ### 2-1. 정책에 직접 거는 선호 손실
 
-04b §2-2의 reward model 손실은 $-\log\sigma(r_w-r_l)$이었다. 그 $r$ 자리에 위의 log 확률비를 넣으면 reward model 없이 정책 $\pi_\theta$를 바로 학습하는 손실이 된다.[^dpo]
+04b §2-2의 reward model 손실은 $-\log\sigma(r_w-r_l)$이었다. 그 $r$ 자리에 위의 log 확률비를 넣되 알 수 없는 $\pi^*$를 학습할 정책 $\pi_\theta$로 바꾸면, reward model 없이 정책을 바로 학습하는 손실이 된다.[^dpo]
 
 $$
 \mathcal{L}_{\mathrm{DPO}}(\theta)=-\mathbb{E}_{(x,y_w,y_l)\sim\mathcal{D}}\Big[\log\sigma\Big(\beta\log\frac{\pi_\theta(y_w\mid x)}{\pi_{\mathrm{ref}}(y_w\mid x)}-\beta\log\frac{\pi_\theta(y_l\mid x)}{\pi_{\mathrm{ref}}(y_l\mid x)}\Big)\Big]
 $$
 
-$\hat r_\theta(x,y)=\beta\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}$를 **implicit reward**라고 부른다. 명시적 reward model은 없지만, 정책 자체가 보상 함수의 역할을 한다. 학습에 필요한 것은 선호쌍 데이터셋 $\mathcal{D}$, 갱신되는 정책, 그리고 고정된 reference model 둘뿐이다. 응답의 log 확률은 [04a §2-3](/lecture/2026f-advanced-deep-learning/04a-sft/)의 토큰별 log 확률을 응답 구간에서 합한 값이다.
+$\hat r_\theta(x,y)=\beta\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}$를 **implicit reward**라고 부른다. 명시적 reward model은 없지만, 정책 자체가 보상 함수의 역할을 한다. 이 손실을 최소화하는 것은 "정책이 정의하는 implicit reward로 관측된 선호의 likelihood를 최대화"하는 것이며, 그 최적점이 §1-2의 $\pi^*$에 대응한다. 학습에 필요한 것은 선호쌍 데이터셋 $\mathcal{D}$, 갱신되는 정책, 그리고 고정된 reference model 둘뿐이다. 응답의 log 확률은 [04a §2-3](/lecture/2026f-advanced-deep-learning/04a-sft/)의 토큰별 log 확률을 응답 구간에서 합한 값이다.
 
 ### 2-2. Gradient가 하는 일
 
@@ -79,7 +79,9 @@ $$
 \nabla_\theta\mathcal{L}_{\mathrm{DPO}}=-\beta\,\mathbb{E}\Big[\underbrace{\sigma\big(\hat r_\theta(x,y_l)-\hat r_\theta(x,y_w)\big)}_{\text{가중치}}\Big(\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\Big)\Big]
 $$
 
-괄호 안은 선호된 응답의 log 확률을 올리고 탈락한 응답의 log 확률을 내리는 방향이다. 앞의 가중치는 implicit reward가 순서를 **틀리게** 매기고 있을수록 커진다. 이미 $y_w$에 훨씬 높은 implicit reward를 주는 쌍은 거의 갱신되지 않고, 순서가 뒤집힌 쌍이 크게 갱신된다. SFT처럼 $y_w$의 확률만 올리는 것과 달리 $y_l$의 확률을 **내리는 항**이 있다는 점이 핵심이다. 이 음의 항이 없으면 두 응답이 비슷할 때 둘 다 확률이 오르며 구분이 생기지 않는다.
+괄호 안의 두 항이 주는 **직접적인 학습 신호**는 선호된 응답의 log 확률을 올리고 탈락한 응답의 log 확률을 내리는 방향이다. 앞의 가중치는 implicit reward가 순서를 **틀리게** 매기고 있을수록 커진다. 이미 $y_w$에 훨씬 높은 implicit reward를 주는 쌍은 거의 갱신되지 않고, 순서가 뒤집힌 쌍이 크게 갱신된다. SFT처럼 $y_w$의 확률만 올리는 것과 달리 $y_l$의 확률을 **내리는 항**이 있다는 점이 DPO를 구분 짓는다.
+
+다만 직접적인 신호와 실제 결과는 다르다. 두 응답은 파라미터를 공유하므로, 한 스텝 뒤 $\log\pi_\theta(y_w\mid x)$가 실제로 오르는지는 두 gradient 벡터의 관계에 달려 있다. 두 응답이 비슷해 gradient가 많이 겹치면 $y_l$을 내리는 항이 $y_w$의 확률도 끌어내릴 수 있다. 이 현상은 §5-1에서 이름을 얻는다.
 
 <Callout type="example">
 **선호쌍 하나의 DPO 손실.** 04b의 예시와 같은 프롬프트에 두 응답이 있고, $\beta=0.1$이라고 하자. 응답 전체의 log 확률이 다음과 같다.
@@ -89,26 +91,32 @@ $$
 | $y_w$ (선호) | $-20.0$ | $-21.0$ | $+1.0$ | $0.1$ |
 | $y_l$ (탈락) | $-24.0$ | $-23.0$ | $-1.0$ | $-0.1$ |
 
-Implicit reward의 차이는 $0.2$이고 $\sigma(0.2)=0.550$이므로 손실은 $-\log0.550=0.598$이다. Gradient의 가중치는 $\sigma(-0.2)=0.450$이다. 정책이 아직 두 응답을 거의 구분하지 못하므로 가중치가 0.5에 가깝고, 갱신은 $y_w$의 확률을 올리고 $y_l$의 확률을 내린다. 같은 log 확률에서 $\beta=1$이면 implicit reward의 차이가 2가 되어 손실은 $-\log\sigma(2)=0.127$, 가중치는 0.119로 줄어든다. $\beta$는 reference model에서 같은 거리를 벗어났을 때 그것을 얼마나 큰 보상 차이로 읽을지를 정한다.
+Implicit reward의 차이는 $0.2$이고 $\sigma(0.2)=0.550$이므로 손실은 $-\log0.550=0.598$이다. 정책 자체는 이미 $y_w$에 $e^{4}\approx55$배 높은 확률을 주지만, implicit reward가 예측한 선호 확률은 0.55에 그친다. Reference model도 $y_w$를 훨씬 높게 보므로 **reference 대비** 얼마나 더 벌렸는가만 세기 때문이다. Gradient의 sigmoid 가중치는 $\sigma(-0.2)=0.450$이고 $\beta$를 곱한 전체 계수는 0.045다.
+
+같은 log 확률에서 $\beta=1$이면 implicit reward의 차이가 2가 되어 손실은 $-\log\sigma(2)=0.127$, sigmoid 가중치는 0.119로 줄어든다. 다만 $\beta$가 곱해진 전체 계수는 0.119로 오히려 커진다. $\beta$는 reference model에서 같은 거리를 벗어났을 때 그것을 얼마나 큰 보상 차이로 읽을지를 정하며, 갱신 폭에는 두 방향으로 작용한다.
 
 04b의 reward model 예시(점수 1.2와 0.4)와 비교하면, 거기서는 별도 모델의 점수 차이 0.8이 확률을 정했고 여기서는 정책 자신의 log 확률비가 그 자리를 차지한다.
 </Callout>
 
 ### 2-3. 원논문의 결과
 
-Rafailov 등은 세 과제에서 DPO를 PPO 기반 RLHF와 비교했다.[^dpo] Reddit TL;DR 요약에서 GPT-4를 판정자로 한 승률은 sampling temperature 0에서 DPO 61%, PPO 57%였고, 보상과 KL 거리의 관계를 그린 frontier에서는 DPO가 같은 KL에서 더 높은 보상에 도달했다(원논문 Figure 2). Anthropic HH 대화에서는 DPO가 데이터셋의 선호 응답보다 나은 응답을 낸 유일한 효율적 방법이었다. 이 결과와 구현의 단순함이 맞물려, 2024년의 Llama 3와 Tülu 3를 비롯한 많은 공개 recipe가 PPO 대신 DPO를 택했다.[^llama][^tulu3] 다만 §3-2에서 보듯 이 비교는 그 뒤에 다시 검토되었다.
+Rafailov 등은 과제별로 다른 방식으로 DPO를 PPO 기반 RLHF와 비교했다.[^dpo] 감성 제어 생성(IMDb)에서는 감성 분류기를 정답 보상으로 두고 보상과 KL 거리의 관계를 그렸는데, DPO가 같은 KL에서 PPO보다 높은 보상에 도달했다(원논문 Figure 2 왼쪽). Reddit TL;DR 요약에서는 GPT-4를 판정자로 사람이 쓴 참조 요약과 비교한 승률이 sampling temperature 0에서 DPO 61%, PPO 57%였다(원논문 Figure 2 오른쪽). Anthropic HH 대화에서는 DPO가 데이터셋의 선호 응답보다 나은 응답을 낸 유일한 효율적 방법이었다. 이 결과와 구현의 단순함이 맞물려, 2024년의 Llama 3와 Tülu 3를 비롯한 많은 공개 recipe가 PPO 대신 DPO를 택했다.[^llama][^tulu3] 다만 §3-3에서 보듯 이 비교는 그 뒤에 다시 검토되었다.
 
 ## 3. DPO는 RL인가
 
 ### 3-1. On-policy와 off-policy
 
-먼저 용어를 정한다. 강화학습 교재의 구분을 따르면, 데이터를 생성하는 정책(behavior policy)과 학습으로 개선하려는 정책(target policy)이 같으면 **on-policy**, 다르면 **off-policy**다.[^sutton] 언어 모델에서는 이렇게 읽으면 된다. 학습에 쓰는 응답을 **지금 갱신 중인 모델이 방금 생성했으면** on-policy이고, 사람이 썼거나 다른 모델이 만들었거나 자신의 과거 checkpoint가 만들었으면 off-policy다. 04b의 PPO는 매 스텝 현재 정책에서 응답을 생성하므로 on-policy에 가깝다(같은 배치로 여러 번 갱신하는 동안 조금 어긋나는 것을 clipping으로 보정했다). [04a](/lecture/2026f-advanced-deep-learning/04a-sft/)의 SFT는 남이 쓴 시연으로 학습하므로 off-policy다.
+먼저 용어를 정한다. 강화학습 교재의 구분을 따르면, 학습 데이터를 생성한 정책을 **behavior policy**, 학습으로 개선하려는 정책을 **target policy**라고 부르고, 둘이 같으면 on-policy, 다르면 off-policy다.[^sutton] 여기에 KL 벌점의 기준이 되는 고정된 **reference policy**(SFT 모델)가 하나 더 있는데, 이것은 데이터를 생성하지 않으므로 앞의 둘과 다른 역할이다.
 
-이 구분은 학습 방법이 아니라 **데이터가 어디서 왔는가**에 대한 것이다. 같은 DPO 손실이라도 고정된 공개 데이터셋으로 학습하면 off-policy이고, 현재 모델에서 두 응답을 뽑아 판정을 받아 학습하면 on-policy다. 뒤 절과 5주차에서 이 구분이 계속 필요하다.
+언어 모델의 post-training에서는 이렇게 읽으면 된다. 학습에 쓰는 응답을 **지금 갱신 중인 정책이 방금 생성했으면** on-policy이고, 사람이 썼거나 다른 모델이 만들었거나 자신의 과거 checkpoint가 만들었으면 off-policy다. 엄밀히는 같은 가중치라도 temperature 같은 decoding 설정이 다르면 표집 분포가 달라지므로, 기준은 "누가 만들었는가"보다 **표집 분포가 target policy와 같은가**다. [04a](/lecture/2026f-advanced-deep-learning/04a-sft/)의 SFT는 남이 쓴 시연으로 학습하므로 이 노트에서는 데이터 분포의 관점에서 off-policy라고 부른다. RL 알고리즘의 분류를 SFT까지 넓혀 쓰는 용례이며, 5주차에서 같은 뜻으로 쓴다.
+
+이와 별개의 축이 **online과 offline**이다. 학습 중에 데이터를 새로 모으면 online, 미리 모은 고정 데이터만 쓰면 offline이다.[^levine] 두 축은 독립이다. 04b의 PPO는 rollout마다 최신 정책으로 응답을 모으고 그 배치로 확률비를 써서 여러 번 갱신하므로 online이며 관례상 on-policy 알고리즘으로 분류한다. 고정 데이터로만 학습하는 offline RL 알고리즘도 있고, 학습 중 데이터를 모으되 오래된 데이터를 함께 쓰는 online off-policy 알고리즘도 있다. 뒤 절과 5주차에서 이 두 축이 계속 필요하다.
 
 ### 3-2. DPO의 정확한 위치
 
-원래의 DPO는 미리 모아 둔 선호쌍에 분류 손실을 거는 **offline** 방법이다. 학습 중에 응답을 생성하지 않고, 보상을 계산하는 별도 모델도 없으며, 환경과의 상호작용도 없다. 그런 뜻에서 DPO는 RL 알고리즘이 아니다. 동시에 그 손실은 KL 제약 보상 최대화 문제의 최적 정책을 재매개화한 것이므로, Bradley–Terry 가정 아래에서는 RLHF와 **같은 문제의 해**를 겨냥한다. "DPO는 RL과 무관하다"도, "DPO는 PPO와 같다"도 정확하지 않다. 손실의 유래(RLHF 목적함수)와 데이터의 출처(고정된 선호쌍)를 나누어 말해야 한다.
+원래의 DPO는 미리 모아 둔 선호쌍에 분류 손실을 거는 offline 방법이고, 그 선호쌍은 보통 다른 모델이 생성했으므로 off-policy다. 학습 중에 응답을 생성하지 않고, 보상을 계산하는 별도 모델도 없다. Offline RL이 존재하므로 "고정 데이터로 학습한다"는 사실만으로 RL이 아니라고 말할 수는 없다. 정확한 서술은 이렇다. DPO는 **선호의 likelihood를 직접 최대화하는 지도학습 손실**이며, 명시적 reward model 학습과 RL의 정책 최적화 루프(rollout, 보상 계산, policy gradient)를 우회한다. 동시에 그 손실은 KL 제약 보상 최대화 문제의 최적 정책을 재매개화한 것이므로, Bradley–Terry 가정 아래에서는 RLHF와 **같은 문제의 해**를 겨냥한다. "DPO는 RL과 무관하다"도, "DPO는 PPO와 같다"도 정확하지 않다. 목적함수의 유래, 실제로 계산하는 손실, 데이터의 출처를 나누어 말해야 한다.
+
+### 3-3. 데이터의 출처가 만드는 차이
 
 데이터의 출처가 왜 문제가 되는지는 DPO 논문 자체가 짚었다. 공개 선호 데이터셋의 응답은 보통 지금 학습하는 모델이 아니라 다른 SFT 모델이 생성한 것이라, reference model과 데이터 사이에 분포 차이가 있다. 저자들은 SFT 모델을 reference로 쓸 수 없을 때 선호 응답에 대해 먼저 SFT한 모델을 reference로 삼으라고 권한다.[^dpo] 이후 연구는 이 차이가 결과를 좌우한다고 보고한다. Xu 등은 DPO가 학습 데이터 분포 밖의 응답에 대해 근본적인 한계를 가지며, 구현을 잘 갖춘 PPO가 코드 경시 문제를 비롯한 여러 벤치마크에서 DPO를 앞선다고 보고했다.[^xu] Tajwar 등은 현재 정책에서 응답을 뽑는 on-policy 표집과 나쁜 응답의 확률을 내리는 음의 gradient가 성능 차이의 핵심 요소라고 분석했다.[^tajwar] Ivison 등은 선호 데이터·알고리즘·reward model·프롬프트를 나누어 실험해, 데이터 품질이 가장 큰 차이를 만들고 그다음이 PPO와 DPO의 차이라고 정리했다.[^ivison]
 
@@ -116,51 +124,68 @@ Rafailov 등은 세 과제에서 DPO를 PPO 기반 RLHF와 비교했다.[^dpo] R
 
 ## 4. 가정을 바꾼 변형
 
-DPO의 손실에는 여러 가정이 들어 있다. 선호가 Bradley–Terry 모형을 따른다는 것, 데이터가 쌍으로 온다는 것, reference model이 필요하다는 것, 응답 전체의 log 확률을 그대로 쓴다는 것이다. 변형들은 이 가정을 하나씩 바꾼다. 아래는 한 줄로 이어지는 계보가 아니라 DPO에서 갈라지는 분기다.
+DPO의 손실에는 여러 가정이 들어 있다. 선호가 Bradley–Terry 모형을 따른다는 것, 데이터가 쌍으로 온다는 것, reference model이 필요하다는 것, 응답 전체의 log 확률을 그대로 쓴다는 것이다. 변형들은 이 가정을 하나씩 바꾼다. 아래는 한 줄로 이어지는 계보가 아니라 DPO에서 갈라지는 분기다. 표 아래에 각 손실의 핵심 식을 적는다. 기호 $h_\theta(y_w,y_l)=\log\frac{\pi_\theta(y_w\mid x)}{\pi_{\mathrm{ref}}(y_w\mid x)}-\log\frac{\pi_\theta(y_l\mid x)}{\pi_{\mathrm{ref}}(y_l\mid x)}$는 DPO 손실 안의 log 확률비 차이이며, DPO 손실은 $-\log\sigma(\beta h_\theta)$다.
 
-| 방법 | 바꾼 가정 | 어떤 문제를 겨냥했나 | 손실의 변화 |
-|---|---|---|---|
-| IPO[^ipo] | 쌍별 선호를 점별 보상으로 환원하는 Bradley–Terry 가정 | 선호가 거의 확정적일 때 DPO가 implicit reward 차이를 무한히 키우며 과적합 | 선호 확률 대신 log 확률비 차이를 목표값에 맞추는 제곱 손실 |
-| KTO[^kto] | 데이터가 쌍으로 온다는 가정 | 같은 프롬프트의 두 응답을 모으기 어렵고, 실제 피드백은 "좋다/나쁘다" 하나인 경우가 많음 | 응답 하나에 대한 desirable/undesirable 신호로 prospect theory의 효용을 최대화 |
-| SimPO[^simpo] | Reference model이 필요하다는 가정과 응답 전체 log 확률 | Reference model의 메모리, 긴 응답이 유리해지는 길이 편향 | 토큰당 평균 log 확률 $\frac{\beta}{\lvert y\rvert}\log\pi_\theta(y\mid x)$를 보상으로 쓰고 목표 여백 $\gamma$를 둠 |
-| ORPO[^orpo] | SFT와 선호 학습이 별도 단계라는 가정, reference model | 두 단계의 비용 | SFT 손실에 선호·탈락 응답의 odds ratio 벌점을 더해 한 단계로 학습 |
-| 길이 정규화 DPO[^tulu3] | 응답 전체 log 확률 | 길이 편향 | DPO의 log 확률비를 응답 길이로 나눔 |
+| 방법 | 바꾼 가정 | 어떤 문제를 겨냥했나 |
+|---|---|---|
+| IPO(identity preference optimization)[^ipo] | 쌍별 선호를 점별 보상으로 환원하는 Bradley–Terry 가정 | 선호가 거의 확정적일 때 DPO가 implicit reward 차이를 무한히 키우며 KL 제약이 무력해짐 |
+| KTO(Kahneman–Tversky optimization)[^kto] | 데이터가 쌍으로 온다는 가정 | 같은 프롬프트의 두 응답을 모으기 어렵고, 실제 피드백은 "좋다/나쁘다" 하나인 경우가 많음 |
+| SimPO(simple preference optimization)[^simpo] | Reference model이 필요하다는 가정과 응답 전체 log 확률 | Reference model의 메모리, 응답 길이가 합산 log 확률과 학습 중 보상에 섞여 드는 길이 편향 |
+| ORPO(odds ratio preference optimization)[^orpo] | SFT와 선호 학습이 별도 단계라는 가정, reference model | 두 단계의 비용 |
+| 길이 정규화 DPO[^tulu3] | 응답 전체 log 확률 | 길이 편향 |
 
-SimPO는 Llama 3 8B Instruct에서 출발한 비교에서 AlpacaEval 2의 길이 보정 승률을 DPO 40.3%에서 44.7%로 올렸다고 보고했다.[^simpo] Tülu 3는 UltraFeedback으로 같은 SFT 모델을 학습한 ablation에서 길이 정규화 DPO의 최고 설정(57.3)이 원래 DPO(55.2)와 SimPO(최고 52.9)보다 높았고, 최종 recipe에 길이 정규화 DPO를 썼다. 다만 같은 표에서 길이 정규화 DPO도 $\beta$와 epoch에 따라 46.8까지 떨어지므로 하이퍼파라미터에 민감하다(원논문 Table 18).[^tulu3] 길이 정규화는 [04d](/lecture/2026f-advanced-deep-learning/04d-reward-hacking/)에서 다룰 길이 편향에 대한 손실 쪽의 대응이다.
+**IPO.** $\mathcal{L}_{\mathrm{IPO}}=\mathbb{E}\big[(h_\theta(y_w,y_l)-\tfrac{1}{2\tau})^2\big]$. DPO의 sigmoid 손실은 $h_\theta$가 커질수록 계속 줄어들므로, 데이터에서 $y_w$가 항상 이기는 쌍이 있으면 $h_\theta\to\infty$가 최적이 되어 reference model에서 무한히 멀어진다. IPO는 $h_\theta$를 유한한 목표값 $\frac{1}{2\tau}$에 맞추는 회귀 손실이라 같은 상황에서도 정해진 거리에서 멈춘다.[^ipo] 위 §2-2 예시의 $h_\theta=2$는 $\tau=0.25$일 때 목표값 2와 일치해 IPO 손실이 0이지만, DPO 손실 0.598은 $h_\theta$를 더 키우라고 요구한다.
 
-실제 recipe는 손실 자체보다 작은 수정도 더한다. Llama 3는 DPO에서 헤더와 종료 토큰 같은 형식 토큰을 손실에서 제외했는데, 선호 응답과 탈락 응답에 같은 토큰이 들어 있으면 올리는 항과 내리는 항이 충돌해 종료 토큰이 반복되거나 갑자기 생성되는 문제가 있었기 때문이다. 또 선호 응답에 대한 NLL(negative log likelihood) 손실을 계수 0.2로 더해 선호 응답의 log 확률이 내려가는 것을 막았다.[^llama] 이 마지막 문제는 §5-1에서 이름을 얻는다.
+**KTO.** 응답 하나에 대한 desirable/undesirable 표시만 있을 때, implicit reward $\hat r_\theta$를 배치에서 추정한 기준점 $z_0\approx\mathrm{KL}(\pi_\theta\,\|\,\pi_{\mathrm{ref}})$과 비교한다. 좋은 응답의 가치는 $\lambda_D\,\sigma(\beta(\hat r_\theta-z_0))$, 나쁜 응답의 가치는 $\lambda_U\,\sigma(\beta(z_0-\hat r_\theta))$이고, 손실은 이 가치를 최대화한다. 좋은 것을 얻는 것보다 나쁜 것을 피하는 데 더 민감한 사람의 효용(prospect theory)을 본떠 $\lambda_D$와 $\lambda_U$를 다르게 둘 수 있다.[^kto]
+
+**SimPO.** Reference model을 없애고 토큰당 평균 log 확률을 보상으로 쓴다. $r_{\mathrm{SimPO}}(x,y)=\frac{\beta}{\lvert y\rvert}\log\pi_\theta(y\mid x)$이고, 손실은 $-\log\sigma\big(r_{\mathrm{SimPO}}(x,y_w)-r_{\mathrm{SimPO}}(x,y_l)-\gamma\big)$로 목표 여백 $\gamma$를 둔다. 길이로 나누므로 긴 응답이 log 확률 합에서 불리해지거나 유리해지는 효과가 사라지고, 평균 log 확률은 생성 때 쓰는 척도와 같다.[^simpo] Llama 3 8B Instruct에서 출발한 비교에서 AlpacaEval 2의 길이 보정 승률이 DPO 40.3%에서 44.7%로 올랐다고 보고했다.[^simpo]
+
+**ORPO.** 응답의 odds를 $\mathrm{odds}_\theta(y\mid x)=\frac{\pi_\theta(y\mid x)}{1-\pi_\theta(y\mid x)}$로 두고, 두 응답의 odds ratio에 $-\log\sigma\big(\log\frac{\mathrm{odds}_\theta(y_w\mid x)}{\mathrm{odds}_\theta(y_l\mid x)}\big)$를 걸어 SFT 손실에 $\lambda$배로 더한다. Reference model 없이 SFT 한 단계 안에서 선호를 학습한다.[^orpo]
+
+**길이 정규화 DPO.** DPO의 두 log 확률비를 각각 응답 길이로 나눈 $\frac{\beta}{\lvert y\rvert}\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}$를 쓴다. Tülu 3는 UltraFeedback으로 같은 SFT 모델을 학습한 ablation에서 이 변형의 최고 설정(57.3)이 원래 DPO(55.2)와 SimPO(최고 52.9)보다 높았고, 최종 recipe에 채택했다. 다만 같은 표에서 $\beta$와 epoch에 따라 46.8까지 떨어지므로 하이퍼파라미터에 민감하다(원논문 Table 18).[^tulu3] 길이 정규화는 [04d](/lecture/2026f-advanced-deep-learning/04d-reward-hacking/)에서 다룰 길이 편향에 대한 손실 쪽의 대응이다.
+
+실제 recipe는 손실 자체보다 작은 수정도 더한다. Llama 3는 DPO에서 헤더와 종료 토큰 같은 형식 토큰을 손실에서 제외했다. 응답 꼬리가 반복되거나 종료 토큰이 갑자기 생성되는 문제가 있었는데, 저자들은 선호 응답과 탈락 응답에 같은 토큰이 들어 있어 올리는 항과 내리는 항이 충돌하기 때문이라고 추정했다. 또 선호 응답에 대한 NLL(negative log likelihood) 손실을 계수 0.2로 더해 선호 응답의 log 확률이 내려가는 것을 막았다.[^llama] 이 마지막 문제가 다음 절의 주제다.
 
 ## 5. 고정된 데이터의 한계와 online 확장
 
-### 5-1. Implicit reward도 over-optimization된다
+### 5-1. Implicit reward의 과최적화와 likelihood displacement
 
-04b §5-1의 reward model over-optimization은 명시적 reward model이 없는 DPO에서도 나타난다. Rafailov 등은 DPO·IPO 같은 직접 정렬 알고리즘이 KL 예산 전 범위에서 성능이 꺾이며, 종종 데이터를 한 번 다 돌기도 전에 꺾인다고 보고했다.[^rafailov-scaling] 선호쌍이 고정되어 있으므로 학습이 길어질수록 정책은 데이터의 특정 쌍을 구분하는 데 과적합하고, 그 쌍 밖의 응답 품질은 보장되지 않는다.
+04b §5-1의 reward model over-optimization은 명시적 reward model이 없는 DPO에서도 나타난다. Rafailov 등은 DPO·IPO 같은 직접 정렬 알고리즘이 실험한 넓은 KL 예산 범위에서 성능이 꺾이며, 종종 데이터를 한 번 다 돌기도 전에 꺾인다고 보고했다.[^rafailov-scaling] 선호쌍이 고정되어 있으므로 학습이 길어질수록 정책은 데이터의 특정 쌍을 구분하는 데 과적합하고, 그 쌍 밖의 응답 품질은 보장되지 않는다.
 
-또 다른 현상은 **likelihood displacement**다. DPO는 $y_w$의 확률을 올리려 하지만, 실제로는 $y_w$의 log 확률이 학습 중 내려가는 일이 흔하다. 확률 질량이 $y_w$가 아니라 데이터에 없는 다른 응답으로 옮겨 가기 때문이며, Razin 등은 두 응답이 비슷할수록 이 현상이 심하고 안전 학습에서 거부 응답의 확률이 오히려 내려가는 사례를 보였다.[^razin] Llama 3의 NLL 항과 §4의 SimPO·ORPO가 각자의 방식으로 이 문제를 완화하려 한다.
+또 다른 현상은 §2-2에서 예고한 **likelihood displacement**다. DPO의 직접 신호는 $y_w$의 확률을 올리는 것이지만, 실제로는 $y_w$의 log 확률이 학습 중 내려가는 일이 흔하다. 확률 질량이 $y_w$가 아니라 데이터에 없는 다른 응답으로 옮겨 가기 때문이며, Razin 등은 두 응답의 표현이 비슷할수록 이 현상이 심하고 안전 학습에서 거부 응답의 확률이 오히려 내려가는 사례를 보였다. 그들의 대응은 그런 쌍을 찾아 거르는 것이다.[^razin] Llama 3가 선호 응답에 NLL 항을 더한 것도 같은 문제에 대한 대응이다.[^llama] §4의 길이 정규화나 SimPO는 길이 편향을 겨냥한 것이지 이 현상을 직접 막는 장치는 아니다.
 
 ### 5-2. 현재 모델에서 응답을 뽑는 online DPO
 
-고정된 데이터의 문제를 푸는 직접적인 방법은 데이터를 고정하지 않는 것이다. 학습 중인 모델에서 응답 두 개를 뽑고, 사람이나 LLM(large language model) 판정자에게 비교를 받아 그 쌍으로 DPO 손실을 계산한다. Guo 등의 OAIF는 매 반복마다 현재 모델의 응답 두 개를 LLM 주석자에게 비교시켜 학습했고 offline DPO보다 나았다고 보고했다.[^oaif] Calandriello 등은 online으로 돌린 IPO가 Nash mirror descent와 같아짐을 보였다.[^calandriello] 이 방식은 §3-1의 정의로 on-policy이며, RL 루프의 응답 생성이 다시 들어온다. 없앤 것은 reward model과 value model이지, 생성 비용이 아니다.
+고정된 데이터의 문제를 푸는 직접적인 방법은 데이터를 고정하지 않는 것이다. 학습 중인 모델에서 응답 두 개를 뽑고, 사람이나 LLM(large language model) 판정자에게 비교를 받아 그 쌍으로 DPO 손실을 계산한다. Guo 등의 OAIF(online AI feedback)는 매 반복마다 현재 모델의 응답 두 개를 LLM 주석자에게 비교시켜 학습했고 offline DPO보다 나았다고 보고했다.[^oaif] 이 구성은 §3-1의 두 축에서 online이자 on-policy이며, 04b의 reward model과 value model 대신 판정 LLM을 쓰고 응답 생성은 다시 학습 루프 안으로 들어온다. 판정을 학습된 reward model에 맡기는 online 변형도 가능하다. Calandriello 등은 online으로 돌린 IPO의 기대 gradient가, 현재 정책끼리 응답을 맞붙여 판정받는 self-play 갱신 방향과 같음을 보였다(reference와 섞지 않고 현재 정책에서만 표집하는 경우).[^calandriello] 서로 다른 출발점의 두 방법이 같은 갱신을 한다는 뜻이다.
 
-실제 recipe는 완전한 online과 offline 사이에 있다. Llama 3는 reward model 학습, rejection sampling, SFT, DPO를 한 라운드로 여섯 번 반복하며, 각 라운드의 선호 데이터는 직전 라운드의 최신 모델이 생성한 응답으로 만든다.[^llama] Tülu 3는 SFT 모델에서 뽑은 on-policy 응답과 다른 모델의 off-policy 응답을 GPT-4o가 네 측면에서 비교한 데이터를 섞었고, on-policy 데이터를 포함하면 완전히 off-policy인 데이터보다 DPO 성능이 올랐다고 보고했다(원논문 Figure 11).[^tulu3] 같은 팀은 매 스텝 갱신하는 online DPO도 시도했지만 이득이 없어 최종 recipe에서 뺐다고 밝혔다.[^tulu3] 라운드 단위로 데이터를 새로 만드는 iterative 방식이 실무의 절충점이다.
+실제 recipe는 완전한 online과 offline 사이에 있으며, "on-policy 데이터"라는 말도 recipe마다 기준이 다르다.
+
+| Recipe | 응답을 만든 정책 | 데이터 갱신 주기 | §3-1의 축으로 |
+|---|---|---|---|
+| OAIF[^oaif] | 갱신 중인 현재 정책 | 매 반복 | Online, on-policy |
+| Llama 3[^llama] | 주로 직전 라운드의 가장 좋은 모델들이 만든 최근 배치 | 라운드마다(6라운드) | 라운드 단위 online, 라운드 안에서는 off-policy |
+| Tülu 3[^tulu3] | 선호 학습의 출발점인 SFT 모델(과 다른 모델들) | 한 번 수집 | Offline. 원논문은 SFT 모델에서 뽑은 응답을 "on-policy 데이터"라고 부르지만, 고정 데이터로 DPO를 진행하면 현재 정책과는 어긋난다 |
+
+Tülu 3는 그 기준으로 on-policy 응답과 다른 모델의 off-policy 응답을 GPT-4o가 네 측면에서 비교한 데이터를 섞었고, SFT 모델의 응답을 포함하면 완전히 다른 모델의 응답만 쓴 경우보다 DPO 성능이 올랐다고 보고했다(원논문 Figure 11).[^tulu3] 같은 팀은 매 스텝 갱신하는 online DPO도 시도했지만 이득이 없어 최종 recipe에서 뺐다고 밝혔다(원논문 §8.2).[^tulu3] Llama 3처럼 라운드 단위로 데이터를 새로 만드는 iterative 방식이 실무의 절충점 중 하나다.
 
 ### 5-3. 남는 문제
 
-DPO는 reward model을 없앴지만 보상의 출처인 **선호 판정**은 그대로 남아 있다. 판정자가 긴 응답을 좋아하면 implicit reward도 길이를 보상하고, 판정자가 자신 있는 말투를 좋아하면 정책은 자신 있게 틀린다. §4의 길이 정규화는 증상 하나에 대한 대응이다. 판정자와 reward model이 어떻게 틀리고 그것을 어떻게 재는지가 [04d](/lecture/2026f-advanced-deep-learning/04d-reward-hacking/)의 주제다. 그리고 판정 대신 **정답 검증**을 보상으로 쓰는 방향이 [5주차](/lecture/2026f-advanced-deep-learning/05a-rlvr/)다. 거기서는 §3-1의 on-policy 표집이 다시 중심이 되고, 04b의 정책 최적화 틀이 그대로 돌아온다.
+DPO는 reward model을 없앴지만 보상의 출처인 **선호 판정**은 그대로 남아 있다. 판정자가 긴 응답을 좋아하면 implicit reward도 길이를 보상하고, 판정자가 자신 있는 말투를 좋아하면 정책은 틀린 답도 자신 있게 쓰는 쪽으로 기울 수 있다. §4의 길이 정규화는 증상 하나에 대한 대응이다. 판정자와 reward model이 어떻게 틀리고 그것을 어떻게 재는지가 [04d](/lecture/2026f-advanced-deep-learning/04d-reward-hacking/)의 주제다. 그리고 판정 대신 **정답 검증**을 보상으로 쓰는 방향이 [5주차](/lecture/2026f-advanced-deep-learning/05a-rlvr/)다. 거기서는 §3-1의 on-policy 표집이 다시 중심이 되고, 04b의 정책 최적화 틀이 그대로 돌아온다.
 
 [^survey]: Xiao, W., et al. (2026). *A Comprehensive Survey of Direct Preference Optimization: Datasets, Theories, Variants, and Applications*. IEEE Transactions on Pattern Analysis and Machine Intelligence. [arXiv:2410.15595v4](https://arxiv.org/abs/2410.15595v4).
 [^dpo]: Rafailov, R., Sharma, A., Mitchell, E., Manning, C. D., Ermon, S., & Finn, C. (2023). *Direct Preference Optimization: Your Language Model is Secretly a Reward Model*. NeurIPS 2023. [arXiv:2305.18290](https://arxiv.org/abs/2305.18290).
 [^llama]: Llama Team, AI @ Meta. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
 [^tulu3]: Lambert, N., et al. (2024). *Tülu 3: Pushing Frontiers in Open Language Model Post-Training*. [arXiv:2411.15124v5](https://arxiv.org/abs/2411.15124v5).
 [^sutton]: Sutton, R. S., & Barto, A. G. (2018). *Reinforcement Learning: An Introduction* (2nd ed.). MIT Press.
+[^levine]: Levine, S., Kumar, A., Tucker, G., & Fu, J. (2020). *Offline Reinforcement Learning: Tutorial, Review, and Perspectives on Open Problems*. [arXiv:2005.01643](https://arxiv.org/abs/2005.01643).
 [^xu]: Xu, S., et al. (2024). *Is DPO Superior to PPO for LLM Alignment? A Comprehensive Study*. ICML 2024. [arXiv:2404.10719](https://arxiv.org/abs/2404.10719).
 [^tajwar]: Tajwar, F., et al. (2024). *Preference Fine-Tuning of LLMs Should Leverage Suboptimal, On-Policy Data*. ICML 2024. [arXiv:2404.14367](https://arxiv.org/abs/2404.14367).
 [^ivison]: Ivison, H., et al. (2024). *Unpacking DPO and PPO: Disentangling Best Practices for Learning from Preference Feedback*. NeurIPS 2024. [arXiv:2406.09279](https://arxiv.org/abs/2406.09279).
-[^ipo]: Azar, M. G., Rowland, M., Piot, B., Guo, D., Calandriello, D., Valko, M., & Munos, R. (2023). *A General Theoretical Paradigm to Understand Learning from Human Preferences*. [arXiv:2310.12036](https://arxiv.org/abs/2310.12036).
+[^ipo]: Azar, M. G., Rowland, M., Piot, B., Guo, D., Calandriello, D., Valko, M., & Munos, R. (2024). *A General Theoretical Paradigm to Understand Learning from Human Preferences*. AISTATS 2024. [arXiv:2310.12036](https://arxiv.org/abs/2310.12036).
 [^kto]: Ethayarajh, K., Xu, W., Muennighoff, N., Jurafsky, D., & Kiela, D. (2024). *KTO: Model Alignment as Prospect Theoretic Optimization*. ICML 2024. [arXiv:2402.01306](https://arxiv.org/abs/2402.01306).
 [^simpo]: Meng, Y., Xia, M., & Chen, D. (2024). *SimPO: Simple Preference Optimization with a Reference-Free Reward*. NeurIPS 2024. [arXiv:2405.14734](https://arxiv.org/abs/2405.14734).
-[^orpo]: Hong, J., Lee, N., & Thorne, J. (2024). *ORPO: Monolithic Preference Optimization without Reference Model*. [arXiv:2403.07691](https://arxiv.org/abs/2403.07691).
+[^orpo]: Hong, J., Lee, N., & Thorne, J. (2024). *ORPO: Monolithic Preference Optimization without Reference Model*. EMNLP 2024. [arXiv:2403.07691](https://arxiv.org/abs/2403.07691).
 [^rafailov-scaling]: Rafailov, R., et al. (2024). *Scaling Laws for Reward Model Overoptimization in Direct Alignment Algorithms*. NeurIPS 2024. [arXiv:2406.02900](https://arxiv.org/abs/2406.02900).
 [^razin]: Razin, N., et al. (2025). *Unintentional Unalignment: Likelihood Displacement in Direct Preference Optimization*. ICLR 2025. [arXiv:2410.08847](https://arxiv.org/abs/2410.08847).
 [^oaif]: Guo, S., et al. (2024). *Direct Language Model Alignment from Online AI Feedback*. [arXiv:2402.04792](https://arxiv.org/abs/2402.04792).
-[^calandriello]: Calandriello, D., et al. (2024). *Human Alignment of Large Language Models through Online Preference Optimisation*. [arXiv:2403.08635](https://arxiv.org/abs/2403.08635).
+[^calandriello]: Calandriello, D., et al. (2024). *Human Alignment of Large Language Models through Online Preference Optimisation*. ICML 2024. [arXiv:2403.08635](https://arxiv.org/abs/2403.08635).
