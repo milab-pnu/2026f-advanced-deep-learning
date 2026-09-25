@@ -36,7 +36,7 @@ $$
 
 ### 2-2. 학습
 
-Reward model은 언어 모델에 스칼라 출력 head를 붙인 것이다. Stiennon 등은 SFT 모델에서 출발해 무작위로 초기화한 선형 head를 더했고,[^stiennon] InstructGPT는 6B 모델의 출력 head(unembedding 층)를 떼고 스칼라 head를 붙였다. 최종 reward model은 여러 공개 NLP 데이터셋으로 fine-tuning한 6B GPT-3에서 초기화했으며, GPT-3나 SFT 모델에서 초기화해도 결과가 비슷했다고 적었다.[^instructgpt] 프롬프트와 응답을 이어 붙인 토큰열을 넣고 **마지막 토큰 위치의 출력**을 점수로 읽는다.[^hf-ppo] 학습 목표는 관측된 선호의 log likelihood를 최대화하는 것이며, 최소화할 손실로 쓰면 다음과 같다.
+Reward model은 언어 모델에 스칼라 출력 head를 붙인 것이다. Stiennon 등은 SFT 모델에서 출발해 무작위로 초기화한 선형 head를 더했고,[^stiennon] InstructGPT는 6B 모델의 출력 head(unembedding 층)를 떼고 스칼라 head를 붙였다. 최종 reward model은 여러 공개 NLP(natural language processing) 데이터셋으로 fine-tuning한 6B GPT-3에서 초기화했으며, GPT-3나 SFT 모델에서 초기화해도 결과가 비슷했다고 적었다.[^instructgpt] 프롬프트와 응답을 이어 붙인 토큰열을 넣고 **마지막 토큰 위치의 출력**을 점수로 읽는다.[^hf-ppo] 학습 목표는 관측된 선호의 log likelihood를 최대화하는 것이며, 최소화할 손실로 쓰면 다음과 같다.
 
 $$
 \mathcal{L}_{\mathrm{RM}}(\theta)=-\mathbb{E}_{(x,y_w,y_l)}\Big[\log\sigma\big(r_\theta(x,y_w)-r_\theta(x,y_l)\big)\Big]
@@ -64,7 +64,7 @@ $$
 
 정책은 $\mathbb{E}_{x\sim\mathcal{D},\,y\sim\pi_\phi^{\mathrm{RL}}(\cdot\mid x)}[R(x,y)]$를 최대화한다. 둘째 항의 기대값은 현재 정책과 출발점인 SFT 모델 사이의 KL(Kullback–Leibler) divergence $\mathrm{KL}(\pi_\phi^{\mathrm{RL}}\,\|\,\pi^{\mathrm{SFT}})$에 $\beta$를 곱한 것이므로, 이 항은 정책이 SFT 모델에서 멀어지는 것에 대한 벌점이다. 저자들은 이 항의 목적을 둘로 설명한다. 정책이 한 가지 출력으로 무너지지 않게 하는 entropy bonus 역할과, reward model이 학습 때 본 적 없는 응답을 정책이 만들어 내지 않게 하는 역할이다.[^stiennon] 둘째 목적이 핵심이다. Reward model은 SFT 모델 근처의 응답으로 학습했으므로, 정책이 거기서 멀어질수록 점수의 신뢰성이 떨어질 수 있다. §5-1에서 이 문제가 실제로 어떻게 나타나는지 본다.
 
-InstructGPT는 여기에 pre-training 데이터의 log likelihood를 계수 $\gamma$로 더한 PPO-ptx(pretraining mix) 목적함수를 썼다.[^instructgpt] RLHF 뒤에 공개 NLP(natural language processing) 벤치마크 점수가 떨어지는 현상을 저자들은 alignment tax라고 불렀고, pre-training 손실을 섞으면 그 하락을 줄이면서 사람의 선호는 유지할 수 있었다. KL 벌점이 정책을 SFT 모델 근처에 묶는 장치라면, 이 항은 그와 별도로 pre-training에서 얻은 능력의 회귀를 완화하는 장치다.
+InstructGPT는 여기에 pre-training 데이터의 log likelihood를 계수 $\gamma$로 더한 PPO-ptx(pretraining mix) 목적함수를 썼다.[^instructgpt] RLHF 뒤에 공개 NLP 벤치마크 점수가 떨어지는 현상을 저자들은 alignment tax라고 불렀고, pre-training 손실을 섞으면 그 하락을 줄이면서 사람의 선호는 유지할 수 있었다. KL 벌점이 정책을 SFT 모델 근처에 묶는 장치라면, 이 항은 그와 별도로 pre-training에서 얻은 능력의 회귀를 완화하는 장치다.
 
 ### 3-2. Policy gradient와 advantage
 
@@ -86,7 +86,7 @@ $A_t$는 위치 $t$의 행동이 그 상태에서 평균적으로 기대되는 �
 | 2 | $-0.01$ | $-0.01+0.97=0.96$ | 0.60 | 0.36 |
 | 3 | $-0.03+1.00=0.97$ | $0.97$ | 0.70 | 0.27 |
 
-마지막 토큰의 보상 0.97은 KL 벌점 $-0.03$과 reward model 점수 1.00의 합이다. $G_t$는 위치 $t$부터 응답 끝까지 보상을 더한 값이고, value model은 이 $G_t$를 목표로 제곱 오차로 학습한다. GAE는 한 스텝의 TD 오차 $\delta_t=r_t+\gamma_{\text{disc}}V_{t+1}-V_t$(응답이 끝난 뒤의 $V_4=0$)를 $\hat A_t=\delta_t+\gamma_{\text{disc}}\lambda\hat A_{t+1}$로 뒤에서부터 누적한다. 표의 $\hat A_t$는 $\lambda=1$인 경우로 $G_t-V_t$와 같고, $\lambda=0.9$이면 $(0.380,\ 0.333,\ 0.27)$이 된다. $\lambda<1$은 value 추정을 더 섞어 분산을 줄이는 대신, value 추정이 부정확하면 편향이 생길 수 있다. 세 토큰 모두 advantage가 양수이므로 세 표본의 policy gradient 항은 각각 해당 토큰의 확률을 높이는 방향으로 기여한다. 파라미터를 공유하므로 갱신 뒤 세 확률이 실제로 모두 오른다는 보장은 없다.
+마지막 토큰의 보상 0.97은 KL 벌점 $-0.03$과 reward model 점수 1.00의 합이다. $G_t$는 위치 $t$부터 응답 끝까지 보상을 더한 값이고, value model은 이 $G_t$를 목표로 제곱 오차로 학습한다. GAE는 한 스텝의 TD(temporal difference) 오차 $\delta_t=r_t+\gamma_{\text{disc}}V_{t+1}-V_t$(응답이 끝난 뒤의 $V_4=0$)를 $\hat A_t=\delta_t+\gamma_{\text{disc}}\lambda\hat A_{t+1}$로 뒤에서부터 누적한다. 표의 $\hat A_t$는 $\lambda=1$인 경우로 $G_t-V_t$와 같고, $\lambda=0.9$이면 $(0.380,\ 0.333,\ 0.27)$이 된다. $\lambda<1$은 value 추정을 더 섞어 분산을 줄이는 대신, value 추정이 부정확하면 편향이 생길 수 있다. 세 토큰 모두 advantage가 양수이므로 세 표본의 policy gradient 항은 각각 해당 토큰의 확률을 높이는 방향으로 기여한다. 파라미터를 공유하므로 갱신 뒤 세 확률이 실제로 모두 오른다는 보장은 없다.
 
 </Details>
 
@@ -133,7 +133,7 @@ $$
 | Reward model | 응답의 점수 | 6B | 고정 |
 | Value model | 상태 가치 추정, reward model에서 초기화 | 6B | 갱신 |
 
-InstructGPT는 175B 정책에도 6B reward model을 썼는데, 175B reward model은 학습 자체가 더 불안정해 value model의 초기화로 덜 적합했고, 175B reward model과 value model을 돌리는 계산 비용도 컸기 때문이다.[^instructgpt] Stiennon 등은 value model을 정책과 완전히 분리된 Transformer로 두고 reward model의 파라미터로 초기화했으며, 정책과 공유하면 초기 value 학습이 정책을 망가뜨린다고 보고했다.[^stiennon] 메모리는 갱신되는 모델(정책, value model)에만 gradient와 optimizer 상태가 필요하고 고정된 모델에는 가중치와 추론 시 activation만 필요하므로, [2주차 Training engineering 노트](/lecture/2026f-advanced-deep-learning/02e-training-engineering/)의 항목별 계산을 모델마다 따로 적용해야 한다. 증가 폭은 모델 크기·공유 여부·배치·offload 구성에 따라 다르지만, 어느 경우든 SFT보다 많은 메모리가 들고 응답 생성이 학습 루프 안에 들어간다. 그 비용은 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)에서 따로 다룬다.
+InstructGPT는 175B 정책에도 6B reward model을 썼는데, 175B reward model은 학습 자체가 더 불안정해 value model의 초기화로 덜 적합했고, 175B reward model과 value model을 돌리는 계산 비용도 컸기 때문이다.[^instructgpt] Stiennon 등은 value model을 정책과 완전히 분리된 Transformer로 두고 reward model의 파라미터로 초기화했으며, 정책과 공유하면 초기 value 학습이 정책을 망가뜨린다고 보고했다.[^stiennon] 메모리는 갱신되는 모델(정책, value model)에만 gradient와 optimizer 상태가 필요하고 고정된 모델에는 가중치와 추론 시 activation만 필요하므로, [2주차 Training engineering 노트](/lecture/2026f-advanced-deep-learning/02e-training-engineering/)의 항목별 계산을 모델마다 따로 적용해야 한다. 정책과 value model을 따로 학습하고 reference model과 reward model도 유지하는 구성에서는 그만큼의 모델 상태가 더 필요하며, GPU peak memory는 배치·공유·offload 구성에 따라 달라진다. 어느 구성이든 응답 생성이 학습 루프 안에 들어간다. 그 비용은 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)에서 따로 다룬다.
 
 <Details summary="한 스텝의 흐름">
 
