@@ -107,7 +107,7 @@ $$
 이 노트의 모든 목적함수는 응답을 생성한 $\pi_{\theta_{\mathrm{old}}}$와 갱신 중인 $\pi_\theta$의 확률비를 쓴다. [04c §3-1](/lecture/2026f-advanced-deep-learning/04c-dpo/)의 구분으로 두 정책이 같으면 on-policy이고, 배치를 여러 번 갱신하거나 생성과 학습을 분리하면 off-policy가 된다. 확률비는 그 차이를 보정하는 장치이지만, 차이가 커지면 clipping이 대부분의 토큰을 잘라 학습이 멈추거나 잡음이 커진다. 실제 시스템에서 이 차이가 어디서 생기는지, 즉 응답을 만드는 inference engine과 학습 커널의 수치 차이, 그리고 비동기 학습의 정책 지연이 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)의 주제다.
 
 [^survey]: Zhang, K., et al. (2025). *A Survey of Reinforcement Learning for Large Reasoning Models*. [arXiv:2509.08827v3](https://arxiv.org/abs/2509.08827v3).
-[^rloo]: Ahmadian, A., et al. (2024). *Back to Basics: Revisiting REINFORCE Style Optimization for Learning from Human Feedback in LLMs*. ACL 2024. [arXiv:2402.14740](https://arxiv.org/abs/2402.14740).
+[^rloo]: Ahmadian, A., et al. (2024). *Back to Basics: Revisiting REINFORCE Style Optimization for Learning from Human Feedback in LLMs*. [arXiv:2402.14740](https://arxiv.org/abs/2402.14740).
 [^deepseekmath]: Shao, Z., et al. (2024). *DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models*. [arXiv:2402.03300](https://arxiv.org/abs/2402.03300).
 [^drgrpo]: Liu, Z., et al. (2025). *Understanding R1-Zero-Like Training: A Critical Perspective*. [arXiv:2503.20783v2](https://arxiv.org/abs/2503.20783v2).
 [^entropy]: Cui, G., et al. (2025). *The Entropy Mechanism of Reinforcement Learning for Reasoning Language Models*. [arXiv:2505.22617](https://arxiv.org/abs/2505.22617).
