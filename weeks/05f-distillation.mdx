@@ -12,11 +12,11 @@ order: 5
 
 ### 1-1. 지식 증류의 원형
 
-Distillation은 Hinton 등이 2015년에 정리한 개념이다. 큰 모델(또는 앙상블)이 내는 부드러운 확률 분포(soft target)를 작은 모델이 따라 배우면, 정답 라벨만 배우는 것보다 큰 모델의 일반화 성질을 더 많이 옮길 수 있다는 관찰이다.[^hinton] 언어 모델에서 이 원형은 토큰마다 teacher의 다음 토큰 분포를 학생이 맞추는 것이 되고, teacher의 logit을 볼 수 있어야 한다.
+Distillation은 Hinton 등이 2015년에 정리한 개념이다. 큰 모델(또는 앙상블)이 내는 부드러운 확률 분포(soft target)를 작은 모델이 따라 배우면, 정답 라벨만 배우는 것보다 큰 모델의 일반화 성질을 더 많이 옮길 수 있다는 관찰이다.[^hinton] 언어 모델에서 이 원형은 토큰마다 teacher의 다음 토큰 분포를 학생이 맞추는 것이 되고, teacher의 확률 분포(soft probability)에 접근할 수 있어야 한다.
 
 ### 1-2. 응답을 생성해 SFT하기
 
-실제로 가장 널리 쓰인 방식은 더 단순하다. Teacher가 응답을 생성하고, 학생이 그 응답으로 [04a](/lecture/2026f-advanced-deep-learning/04a-sft/)의 SFT(supervised fine-tuning)를 한다. 04a §3-3의 Self-Instruct와 Alpaca가 이 방식이었고, DeepSeek-R1은 이것을 추론 모델에 적용했다. R1이 생성한 약 80만 건의 샘플로 Qwen2.5와 Llama 계열 base model을 SFT만 했더니, 7B 모델이 AIME 2024에서 55.5%, 32B가 72.6%, Llama 70B가 70.0%를 냈다. 같은 Qwen 32B base에 R1-Zero 방식의 RL을 직접 적용한 모델은 47.0%였다.[^r1] 저자들은 큰 모델에서 찾은 추론 패턴을 옮기는 데는 작은 모델에 RL을 돌리는 것보다 distillation이 낫다고 결론지었다. [05b §4-1](/lecture/2026f-advanced-deep-learning/05b-long-cot/)에서 Yue 등이 RLVR(reinforcement learning with verifiable rewards)과 달리 distillation은 base model이 내지 못하던 풀이를 낸다고 관찰한 것과 같은 방향이다.
+실제로 가장 널리 쓰인 방식은 더 단순하다. Teacher가 응답을 생성하고, 학생이 그 응답으로 [04a](/lecture/2026f-advanced-deep-learning/04a-sft/)의 SFT(supervised fine-tuning)를 한다. 04a §3-3의 Self-Instruct와 Alpaca가 이 방식이었고, DeepSeek-R1은 이것을 추론 모델에 적용했다. R1이 생성한 약 80만 건의 샘플로 Qwen2.5 base model들과 Llama-3.3-70B-Instruct를 SFT만 했더니, Qwen 7B 모델이 AIME 2024에서 55.5%, 32B가 72.6%, Llama 70B가 70.0%를 냈다. 같은 Qwen 32B base에 R1-Zero 방식의 RL을 직접 적용한 모델은 47.0%였다.[^r1] 저자들은 큰 모델에서 찾은 추론 패턴을 옮기는 데는 작은 모델에 RL을 돌리는 것보다 distillation이 낫다고 결론지었다. [05b §4-1](/lecture/2026f-advanced-deep-learning/05b-long-cot/)에서 Yue 등이 RLVR(reinforcement learning with verifiable rewards)과 달리 distillation은 base model이 내지 못하던 풀이를 낸다고 관찰한 것과 같은 방향이다.
 
 이 방식을 이 노트에서는 **off-policy distillation**이라고 부른다. 학습 데이터를 만든 정책(teacher)과 학습되는 정책(학생)이 다르기 때문이다. 04c §3-1의 정의 그대로다.
 
@@ -102,7 +102,7 @@ Ma 등의 MOPD(multi-teacher on-policy distillation)는 이 문제를 on-policy 
 
 ## 4. 실패 양상과 한계
 
-서베이 §7은 on-policy distillation의 실패 양상을 다섯 가지로 정리한다.[^survey] 학생이 이미 틀린 prefix 위에서 teacher의 피드백을 받으면 그 문맥에서 teacher도 좋은 다음 토큰을 모를 수 있어 잘못된 신호가 되는 문제(flawed prefix trap), 학생 자신을 teacher로 쓰는 self-distillation의 개선이 금방 멈추는 문제, reverse KL 같은 mode-seeking 목적함수가 유효한 대안을 억눌러 다양성이 무너지는 문제, teacher의 확신과 실제 정확도가 어긋나는 문제, 그리고 다중 턴 agent 궤적에서 오류가 누적되는 문제다. 세 번째는 GKD가 관찰한 다양성 감소의 다른 이름이고, [05b §4](/lecture/2026f-advanced-deep-learning/05b-long-cot/)의 pass@$k$ 논쟁과도 이어진다. Teacher를 따르는 학생은 teacher의 봉우리 하나를 배우므로, 넓은 $k$에서의 커버리지는 오히려 줄 수 있다.
+서베이 §7은 on-policy distillation의 실패 양상을 대표적인 다섯 축으로 정리한다.[^survey] 학생이 이미 틀린 prefix 위에서 teacher의 피드백을 받으면 그 문맥에서 teacher도 좋은 다음 토큰을 모를 수 있어 잘못된 신호가 되는 문제(flawed prefix trap), 학생 자신을 teacher로 쓰는 self-distillation의 개선이 금방 멈추는 문제, reverse KL 같은 mode-seeking 목적함수가 유효한 대안을 억눌러 다양성이 무너질 수 있는 문제, 증류된 학생의 확신과 실제 정확도가 어긋나는 문제, 그리고 다중 턴 agent 궤적에서 teacher가 갱신되지 않거나 턴 구조가 무너지거나 응답이 폭주하는 문제다. 세 번째는 GKD가 관찰한 다양성 감소의 다른 이름이고, [05b §4](/lecture/2026f-advanced-deep-learning/05b-long-cot/)의 pass@$k$ 논쟁과도 이어진다. Teacher의 봉우리 하나를 따르는 학생은 넓은 $k$에서의 커버리지가 줄 수 있으며, 이것은 reverse KL 계열의 가능한 실패이지 필연은 아니다.
 
 그리고 모든 distillation은 teacher를 전제한다. Teacher를 만드는 비용과 teacher의 편향이 조건이고, teacher에게서 무엇을 받아야 하는지도 방식마다 다르다. §1-2의 응답 기반 방식은 응답 텍스트만 있으면 되고, Thinking Machines의 구현은 표집한 토큰의 log 확률만 필요해 API로도 가능하며, GKD처럼 어휘 전체나 상위 $k$개의 분포를 맞추려면 logit에 접근해야 한다. 공개 가중치 여부와 필요한 확률에 접근할 수 있는가는 별개의 조건이다. R1과 Qwen3의 recipe에서는 RL로 개선한 teacher의 행동을 distillation으로 작은 모델에 전달하며, 적합한 teacher가 없으면 시연 데이터나 검증 보상 같은 다른 감독 신호가 필요하다. 두 방법은 대체 관계가 아니라 [05a §3-2](/lecture/2026f-advanced-deep-learning/05a-rlvr/)의 recipe 안에서 역할을 나눈다.
 
@@ -115,5 +115,5 @@ Ma 등의 MOPD(multi-teacher on-policy distillation)는 이 문제를 on-policy 
 [^r1]: DeepSeek-AI. (2026). *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning*. [arXiv:2501.12948v2](https://arxiv.org/abs/2501.12948v2).
 [^gkd]: Agarwal, R., et al. (2024). *On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes*. ICLR 2024. [arXiv:2306.13649](https://arxiv.org/abs/2306.13649).
 [^qwen3]: Qwen Team. (2025). *Qwen3 Technical Report*. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
-[^tm]: Lu, K., et al. (2025). *On-Policy Distillation*. [Thinking Machines Lab 블로그](https://thinkingmachines.ai/blog/on-policy-distillation/).
+[^tm]: Lu, K., & Thinking Machines Lab. (2025). *On-Policy Distillation*. [Thinking Machines Lab 블로그](https://thinkingmachines.ai/blog/on-policy-distillation/).
 [^mopd]: Ma, W., et al. (2026). *MOPD: Multi-Teacher On-Policy Distillation for Capability Integration in LLM Post-Training*. [arXiv:2606.30406](https://arxiv.org/abs/2606.30406).
