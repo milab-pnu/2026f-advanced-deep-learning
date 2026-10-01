@@ -33,7 +33,7 @@ $\lfloor\cdot\rceil$는 가장 가까운 정수로의 반올림이다. 반올림
 예시가 보여 주듯 scale을 몇 개의 값이 함께 쓰느냐가 오차를 크게 좌우한다. 행렬 전체가 scale 하나를 쓰는 per-tensor, 출력 channel마다 쓰는 per-channel, activation의 토큰마다 쓰는 per-token, 연속된 몇 개의 원소마다 쓰는 per-group이 있다.[^survey] 범위를 작게 나눌수록 큰 값의 영향이 그 묶음 안에 갇히지만, scale을 저장할 공간이 늘어난다. LLM의 4-bit 가중치 양자화에서는 원소 128개마다 scale을 두는 group 크기 128이 흔한 기본값이다. GPTQ 논문은 이때 scale 저장에 원소당 약 0.15 bits가 더 든다고 계산했다.[^gptq]
 
 <Callout type="example">
-Llama 3 8B의 가중치를 group 128의 INT4로 저장하고 group마다 16-bit scale을 둔다면 원소당 $4+16/128=4.125$ bits다. 파라미터 8.03B개에 곱하면 약 4.1 GB로, BF16의 16.1 GB에서 약 4분의 1이 된다. [06a §4-3](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#4-3-동시에-처리할-수-있는-요청-수)의 H100 한 대라면 KV cache에 쓸 공간이 약 12 GB 늘어난다.
+Llama 3 8B의 가중치를 group 128의 INT4로 저장하고 group마다 16-bit scale 하나만 둔다면 원소당 $4+16/128=4.125$ bits로, 위의 약 0.15 bits와 비슷한 부가 비용이다. 파라미터 8.03B개에 곱하면 약 4.1 GB로, BF16의 16.1 GB에서 약 4분의 1이 된다. [06a §4-3](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#4-3-동시에-처리할-수-있는-요청-수)의 H100 한 대라면 KV cache에 쓸 공간이 약 12 GB 늘어난다.
 </Callout>
 
 ### 1-3. 두 가지 쓰임
