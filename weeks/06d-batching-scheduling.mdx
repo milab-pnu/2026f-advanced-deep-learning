@@ -77,7 +77,7 @@ DistServe의 해법은 prefill과 decode를 **다른 GPU에서** 실행하는 �
 분리의 대가는 KV cache의 전송이다. DistServe의 계산으로 OPT-66B에서 512토큰 요청 하나의 KV cache는 약 1.13 GB다.[^distserve] 이 양을 매 요청 옮기려면 빠른 연결이 필요하다. 그래서 DistServe는 prefill과 decode를 같은 노드 안의 GPU에 배치해 NVLink로 옮겼고, Splitwise는 prefill이 층 하나를 끝낼 때마다 그 층의 KV cache를 비동기로 보내 계산과 전송을 겹쳤다. 두 논문 모두 이렇게 했을 때 전송 시간이 전체 지연의 1% 미만이었다고 보고했다.[^distserve][^splitwise] [06c §4-3](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/#4-3-offloading과-계층-저장)의 Mooncake는 여기에 분산 KV cache pool을 더해, prefill pool과 decode pool 사이에서 KV cache를 저장하고 옮기는 구조다.[^mooncake]
 
 <Callout type="note">
-Disaggregation은 처리량을 늘리는 기법이라기보다 두 지연 지표를 따로 다루는 기법이다. vLLM 문서도 disaggregated prefill이 처리량을 높이지는 않으며, TTFT와 ITL을 따로 조정하고 ITL의 꼬리를 줄이는 데 목적이 있다고 밝힌다. 같은 목적을 적절한 chunk 크기로 달성할 수도 있지만, 실제로는 그 크기를 찾기 어렵다는 점도 함께 적는다.[^vllm-disagg] 어느 쪽이 나은지는 SLO와 작업의 입출력 길이에 따라 달라진다.
+Disaggregation은 처리량을 늘리는 기법이라기보다 두 지연 지표를 따로 다루는 기법이다. 앞의 DistServe가 보고한 7.4배도 SLO를 지키며 처리한 요청 수, 곧 goodput의 이득이다. vLLM 문서도 disaggregated prefill이 처리량을 높이지는 않으며, TTFT와 ITL을 따로 조정하고 ITL의 꼬리를 줄이는 데 목적이 있다고 밝힌다. 같은 목적을 적절한 chunk 크기로 달성할 수도 있지만, 실제로는 그 크기를 찾기 어렵다는 점도 함께 적는다.[^vllm-disagg] 어느 쪽이 나은지는 SLO와 작업의 입출력 길이에 따라 달라진다.
 </Callout>
 
 ## 3. 대기열과 선점
