@@ -393,7 +393,9 @@ Mamba나 Mamba-2 층만 쌓은 순수 SSM 언어 모델은 attention 없이 시�
 
 ### 6-2. Linear attention과 attention
 
-둘째는 **linear attention 계열 층과 softmax attention 층의 조합**이다. Qwen3-Next의 공식 발표 블로그는 이 선택을 "linear attention은 빠르지만 recall이 약하고, standard attention은 비싸고 추론이 느리다"는 관찰로 설명한다.[^qwen3next] Qwen3-Next-80B-A3B는 48층을 `12 × (3 × (Gated DeltaNet → MoE) → 1 × (Gated Attention → MoE))`로 쌓아(MoE는 mixture of experts), Gated DeltaNet과 gated attention을 3:1로 섞었다.[^qwen3next-card] 블로그는 3:1 혼합이 한 종류로만 쌓은 구성보다 좋았고, Gated DeltaNet이 sliding window attention이나 Mamba-2보다 in-context learning 능력이 강했다고 보고한다.[^qwen3next] 다만 블로그는 이 비교의 실험 표를 공개하지 않았으므로 개발사의 보고로 읽는다.
+둘째는 **linear attention 계열 층과 softmax attention 층의 조합**이다. Qwen3-Next의 공식 발표 블로그는 이 선택을 "linear attention은 빠르지만 recall이 약하고, standard attention은 비싸고 추론이 느리다"는 관찰로 설명한다.[^qwen3next] Qwen3-Next-80B-A3B는 48층을 `12 × (3 × (Gated DeltaNet → MoE) → 1 × (Gated Attention → MoE))`로 쌓아(MoE는 mixture of experts), Gated DeltaNet과 gated attention을 3:1로 섞었다.[^qwen3next-card] Qwen3.5-397B-A17B도 같은 단위를 15번 쌓아 60층을 만들었다.[^qwen35] 블로그는 3:1 혼합이 한 종류로만 쌓은 구성보다 좋았고, Gated DeltaNet이 sliding window attention이나 Mamba-2보다 in-context learning 능력이 강했다고 보고한다.[^qwen3next] 다만 블로그는 이 비교의 실험 표를 공개하지 않았으므로 개발사의 보고로 읽는다.
+
+두 층의 이름에 모두 "gate"가 들어가지만 가리키는 것은 다르다. Gated DeltaNet의 $\alpha_t$는 **recurrent 상태를 얼마나 남길지** 정하는 감쇠 gate(§4-1)이고, gated attention의 gate는 softmax attention의 **출력에 원소별로 곱하는** gate로 [Normalization and attention sink §4-3](/lecture/2026f-advanced-deep-learning/03e-normalization/#4-3-대응)에서 다룬다.
 
 Kimi Linear도 같은 3:1 배치를 쓰되, linear 층은 §4-3의 KDA로, attention 층은 MLA로 채웠다. 논문은 순수 linear attention의 주된 약점을 긴 문맥 검색으로 보고 MLA 층을 소수 섞었다. 한 층 안에서 head를 나누어 섞지 않고 층 단위로 번갈아 둔 것은 구현이 단순하고 학습이 안정적이어서이고(원논문 §4), 비율은 여러 값을 비교한 실험에서 3:1이 품질과 처리량의 균형이 가장 좋았다(원논문 §5.2, 표 1). MLA 층에는 위치 인코딩을 넣지 않는 NoPE(no positional encoding)를 쓰고([03a §6-1](/lecture/2026f-advanced-deep-learning/03a-positional-encoding/#6-1-위치-신호를-생략하는-층)), 위치 정보는 KDA 층에 맡겼다. 48B 파라미터(활성 3B) 모델에서 긴 시퀀스를 생성할 때 KV cache를 최대 75% 줄였고, 1M 토큰 문맥의 decoding은 층 수와 head 수가 같고 모든 층이 MLA인 모델보다 약 6배 빨랐다(원논문 §5.6, 그림 7, batch 1).[^kimilinear] 공개 config에서 27층 중 KDA가 20층, MLA가 7층이다(마지막 27번째 층도 MLA).[^kimilinear-config]
 
@@ -421,30 +423,10 @@ Mamba-2를 쓴 hybrid의 대표 사례는 NVIDIA의 Nemotron 계열이다. Nemot
 | Nemotron 3 Nano (attention:Mamba-2 = 6:23) | sequence mixer 29개 중 attention 6개 | Mamba-2 층은 고정 크기 상태 | $\tfrac{6}{29}\approx0.21$ |
 | Qwen3.5-397B-A17B (3:1) | full attention 층 15/60 | Gated DeltaNet 층은 고정 크기 상태 | $\tfrac{15}{60}=0.25$ |
 
-Qwen3.5의 config로 고정 크기 상태를 직접 세어 보자. Gated DeltaNet 층 하나의 recurrent 상태 행렬은 value head 64개 × $128\times128$ = 약 105만 원소다(짧은 convolution의 상태는 제외했다). 같은 모델의 full attention 층은 KV head 2개 × head 차원 256 × (K, V) = 토큰당 1,024 원소를 저장하므로, 1,024 토큰에서 두 원소 수가 같아지고, 그보다 길어지면 attention 층 하나의 캐시가 recurrent 상태보다 커진다. 128K 토큰이면 attention 층 하나가 약 1.34억 원소를 저장한다.
+Qwen3.5의 config로 고정 크기 상태를 직접 세어 보자.[^qwen35] Gated DeltaNet 층 하나의 recurrent 상태 행렬은 value head 64개 × $128\times128$ = 약 105만 원소다(짧은 convolution의 상태는 제외했다). 같은 모델의 full attention 층은 KV head 2개 × head 차원 256 × (K, V) = 토큰당 1,024 원소를 저장하므로, 1,024 토큰에서 두 원소 수가 같아지고, 그보다 길어지면 attention 층 하나의 캐시가 recurrent 상태보다 커진다. 128K 토큰이면 attention 층 하나가 약 1.34억 원소를 저장한다.
 </Callout>
 
-세 종류는 섞는 부품이 다르고 개발사가 밝힌 동기도 같지 않다. Gemma 3 보고서와 Jamba 논문은 KV cache 비용을, Nemotron-H 논문은 생성 단계의 추론 비용을 설계 동기로 내세운다. Qwen3-Next 발표와 Kimi Linear 논문은 linear attention의 약한 recall과 긴 문맥 검색을 들고, Jamba 논문은 attention 층이 필요한 이유를 in-context learning으로 설명한다. 그래도 구조만 보면 이 모델들은 비슷한 판단을 공유한다고 읽을 수 있다. 대부분의 층에서는 가까운 문맥이나 압축된 요약으로 충분하고, **정확한 검색이 필요한 몇 층만 전체 문맥을 직접 보면 된다**는 판단이다. 어떤 비율과 배치가 최선인지는 모델 규모와 작업에 따라 다르게 보고되며, 위의 모델들도 서로 다른 선택을 했다.
-
-## 7. 최근 모델의 선택
-
-아래는 공식 기술 보고서와 공개 config에서 확인한 sequence mixer 종류와 층 배치만 정리한 것이다. 표의 첫 두 모델은 참조 범위 제한 갈래를 모든 층에 쓴 경우이고, 나머지는 hybrid다.
-
-| 모델 | Sequence mixer 구성 | 층 배치 | 출처 |
-|---|---|---|---|
-| Mistral 7B | SWA(window 4096) | 32층 모두 SWA | 원논문[^mistral] |
-| DeepSeek-V3.2 | MLA + DSA(top-k 2048) | V3.1-Terminus의 MLA 층에 DSA를 얹어 이어서 학습 | 원논문[^dsv32] |
-| Gemma 3 | local SWA(window 1024) + global attention | local 5 : global 1, 첫 층은 local | 기술 보고서[^gemma3] |
-| Qwen3-Next-80B-A3B | Gated DeltaNet + gated attention | 48층 = 12 × (Gated DeltaNet 3층 + gated attention 1층) | 모델 카드[^qwen3next-card] |
-| Qwen3.5-397B-A17B | Gated DeltaNet + gated attention | 60층 = 15 × (Gated DeltaNet 3층 + gated attention 1층) | 모델 카드·config[^qwen35] |
-| Kimi Linear 48B-A3B | KDA + MLA(NoPE) | 27층 = KDA 20층 + MLA 7층(KDA 3층마다 MLA 1층, 마지막 층도 MLA) | 원논문·config[^kimilinear][^kimilinear-config] |
-| Jamba | Mamba + attention | 32층 = 4 블록 × (attention 1층 + Mamba 7층) | 원논문[^jamba] |
-| Nemotron-H-8B | Mamba-2 + attention | 52층 = Mamba-2 24층 + attention 4층 + FFN 24층 | 원논문[^nemotronh] |
-| Nemotron 3 Nano 30B-A3B | Mamba-2 + GQA attention | 52층 = Mamba-2 23층 + attention 6층 + MoE 23층 | 기술 보고서·config[^nemotron3nano][^nemotron3nano-config] |
-
-Qwen3.5의 config에서는 `layer_types`가 `linear_attention` 세 번과 `full_attention` 한 번을 반복하고, `full_attention_interval`이 4로 적혀 있다. 모델 카드는 `linear_attention` 층이 Gated DeltaNet임을 밝힌다.[^qwen35]
-
-Qwen3.5 한 모델 안에서도 "gate"는 두 가지 뜻으로 쓰인다. Gated DeltaNet의 $\alpha_t$는 **recurrent 상태를 얼마나 남길지** 정하는 감쇠 gate이고, gated attention의 gate는 softmax attention의 **출력에 원소별로 곱하는** gate로 [Normalization and attention sink §4-3](/lecture/2026f-advanced-deep-learning/03e-normalization/#4-3-대응)에서 다룬다.
+세 종류는 섞는 부품이 다르고 개발사가 밝힌 동기도 같지 않다. Gemma 3 보고서와 Jamba 논문은 KV cache 비용을, Nemotron-H 논문은 생성 단계의 추론 비용을 설계 동기로 내세운다. Qwen3-Next 발표와 Kimi Linear 논문은 linear attention의 약한 recall과 긴 문맥 검색을 들고, Jamba 논문은 attention 층이 필요한 이유를 in-context learning으로 설명한다. 그래도 구조만 보면 이 모델들은 비슷한 판단을 공유한다고 읽을 수 있다. 대부분의 층에서는 가까운 문맥이나 압축된 요약으로 충분하고, **정확한 검색이 필요한 몇 층만 전체 문맥을 직접 보면 된다**는 판단이다. 어떤 비율과 배치가 최선인지는 모델 규모와 작업에 따라 다르게 보고되며, 위의 모델들도 서로 다른 선택을 했다. 여기서 다룬 모델과 그 밖의 최근 모델이 sequence mixer를 어떻게 배치했는지는 Sebastian Raschka의 [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/)에서 모델별 블록 구성도로 비교해 볼 수 있다.[^gallery]
 
 [^tay]: Tay, Y., Dehghani, M., Bahri, D., & Metzler, D. (2022). *Efficient Transformers: A Survey*. ACM Computing Surveys, 55(6), Article 109. [arXiv:2009.06732](https://arxiv.org/abs/2009.06732), [doi:10.1145/3530811](https://doi.org/10.1145/3530811).
 [^llama3]: Llama Team, AI @ Meta. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
@@ -470,3 +452,4 @@ Qwen3.5 한 모델 안에서도 "gate"는 두 가지 뜻으로 쓰인다. Gated 
 [^nemotron3nano-config]: NVIDIA. (2025). *NVIDIA-Nemotron-3-Nano-30B-A3B-BF16*. Hugging Face. [config.json](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16/blob/main/config.json).
 [^qwen35]: Qwen Team. (2026). *Qwen3.5-397B-A17B*. Hugging Face. [모델 카드](https://huggingface.co/Qwen/Qwen3.5-397B-A17B), [config.json](https://huggingface.co/Qwen/Qwen3.5-397B-A17B/blob/main/config.json).
 [^jamba]: Lieber, O., et al. (2024). *Jamba: A Hybrid Transformer-Mamba Language Model*. [arXiv:2403.19887](https://arxiv.org/abs/2403.19887).
+[^gallery]: Raschka, S. (2026). *LLM Architecture Gallery*. [sebastianraschka.com](https://sebastianraschka.com/llm-architecture-gallery/).

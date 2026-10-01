@@ -14,7 +14,9 @@ Transformer 블록을 수십 층 쌓으면 벡터의 크기(scale)가 층을 지
 | Residual 대비 위치 | 덧셈 경로의 어디에 두는가 | Post-LN, Pre-LN, Peri-LN(sandwich) | §2 |
 | 적용 대상 | 무엇을 정규화하는가 | 블록 입력·출력, query와 key(QK-Norm) | §3 |
 
-§4의 attention sink는 정규화 기법이 아니라, 특정 위치에 attention weight가 몰리는 현상이다. 그래도 이 노트에서 함께 다루는 데는 이유가 있다. §3과 같은 softmax 식에서 출발하고, 원인 가설 하나가 §2의 정규화 위치와 이어진다. 대응책의 일부(gated attention)는 최근 모델의 구조 선택으로도 이어진다.
+본문에서는 각 선택을 쓰는 모델을 그 기법의 예로 든다. 모델마다 세 축을 어떻게 조합했는지 한눈에 보려면 Sebastian Raschka의 [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/)에서 모델별 블록 구성도를 확인하면 된다.[^gallery]
+
+§4의 attention sink는 정규화 기법이 아니라, 특정 위치에 attention weight가 몰리는 현상이다. 그래도 이 노트에서 함께 다루는 데는 이유가 있다. §3과 같은 softmax 식에서 출발하고, 원인 가설 하나가 §2의 정규화 위치와 이어진다. 대응책 가운데 gated attention은 Qwen3-Next 같은 최근 모델에도 들어갔다.
 
 ## 1. LayerNorm과 RMSNorm
 
@@ -71,7 +73,7 @@ RMSNorm을 쓴다는 것은 셋째 행의 차이, 즉 공통 이동을 제거하
 
 ## 2. Post-LN과 Pre-LN
 
-§1이 "무엇으로 정규화하는가"였다면 이 절은 "어디에 두는가"다. 두 축은 독립이다. GPT-2는 Pre-LN 위치에 LayerNorm을, Llama는 같은 위치에 RMSNorm을 쓴다.
+§1이 "무엇으로 정규화하는가"였다면 이 절은 "어디에 두는가"다. 두 축은 독립이다. GPT-2는 Pre-LN 위치에 LayerNorm을, Llama는 같은 위치에 RMSNorm을 쓴다.[^llamaimpl]
 
 ### 2-1. Residual 대비 정규화 위치
 
@@ -264,7 +266,7 @@ $$
 
 10은 거의 그대로이고 100과 200은 둘 다 50 가까이에 머문다. 상한이 50이면 §3-1 예시와 같은 one-hot 분포는 여전히 가능하다. Soft-capping은 분포를 평평하게 만드는 장치라기보다 logit이 무한히 커지는 것을 막는 장치다.
 
-실제 모델에서는 한쪽에서 다른 쪽으로 옮겨 간 사례도 있다. Gemma 3는 Gemma 2의 soft-capping을 QK-Norm으로 교체했다고 밝힌다.[^gemma3]
+두 갈래 사이를 옮겨 간 모델 계열도 있다. Gemma 2는 위처럼 soft-capping을 썼지만, Gemma 3는 이를 QK-Norm으로 교체했다.[^gemma3] 보고서는 교체 이유를 실험으로 보이지 않고, §3-1에서 본 ViT-22B와 Wortsman 등의 연구, 그리고 Chameleon에서 착안했다고만 적는다. 결과값을 누르는 대신 재료의 크기를 묶는 쪽으로 옮겨 간 셈이지만, 같은 조건에서 두 방법을 비교한 결과는 아니다.
 
 ## 4. Attention sink
 
@@ -338,31 +340,16 @@ $$
 
 $\otimes$는 [03d §3-1](/lecture/2026f-advanced-deep-learning/03d-ffn-activation/#3-1-곱셈-gating)의 GLU 식에서처럼 원소별(elementwise) 곱이다. $Y$는 head별 attention 출력, $X$는 pre-normalization을 거친 블록 입력, $W_\theta$는 gate의 파라미터다. Gate가 0에 가까우면 head 출력이 줄어들므로, "가져올 정보가 없다"를 sink에 attention을 버리는 대신 gate로 표현할 수 있다. 원논문 Table 4의 baseline에서는 층 평균으로 attention의 46.7%가 첫 토큰에 갔지만, SDPA 출력에 head별 원소별 gate를 둔 모델에서는 4.8%로 줄었다. 같은 연구는 학습 안정성과 긴 문맥 외삽 성능의 개선도 보고한다.
 
+이 gate는 실제 모델에도 들어갔다. Qwen3-Next는 표준 softmax attention 층(Gated Attention 층)의 SDPA 출력에 head별 원소별 sigmoid gate를 곱한다.[^qwen3next] 공개 구현을 보면 gate를 위한 투영을 따로 두지 않는다. Query 투영의 출력 폭을 두 배로 늘려 절반은 query로, 나머지 절반은 gate로 쓰고, attention 출력에 그 절반의 sigmoid를 곱한다. 위 식의 $XW_\theta$를 query 투영에 합쳐 한 번의 행렬 곱으로 계산하는 셈이다.
+
 <Callout type="note">
-여기의 gate는 **softmax attention의 출력**에 곱하는 gate다. [03c §4-3](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/#4-3-gated-deltanet)의 Gated DeltaNet에서 gate는 linear attention의 **recurrent 상태**를 얼마나 잊을지 정한다. 둘 다 0과 1 사이의 계수를 곱하지만 적용 대상과 목적이 다르다. Qwen3-Next처럼 두 종류를 한 모델에서 함께 쓰는 경우도 있다.
+여기의 gate는 **softmax attention의 출력**에 곱하는 gate다. [03c §4-3](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/#4-3-gated-deltanet)의 Gated DeltaNet에서 gate는 linear attention의 **recurrent 상태**를 얼마나 잊을지 정한다. 둘 다 0과 1 사이의 계수를 곱하지만 적용 대상과 목적이 다르다. Qwen3-Next는 두 종류를 한 모델에서 함께 쓰며, Gated DeltaNet 층과 Gated Attention 층을 섞는 구성은 [03c §6-2](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/#6-2-linear-attention과-attention)에서 다룬다.
 </Callout>
 
 Sink를 어떻게 다루든, 이미 sink에 의존하도록 학습된 모델에서 그 장치를 빼는 것은 별개 문제다. Gu 등은 학습 가능한 sink token이나 KV bias로 학습한 모델에서 그것을 제거하면 성능이 크게 떨어졌다고 보고했다.[^gu] Sink는 학습된 모델에서 계산의 일부로 쓰이는 구조라 보는 편이 안전하다.
 
-## 5. 최근 모델의 선택
-
-아래 표는 공식 기술 보고서와 공개 구현에서 확인한 norm 위치, attention logit 규모 제어, attention 출력 gate만 정리한 것이다. 정규화 연산은 모두 RMSNorm이다.
-
-| 모델 | 블록 정규화 위치 | Attention logit 규모 제어 | Attention 출력 gate |
-|---|---|---|---|
-| Llama 3 8B | Pre-LN (A) | 없음 | 없음 |
-| Gemma 2 | Pre + Post (A+B) | Soft-capping, $c=50$ | 없음 |
-| Gemma 3 | Pre + Post (A+B) | QK-Norm (soft-capping 대체) | 없음 |
-| OLMo 2 | 출력만 (B) | QK-Norm | 없음 |
-| Qwen3 | Pre-LN (A) | QK-Norm | 없음 |
-| Qwen3-Next | Pre-LN (A) | QK-Norm | SDPA 출력의 head별 원소별 sigmoid gate |
-| gpt-oss | Pre-LN (A) | 없음 | 없음 |
-
-출처는 Llama 3 공식 구현,[^llamaimpl] Gemma 2·3 보고서,[^gemma2][^gemma3] OLMo 2 보고서,[^olmo2] Qwen3 보고서,[^qwen3] Qwen3-Next 모델 카드와 공개 구현,[^qwen3next] gpt-oss 모델 카드다.[^gptoss] Qwen3-Next의 gate와 QK-Norm은 표준 softmax attention 층(Gated Attention 층)에 해당한다. 공개 구현은 query 투영을 두 배 폭으로 만들어 절반을 gate로 쓴다. Gated DeltaNet 층의 구성은 [03c §6-2](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/#6-2-linear-attention과-attention)에서 다룬다. gpt-oss의 learned sink는 §4-3에서 설명했다.
-
-표에서 보이듯 Pre-LN이 여전히 흔하지만, Gemma와 OLMo 2처럼 sub-layer 출력을 정규화하는 배치도 쓰인다. Attention logit 쪽에서는 QK-Norm을 쓰는 모델이 늘었고, Gemma는 soft-capping에서 QK-Norm으로 옮겨 갔다. 일부 선택은 해당 보고서의 학습 안정성 실험으로 뒷받침되지만(예: OLMo 2의 배치 변경과 QK-Norm), 구현 문제나 하드웨어 같은 다른 이유가 함께 제시되기도 하고 공개 구현만으로는 선택의 동기를 알 수 없는 경우도 있다. 어느 조합이 모든 규모에서 낫다는 비교는 아니다.
-
 [^normsurvey]: Huang, L., Qin, J., Zhou, Y., Zhu, F., Liu, L., & Shao, L. (2023). *Normalization Techniques in Training DNNs: Methodology, Analysis and Application*. IEEE Transactions on Pattern Analysis and Machine Intelligence, 45(8), 10173–10196. [arXiv:2009.12836](https://arxiv.org/abs/2009.12836).
+[^gallery]: Raschka, S. (2026). *LLM Architecture Gallery*. [sebastianraschka.com](https://sebastianraschka.com/llm-architecture-gallery/).
 [^layernorm]: Ba, J. L., Kiros, J. R., & Hinton, G. E. (2016). *Layer Normalization*. [arXiv:1607.06450](https://arxiv.org/abs/1607.06450).
 [^rmsnorm]: Zhang, B., & Sennrich, R. (2019). *Root Mean Square Layer Normalization*. NeurIPS 2019. [arXiv:1910.07467](https://arxiv.org/abs/1910.07467).
 [^vit22b]: Dehghani, M., et al. (2023). *Scaling Vision Transformers to 22 Billion Parameters*. ICML 2023. [arXiv:2302.05442](https://arxiv.org/abs/2302.05442).
@@ -388,5 +375,4 @@ Sink를 어떻게 다루든, 이미 sink에 의존하도록 학습된 모델에�
 [^offbyone]: Miller, E. (2023). *Attention Is Off By One*. [evanmiller.org](https://www.evanmiller.org/attention-is-off-by-one.html).
 [^gptossimpl]: OpenAI. (2025). *gpt-oss reference implementation*. [gpt_oss/torch/model.py](https://github.com/openai/gpt-oss/blob/243a1b02767da73bd2e3975be250afa801635866/gpt_oss/torch/model.py).
 [^llamaimpl]: Meta. (2024). *Llama 3 reference implementation*. [model.py](https://github.com/meta-llama/llama3/blob/32b7ddc9b638f0fd6b04b80e1845536a95f7a5d5/llama/model.py).
-[^qwen3]: Qwen Team. (2025). *Qwen3 Technical Report*. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
 [^qwen3next]: Qwen Team. (2025). *Qwen3-Next-80B-A3B-Instruct*. [모델 카드](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct), [modeling_qwen3_next.py](https://github.com/huggingface/transformers/blob/v5.17.0/src/transformers/models/qwen3_next/modeling_qwen3_next.py) (Transformers v5.17.0).

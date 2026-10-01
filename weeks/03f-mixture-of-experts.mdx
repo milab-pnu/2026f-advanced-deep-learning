@@ -16,7 +16,7 @@ MoE 부분의 전체 지도는 Cai 등의 서베이[^moe-survey]가 좋다. arXi
 
 Dense 구조에서는 이 FFN 가중치를 **모든 토큰이 전부** 사용한다. FFN 폭을 두 배로 키우면 저장할 파라미터도 두 배, 토큰마다 곱해야 하는 행렬도 두 배가 된다. [Scaling §1-1](/lecture/2026f-advanced-deep-learning/02d-scaling/#1-1-모델데이터계산량)에서 본 근사 $C\approx6ND$도 같은 가정을 깔고 있다. 파라미터 $N$을 늘리면 토큰당 계산 $6N$이 같이 늘어난다.
 
-그런데 파라미터 수와 토큰당 계산을 꼭 함께 늘려야 할까? Shazeer 등(2017)은 입력마다 네트워크의 일부만 활성화하는 conditional computation으로 이 둘을 분리하자고 제안했다. 논문의 표현을 빌리면 "계산을 비례해서 늘리지 않고 모델 용량을 크게 늘리는" 방법이다.[^shazeer] 이들은 LSTM(long short-term memory) 층 사이에 expert 수천 개로 이루어진 MoE layer를 넣어 최대 137B 파라미터 규모까지 학습했다. 이 구조를 Transformer의 FFN 자리에 옮긴 것이 GShard[^gshard]와 Switch Transformer[^switch]이고, §6에서 보는 최근 모델들도 이 형태를 따른다.
+그런데 파라미터 수와 토큰당 계산을 꼭 함께 늘려야 할까? Shazeer 등(2017)은 입력마다 네트워크의 일부만 활성화하는 conditional computation으로 이 둘을 분리하자고 제안했다. 논문의 표현을 빌리면 "계산을 비례해서 늘리지 않고 모델 용량을 크게 늘리는" 방법이다.[^shazeer] 이들은 LSTM(long short-term memory) 층 사이에 expert 수천 개로 이루어진 MoE layer를 넣어 최대 137B 파라미터 규모까지 학습했다. 이 구조를 Transformer의 FFN 자리에 옮긴 것이 GShard[^gshard]와 Switch Transformer[^switch]이고, 이 노트에서 예로 드는 Mixtral, DeepSeek-V3, Qwen3, gpt-oss도 이 형태를 따른다. DeepSeek-V3, Qwen3, gpt-oss를 비롯한 최근 LLM의 전체 구성은 Sebastian Raschka의 [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/)에서 나란히 비교할 수 있다.[^gallery] 모델마다 블록 구성도와 함께 전체·활성 파라미터 같은 설정을 정리해 두었다.
 
 ## 2. Sparse MoE와 routing
 
@@ -98,7 +98,7 @@ MoE의 크기를 말할 때는 세 가지 비용을 구분해야 한다.
 - **활성 파라미터(active parameters):** 토큰 하나를 처리할 때 실제로 쓰이는 가중치 수. 토큰당 FLOPs(floating-point operations)를 대략 정한다.
 - **메모리 이동과 통신:** 어떤 expert가 어느 장치에 있는지, 토큰이 장치 사이를 얼마나 오가는지에 따라 달라진다. 파라미터 수만으로는 드러나지 않는다.
 
-Mixtral 8x7B로 앞의 두 값을 계산해 보자. 층마다 attention은 약 41.9M, expert 하나는 약 176.2M, router는 $4096\times8$개다. Embedding과 LM(language model) head는 각각 $32000\times4096$이다. 표의 활성 열은 이 노트의 계산 관례로 embedding과 LM head를 포함해 셌다. 논문은 활성 13B의 집계 범위를 밝히지 않으며, 두 행렬을 빼도 정수 자리에서는 같은 13B다. 모델 카드마다 이 관례가 다르다. 예를 들어 gpt-oss는 LM head는 활성에 넣고 입력 embedding은 뺀다(§6).
+Mixtral 8x7B로 앞의 두 값을 계산해 보자. 층마다 attention은 약 41.9M, expert 하나는 약 176.2M, router는 $4096\times8$개다. Embedding과 LM(language model) head는 각각 $32000\times4096$이다. 표의 활성 열은 이 노트의 계산 관례로 embedding과 LM head를 포함해 셌다. 논문은 활성 13B의 집계 범위를 밝히지 않으며, 두 행렬을 빼도 정수 자리에서는 같은 13B다. 모델 카드마다 이 관례가 다르다. 예를 들어 gpt-oss model card는 LM head는 활성에 넣고 입력 embedding은 뺀다.[^gptoss]
 
 | 항목 | Llama형 dense (Mixtral과 같은 차원) | Mixtral 8x7B 전체 | Mixtral 8x7B 활성 (top-2) |
 |---|---|---|---|
@@ -112,6 +112,8 @@ Mixtral 8x7B로 앞의 두 값을 계산해 보자. 층마다 attention은 약 4
 **학습 계산량.** $C\approx6ND$의 $N$에는 dense 모델과 같은 관례로 입력 embedding과 LM head를 뺀 블록 파라미터를 넣되, MoE에서는 그중 **활성 파라미터**만 넣는다. Forward에서 토큰 하나가 거치는 행렬곱이 그만큼이기 때문이다(문맥 길이에 따라 늘어나는 attention score 계산은 02d와 같이 생략한다). Mixtral의 블록 활성 파라미터는 $12.9-0.26\approx12.6$B이므로 토큰당 학습 계산은 약 $6\times12.6\text{B}\approx7.6\times10^{10}$ FLOPs다. 전체 블록 파라미터 46.4B를 넣으면 약 3.7배 과대 추정한다. DeepSeek-V3에 같은 근사를 적용하면, 보고된 활성 37B와 학습 토큰 14.8T로 $6\times37\text{B}\times14.8\text{T}\approx3.3\times10^{24}$ FLOPs가 나온다(이 노트에서 계산한 근사치이며, 37B는 embedding 포함 여부를 따로 밝히지 않은 값이다).[^dsv3] 이 근사에는 router 계산, capacity를 맞추려고 채우는 padding(§3-4), 장치 간 통신 시간이 들어가지 않는다.
 
 **메모리.** 계산은 활성 파라미터를 따라가지만 메모리는 전체 파라미터를 따라간다. 어떤 토큰이 어떤 expert를 고를지 미리 모르므로 모든 expert를 올려 두어야 한다. Mixtral 논문도 활성 파라미터 비교는 계산 비용만 반영하며, 서빙 메모리는 전체 47B에 비례한다고 적는다.[^mixtral] BF16(bfloat16)으로 저장하면 Mixtral은 약 93GB로, 같은 활성 크기의 dense 13B 모델(약 26GB)보다 훨씬 크다. gpt-oss-120b에서는 MoE 가중치 114.7B가 전체 116.8B의 약 98%를 차지한다.[^gptoss]
+
+expert를 100개 넘게 두고 그중 몇 개만 고르는 최근 모델에서는 두 숫자의 차이가 훨씬 크다. 보고된 활성 파라미터를 전체로 나누면 Mixtral은 13B/47B로 약 28%지만, DeepSeek-V3는 37B/671B로 약 5.5%이고[^dsv3] gpt-oss-120b는 5.1B/116.8B로 약 4.4%다.[^gptoss] 비율은 이 노트에서 계산한 값이며, 앞에서 본 대로 모델마다 활성 파라미터의 집계 관례가 조금씩 다르다. 그래서 MoE 모델을 비교할 때는 전체 파라미터 하나만 보지 말고 활성 파라미터와 expert 구성을 함께 보아야 한다.
 
 **통신.** Expert가 많으면 여러 GPU(graphics processing unit)에 나누어 둔다. 이것이 [Training engineering §4-4](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#4-4-ep)에서 본 EP(expert parallelism)다. 각 GPU는 자기 토큰을 선택된 expert가 있는 GPU로 보내고(dispatch), 결과를 다시 받아 원래 순서로 합친다(combine). 두 단계 모두 all-to-all 통신이다. DeepSeek-V3는 노드를 넘는 EP 때문에 계산과 통신의 비율이 약 1:1이 되었다고 보고했고, 토큰 하나가 가는 노드를 최대 4개로 제한하는 routing 규칙을 두었다.[^dsv3] 추론에서 batch가 작으면 토큰 몇 개를 위해 여러 expert의 가중치를 메모리에서 읽어야 하므로 효율이 떨어질 수 있다. 추론 쪽 비용 분석은 6주차에서 다룬다.
 
@@ -232,7 +234,7 @@ ST-MoE는 전체 loss를 $L_{CE}+c_BL_B+c_zL_z$로 두고 $c_z=0.001$을 썼다.
 
 ## 4. Fine-grained expert와 shared expert
 
-§2–3의 MoE는 "dense FFN과 같은 크기의 expert 몇 개 중 한두 개 선택"이었다. DeepSeekMoE는 부하 균형과는 다른 문제, 즉 각 expert가 얼마나 뚜렷하게 특화되는가에 주목해 이 구성에서 expert 수와 크기, 항상 켜 두는 expert를 바꾸는 두 가지 선택을 제안했다.[^dsmoe] 두 선택 모두 MoE가 동작하는 데 필수는 아니며, 최근 모델들도 서로 다르게 고른다(§6).
+§2–3의 MoE는 "dense FFN과 같은 크기의 expert 몇 개 중 한두 개 선택"이었다. DeepSeekMoE는 부하 균형과는 다른 문제, 즉 각 expert가 얼마나 뚜렷하게 특화되는가에 주목해 이 구성에서 expert 수와 크기, 항상 켜 두는 expert를 바꾸는 두 가지 선택을 제안했다.[^dsmoe] 두 선택 모두 MoE가 동작하는 데 필수는 아니며, 아래에서 보듯 최근 모델들도 이 둘을 서로 다르게 고른다.
 
 ### 4-1. Fine-grained expert segmentation
 
@@ -347,24 +349,7 @@ $N_r=3$에서 균형 잡힌 token-choice로 토큰의 1/3씩이 1·2·3회 반�
 
 실험은 가중치를 공유하지 않는 일반 Transformer(vanilla) 135M–1.7B를 기준으로, 같은 학습 FLOPs에서 비교했다. $N_r=3$일 때 embedding을 뺀 MoR의 고유 파라미터는 vanilla의 40% 안팎이다(원논문 Appendix D의 Table 9 기준 37–42%). 이 조건에서 MoR은 기존 recursive 모델보다 일관되게 낮은 validation loss를 보였다. Vanilla와의 비교는 규모에 따라 다르다. 135M에서는 vanilla보다 나빴고, 360M 이상에서는 여러 계산 예산에서 vanilla와 같거나 나았지만 모든 설정에서 그런 것은 아니다. Table 9에는 360M과 730M의 가장 큰 예산(16.5e18)에서 vanilla에 뒤진 값도 있다. 처리량 개선은 360M 기준 모델로 측정했다.[^mor] 저자들도 계산 자원의 제약으로 실험이 1.7B까지였다고 밝히며, 3B 이상으로의 확장을 후속 과제로 둔다.
 
-MoD와 MoR은 §6의 공개 모델 중 채택한 것이 없는 연구 단계의 기법이다. 폭 방향의 MoE가 토큰마다 쓰는 가중치를 바꾸듯, 깊이 방향에서 토큰마다 계산량을 바꾸는 연구로 읽는 것이 적절하다.
-
-## 6. 최근 모델의 선택
-
-아래는 공개 모델의 expert·router 구성만 모은 것이다. 값은 각 모델의 기술 보고서·model card와 공개 config에서 확인했다.
-
-| 모델 | 전체 / 활성 파라미터 | MoE 층 | Routed expert (층당) | Top-k | Shared expert | Gate 계산 |
-|---|---|---|---|---|---|---|
-| Mixtral 8x7B | 47B / 13B | 32층 전부 | 8 | 2 | 없음 | 선택한 logit의 softmax |
-| DeepSeek-V3 | 671B / 37B | 61층 중 앞 3층 제외 | 256 | 8 | 1 | Sigmoid 점수, 선택한 점수로 정규화한 뒤 2.5배, bias는 선택에만 사용 |
-| Qwen3-235B-A22B | 235B / 22B | 94층 전부 | 128 | 8 | 없음 | 전체 softmax 후 top-k 재정규화 |
-| Qwen3-30B-A3B | 30.5B / 3.3B | 48층 전부 | 128 | 8 | 없음 | 전체 softmax 후 top-k 재정규화 |
-| gpt-oss-120b | 116.8B / 5.1B | 36층 전부 | 128 | 4 | 없음 | 선택한 4개의 softmax |
-| gpt-oss-20b | 20.9B / 3.6B | 24층 전부 | 32 | 4 | 없음 | 선택한 4개의 softmax |
-
-출처: Mixtral[^mixtral], DeepSeek-V3 보고서[^dsv3]와 config·구현[^dsv3-config], Qwen3 보고서[^qwen3]와 config·구현[^qwen3-config], gpt-oss model card[^gptoss]. Qwen3-30B-A3B의 파라미터 수는 공식 model card 값이다. gpt-oss의 활성 파라미터에는 LM head(unembedding)가 포함되고 입력 embedding은 빠져 있다.[^gptoss]
-
-표에서 몇 가지 경향을 읽을 수 있다. 초기의 "큰 expert 8개 중 2개"(Mixtral) 이후 DeepSeek-V3, Qwen3, gpt-oss-120b는 expert를 100개 이상으로 늘리고 4–8개를 고른다(gpt-oss-20b는 32개). 활성 파라미터 비율은 Mixtral의 약 28%에서 DeepSeek-V3의 약 5.5%, gpt-oss-120b의 약 4.4%까지 낮아졌다. Shared expert는 DeepSeek-V3에만 있고, Qwen3와 gpt-oss는 두지 않았다. 전체 파라미터가 비슷한 모델이라도 활성 파라미터와 expert 구성이 크게 다르므로, MoE 모델을 비교할 때는 두 숫자와 expert 구성을 함께 보아야 한다.
+MoD와 MoR은 이 노트에서 본 Mixtral, DeepSeek-V3, Qwen3, gpt-oss 중 어느 것도 채택하지 않은 연구 단계의 기법이다. 폭 방향의 MoE가 토큰마다 쓰는 가중치를 바꾸듯, 깊이 방향에서 토큰마다 계산량을 바꾸는 연구로 읽는 것이 적절하다.
 
 [^moe-survey]: Cai, W., Jiang, J., Wang, F., Tang, J., Kim, S., & Huang, J. (2025). *A Survey on Mixture of Experts in Large Language Models*. *IEEE Transactions on Knowledge and Data Engineering*. [doi:10.1109/TKDE.2025.3554028](https://doi.org/10.1109/TKDE.2025.3554028). [arXiv:2407.06204v3](https://arxiv.org/abs/2407.06204v3).
 [^shazeer]: Shazeer, N., Mirhoseini, A., Maziarz, K., Davis, A., Le, Q., Hinton, G., & Dean, J. (2017). *Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer*. ICLR 2017. [arXiv:1701.06538](https://arxiv.org/abs/1701.06538).
@@ -379,9 +364,10 @@ MoD와 MoR은 §6의 공개 모델 중 채택한 것이 없는 연구 단계의 
 [^stmoe]: Zoph, B., Bello, I., Kumar, S., Du, N., Huang, Y., Dean, J., Shazeer, N., & Fedus, W. (2022). *ST-MoE: Designing Stable and Transferable Sparse Expert Models*. [arXiv:2202.08906](https://arxiv.org/abs/2202.08906).
 [^megablocks]: Gale, T., Narayanan, D., Young, C., & Zaharia, M. (2023). *MegaBlocks: Efficient Sparse Training with Mixture-of-Experts*. Proceedings of Machine Learning and Systems 5 (MLSys 2023). [arXiv:2211.15841](https://arxiv.org/abs/2211.15841).
 [^dsmoe]: Dai, D., et al. (2024). *DeepSeekMoE: Towards Ultimate Expert Specialization in Mixture-of-Experts Language Models*. ACL 2024. [arXiv:2401.06066](https://arxiv.org/abs/2401.06066).
-[^qwen3-config]: Qwen. (2025). *Qwen3-235B-A22B* [config.json](https://huggingface.co/Qwen/Qwen3-235B-A22B/blob/main/config.json), *Qwen3-30B-A3B* [model card](https://huggingface.co/Qwen/Qwen3-30B-A3B). Hugging Face Transformers, [modeling_qwen3_moe.py](https://github.com/huggingface/transformers/blob/7cd73d9df0c14b151c684b708a9f27d8d0349dfe/src/transformers/models/qwen3_moe/modeling_qwen3_moe.py).
+[^qwen3-config]: Qwen. (2025). *Qwen3-235B-A22B* [config.json](https://huggingface.co/Qwen/Qwen3-235B-A22B/blob/main/config.json). Hugging Face Transformers, [modeling_qwen3_moe.py](https://github.com/huggingface/transformers/blob/7cd73d9df0c14b151c684b708a9f27d8d0349dfe/src/transformers/models/qwen3_moe/modeling_qwen3_moe.py).
 [^mod]: Raposo, D., Ritter, S., Richards, B., Lillicrap, T., Humphreys, P. C., & Santoro, A. (2024). *Mixture-of-Depths: Dynamically allocating compute in transformer-based language models*. [arXiv:2404.02258](https://arxiv.org/abs/2404.02258).
 [^ut]: Dehghani, M., Gouws, S., Vinyals, O., Uszkoreit, J., & Kaiser, Ł. (2019). *Universal Transformers*. ICLR 2019. [arXiv:1807.03819](https://arxiv.org/abs/1807.03819).
 [^albert]: Lan, Z., et al. (2020). *ALBERT: A Lite BERT for Self-supervised Learning of Language Representations*. ICLR 2020. [arXiv:1909.11942](https://arxiv.org/abs/1909.11942).
 [^rrt]: Bae, S., Fisch, A., Harutyunyan, H., Ji, Z., Kim, S., & Schuster, T. (2025). *Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA*. ICLR 2025. [arXiv:2410.20672](https://arxiv.org/abs/2410.20672).
 [^mor]: Bae, S., et al. (2025). *Mixture-of-Recursions: Learning Dynamic Recursive Depths for Adaptive Token-Level Computation*. NeurIPS 2025. [arXiv:2507.10524](https://arxiv.org/abs/2507.10524).
+[^gallery]: Raschka, S. (2026). *LLM Architecture Gallery*. [sebastianraschka.com](https://sebastianraschka.com/llm-architecture-gallery/).

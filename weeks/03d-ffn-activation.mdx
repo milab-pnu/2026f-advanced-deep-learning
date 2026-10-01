@@ -6,7 +6,7 @@ order: 3
 
 원래 Transformer의 FFN(feed-forward network)은 행렬 두 개 사이에 ReLU(rectified linear unit)를 둔 구조였다. Llama 3 8B의 FFN은 두 가지 점에서 다르다. 가운데 활성화 함수가 매끄러운 모양으로 바뀌었고, 한 입력 투영의 출력으로 다른 투영의 출력을 원소별로 조절하는 **곱셈 gating**이 들어왔다. 앞의 변화가 GELU(Gaussian error linear unit)·SiLU(sigmoid linear unit) 계열이고 Llama 3는 SiLU를 쓴다. 뒤의 변화가 GLU(gated linear unit) 계열이고 Llama 3는 SwiGLU(Swish-gated linear unit)를 쓴다. 활성화 함수 전반은 Kunc와 Kléma가 활성화 함수 400개를 정리한 서베이(2024)[^survey]로 조망할 수 있는데, 이 노트와 겹치는 범위는 §3.3(SiLU와 GELU), §3.4(GLU 계열), §3.6(ReLU)이다.
 
-두 변화는 동기가 다르다. 앞의 것은 입력 자신의 값으로 만든 gate의 **모양**을, 뒤의 것은 gate를 별도 투영으로 만드는 **구조**를 바꾼다. 이 노트는 두 축을 따로 따라간 뒤 SwiGLU에서 만나는 지점을 보고, 행렬이 셋으로 늘면서 생긴 폭 조정 문제를 Llama 3 8B의 실제 중간 폭 14336으로 계산한다.
+두 변화는 동기가 다르다. 앞의 것은 입력 자신의 값으로 만든 gate의 **모양**을, 뒤의 것은 gate를 별도 투영으로 만드는 **구조**를 바꾼다. 이 노트는 두 축을 따로 따라간 뒤 SwiGLU에서 만나는 지점을 보고, 행렬이 셋으로 늘면서 생긴 폭 조정 문제를 Llama 3 8B의 실제 중간 폭 14336으로 계산한다. 마지막으로 활성화 계보와는 별개로 일어난 변화인 bias 제거를 짚는다. 여기서 다루는 선택이 다른 최근 모델에서 어떻게 조합되는지는 Sebastian Raschka의 [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/)에서 모델별 구성도로 확인할 수 있다.[^gallery]
 
 <figure>
 <svg viewBox="0 0 560 340" role="img" aria-label="FFN 활성화 계보의 두 축. 위쪽 축 1은 활성화 모양의 선택으로, ReLU max(0, x)에서 GELU x 곱하기 Phi(x)와 SiLU x 곱하기 sigma(x)로 간다. 화살표에 붙은 기존 방식의 문제는 음수 입력의 기울기 0, 0에서 꺾임, 부호만 보고 통과와 차단을 정하는 것이다. 아래쪽 축 2는 곱셈 gating의 도입으로, 출발점이 둘이다. 하나는 Transformer의 행렬 2개 FFN이고, 그 문제는 gate와 전달 값이 같은 투영에서 정해진다는 것이다. 다른 하나는 convolutional 언어 모델에서 제안된 GLU sigma(xW) 곱하기 xV다. 둘은 Shazeer가 GLU를 Transformer FFN에 들여오며 gate 함수를 바꿔 본 GLU 변형 FFN(ReGLU, GeGLU, SwiGLU)에서 합류한다. 축 1의 GELU와 SiLU가 그 gate 함수 자리에 들어가며 두 축도 합류한다. SwiGLU는 SiLU를 gate 함수로 쓴 GLU다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -99,7 +99,7 @@ $$
 입력 네 개 $x=(-3,\,-0.01,\,0.01,\,2)$로 확인하면 출력은 $(0,\,0,\,0.01,\,2)$, 기울기는 $(0,\,0,\,1,\,1)$이다. 0 근처의 두 값은 크기가 0.02밖에 차이 나지 않지만 기울기는 0과 1로 갈린다.
 
 <Callout type="note">
-세 성질이 곧 결함인 것은 아니다. 정확한 0 출력은 희소한 표현을 만들고, Maas 등은 이것이 분류기의 입력 특징으로는 이로울 수 있다고 보았다.[^maas] §5에서 보듯 ReLU를 제곱한 형태를 쓰는 최근 LLM도 있다. 아래의 발전은 이 성질들을 다르게 절충한 선택으로 읽는 편이 정확하다.
+세 성질이 곧 결함인 것은 아니다. 정확한 0 출력은 희소한 표현을 만들고, Maas 등은 이것이 분류기의 입력 특징으로는 이로울 수 있다고 보았다.[^maas] §3-2에서 보듯 ReLU를 제곱한 형태를 쓰는 최근 LLM도 있다. 아래의 발전은 이 성질들을 다르게 절충한 선택으로 읽는 편이 정확하다.
 </Callout>
 
 ### 2-2. GELU와 SiLU
@@ -240,7 +240,7 @@ $$
 \operatorname{FFN}_{\text{SwiGLU}}(x)=\big(\operatorname{Swish}_1(xW)\otimes xV\big)W_2,\qquad \operatorname{FFN}_{\text{GeGLU}}(x)=\big(\operatorname{GELU}(xW)\otimes xV\big)W_2
 $$
 
-ReGLU(ReLU-gated linear unit)는 $\max(0,\cdot)$, bilinear는 항등 함수를 넣은 경우다. 이 변형들은 앞뒤로 이어진 발전이 아니라, GLU라는 같은 구조에서 gate 함수만 달리 고른 **병렬 변형**이다. 축 1에서 고른 모양이 축 2의 gate 자리에 들어가는 합류 지점이 여기다.
+ReGLU(ReLU-gated linear unit)는 $\max(0,\cdot)$, bilinear는 항등 함수를 넣은 경우다. 이 변형들은 앞뒤로 이어진 발전이 아니라, GLU라는 같은 구조에서 gate 함수만 달리 고른 **병렬 변형**이다. 축 1에서 고른 모양이 축 2의 gate 자리에 들어가는 합류 지점이 여기다. 실제 모델에서도 SwiGLU만 쓰이지는 않는다. Gemma 3의 공식 PyTorch 구현은 GeGLU를 쓰며, gate 투영에 §2-2의 tanh 근사 GELU를 적용한다.[^gemma3]
 
 앞의 예제에서 $\sigma(u)$를 $\operatorname{SiLU}(u)=u\,\sigma(u)$로 바꾸면 토큰 A에서 SiLU를 적용한 gate 투영값은 $(1.762,\,-0.269)$, 은닉값은 $(5.285,\,-0.807)$이 된다. SwiGLU의 "gate"는 0과 1 사이에 갇히지 않고 음수도 될 수 있다. 은닉값은 $u$의 부호와 크기, $\sigma(u)$, $v$ 세 요소의 곱이다.
 
@@ -262,7 +262,7 @@ ReGLU(ReLU-gated linear unit)는 $\max(0,\cdot)$, bilinear는 항등 함수를 �
 Llama 3의 공식 구현은 위의 $\operatorname{FFN}_{\text{SwiGLU}}$를 `forward` 한 줄로 쓴다([model.py 218–219행](https://github.com/meta-llama/llama3/blob/a0940f9cf7065d45bb6675660f80d305c041a754/llama/model.py#L218-L219)).[^llamacode] `w1`이 $W$, `w3`가 $V$, `w2`가 $W_2$에 해당하고, Hugging Face 구현에서는 각각 `gate_proj`, `up_proj`, `down_proj`라고 부른다.[^hfcode] 가운데 쓰인 `F.silu`는 $\operatorname{Swish}_1$과 같은 함수다.
 
 <Callout type="note">
-Gating 없이 곱셈 효과를 내는 갈래도 있다. Primer는 행렬 2개 FFN의 ReLU를 제곱한 squared ReLU $\max(0,u)^2$를 제안했다.[^primer] $\max(0,u)^2=\max(0,u)\cdot u$이므로, ReGLU에서 $W=V$로 두 투영을 묶은 경우와 같다. 저자들은 추가 파라미터 없이 GLU 변형의 이점을 얻는다고 보았고, 자신들의 언어 모델 실험에서 ReGLU·SwiGLU보다 나은 결과를 보고했다(arXiv v2 PDF의 Figure 5, arXiv HTML 변환본에서는 Figure 6).
+Gating 없이 곱셈 효과를 내는 갈래도 있다. Primer는 행렬 2개 FFN의 ReLU를 제곱한 squared ReLU $\max(0,u)^2$를 제안했다.[^primer] $\max(0,u)^2=\max(0,u)\cdot u$이므로, ReGLU에서 $W=V$로 두 투영을 묶은 경우와 같다. 저자들은 추가 파라미터 없이 GLU 변형의 이점을 얻는다고 보았고, 자신들의 언어 모델 실험에서 ReGLU·SwiGLU보다 나은 결과를 보고했다(arXiv v2 PDF의 Figure 5, arXiv HTML 변환본에서는 Figure 6). 이 형태는 실제 LLM에도 쓰였다. Nemotron-4 15B 보고서는 MLP(multilayer perceptron)에 squared ReLU를 쓴다고 적었는데, gate 투영을 따로 두는지는 설명하지 않았다.[^nemotron]
 </Callout>
 
 <figure>
@@ -326,7 +326,7 @@ $$
 
 $d=4096$에 대입하면 행렬 2개 FFN($d_{\text{ff}}=16384$)의 파라미터는 $2\cdot4096\cdot16384=134{,}217{,}728$이고, 맞춰야 할 폭은 $h=8\cdot4096/3=10922.67$로 정수가 아니다. 실제 구현은 이 값을 어떤 규칙으로 정수로 만들지 정해야 한다.
 
-예산을 맞추는 것은 비교 실험의 조건이지 설계 규칙은 아니다. PaLM은 SwiGLU를 쓰면서 $d_{\text{ff}}=4d$를 유지했다.[^palm] 같은 $d$의 행렬 2개 FFN보다 FFN 파라미터가 1.5배다. PaLM은 SwiGLU를 채택한 근거로 Shazeer가 연산량을 맞춘 실험에서도 품질 향상을 보였다는 점을 들었을 뿐, $4d$를 유지한 이유는 따로 설명하지 않는다.
+예산을 맞추는 것은 비교 실험의 조건이지 설계 규칙은 아니다. PaLM은 SwiGLU를 쓰면서 $d_{\text{ff}}=4d$를 유지했다.[^palm] 같은 $d$의 행렬 2개 FFN보다 FFN 파라미터가 1.5배다. PaLM은 SwiGLU를 채택한 근거로 Shazeer가 연산량을 맞춘 실험에서도 품질 향상을 보였다는 점을 들었을 뿐, $4d$를 유지한 이유는 따로 설명하지 않는다. GeGLU를 쓰는 Gemma 3 12B 설정도 $d=3840$에 중간 폭 $15360=4d$를 둔다.[^gemma3]
 
 ### 4-2. Llama 3 8B의 FFN 폭
 
@@ -345,31 +345,16 @@ Meta의 `llama-models` 저장소에 있는 Llama 3 8B 설정은 `dim=4096`, `ffn
 
 두 조정 가운데 공식 자료에 이유가 남아 있는 것은 `multiple_of` 쪽이다. 이 인자에는 "SwiGLU hidden layer size를 큰 2의 거듭제곱의 배수로 만든다"는 주석이 달려 있다([model.py 26행](https://github.com/meta-llama/llama3/blob/a0940f9cf7065d45bb6675660f80d305c041a754/llama/model.py#L26)). $14336=14\cdot1024$라서, 예를 들어 GPU(graphics processing unit) 8개에 나누면 1792씩 떨어진다. 배율 1.3을 고른 이유는 공식 구현이나 논문에서 찾지 못했다.
 
-같은 규칙에서 배율 없이 `multiple_of=256`을 쓰면 $256\cdot\lceil10922/256\rceil=256\cdot43=11008$이 된다. §5의 OLMo 2 7B가 쓰는 폭이 이 값과 같다.
+같은 규칙에서 배율 없이 `multiple_of=256`을 쓰면 $256\cdot\lceil10922/256\rceil=256\cdot43=11008$이 된다. 같은 $d=4096$에 SwiGLU를 쓰는 OLMo 2 7B의 중간 폭이 바로 이 값이다.[^olmo2][^hfcode] 같은 FFN 식과 같은 $d$에서도 폭은 예산을 거의 그대로 맞춘 약 $2.69d$부터 Llama 3 8B의 $3.5d$까지 갈린다. FFN의 식을 고르는 일과 FFN에 파라미터를 얼마나 줄지 정하는 일은 별개의 선택이고, 8d/3은 그 출발점이다.
 
-## 5. 최근 모델의 선택
+## 5. FFN의 bias 제거
 
-### 5-1. FFN 식과 폭
-
-공식 설정 파일과 구현, 기술 보고서에서 확인한 FFN의 식과 중간 폭이다.
-
-| 모델 | FFN 식 | $d$ | 중간 폭 | 폭 / $d$ |
-|---|---|---|---|---|
-| Llama 3 8B[^llama3][^llamacode] | SwiGLU | 4,096 | 14,336 | 3.5 |
-| Qwen3-8B[^qwen3][^hfcode] | SwiGLU | 4,096 | 12,288 | 3.0 |
-| OLMo 2 7B[^olmo2][^hfcode] | SwiGLU | 4,096 | 11,008 | 약 2.69 |
-| Gemma 3 12B[^gemma3] | GeGLU (tanh 근사 GELU) | 3,840 | 15,360 | 4.0 |
-| Nemotron-4 15B[^nemotron] | squared ReLU(gate 투영 여부 미기재) | 6,144 | 보고서 미기재 | |
-
-같은 SwiGLU라도 폭은 $d$의 2.69배에서 3.5배까지 다르고, GeGLU를 쓰는 Gemma 3 12B는 PaLM처럼 $4d$를 쓴다. FFN의 식을 정하는 일과 FFN에 파라미터를 얼마나 줄지 정하는 일은 별개의 선택이며, 8d/3은 그 출발점 중 하나다. Nemotron-4 보고서는 표준 decoder-only Transformer의 MLP(multilayer perceptron)에 squared ReLU를 쓴다고만 적었다. Gate 투영을 두는지는 설명하지 않았고, 하이퍼파라미터 표에도 FFN 폭이 없다.
-
-### 5-2. Bias 제거
-
-활성화 계보와는 별개로, 최근 모델은 FFN의 선형 층에서 bias를 대부분 뺀다. §1의 원래 FFN에는 $b_1, b_2$가 있었지만, Shazeer의 비교는 T5 코드베이스를 따라 bias 없는 FFN을 썼다.[^glu] PaLM은 dense 층과 layer norm 어디에도 bias를 쓰지 않았고, 그렇게 하면 큰 모델의 학습 안정성이 높아졌다고 보고했다.[^palm] Llama 3 공식 구현의 `w1`, `w2`, `w3`는 모두 `bias=False`이고,[^llamacode] Qwen3와 OLMo 2의 Hugging Face 구현도 세 투영에 bias가 없다.[^hfcode] Nemotron-4 보고서도 bias 항이 없다고 적었다.[^nemotron]
+활성화 계보와는 별개로, FFN의 선형 층에서 bias를 빼는 선택도 있다. §1의 원래 FFN에는 $b_1, b_2$가 있었지만, Shazeer의 비교는 T5 코드베이스를 따라 bias 없는 FFN을 썼다.[^glu] PaLM은 dense 층과 layer norm 어디에도 bias를 쓰지 않았고, 그렇게 하면 큰 모델의 학습 안정성이 높아졌다고 보고했다.[^palm] Llama 3 공식 구현의 `w1`, `w2`, `w3`도 모두 `bias=False`다.[^llamacode]
 
 절약되는 파라미터는 작다. Llama 3 8B의 FFN 한 층에 bias를 붙이면 $14336\cdot2+4096=32{,}768$개로, 층당 FFN 파라미터 1억 7,616만 개의 0.02%에 못 미친다. 따라서 bias 제거를 파라미터 절약으로 설명하기는 어렵고, 공식 자료가 드는 이유는 PaLM의 학습 안정성 관찰 정도다. 이 관찰이 모든 규모와 설정에서 성립한다고 확인된 것은 아니다.
 
 [^survey]: Kunc, V., & Kléma, J. (2024). *Three Decades of Activations: A Comprehensive Survey of 400 Activation Functions for Neural Networks*. [arXiv:2402.09092](https://arxiv.org/abs/2402.09092).
+[^gallery]: Raschka, S. (2026). *LLM Architecture Gallery*. [sebastianraschka.com](https://sebastianraschka.com/llm-architecture-gallery/).
 [^aiayn]: Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., & Polosukhin, I. (2017). *Attention Is All You Need*. NeurIPS 2017. [arXiv:1706.03762](https://arxiv.org/abs/1706.03762).
 [^geva]: Geva, M., Schuster, R., Berant, J., & Levy, O. (2021). *Transformer Feed-Forward Layers Are Key-Value Memories*. EMNLP 2021, 5484–5495. [arXiv:2012.14913](https://arxiv.org/abs/2012.14913).
 [^llama3]: Llama Team, AI @ Meta. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
@@ -384,8 +369,7 @@ Meta의 `llama-models` 저장소에 있는 Llama 3 8B 설정은 `dim=4096`, `ffn
 [^primer]: So, D. R., Mańke, W., Liu, H., Dai, Z., Shazeer, N., & Le, Q. V. (2021). *Primer: Searching for Efficient Transformers for Language Modeling*. NeurIPS 2021, 6010–6022. [arXiv:2109.08668](https://arxiv.org/abs/2109.08668).
 [^palm]: Chowdhery, A., et al. (2023). *PaLM: Scaling Language Modeling with Pathways*. *Journal of Machine Learning Research*, 24(240), 1–113. [arXiv:2204.02311](https://arxiv.org/abs/2204.02311).
 [^llamaparams]: Meta. (2025). *llama-models*. [sku_list.py](https://github.com/meta-llama/llama-models/blob/0e0b8c519242d5833d8c11bffc1232b77ad7f301/models/sku_list.py).
-[^qwen3]: Qwen Team. (2025). *Qwen3-8B*. Hugging Face. [config.json](https://huggingface.co/Qwen/Qwen3-8B/blob/main/config.json).
-[^hfcode]: Hugging Face. (2026). *Transformers*. [modeling_llama.py](https://github.com/huggingface/transformers/blob/f324707307757d9c0b8dac1c4462eceff911fa2f/src/transformers/models/llama/modeling_llama.py), [modeling_qwen3.py](https://github.com/huggingface/transformers/blob/f324707307757d9c0b8dac1c4462eceff911fa2f/src/transformers/models/qwen3/modeling_qwen3.py), [modeling_olmo2.py](https://github.com/huggingface/transformers/blob/f324707307757d9c0b8dac1c4462eceff911fa2f/src/transformers/models/olmo2/modeling_olmo2.py).
+[^hfcode]: Hugging Face. (2026). *Transformers*. [modeling_llama.py](https://github.com/huggingface/transformers/blob/f324707307757d9c0b8dac1c4462eceff911fa2f/src/transformers/models/llama/modeling_llama.py), [modeling_olmo2.py](https://github.com/huggingface/transformers/blob/f324707307757d9c0b8dac1c4462eceff911fa2f/src/transformers/models/olmo2/modeling_olmo2.py).
 [^olmo2]: Allen Institute for AI. (2024). *OLMo-2-1124-7B*. Hugging Face. [config.json](https://huggingface.co/allenai/OLMo-2-1124-7B/blob/main/config.json).
 [^gemma3]: Google. (2025). *Gemma in PyTorch*. [config.py](https://github.com/google/gemma_pytorch/blob/014acb7ac4563a5f77c76d7ff98f31b568c16508/gemma/config.py), [model.py](https://github.com/google/gemma_pytorch/blob/014acb7ac4563a5f77c76d7ff98f31b568c16508/gemma/model.py).
 [^nemotron]: Parmar, J., et al. (2024). *Nemotron-4 15B Technical Report*. [arXiv:2402.16819](https://arxiv.org/abs/2402.16819).

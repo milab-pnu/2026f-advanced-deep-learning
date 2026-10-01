@@ -384,11 +384,13 @@ $$
 \operatorname{softmax}\!\left(\frac{q_m^\top k_n}{t\sqrt{d}}\right),\qquad \sqrt{1/t}=0.1\ln s+1
 $$
 
-$s=16$이면 $\sqrt{1/t}\approx1.277$이고, query와 key에 각각 이 값을 곱하면 logit은 $1/t\approx1.63$배가 되어 분포가 날카로워진다. 1.277을 RoPE의 sin·cos 계수에 미리 곱해 두면 query와 key가 회전과 함께 배율을 받으므로 attention 코드를 고칠 필요가 없다(RoPE가 head 차원 전체에 걸릴 때 성립하는 방법이다). 온도식은 LLaMA 7B–65B에서 perplexity가 가장 낮은 값을 $s$별로 찾아 적합한 경험식이다.
+$s=16$이면 $\sqrt{1/t}\approx1.277$이고, query와 key에 각각 이 값을 곱하면 logit은 $1/t\approx1.63$배가 되어 분포가 날카로워진다. 1.277을 RoPE의 sin·cos 계수에 미리 곱해 두면 query와 key가 회전과 함께 배율을 받으므로 attention 코드를 고칠 필요가 없다(RoPE가 head 차원 전체에 걸릴 때 성립하는 방법이다). RoPE가 head 차원의 일부에만 걸리는 모델에서는 이 방법을 그대로 쓸 수 없다. DeepSeek-V3가 그런 예로, 보고서는 문맥을 128K로 늘릴 때 MLA의 decoupled RoPE key(§6-2)에 YaRN을 적용했다고 쓴다.[^deepseek3] 공식 추론 구현을 보면 조정된 주파수는 RoPE를 받는 query·key 성분에만 걸리고, temperature 배율은 RoPE를 받지 않는 성분까지 포함한 attention score 전체에 곱해진다.[^deepseek3-code] 온도식은 LLaMA 7B–65B에서 perplexity가 가장 낮은 값을 $s$별로 찾아 적합한 경험식이다.
 
 YaRN은 Llama 2 7B·13B를 64K용 배율로 400 step, 이어서 128K용 배율로 200 step 미세조정해 128K 문맥으로 늘렸다. 논문은 이를 원래 사전학습 데이터의 약 0.1% 미만이라고 표현한다. 두 단계 모두 64K 길이의 시퀀스로 학습했으므로, step 수·batch·시퀀스 길이로 다시 계산하면 600 × 64 × 64K ≈ 2.5B 토큰이고, Llama 2의 사전학습 2T 토큰에 대해 약 0.13%다. 자릿수는 맞지만 엄밀히 0.1% 미만은 아니다. 방법 간 비교는 LLaMA 7B를 32K로 늘리는 같은 400 step 예산에서 했고, YaRN이 PI·NTK-aware보다 낮은 perplexity를 보였다.
 
 Llama 3.1의 RoPE 조정도 같은 아이디어의 한 예다. Meta의 공식 구현은 주석에 grid search로 얻었다고 적힌 값을 쓴다. 원래 학습 길이 8,192에 대해 파장이 2,048보다 짧은 쌍(8,192 안에서 네 바퀴 넘게 도는 쌍)은 그대로 두고, 8,192보다 긴 쌍은 파장을 8배로 늘리며, 그 사이는 부드럽게 잇는다.[^llama-code] $r=8192/\lambda$로 바꿔 쓰면 NTK-by-parts에서 $\alpha=1$, $\beta=4$, $s=8$로 둔 것과 같은 형태이고, 공식 구현에 attention temperature는 없다. §5-2 그림의 점선이 그 결과다.
+
+확장 방법이 checkpoint에 고정되지 않고 사용자가 켜는 설정으로 남기도 한다. Qwen3-8B의 모델 카드는 기본 문맥을 32,768로 소개하고, config에 YaRN `rope_scaling`(배율 4)을 추가하면 131,072토큰까지 쓸 수 있으며 그 길이까지 검증했다고 안내한다. 동시에 주요 오픈소스 프레임워크가 입력 길이와 무관하게 같은 배율을 쓰는 정적(static) YaRN을 구현하므로 짧은 입력의 성능이 떨어질 수 있다고 경고하고, 32,768을 넘는 입력을 다룰 때만 켜고 배율도 실제로 필요한 길이에 맞추라고 권한다.[^qwen3-card] 같은 checkpoint라도 이 설정 하나로 다룰 수 있는 길이와 짧은 입력의 품질이 함께 달라진다. Config에 적힌 숫자만으로 모델의 문맥 길이를 판단하기 어려운 또 하나의 이유다(§5-1).
 
 **남은 문제: 대역 구분이 수작업 규칙이다.** $\alpha$, $\beta$, 온도식은 모델 계열마다 실험으로 맞춘 값이다. 대역 사이를 선형 ramp로 잇는 것도 구현의 단순함을 위한 선택이라고 Peng 등은 밝힌다.[^yarn] 쌍마다 최적의 배율이 이 규칙을 따른다는 보장은 없다.
 
@@ -443,32 +445,11 @@ $$
 
 ### 6-2. Head 차원 일부에만 적용하는 RoPE
 
-Partial RoPE는 head 차원 중 일부 쌍에만 회전을 적용하고, 나머지 성분은 위치와 무관하게 내용만으로 내적한다. GPT-NeoX-20B는 GPT-J를 따라 차원의 25%에만 RoPE를 적용했고, 초기 실험에서 이것이 성능과 계산 효율의 균형이 가장 좋았다고 밝혔다.[^neox] 이때 각주파수의 분모에 들어가는 차원도 달라진다. 회전을 받는 차원을 $d_{\mathrm{rot}}$이라 하면, Hugging Face Transformers 구현은 §4-1의 식에서 $d$ 대신 $d_{\mathrm{rot}}$을 써서 $\theta_i=b^{-2i/d_{\mathrm{rot}}}$($i=0,\ldots,d_{\mathrm{rot}}/2-1$)로 계산한다.[^hf-rope] 전체 head 차원으로 만든 주파수 목록에서 일부를 고르는 것이 아니라, 가장 빠른 주파수부터 가장 느린 주파수까지의 거의 같은 범위를 더 적은 쌍으로 다시 나누는 셈이다. 예를 들어 GLM-4.5는 head 차원 128 중 64차원($d_{\mathrm{rot}}=64$, 32개 쌍)에만 RoPE를 적용한다(§7 표). 거리와 무관하게 내용만 비교하는 성분을 남겨 두는 효과로 해석할 수도 있다. 다만 이 해석을 직접 검증한 결과는 모델마다 달라 일반화하기 어렵다. [03b §5-4](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/#5-4-decoupled-rope-key)의 MLA는 다른 이유(KV 압축과 RoPE의 충돌)로 RoPE를 받는 작은 key 성분을 따로 두는데, 결과적으로 head 차원의 일부에만 RoPE가 걸린다는 점은 같다.
+Partial RoPE는 head 차원 중 일부 쌍에만 회전을 적용하고, 나머지 성분은 위치와 무관하게 내용만으로 내적한다. GPT-NeoX-20B는 GPT-J를 따라 차원의 25%에만 RoPE를 적용했고, 초기 실험에서 이것이 성능과 계산 효율의 균형이 가장 좋았다고 밝혔다.[^neox] 이때 각주파수의 분모에 들어가는 차원도 달라진다. 회전을 받는 차원을 $d_{\mathrm{rot}}$이라 하면, Hugging Face Transformers 구현은 §4-1의 식에서 $d$ 대신 $d_{\mathrm{rot}}$을 써서 $\theta_i=b^{-2i/d_{\mathrm{rot}}}$($i=0,\ldots,d_{\mathrm{rot}}/2-1$)로 계산한다.[^hf-rope] 전체 head 차원으로 만든 주파수 목록에서 일부를 고르는 것이 아니라, 가장 빠른 주파수부터 가장 느린 주파수까지의 거의 같은 범위를 더 적은 쌍으로 다시 나누는 셈이다. 예를 들어 GLM-4.5는 head 차원 128 중 64차원($d_{\mathrm{rot}}=64$, 32개 쌍)에만 RoPE를 적용한다.[^glm45] 거리와 무관하게 내용만 비교하는 성분을 남겨 두는 효과로 해석할 수도 있다. 다만 이 해석을 직접 검증한 결과는 모델마다 달라 일반화하기 어렵다. [03b §5-4](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/#5-4-decoupled-rope-key)의 MLA는 다른 이유(KV 압축과 RoPE의 충돌)로 RoPE를 받는 작은 key 성분을 따로 두는데, 결과적으로 head 차원의 일부에만 RoPE가 걸린다는 점은 같다.
 
 ### 6-3. 층별 RoPE base
 
 Gemma 3는 1,024토큰 sliding window를 쓰는 지역 attention 층 다섯 개와 전체 attention 층 하나를 번갈아 쌓는다. 전체 attention 층의 RoPE base는 1,000,000으로 올리고, 지역 층은 10,000을 유지했다.[^gemma3] 지역 층은 1,024토큰보다 먼 거리를 볼 일이 없으므로 기존 base로도 충분하고, 먼 거리를 구분해야 하는 층에만 느린 회전을 준 설계로 읽을 수 있다. 다만 보고서는 설정값을 밝힐 뿐 층별 base의 ablation은 제시하지 않는다. 32K로 사전학습한 뒤 전체 attention 층에 PI와 비슷한 방식(배율 8)을 적용해 128K로 늘렸고, §5-1의 그림이 그 결과다.
-
-## 7. 최근 모델의 선택
-
-아래 값은 공식 기술 보고서, 공식 구현, 모델 카드·config에서 확인한 위치 관련 설정이다. 학습 길이는 학습 시퀀스의 최대 길이(§5-1)이고, 확인하지 못한 칸은 —로 둔다. Attention 층의 종류(sliding window·linear attention 등)와 그 비율은 [03c §7](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/#7-최근-모델의-선택)에서 다룬다.
-
-| 모델 | 위치 신호의 배치 | RoPE base | 학습 길이 | 지원 길이 | 확장 방법 |
-|---|---|---|---|---|---|
-| Llama 3 8B[^llama3] | 모든 층에 RoPE | 500,000 | 8,192 | 8,192 | 없음 |
-| Llama 3.1 8B[^llama3][^llama-code] | 모든 층에 RoPE | 500,000 | 8,192에서 단계적으로 128K | 128K | 대역별 조정(§5-4), 배율 8 |
-| Llama 4 Scout[^llama4-blog][^llama4-code] | RoPE 층과 NoPE 층의 교대(iRoPE) | checkpoint 값 미확인(접근 제한) | 256K | 10M(발표) | RoPE scaling 배율 16(공식 구현 기본값), NoPE 층 temperature |
-| Gemma 3 (4B·12B·27B)[^gemma3] | 지역 5 : 전체 1, 층별 base | 지역 10,000 / 전체 1,000,000 | 32K, 사전학습 말미에 128K로 확장 | 128K | 전체 층에 PI 방식, 배율 8 |
-| Qwen3-8B[^qwen3][^qwen3-card] | 모든 층에 RoPE | 1,000,000 (ABF) | 32,768 | 131,072(YaRN 사용 시) | 추론 시 YaRN(배율 4)과 DCA(dual chunk attention) |
-| DeepSeek-V3[^deepseek3] | Decoupled RoPE key(03b) | 10,000 | 4K → 32K → 128K | 128K | YaRN $s=40$, $\alpha=1$, $\beta=32$ |
-| GLM-4.5[^glm45] | Head 차원의 50%에 RoPE | 1,000,000 | — | 설정 131,072 | config에 scaling 없음 |
-| Qwen3-Next-80B-A3B[^qwen3next] | Full attention 층에서 head 차원의 25%에 RoPE | 10,000,000 | — | 설정 262,144 | config에 scaling 없음 |
-
-몇 가지를 덧붙인다.
-
-- **Llama 4 Scout**의 RoPE scaling 배율 16과 high-frequency 인자 1은 공식 구현의 기본값이며, 구현 주석은 "Llama-4-Scout만 scaled RoPE를 쓴다"고 적는다.[^llama4-code] NoPE 층의 간격은 공개 config 대신 Hugging Face 구현의 기본값(4)으로 확인했다.
-- **Qwen3**의 모델 카드는 주요 프레임워크가 입력 길이와 무관하게 같은 배율을 쓰는 정적(static) YaRN을 구현하므로 짧은 입력의 성능이 떨어질 수 있다고 경고하고, 긴 문맥이 필요할 때만 `rope_scaling`을 켜라고 권한다.[^qwen3-card] YaRN을 쓸지, 배율을 얼마로 할지가 사용자의 설정 항목이라는 점에서 §5-1의 설정 길이와 유효 길이의 차이를 보여 주는 사례다. 기술 보고서는 추론 시 YaRN과 함께 DCA도 쓴다고 밝히는데, DCA는 긴 입력을 chunk로 나누고 chunk 안과 chunk 사이의 상대 위치를 다시 매겨 학습 때 본 거리 범위 안에 두는 방식이다.[^qwen3][^dca]
-- **DeepSeek-V3**의 보고서는 YaRN을 MLA의 decoupled RoPE key에만 적용했다고 쓴다.[^deepseek3] 공식 추론 구현을 보면 조정된 주파수는 RoPE를 받는 query·key 성분 양쪽에 걸리고, temperature 배율은 RoPE를 받지 않는 성분까지 포함한 attention score 전체에 곱해진다.[^deepseek3-code] 32K와 128K 단계에서 각각 1,000 step씩 추가 학습했다.[^deepseek3] Config에는 `qk_rope_head_dim: 64`와 `qk_nope_head_dim: 128`이 있어, 결과적으로 §6-2의 partial RoPE와 같은 모양이 된다.
 
 [^survey]: Zhao, L., Feng, X., Feng, X., Zhong, W., Xu, D., Yang, Q., Liu, H., Qin, B., & Liu, T. (2024). *Length Extrapolation of Transformers: A Survey from the Perspective of Positional Encoding*. Findings of EMNLP 2024. [arXiv:2312.17044](https://arxiv.org/abs/2312.17044).
 [^gallery]: Raschka, S. (2026). *LLM Architecture Gallery*. [sebastianraschka.com](https://sebastianraschka.com/llm-architecture-gallery/).
@@ -490,6 +471,8 @@ Gemma 3는 1,024토큰 sliding window를 쓰는 지역 attention 층 다섯 개�
 [^ntkparts]: bloc97. (2023). *Add NTK-Aware interpolation "by parts" correction*. [GitHub jquesnelle/scaled-rope PR #1](https://github.com/jquesnelle/scaled-rope/pull/1).
 [^yarn-code]: Quesnelle, J. (2023). *yarn: scaled_rope/LlamaYaRNScaledRotaryEmbedding.py*. [GitHub jquesnelle/yarn](https://github.com/jquesnelle/yarn/blob/master/scaled_rope/LlamaYaRNScaledRotaryEmbedding.py).
 [^hf-rope]: Hugging Face. (2025). *Transformers v4.57.0: modeling_rope_utils.py*. [GitHub](https://github.com/huggingface/transformers/blob/v4.57.0/src/transformers/modeling_rope_utils.py).
+[^deepseek3]: DeepSeek-AI. (2024). *DeepSeek-V3 Technical Report*. [arXiv:2412.19437](https://arxiv.org/abs/2412.19437).
+[^deepseek3-code]: DeepSeek-AI. (2024). *DeepSeek-V3: inference/model.py*. [GitHub](https://github.com/deepseek-ai/DeepSeek-V3/blob/main/inference/model.py).
 [^llama-code]: Meta. (2024). *llama-models: Llama 3 reference implementation*. [model.py](https://github.com/meta-llama/llama-models/blob/main/models/llama3/model.py), [sku_list.py](https://github.com/meta-llama/llama-models/blob/main/models/sku_list.py).
 [^longrope]: Ding, Y., Zhang, L. L., Zhang, C., Xu, Y., Shang, N., Xu, J., Yang, F., & Yang, M. (2024). *LongRoPE: Extending LLM Context Window Beyond 2 Million Tokens*. ICML 2024. [arXiv:2402.13753](https://arxiv.org/abs/2402.13753).
 [^llama4-blog]: Meta. (2025). *The Llama 4 herd: The beginning of a new era of natively multimodal AI innovation*. [Meta AI Blog](https://ai.meta.com/blog/llama-4-multimodal-intelligence/).
@@ -497,9 +480,4 @@ Gemma 3는 1,024토큰 sliding window를 쓰는 지역 attention 층 다섯 개�
 [^llama4-card]: Meta. (2025). *Llama 4 model card*. [MODEL_CARD.md](https://github.com/meta-llama/llama-models/blob/main/models/llama4/MODEL_CARD.md).
 [^llama4-hf]: Hugging Face. (2025). *Transformers: Llama4 configuration*. [configuration_llama4.py](https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama4/configuration_llama4.py).
 [^neox]: Black, S., et al. (2022). *GPT-NeoX-20B: An Open-Source Autoregressive Language Model*. Proceedings of BigScience Episode #5, Workshop on Challenges & Perspectives in Creating Large Language Models. [arXiv:2204.06745](https://arxiv.org/abs/2204.06745).
-[^qwen3]: Qwen Team. (2025). *Qwen3 Technical Report*. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
-[^dca]: An, C., Huang, F., Zhang, J., Gong, S., Qiu, X., Zhou, C., & Kong, L. (2024). *Training-Free Long-Context Scaling of Large Language Models*. ICML 2024. [arXiv:2402.17463](https://arxiv.org/abs/2402.17463).
-[^deepseek3]: DeepSeek-AI. (2024). *DeepSeek-V3 Technical Report*. [arXiv:2412.19437](https://arxiv.org/abs/2412.19437).
-[^deepseek3-code]: DeepSeek-AI. (2024). *DeepSeek-V3: inference/model.py*. [GitHub](https://github.com/deepseek-ai/DeepSeek-V3/blob/main/inference/model.py).
 [^glm45]: Z.ai. (2025). *GLM-4.5 config.json*. [Hugging Face](https://huggingface.co/zai-org/GLM-4.5/blob/main/config.json).
-[^qwen3next]: Qwen Team. (2025). *Qwen3-Next-80B-A3B-Instruct config.json*. [Hugging Face](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct/blob/main/config.json).
