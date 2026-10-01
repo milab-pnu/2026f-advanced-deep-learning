@@ -59,7 +59,7 @@ $$
 
 $\alpha=0.7$, $\gamma=4$라면 $(1-0.7^5)/0.3\approx2.77$개, $\alpha=0.5$라면 1.94개다. 여기에 draft를 $\gamma$번 돌리는 비용이 붙는다. Draft 한 번이 target 한 번의 $c$배 시간이 든다면 전체 시간의 개선 배수는 $(1-\alpha^{\gamma+1})/\bigl((1-\alpha)(\gamma c+1)\bigr)$이다(원논문 Theorem 3.8). $\alpha=0.7$, $\gamma=4$, $c=0.05$라면 $2.77/1.2\approx2.3$배다. 이 식은 target이 $\gamma+1$개 위치를 계산하는 데 위치 하나와 같은 시간이 든다는 가정(원논문 §3.3)에 기대는데, §1-1에서 본 memory-bound decode가 그 가정을 뒷받침한다.[^leviathan]
 
-실제로 Leviathan 등은 T5-XXL(11B)에 T5-small을 draft로 붙여 번역에서 2.6–3.4배, 요약에서 2.3–3.1배 빨라졌다고 보고했다(Table 2, batch 1). Chen 등은 Chinchilla 70B에 4B draft를 붙여 2–2.5배를 보고했다.[^leviathan][^chen] 두 결과 모두 출력 분포는 target 그대로다.
+실제로 Leviathan 등은 T5-XXL(11B)에 T5-small을 draft로 붙여 번역에서 2.6–3.4배, 요약에서 2.3–3.1배 빨라졌다고 보고했다(원논문 Table 2, batch 1). Chen 등은 Chinchilla 70B에 4B draft를 붙여 2–2.5배를 보고했다.[^leviathan][^chen] 두 결과 모두 출력 분포는 target 그대로다.
 
 ## 2. Draft를 만드는 방법
 
@@ -135,7 +135,7 @@ EAGLE 계열의 draft와 DeepSeek-V3의 MTP 모듈은 모양이 비슷하다. �
 
 ### 4-2. Serving에서의 선택
 
-이 때문에 서빙 시스템은 speculative decoding을 켜고 끄는 일을 부하에 맞춰 조절한다. Liu 등의 TurboSpec은 speculative decoding을 단순히 덧붙이면 serving 성능이 오히려 나빠질 수 있다고 지적하고, 시스템의 goodput을 보며 추측 길이를 실행 중에 바꾸는 제어 방식을 제안했다.[^turbospec] vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-bound 상황에서 ITL(inter-token latency)을 줄이는 기능으로 설명한다.[^vllm-spec]
+그래서 serving에서는 부하에 맞춰 speculative decoding의 사용 여부와 추측 길이를 조절하는 방법이 나왔다. Liu 등의 TurboSpec은 speculative decoding을 단순히 덧붙이면 serving 성능이 오히려 나빠질 수 있다고 지적하고, 시스템의 goodput을 보며 추측 길이를 실행 중에 바꾸는 제어 방식을 제안했다.[^turbospec] vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-bound 상황에서 ITL(inter-token latency)을 줄이는 기능으로 설명한다.[^vllm-spec]
 
 측정할 때는 [06a §3-1](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#3-1-요청-하나의-지연)의 ITL과 TPOT 차이를 기억한다. 한 번의 forward에서 토큰 여러 개가 함께 나오면 ITL은 도착 간격만 기록하고 TPOT는 그 시간을 토큰 수로 나누므로, speculative decoding의 효과는 TPOT로 보아야 일관되게 비교할 수 있다. 출력이 바뀌지 않는다는 보장도 수학적으로는 정확하지만, vLLM 문서는 그 보장이 하드웨어 수치 정밀도의 범위 안에서라고 밝힌다.[^vllm-spec] Batch 구성이 바뀌면 부동소수점 계산 순서가 달라져 sampling 결과가 미세하게 달라질 수 있다.
 
@@ -143,7 +143,7 @@ EAGLE 계열의 draft와 DeepSeek-V3의 MTP 모듈은 모양이 비슷하다. �
 
 Memory-bound인 decode에서는 위치 하나를 계산하든 여러 개를 계산하든 시간이 거의 같다. Speculative decoding은 이 여유를 쓰려고 다음 토큰들을 값싸게 추측하고 target이 forward 한 번으로 검증하게 한다. Greedy에서는 처음 어긋나는 곳까지 받아들이고, sampling에서는 $\min(1,p/q)$로 받아들이고 거부되면 $\max(0,p-q)$에서 다시 뽑아 target의 분포를 정확히 유지한다. 수락률 $\alpha$와 추측 길이 $\gamma$가 forward 한 번에 얻는 토큰 수를 정한다.
 
-추측을 만드는 방법은 별도의 작은 모델에서 출발해 두 갈래로 나뉘었다. 하나는 target 위에 head(Medusa)나 feature 수준의 draft(EAGLE 계열)를 붙여 학습하는 길이고, 다른 하나는 학습 없이 문맥에서 n-gram을 가져오는 길이다. Multi-token prediction은 같은 생각을 pre-training으로 옮겨, 큰 모델의 품질을 높이면서 추론 때 draft로 쓸 head를 함께 만든다. DeepSeek-V3는 순차 MTP 모듈 하나로 두 번째 토큰 85–90%의 수락률을 얻었다.
+추측을 만드는 방법은 별도의 작은 모델에서 출발해 두 갈래로 나뉘었다. 하나는 target 위에 head(Medusa)나 feature 수준의 draft(EAGLE 계열)를 붙여 학습하는 길이고, 다른 하나는 학습 없이 문맥에서 n-gram을 가져오는 길이다. Multi-token prediction은 같은 생각을 pre-training으로 옮겨, 큰 모델에서는 품질을 높이면서 추론 때 draft로 쓸 head를 함께 만든다. DeepSeek-V3는 순차 MTP 모듈 하나로 두 번째 토큰 85–90%의 수락률을 얻었다.
 
 이득은 공짜가 아니다. 추측은 요청마다 계산할 위치를 늘리므로, batch가 커져 스텝이 compute-bound가 되면 거부될 추측의 계산이 시간을 잡아먹어 이득이 줄거나 손해가 된다. 문맥이 길어 KV cache 읽기가 지배하면 큰 batch에서도 이득이 남는다. 그래서 serving에서는 부하에 따라 추측 길이를 조절하고, 효과는 TPOT와 goodput으로 잰다.
 
