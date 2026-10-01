@@ -47,11 +47,11 @@ Draft가 덜 뽑아 주는 토큰, 곧 $p$가 $q$보다 큰 부분만 남긴 분
 어휘가 A·B·C 셋뿐이고 target은 $p=(0.5,\,0.3,\,0.2)$, draft는 $q=(0.2,\,0.6,\,0.2)$라고 하자. Draft가 A를 뽑으면($q=0.2\le p=0.5$) 항상 받는다. B를 뽑으면 $0.3/0.6=0.5$의 확률로 받는다. C는 두 분포가 같아 항상 받는다. 그래서 수락으로 나오는 확률은 A $0.2$, B $0.6\times0.5=0.3$, C $0.2$이고, 합인 0.7이 전체 수락 확률이다. 거부될 확률 0.3에서는 $p'$에서 새로 뽑는다. $\max(0,p-q)=(0.3,\,0,\,0)$이므로 $p'$는 A만 남는다. 최종 확률은 A $0.2+0.3=0.5$, B $0.3$, C $0.2$로 $p$와 같다.
 </Callout>
 
-이 예에서 전체 수락 확률 0.7은 $\sum_x\min(p(x),q(x))=0.2+0.3+0.2$와 같다. Leviathan 등은 이 값을 $\alpha$로 두고, draft가 target과 비슷할수록 1에 가깝다는 것을 보였다(원논문 Corollary 3.6).[^leviathan] Greedy 검증은 $p$와 $q$가 모두 argmax에 확률 1을 둔 특수한 경우다.
+이 예에서 전체 수락 확률 0.7은 $\sum_x\min(p(x),q(x))=0.2+0.3+0.2$와 같다. Leviathan 등은 이 값을 $\alpha$로 두고, draft가 target과 비슷할수록 1에 가깝다는 것을 보였다(Corollary 3.6).[^leviathan] Greedy 검증은 $p$와 $q$가 모두 argmax에 확률 1을 둔 특수한 경우다.
 
 ### 1-4. 기대 속도 향상
 
-추측 하나하나가 서로 독립으로 확률 $\alpha$로 수락된다고 단순화하면, target의 forward 한 번이 내는 토큰 수의 기댓값은 다음과 같다(원논문 Eq. (1)).[^leviathan]
+추측 하나하나가 서로 독립으로 확률 $\alpha$로 수락된다고 단순화하면, target의 forward 한 번이 내는 토큰 수의 기댓값은 다음과 같다(Eq. (1)).[^leviathan]
 
 $$
 \mathbb{E}[\text{토큰 수}]=\frac{1-\alpha^{\gamma+1}}{1-\alpha}
@@ -59,7 +59,7 @@ $$
 
 $\alpha=0.7$, $\gamma=4$라면 $(1-0.7^5)/0.3\approx2.77$개, $\alpha=0.5$라면 1.94개다. 여기에 draft를 $\gamma$번 돌리는 비용이 붙는다. Draft 한 번이 target 한 번의 $c$배 시간이 든다면 전체 시간의 개선 배수는 $(1-\alpha^{\gamma+1})/\bigl((1-\alpha)(\gamma c+1)\bigr)$이다(원논문 Theorem 3.8). $\alpha=0.7$, $\gamma=4$, $c=0.05$라면 $2.77/1.2\approx2.3$배다. 이 식은 target이 $\gamma+1$개 위치를 계산하는 데 위치 하나와 같은 시간이 든다는 가정(원논문 §3.3)에 기대는데, §1-1에서 본 memory-bound decode가 그 가정을 뒷받침한다.[^leviathan]
 
-실제로 Leviathan 등은 T5-XXL(11B)에 T5-small을 draft로 붙여 번역에서 2.6–3.4배, 요약에서 2.3–3.1배 빨라졌다고 보고했다(원논문 Table 2, batch 1). Chen 등은 Chinchilla 70B에 4B draft를 붙여 2–2.5배를 보고했다.[^leviathan][^chen] 두 결과 모두 출력 분포는 target 그대로다.
+실제로 Leviathan 등은 T5-XXL(11B)에 T5-small을 draft로 붙여 번역에서 2.6–3.4배, 요약에서 2.3–3.1배 빨라졌다고 보고했다(Table 2, batch 1). Chen 등은 Chinchilla 70B에 4B draft를 붙여 2–2.5배를 보고했다.[^leviathan][^chen] 두 결과 모두 출력 분포는 target 그대로다.
 
 ## 2. Draft를 만드는 방법
 
@@ -129,9 +129,9 @@ EAGLE 계열의 draft와 DeepSeek-V3의 MTP 모듈은 모양이 비슷하다. �
 문맥이 짧고 batch가 큰 마지막 행에서는 한 스텝에 $192\times5=960$개 위치를 계산하느라 스텝이 2.3배 길어진다. 수락률이 0.5라면 얻는 토큰보다 늘어난 시간이 커서 오히려 느려진다. 반면 문맥이 2,048토큰이면 batch 192에서도 KV cache를 읽는 시간이 스텝을 지배해, 위치를 다섯 배로 늘려도 스텝 시간이 그대로다. Draft 비용을 무시했으므로 memory-bound인 행의 개선 배수는 §1-4의 기대 토큰 수와 같다.
 </Callout>
 
-측정 결과도 같은 방향이다. EAGLE은 LLaMA2-Chat 70B에서 batch 1의 3.01배가 batch 4에서 2.40배로 줄었다(원논문 Table 7).[^eagle] EAGLE-3 논문이 SGLang 팀의 측정으로 실은 결과에서는, H100에서 LLaMA-3.1-8B를 돌릴 때 EAGLE이 batch 24에서 처리량을 0.93배로 오히려 낮춘 반면 EAGLE-3는 batch 64에서도 1.38배를 유지했다(원논문 Table 3).[^eagle3] vLLM 팀은 Llama 3 70B에서 요청률이 낮을 때 n-gram 방식으로 최대 2.8배를 얻었지만, 요청률이 높을 때는 1.4–1.8배 느려졌다고 보고했다.[^vllm-blog]
+측정 결과도 같은 방향이다. EAGLE은 LLaMA2-Chat 70B에서 batch 1의 3.01배가 batch 4에서 2.40배로 줄었다(Table 7).[^eagle] EAGLE-3 논문이 SGLang 팀의 측정으로 실은 결과에서는, H100에서 LLaMA-3.1-8B를 돌릴 때 EAGLE이 batch 24에서 처리량을 0.93배로 오히려 낮춘 반면 EAGLE-3는 batch 64에서도 1.38배를 유지했다(Table 3).[^eagle3] vLLM 팀은 Llama 3 70B에서 요청률이 낮을 때 n-gram 방식으로 최대 2.8배를 얻었지만, 요청률이 높을 때는 1.4–1.8배 느려졌다고 보고했다.[^vllm-blog]
 
-예시의 2,048토큰 행이 보여 주듯 긴 문맥은 예외가 될 수 있다. Sadhukhan 등의 MagicDec은 KV cache 읽기가 스텝을 지배하는 긴 문맥에서는 target이 $\gamma+1$개 위치를 검증하는 시간이 위치 하나를 처리하는 시간과 거의 같게 유지된다는 점을 짚었다. LLaMA-3.1-8B에서는 문맥이 약 4,000토큰보다 짧으면 batch가 커질수록 이득이 줄지만, 그보다 길면 오히려 batch가 커질수록 이득이 커졌다(원논문 Figure 2(c)).[^magicdec]
+예시의 2,048토큰 행이 보여 주듯 긴 문맥은 예외가 될 수 있다. Sadhukhan 등의 MagicDec은 KV cache 읽기가 스텝을 지배하는 긴 문맥에서는 target이 $\gamma+1$개 위치를 검증하는 시간이 위치 하나를 처리하는 시간과 거의 같게 유지된다는 점을 짚었다. LLaMA-3.1-8B에서는 문맥이 약 4,000토큰보다 짧으면 batch가 커질수록 이득이 줄지만, 그보다 길면 오히려 batch가 커질수록 이득이 커졌다(Figure 2(c)).[^magicdec]
 
 ### 4-2. Serving에서의 선택
 

@@ -28,7 +28,7 @@ Llama 3 8B로 최대 8,192토큰을 허용하는 서비스에서, 입력 100토�
 
 ### 1-2. 측정된 낭비
 
-Kwon 등은 이 낭비를 실제 서빙 실험에서 쟀다. Orca를 재현한 시스템에서 최대 길이만큼 미리 잡으면 KV cache 공간의 20.4%만 실제 토큰 상태를 담았다. 할당 크기를 2의 거듭제곱으로 맞추면 26.8%, 출력 길이를 미리 안다고 가정한 이상적인 경우(Oracle)에도 38.2%였다(원논문 Figure 2).[^vllm] Oracle에서도 internal fragmentation이 사라질 뿐 reserved와 external fragmentation이 남기 때문이다. 06b §4-2에서 KV cache 공간이 batch 크기의 상한이었으니, 이 낭비는 곧 처리량의 손실이다.
+Kwon 등은 이 낭비를 실제 서빙 실험에서 쟀다. Orca를 재현한 시스템에서 최대 길이만큼 미리 잡으면 KV cache 공간의 20.4%만 실제 토큰 상태를 담았다. 할당 크기를 2의 거듭제곱으로 맞추면 26.8%, 출력 길이를 미리 안다고 가정한 이상적인 경우(Oracle)에도 38.2%였다(Figure 2).[^vllm] Oracle에서도 internal fragmentation이 사라질 뿐 reserved와 external fragmentation이 남기 때문이다. 06b §4-2에서 KV cache 공간이 batch 크기의 상한이었으니, 이 낭비는 곧 처리량의 손실이다.
 
 ## 2. PagedAttention
 
@@ -41,22 +41,22 @@ Kwon 등은 운영체제가 프로세스의 메모리를 관리하는 방식, �
 요청마다 logical 블록이 순서대로 이어지고, block table은 logical 블록마다 그 내용을 담은 physical 블록 번호와 채워진 칸 수를 기록한다. 새 토큰이 생기면 마지막 블록의 빈칸에 쓰고, 블록이 다 차면 그때 빈 physical 블록 하나를 새로 받는다. 요청이 끝나면 블록을 모두 돌려준다. 이렇게 하면 미리 잡는 공간이 없어 reserved가 사라지고, 모든 블록의 크기가 같아 external fragmentation도 사라진다. 남는 낭비는 요청마다 마지막 블록의 빈칸뿐이라, 원논문의 표현대로 낭비가 요청당 블록 하나 안으로 제한된다(원논문 §4.3).[^vllm]
 
 <Callout type="example">
-vLLM의 기본 블록 크기는 16토큰이다(원논문 §7.2).[^vllm] Llama 3 8B에서 블록 하나는 $16\times128\ \text{KiB}=2\ \text{MiB}$다. §1-1의 요청이 300토큰까지 자라면 블록 19개(304칸)를 쓰고, 마지막 블록의 빈칸 4개, 0.5 MiB만 낭비한다. 연속 할당의 1 GiB 대신 38 MiB다. 블록이 너무 작으면 kernel이 KV cache를 읽고 처리할 때 GPU의 병렬성을 충분히 쓰지 못하고, 너무 크면 마지막 블록의 빈칸이 커진다. 원논문은 ShareGPT 작업에서 16–128토큰 블록이 가장 좋았다고 보고했다.
+vLLM의 기본 블록 크기는 16토큰이다(§7.2).[^vllm] Llama 3 8B에서 블록 하나는 $16\times128\ \text{KiB}=2\ \text{MiB}$다. §1-1의 요청이 300토큰까지 자라면 블록 19개(304칸)를 쓰고, 마지막 블록의 빈칸 4개, 0.5 MiB만 낭비한다. 연속 할당의 1 GiB 대신 38 MiB다. 블록이 너무 작으면 kernel이 KV cache를 읽고 처리할 때 GPU의 병렬성을 충분히 쓰지 못하고, 너무 크면 마지막 블록의 빈칸이 커진다. 원논문은 ShareGPT 작업에서 16–128토큰 블록이 가장 좋았다고 보고했다.
 </Callout>
 
-이 방식에는 대가가 있다. 한 요청의 key·value가 메모리에 흩어져 있으므로, attention kernel이 block table을 보며 블록을 찾아 읽어야 한다. 원논문은 이 때문에 attention kernel 자체의 지연이 연속 메모리를 쓰는 FasterTransformer보다 20–26% 길었다고 밝혔다(원논문 §7.1).[^vllm] 그래도 batch를 훨씬 크게 키울 수 있어 전체 처리량은 크게 오른다. 흩어진 블록을 효율적으로 읽는 kernel은 7주차 kernel 노트에서 다룬다.
+이 방식에는 대가가 있다. 한 요청의 key·value가 메모리에 흩어져 있으므로, attention kernel이 block table을 보며 블록을 찾아 읽어야 한다. 원논문은 이 때문에 attention kernel 자체의 지연이 연속 메모리를 쓰는 FasterTransformer보다 20–26% 길었다고 밝혔다(§7.1).[^vllm] 그래도 batch를 훨씬 크게 키울 수 있어 전체 처리량은 크게 오른다. 흩어진 블록을 효율적으로 읽는 kernel은 7주차 kernel 노트에서 다룬다.
 
 ### 2-2. 블록 공유와 copy-on-write
 
-블록 단위 관리는 공유도 쉽게 만든다. 같은 프롬프트로 응답 여러 개를 sampling하는 parallel sampling이나 beam search에서는 여러 시퀀스가 같은 prefix를 가진다. 연속 할당에서는 시퀀스마다 그 prefix의 KV cache를 복사해 두어야 했지만, block table을 쓰면 여러 시퀀스의 logical 블록이 같은 physical 블록을 가리키게 하면 된다. vLLM은 physical 블록마다 몇 개의 시퀀스가 가리키는지 reference count를 두고, 공유 중인 블록에 어느 한 시퀀스가 새 토큰을 써야 할 때만 그 블록을 복사한다. 운영체제의 **copy-on-write**와 같은 방식이다(원논문 §4.4).[^vllm]
+블록 단위 관리는 공유도 쉽게 만든다. 같은 프롬프트로 응답 여러 개를 sampling하는 parallel sampling이나 beam search에서는 여러 시퀀스가 같은 prefix를 가진다. 연속 할당에서는 시퀀스마다 그 prefix의 KV cache를 복사해 두어야 했지만, block table을 쓰면 여러 시퀀스의 logical 블록이 같은 physical 블록을 가리키게 하면 된다. vLLM은 physical 블록마다 몇 개의 시퀀스가 가리키는지 reference count를 두고, 공유 중인 블록에 어느 한 시퀀스가 새 토큰을 써야 할 때만 그 블록을 복사한다. 운영체제의 **copy-on-write**와 같은 방식이다(§4.4).[^vllm]
 
-공유로 줄어드는 메모리는 작업에 따라 다르다. OPT-13B 실험에서 parallel sampling은 6.1–9.8%(Alpaca)와 16.2–30.5%(ShareGPT), 가지가 더 많이 공유되는 beam search는 37.6–55.2%와 44.3–66.3%의 메모리를 아꼈다(원논문 Figure 15).[^vllm]
+공유로 줄어드는 메모리는 작업에 따라 다르다. OPT-13B 실험에서 parallel sampling은 6.1–9.8%(Alpaca)와 16.2–30.5%(ShareGPT), 가지가 더 많이 공유되는 beam search는 37.6–55.2%와 44.3–66.3%의 메모리를 아꼈다(Figure 15).[^vllm]
 
 ### 2-3. 결과와 선점
 
 이 설계를 구현한 것이 vLLM이다. 원논문은 같은 지연 수준에서 FasterTransformer와 Orca보다 처리량이 2–4배 높았다고 보고했다.[^vllm] §1-2에서 20.4–38.2%였던 KV cache 공간의 실제 사용률은 96.3%로 올랐다(원논문 Figure 2).
 
-공간을 쓰는 만큼만 주면 새로운 문제가 생긴다. 생성 도중 빈 블록이 바닥날 수 있다는 것이다. 그때는 실행 중인 요청 일부를 멈추고(preemption) 그 블록을 회수해야 한다. 원논문은 두 방법을 비교했다. 멈춘 요청의 블록을 CPU 메모리로 옮겨 두었다가 다시 가져오는 swapping과, 블록을 버리고 나중에 다시 prefill해 KV cache를 재계산하는 recomputation이다(원논문 §4.5). 재계산은 이미 생성한 토큰까지 프롬프트처럼 한 번에 처리하므로 원래의 decode보다 훨씬 빠르다. 현재 vLLM은 recomputation을 기본으로 쓴다.[^vllm-opt] 어떤 요청을 멈추고 어떤 요청을 먼저 실행할지는 [06d](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/#3-대기열과-선점)의 scheduling 문제다.
+공간을 쓰는 만큼만 주면 새로운 문제가 생긴다. 생성 도중 빈 블록이 바닥날 수 있다는 것이다. 그때는 실행 중인 요청 일부를 멈추고(preemption) 그 블록을 회수해야 한다. 원논문은 두 방법을 비교했다. 멈춘 요청의 블록을 CPU 메모리로 옮겨 두었다가 다시 가져오는 swapping과, 블록을 버리고 나중에 다시 prefill해 KV cache를 재계산하는 recomputation이다(§4.5). 재계산은 이미 생성한 토큰까지 프롬프트처럼 한 번에 처리하므로 원래의 decode보다 훨씬 빠르다. 현재 vLLM은 recomputation을 기본으로 쓴다.[^vllm-opt] 어떤 요청을 멈추고 어떤 요청을 먼저 실행할지는 [06d](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/#3-대기열과-선점)의 scheduling 문제다.
 
 ## 3. Prefix 재사용
 
@@ -86,7 +86,7 @@ SGLang의 RadixAttention은 cache를 **radix tree**로 관리한다.[^sglang] �
 
 메모리가 모자라면 **가장 오래 쓰이지 않은 잎**부터 지운다. 잎부터 지우면 여러 요청이 공유하는 조상 노드는 남아 계속 재사용된다. 실행 중인 요청이 쓰고 있는 노드는 reference count가 0이 아니어서 지우지 않는다. 또 cache와 실행 중인 요청이 같은 메모리 공간을 나누어 쓰므로, cache를 위한 공간을 따로 떼어 둘 필요가 없다.[^sglang]
 
-재사용을 늘리려면 요청의 처리 순서도 바꿔야 한다. 같은 prefix를 가진 요청들이 멀리 떨어져 처리되면 그 사이에 cache가 지워질 수 있다. SGLang은 대기 중인 요청을 cache와 일치하는 prefix가 긴 순서로 정렬해 먼저 처리하는 cache-aware scheduling을 제안했고, 이 순서가 나무를 깊이 우선으로 훑는 것과 같아 오프라인에서는 최적임을 보였다(원논문 Theorem 3.1). 다만 일치하는 prefix가 짧은 요청은 계속 밀려 굶을 수 있다.[^sglang] 현재 SGLang은 이 정책을 선택 사항으로 두고 기본값은 도착 순서(FCFS, first come first served)다.[^sglang-args]
+재사용을 늘리려면 요청의 처리 순서도 바꿔야 한다. 같은 prefix를 가진 요청들이 멀리 떨어져 처리되면 그 사이에 cache가 지워질 수 있다. SGLang은 대기 중인 요청을 cache와 일치하는 prefix가 긴 순서로 정렬해 먼저 처리하는 cache-aware scheduling을 제안했고, 이 순서가 나무를 깊이 우선으로 훑는 것과 같아 오프라인에서는 최적임을 보였다(Theorem 3.1). 다만 일치하는 prefix가 짧은 요청은 계속 밀려 굶을 수 있다.[^sglang] 현재 SGLang은 이 정책을 선택 사항으로 두고 기본값은 도착 순서(FCFS, first come first served)다.[^sglang-args]
 
 SGLang 논문은 여러 작업에서 cache 적중률이 50–99%였고, 처리량이 최대 6.4배 높아졌다고 보고했다. Chatbot Arena에 배치했을 때 Vicuna-33B의 적중률은 74.1%였고 첫 토큰 지연은 평균 1.7배 줄었다(원논문 §6).[^sglang] [06a §3-4](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#3-4-서버-내부-지표)의 prefix cache 적중률이 바로 이 값이다. 적중률이 높은 작업일수록 TTFT와 처리량이 함께 좋아진다.
 
@@ -106,7 +106,7 @@ SGLang 논문은 여러 작업에서 cache 적중률이 50–99%였고, 처리�
 
 <Figure src="https://arxiv.org/html/2402.02750v2/quant_scheme.svg" alt="KIVI 논문의 양자화 단위 그림. 왼쪽은 per-token 양자화로, 토큰 수만큼의 길이를 가진 scale과 zero-point 벡터가 행렬 X 옆에 세로로 붙고 빨간 점선이 한 행(토큰 하나)을 묶는다. 오른쪽은 per-channel 양자화로, 차원 d만큼의 길이를 가진 scale과 zero-point 벡터가 행렬 위에 가로로 놓이고 빨간 점선이 한 열(channel 하나)을 묶는다." caption="Per-token과 per-channel 양자화. 같은 scale과 zero-point를 공유하는 범위가 행(토큰)인지 열(channel)인지가 다르다. KIVI는 key를 per-channel로, value를 per-token으로 양자화한다." source="Liu et al. (2024), KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache, 원논문 그림. CC BY 4.0. 원본 그대로 사용." />
 
-Key를 channel 단위로 묶으려면 여러 토큰이 모여야 하므로, KIVI는 가장 최근 토큰 128개까지는 원래 정밀도로 두고 32개씩 모일 때마다 2-bit로 양자화한다. 이렇게 2-bit KV cache로 모델 가중치를 포함한 최대 메모리를 2.6배 줄였고, batch를 최대 4배 키워 처리량을 2.35–3.47배 높였다(Llama-2-7B, A100 한 대).[^kivi] 서베이도 key는 channel 단위, value는 토큰 단위로 양자화하는 것이 흔한 관행이 되었다고 정리한다(서베이 §5.1.1).[^survey] 양자화 자체의 원리는 7주차 양자화 노트에서 가중치와 함께 다룬다.
+Key를 channel 단위로 묶으려면 여러 토큰이 모여야 하므로, KIVI는 가장 최근 토큰 128개까지는 원래 정밀도로 두고 32개씩 모일 때마다 2-bit로 양자화한다. 이렇게 2-bit KV cache로 모델 가중치를 포함한 최대 메모리를 2.6배 줄였고, batch를 최대 4배 키워 처리량을 2.35–3.47배 높였다(Llama-2-7B, A100 한 대).[^kivi] 서베이도 key는 channel 단위, value는 토큰 단위로 양자화하는 것이 흔한 관행이 되었다고 정리한다(§5.1.1).[^survey] 양자화 자체의 원리는 7주차 양자화 노트에서 가중치와 함께 다룬다.
 
 ### 4-2. Eviction
 

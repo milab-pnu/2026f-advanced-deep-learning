@@ -40,7 +40,7 @@ Orca는 GPT-3 175B에서 같은 지연 수준일 때 FasterTransformer보다 처
 06b의 하한 모형으로 계산해 보자. Llama 3 8B가 H100 한 대에서 문맥 2,048토큰인 요청 64개를 decode하고 있다면 한 스텝은 약 9.9 ms다. 여기에 8,192토큰 프롬프트의 prefill이 같은 반복에 들어오면 계산량이 약 150 TFLOP로 늘어 그 반복은 약 152 ms가 된다. 이미 응답을 받던 64명의 사용자에게는 10 ms 간격으로 나오던 토큰이 한 번 152 ms 동안 멈춘다. [06a §3-1](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#3-1-요청-하나의-지연)의 ITL 분포에서 꼬리가 길어지는 것이다.
 </Callout>
 
-Zhong 등의 DistServe는 13B 모델에서 이 간섭을 측정했다. Decode만 하는 batch에 prefill 하나를 더하자 decode 반복의 지연이 늘었고, 반대로 prefill도 decode와 섞이면서 느려졌다(원논문 Figure 2).[^distserve]
+Zhong 등의 DistServe는 13B 모델에서 이 간섭을 측정했다. Decode만 하는 batch에 prefill 하나를 더하자 decode 반복의 지연이 늘었고, 반대로 prefill도 decode와 섞이면서 느려졌다(Figure 2).[^distserve]
 
 <Figure src="https://arxiv.org/html/2401.09670v3/prefill-decoding-interference.svg" alt="DistServe 논문의 Figure 2. 두 그래프 모두 가로축은 batch 크기, 세로축은 지연(ms)이다. 주황색 선은 decode만 하는 batch, 파란 선은 decode batch에 prefill 하나를 더한 경우다. 왼쪽(입력 128토큰)에서는 파란 선이 주황 선보다 몇 ms 위에 있다. 오른쪽(입력 1,024토큰)에서는 주황 선이 10–40 ms인 데 비해 파란 선은 120–150 ms로, prefill 하나가 decode 반복을 여러 배 느리게 한다. 두 그래프에 decoding slowdown과 prefill slowdown이 화살표로 표시되어 있다." caption="Decode batch에 prefill 하나를 더했을 때의 지연. 프롬프트가 길수록(오른쪽) decode 반복이 크게 느려지고, prefill도 decode와 섞여 느려진다." source="Zhong et al. (2024), DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving, Figure 2. CC BY-SA 4.0. 원본 그대로 사용." />
 
@@ -106,7 +106,7 @@ MoE 모델은 사정이 다르다. [3주차 Mixture of Experts §2-4](/lecture/2
 DeepSeek-V3는 층마다 routed expert 256개 가운데 8개를 고른다.[^dsv3] 한 GPU 묶음이 decode 스텝마다 토큰 64개를 처리한다면 expert 하나에 평균 $64\times8/256=2$개의 토큰이 간다. 06b §3-1의 선형층이라면 intensity가 약 2인 셈이라, 가중치를 읽는 시간이 스텝을 지배한다. Expert마다의 batch를 키우려면 훨씬 많은 요청의 토큰을 같은 expert로 모아야 한다.
 </Callout>
 
-그래서 DeepSeek-V3는 prefill과 decode를 분리하고, 특히 decode를 큰 규모로 배치했다(보고서 §3.4).[^dsv3] Prefill의 최소 배치 단위는 4개 노드, GPU 32개다. Attention은 TP4와 sequence parallelism에 DP8(data parallelism)을, MoE 층은 EP32(expert parallelism)를 쓴다. Decode의 최소 배치 단위는 40개 노드, GPU 320개다. Attention은 TP4와 sequence parallelism에 DP80을 쓰고, MoE 층은 EP320으로 GPU 하나에 expert 하나만 둔다. DP80의 80개 attention 묶음이 처리한 토큰이 모두 같은 expert GPU들로 모이므로, 묶음마다 위 예시처럼 64토큰을 처리한다면 expert마다 약 160토큰이 된다(교육용 계산). 보고서는 그래도 expert당 batch가 대개 256토큰 이내이고 병목은 메모리 접근이라고 적는다. 부하가 몰리는 expert를 복제해 두는 redundant expert도 둔다. 이 구조에서는 토큰을 expert GPU로 보내고 결과를 되받는 all-to-all 통신이 새로운 비용이 되며, [2주차 §4-4](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#4-4-ep)의 EP와 같은 문제다.
+그래서 DeepSeek-V3는 prefill과 decode를 분리하고, 특히 decode를 큰 규모로 배치했다(§3.4).[^dsv3] Prefill의 최소 배치 단위는 4개 노드, GPU 32개다. Attention은 TP4와 sequence parallelism에 DP8(data parallelism)을, MoE 층은 EP32(expert parallelism)를 쓴다. Decode의 최소 배치 단위는 40개 노드, GPU 320개다. Attention은 TP4와 sequence parallelism에 DP80을 쓰고, MoE 층은 EP320으로 GPU 하나에 expert 하나만 둔다. DP80의 80개 attention 묶음이 처리한 토큰이 모두 같은 expert GPU들로 모이므로, 묶음마다 위 예시처럼 64토큰을 처리한다면 expert마다 약 160토큰이 된다(교육용 계산). 보고서는 그래도 expert당 batch가 대개 256토큰 이내이고 병목은 메모리 접근이라고 적는다. 부하가 몰리는 expert를 복제해 두는 redundant expert도 둔다. 이 구조에서는 토큰을 expert GPU로 보내고 결과를 되받는 all-to-all 통신이 새로운 비용이 되며, [2주차 §4-4](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#4-4-ep)의 EP와 같은 문제다.
 
 ## 5. 정리
 
