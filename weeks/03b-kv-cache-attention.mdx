@@ -315,7 +315,7 @@ $$
 
 ## 6. 최근 모델의 선택
 
-공개 보고서와 공식 config로 확인한 KV 표현과 head 구성만 모았다.<Sidenote>Head 수와 층 수는 보고서 값이고, 나머지는 공식 config 값이다. GQA 모델의 $d_h$는 Qwen3가 config의 `head_dim`, Llama 3가 참조 구현이 모델 폭을 head 수로 나눈 값(4096/32)이다. MLA 모델의 $d_h$는 `qk_nope_head_dim`과 `v_head_dim`(둘 다 128), latent와 RoPE key 차원은 `kv_lora_rank`와 `qk_rope_head_dim`이다.</Sidenote> 토큰당 원소 수는 표의 값으로 이 노트에서 계산했으며, 모든 층이 전체 문맥을 캐시한다고 본 값이다.
+공개 보고서와 공식 config로 확인한 KV 표현과 head 구성만 모았다.<Sidenote>Head 수와 층 수는 보고서 값이고, 나머지는 공식 config 값이다. GQA 모델의 $d_h$는 Qwen3의 경우 config의 `head_dim`이고, Llama 3의 경우 참조 구현처럼 모델 폭을 head 수로 나눈 값(4096/32)이다. MLA 모델의 $d_h$는 `qk_nope_head_dim`과 `v_head_dim`(둘 다 128), latent와 RoPE key 차원은 `kv_lora_rank`와 `qk_rope_head_dim`이다.</Sidenote> 토큰당 원소 수는 표의 값으로 이 노트에서 계산했으며, 모든 층이 전체 문맥을 캐시한다고 본 값이다.
 
 | 모델 | Attention | Query head | K/V head 또는 캐시 벡터 | $d_h$ | 층 수 | 토큰당 캐시 원소 |
 |---|---|---|---|---|---|---|

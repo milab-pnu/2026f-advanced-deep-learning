@@ -4,7 +4,7 @@ week: 3
 order: 0
 ---
 
-Self-attention은 토큰 사이의 관계를 계산하지만, 그 자체로는 토큰의 순서를 알지 못한다. 그렇다면 위치 정보를 어디에, 어떤 형태로 넣어야 할까? 그리고 그렇게 넣은 위치 정보는 학습 때보다 긴 입력에서도 통할까? 이 노트는 두 질문을 한 줄기로 따라간다. 입력에 위치 벡터를 더하는 **절대 위치 인코딩**에서 출발해, attention score에 상대 거리를 반영하는 **상대 위치 인코딩**, query와 key를 회전시키는 **RoPE**(rotary position embedding), 그리고 RoPE를 학습 길이 밖으로 늘리는 **long context 확장**(position interpolation → NTK(neural tangent kernel)-aware·YaRN(Yet another RoPE extensioN) → LongRoPE)으로 이어진다. 마지막으로 이 계보와 별개인 설계 축으로, 위치 신호를 어느 층과 어느 차원에 둘지를 다룬다.
+Self-attention은 토큰 사이의 관계를 계산하지만, 그 자체로는 토큰의 순서를 알지 못한다. 그렇다면 위치 정보를 어디에, 어떤 형태로 넣어야 할까? 그리고 그렇게 넣은 위치 정보는 학습 때보다 긴 입력에서도 통할까? 이 노트는 두 질문을 한 줄기로 따라간다. 입력에 위치 벡터를 더하는 **절대 위치 인코딩**에서 출발해, attention score에 상대 거리를 반영하는 **상대 위치 인코딩**, query와 key를 회전시키는 **RoPE**(rotary position embedding), 그리고 RoPE를 학습 길이 밖으로 늘리는 **long context 확장**(position interpolation → NTK(neural tangent kernel)-aware·YaRN(Yet another RoPE extensioN method) → LongRoPE)으로 이어진다. 마지막으로 이 계보와 별개인 설계 축으로, 위치 신호를 어느 층과 어느 차원에 둘지를 다룬다.
 
 전체 지도는 Zhao 등이 위치 인코딩의 관점에서 길이 외삽(length extrapolation)을 정리한 서베이[^survey]로 잡는다. 서베이의 §3(외삽을 염두에 둔 위치 인코딩)이 이 노트의 §2–4에, §4.1(position interpolation)이 §5-3·5-4에 대응한다. 서베이는 LongRoPE를 이름만 언급하고, §6의 층별·차원별 배치는 다루지 않으므로 이 둘은 원논문과 공식 구현으로 보충했다.
 
@@ -386,7 +386,7 @@ $$
 
 $s=16$이면 $\sqrt{1/t}\approx1.277$이고, query와 key에 각각 이 값을 곱하면 logit은 $1/t\approx1.63$배가 되어 분포가 날카로워진다. 1.277을 RoPE의 sin·cos 계수에 미리 곱해 두면 query와 key가 회전과 함께 배율을 받으므로 attention 코드를 고칠 필요가 없다(RoPE가 head 차원 전체에 걸릴 때 성립하는 방법이다). 온도식은 LLaMA 7B–65B에서 perplexity가 가장 낮은 값을 $s$별로 찾아 적합한 경험식이다.
 
-YaRN은 Llama 2 7B·13B를 64K용 배율로 400 step, 이어서 128K용 배율로 200 step 미세조정해 128K 문맥으로 늘렸다. 논문은 이를 원래 사전학습 데이터의 약 0.1% 미만이라고 표현한다. Step 수·batch·시퀀스 길이로 다시 계산하면 600 × 64 × 64K ≈ 2.5B 토큰이고, Llama 2의 사전학습 2T 토큰에 대해 약 0.13%다. 자릿수는 맞지만 엄밀히 0.1% 미만은 아니다. 방법 간 비교는 LLaMA 7B를 32K로 늘리는 같은 400 step 예산에서 했고, YaRN이 PI·NTK-aware보다 낮은 perplexity를 보였다.
+YaRN은 Llama 2 7B·13B를 64K용 배율로 400 step, 이어서 128K용 배율로 200 step 미세조정해 128K 문맥으로 늘렸다. 논문은 이를 원래 사전학습 데이터의 약 0.1% 미만이라고 표현한다. 두 단계 모두 64K 길이의 시퀀스로 학습했으므로, step 수·batch·시퀀스 길이로 다시 계산하면 600 × 64 × 64K ≈ 2.5B 토큰이고, Llama 2의 사전학습 2T 토큰에 대해 약 0.13%다. 자릿수는 맞지만 엄밀히 0.1% 미만은 아니다. 방법 간 비교는 LLaMA 7B를 32K로 늘리는 같은 400 step 예산에서 했고, YaRN이 PI·NTK-aware보다 낮은 perplexity를 보였다.
 
 Llama 3.1의 RoPE 조정도 같은 아이디어의 한 예다. Meta의 공식 구현은 주석에 grid search로 얻었다고 적힌 값을 쓴다. 원래 학습 길이 8,192에 대해 파장이 2,048보다 짧은 쌍(8,192 안에서 네 바퀴 넘게 도는 쌍)은 그대로 두고, 8,192보다 긴 쌍은 파장을 8배로 늘리며, 그 사이는 부드럽게 잇는다.[^llama-code] $r=8192/\lambda$로 바꿔 쓰면 NTK-by-parts에서 $\alpha=1$, $\beta=4$, $s=8$로 둔 것과 같은 형태이고, 공식 구현에 attention temperature는 없다. §5-2 그림의 점선이 그 결과다.
 

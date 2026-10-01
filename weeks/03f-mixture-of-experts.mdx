@@ -12,9 +12,9 @@ MoE 부분의 전체 지도는 Cai 등의 서베이[^moe-survey]가 좋다. arXi
 
 ## 1. Dense FFN의 확장 한계
 
-[FFN activations](/lecture/2026f-advanced-deep-learning/03d-ffn-activation/#1-ffn의-역할)에서 계산했듯이, 기준 모델 Llama 3 8B에서는 SwiGLU(Swish-gated linear unit) FFN이 전체 8.03B 파라미터의 약 70%를 차지한다.
+[FFN activations §1](/lecture/2026f-advanced-deep-learning/03d-ffn-activation/#1-ffn의-역할)에서 계산했듯이, 기준 모델 Llama 3 8B에서는 SwiGLU(Swish-gated linear unit) FFN이 전체 8.03B 파라미터의 약 70%를 차지한다.
 
-Dense 구조에서는 이 FFN 가중치를 **모든 토큰이 전부** 사용한다. FFN 폭을 두 배로 키우면 저장할 파라미터도 두 배, 토큰마다 곱해야 하는 행렬도 두 배가 된다. [Scaling](/lecture/2026f-advanced-deep-learning/02d-scaling/#1-1-모델데이터계산량)에서 본 근사 $C\approx6ND$도 같은 가정을 깔고 있다. 파라미터 $N$을 늘리면 토큰당 계산 $6N$이 같이 늘어난다.
+Dense 구조에서는 이 FFN 가중치를 **모든 토큰이 전부** 사용한다. FFN 폭을 두 배로 키우면 저장할 파라미터도 두 배, 토큰마다 곱해야 하는 행렬도 두 배가 된다. [Scaling §1-1](/lecture/2026f-advanced-deep-learning/02d-scaling/#1-1-모델데이터계산량)에서 본 근사 $C\approx6ND$도 같은 가정을 깔고 있다. 파라미터 $N$을 늘리면 토큰당 계산 $6N$이 같이 늘어난다.
 
 그런데 파라미터 수와 토큰당 계산을 꼭 함께 늘려야 할까? Shazeer 등(2017)은 입력마다 네트워크의 일부만 활성화하는 conditional computation으로 이 둘을 분리하자고 제안했다. 논문의 표현을 빌리면 "계산을 비례해서 늘리지 않고 모델 용량을 크게 늘리는" 방법이다.[^shazeer] 이들은 LSTM(long short-term memory) 층 사이에 expert 수천 개로 이루어진 MoE layer를 넣어 최대 137B 파라미터 규모까지 학습했다. 이 구조를 Transformer의 FFN 자리에 옮긴 것이 GShard[^gshard]와 Switch Transformer[^switch]이고, §6에서 보는 최근 모델들도 이 형태를 따른다.
 
@@ -113,7 +113,7 @@ Mixtral 8x7B로 앞의 두 값을 계산해 보자. 층마다 attention은 약 4
 
 **메모리.** 계산은 활성 파라미터를 따라가지만 메모리는 전체 파라미터를 따라간다. 어떤 토큰이 어떤 expert를 고를지 미리 모르므로 모든 expert를 올려 두어야 한다. Mixtral 논문도 활성 파라미터 비교는 계산 비용만 반영하며, 서빙 메모리는 전체 47B에 비례한다고 적는다.[^mixtral] BF16(bfloat16)으로 저장하면 Mixtral은 약 93GB로, 같은 활성 크기의 dense 13B 모델(약 26GB)보다 훨씬 크다. gpt-oss-120b에서는 MoE 가중치 114.7B가 전체 116.8B의 약 98%를 차지한다.[^gptoss]
 
-**통신.** Expert가 많으면 여러 GPU(graphics processing unit)에 나누어 둔다. 이것이 [Training engineering](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#4-4-ep)에서 본 EP(expert parallelism)다. 각 GPU는 자기 토큰을 선택된 expert가 있는 GPU로 보내고(dispatch), 결과를 다시 받아 원래 순서로 합친다(combine). 두 단계 모두 all-to-all 통신이다. DeepSeek-V3는 노드를 넘는 EP 때문에 계산과 통신의 비율이 약 1:1이 되었다고 보고했고, 토큰 하나가 가는 노드를 최대 4개로 제한하는 routing 규칙을 두었다.[^dsv3] 추론에서 batch가 작으면 토큰 몇 개를 위해 여러 expert의 가중치를 메모리에서 읽어야 하므로 효율이 떨어질 수 있다. 추론 쪽 비용 분석은 6주차에서 다룬다.
+**통신.** Expert가 많으면 여러 GPU(graphics processing unit)에 나누어 둔다. 이것이 [Training engineering §4-4](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#4-4-ep)에서 본 EP(expert parallelism)다. 각 GPU는 자기 토큰을 선택된 expert가 있는 GPU로 보내고(dispatch), 결과를 다시 받아 원래 순서로 합친다(combine). 두 단계 모두 all-to-all 통신이다. DeepSeek-V3는 노드를 넘는 EP 때문에 계산과 통신의 비율이 약 1:1이 되었다고 보고했고, 토큰 하나가 가는 노드를 최대 4개로 제한하는 routing 규칙을 두었다.[^dsv3] 추론에서 batch가 작으면 토큰 몇 개를 위해 여러 expert의 가중치를 메모리에서 읽어야 하므로 효율이 떨어질 수 있다. 추론 쪽 비용 분석은 6주차에서 다룬다.
 
 <Video src="https://www.youtube.com/watch?v=RcJ1YXHLv5o" caption="Stanford CS25 V4, Albert Jiang, Demystifying Mixtral of Experts (2024). Mixtral의 router와 expert 구성, routing 분석을 설명한다." />
 
@@ -224,7 +224,7 @@ $$
 
 $B$는 토큰 수, $N$은 expert 수, $x^{(i)}$는 $i$번째 토큰의 router logit이다. 이 항은 logit 전체가 커지는 것을 벌한다. 근거는 수치 정밀도다. bfloat16은 가수 비트가 7개뿐이라 큰 수일수록 반올림 오차가 크고, softmax의 지수 함수는 작은 입력 오차를 큰 출력 차이로 키운다. ST-MoE의 예에서 logit 10개가 128이고 하나가 128.5일 때, bfloat16 반올림으로 128.5가 128이 되면 가장 큰 확률이 약 0.142에서 0.091로 바뀐다. Router 확률은 expert 출력에 곱해지는 gate이므로 이런 오차가 바로 출력에 반영된다.
 
-ST-MoE는 전체 loss를 $L_{CE}+c_BL_B+c_zL_z$로 두고 $c_z=0.001$을 썼다. 실험에서 update clipping은 학습을 안정시켰지만 품질을 크게 떨어뜨렸고, router z-loss는 품질 저하 없이 안정화했다(논문 Table 4).[^stmoe]
+ST-MoE는 전체 loss를 $L_{CE}+c_BL_B+c_zL_z$로 두고 $c_z=0.001$을 썼다. 실험에서 update clipping은 학습을 안정시켰지만 품질을 크게 떨어뜨렸고, router z-loss는 품질 저하 없이 안정화했다(원논문 Table 4).[^stmoe]
 
 </Details>
 
@@ -252,7 +252,7 @@ $$
 
 $u_t$는 보고서가 정의한 토큰 $t$의 FFN 입력이고, $h'_t$는 residual 경로 $u_t$까지 포함한 FFN 출력이다. 이 식은 정규화를 생략한 개략식이다. 공식 구현의 실제 순서는 attention residual 합산, RMSNorm(root mean square normalization), MoE, residual 합산이므로 expert가 받는 벡터는 정규화된 값이다.[^dsv3-config] $N_s$개의 shared expert에는 gate가 없고, $N_r$개의 routed expert 중 선택된 것만 gate 값 $g_{i,t}$를 곱해 더한다. DeepSeek-V3는 shared expert 1개와 routed expert 256개를 두고 routed expert 중 8개를 고른다. 토큰마다 계산하는 expert는 모두 9개다.
 
-DeepSeekMoE 원논문은 2B 규모에서 두 선택을 적용한 모델이 expert 파라미터와 계산이 1.5배인 GShard 2.9B와 비슷한 성능을 냈다고 보고했다(논문 Table 2).[^dsmoe] 그러나 이후 모델들이 모두 같은 선택을 한 것은 아니다. Qwen3는 fine-grained expert segmentation은 따르지만, 이전 Qwen2.5-MoE와 달리 shared expert를 두지 않았다. 보고서의 해당 절은 이유를 따로 설명하지 않는다.[^qwen3]
+DeepSeekMoE 원논문은 2B 규모에서 두 선택을 적용한 모델이 expert 파라미터와 계산이 1.5배인 GShard 2.9B와 비슷한 성능을 냈다고 보고했다(원논문 Table 2).[^dsmoe] 그러나 이후 모델들이 모두 같은 선택을 한 것은 아니다. Qwen3는 fine-grained expert segmentation은 따르지만, 이전 Qwen2.5-MoE와 달리 shared expert를 두지 않았다. 보고서의 해당 절은 이유를 따로 설명하지 않는다.[^qwen3]
 
 ## 5. Mixture-of-Depths와 Mixture-of-Recursions
 
