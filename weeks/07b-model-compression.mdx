@@ -24,7 +24,7 @@ $$
 S_{ij}=\lvert W_{ij}\rvert\cdot\lVert X_j\rVert_2
 $$
 
-$\lVert X_j\rVert_2$는 보정 데이터의 모든 토큰에서 입력 channel $j$의 값을 모은 벡터의 크기다. 출력마다(행마다) 점수가 낮은 가중치를 지우고, 남은 가중치는 그대로 둔다. [07a §2](/lecture/2026f-advanced-deep-learning/07a-quantization/#2-weight-activation-양자화와-outlier)의 activation outlier가 이유다. 큰 activation이 들어오는 channel의 가중치는 크기가 작아도 출력에 큰 영향을 준다.
+$\lVert X_j\rVert_2$는 보정 데이터의 모든 토큰에서 입력 channel $j$의 값을 모은 벡터의 크기다. 출력마다(행마다) 점수가 낮은 가중치를 지우고, 남은 가중치는 그대로 둔다. 이렇게 하는 까닭은 [07a §2](/lecture/2026f-advanced-deep-learning/07a-quantization/#2-weight-activation-양자화와-outlier)의 activation outlier에 있다. 큰 activation이 들어오는 channel의 가중치는 크기가 작아도 출력에 큰 영향을 준다.
 
 <Callout type="example">
 가중치 한 행이 $(0.8,\,-0.1,\,0.3,\,0.05)$이고, 각 입력 channel의 크기 $\lVert X_j\rVert_2$가 $(0.5,\,10,\,1,\,9)$라고 하자. 절반을 지운다면 magnitude pruning은 크기가 작은 $-0.1$과 $0.05$를 지운다. Wanda의 점수는 $(0.4,\,1.0,\,0.3,\,0.45)$이므로 오히려 $0.3$과 $0.8$을 지운다. 둘째와 넷째 가중치는 작지만 큰 입력에 곱해지므로 출력에 주는 영향이 더 크다.
@@ -198,7 +198,7 @@ $d\times n$ 가중치 행렬 $W$를 rank $r$의 두 행렬 $U\in\mathbb{R}^{d\ti
 
 해법은 pruning과 양자화에서 보았던 것과 같다. 가중치만이 아니라 입력 activation의 통계를 함께 본다. ASVD는 activation의 크기로 만든 대각 행렬 $S$를 가중치에 곱한 $WS$를 SVD로 분해한 뒤 $S^{-1}$을 다시 곱해, 큰 activation이 들어오는 방향을 우선 보존한다. 층마다 민감도가 달라서 rank도 층마다 다르게 정한다. 그 결과 LLaMA-7B의 파라미터를 5%, 10%, 15% 줄였을 때 perplexity가 5.78, 6.09, 6.80으로 유지되었다.[^asvd] Wang 등의 SVD-LLM은 activation을 whitening한 뒤 분해해, 작은 특이값을 잘라 내는 것이 층 출력의 오차를 최소화하도록 만들었다. 20%를 줄인 LLaMA-2-7B의 perplexity가 SVD 18,192, ASVD 10.10에 비해 7.73이었다(원래 5.47).[^svdllm]
 
-그래도 가중치 low-rank는 아직 압축률이 높지 않다. 20% 압축에서도 perplexity가 원래보다 꽤 높다. Low-rank는 가중치보다 KV cache에서 더 성공적이었다. [3주차 §5](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/#5-1-latent-압축과-head별-복원)의 MLA는 key와 value를 저차원 latent로 압축하는 low-rank 구조를 처음부터 학습한 것으로 볼 수 있다.
+그래도 가중치 low-rank는 아직 압축률이 높지 않다. 20% 압축에서도 perplexity가 원래보다 꽤 높다. Low-rank 구조는 다 학습한 가중치를 나중에 분해할 때보다, 처음부터 그 구조로 학습할 때 더 잘 작동해 왔다. [3주차 §5](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/#5-1-latent-압축과-head별-복원)의 MLA는 key와 value를 저차원 latent로 압축하는 low-rank 구조를 처음부터 학습한 예로 볼 수 있다.
 
 ## 6. 작은 dense 모델과 MoE
 
@@ -220,9 +220,9 @@ Gupta 등의 Lynx는 이를 실측으로 보였다.[^lynx] Qwen3-30B-A3B의 deco
 
 파라미터를 줄이면 bytes와 FLOPs가 함께 준다. LLM 규모에서는 재학습 없이 지워야 하므로, SparseGPT는 남은 가중치를 고쳐 층 출력을 보존했고, Wanda는 가중치와 입력의 크기를 함께 보는 점수로 가중치 수정 없이 비슷한 품질을 얻었다.
 
-그러나 비구조적으로 흩어진 0은 GPU에서 속도로 이어지기 어렵다. 2:4 sparsity는 하드웨어가 가속하는 대신 품질 손실이 크고, 실측 속도도 1.2–1.4배에 그쳤다. 구조 단위로 head, channel, 층을 지우면 작은 dense 모델이 되어 확실히 빨라지지만 품질 손실이 커서, 원래 모델로부터의 distillation으로 회복한다. Minitron, Llama 3.2, Gemma 2가 보여 주듯 큰 모델을 pruning하고 distillation으로 되살리는 방식, 그리고 처음부터 distillation으로 사전학습하는 방식이 작은 모델을 만드는 데 널리 쓰인다.
+그러나 비구조적으로 흩어진 0은 GPU에서 속도로 이어지기 어렵다. 2:4 sparsity는 하드웨어가 가속하는 대신 품질 손실이 크고, 실측 속도도 1.2–1.4배에 그쳤다. 구조 단위로 head, channel, 층을 지우면 작은 dense 모델이 되어 확실히 빨라지지만 품질 손실이 커서, 추가 학습, 특히 원래 모델로부터의 distillation으로 회복한다. Minitron, Llama 3.2, Gemma 2가 보여 주듯 큰 모델을 pruning하고 distillation으로 되살리는 방식, 그리고 처음부터 distillation으로 사전학습하는 방식이 작은 모델을 만드는 데 널리 쓰인다.
 
-Low-rank factorization은 가중치에서는 activation을 고려해도 압축률이 아직 높지 않고, KV cache를 압축하는 MLA 같은 구조에서 더 성공적이었다. MoE는 토큰당 계산을 줄이지만 메모리는 전체 파라미터를 요구하고, batch가 커지면 decode에서 읽는 가중치가 전체에 가까워진다. 어떤 방식이 나은지는 06b의 roofline처럼 배포 환경의 메모리와 batch 크기에 따라 다르다.
+Low-rank factorization은 학습된 가중치에 사후로 적용하면 activation을 고려해도 압축률이 아직 높지 않고, MLA처럼 처음부터 low-rank 구조로 학습할 때 더 잘 작동했다. MoE는 토큰당 계산을 줄이지만 메모리는 전체 파라미터를 요구하고, batch가 커지면 decode에서 읽는 가중치가 전체에 가까워진다. 어떤 방식이 나은지는 06b의 roofline처럼 배포 환경의 메모리와 batch 크기에 따라 다르다.
 
 [^survey]: Zhu, X., Li, J., Liu, Y., Ma, C., & Wang, W. (2024). A Survey on Model Compression for Large Language Models. *Transactions of the Association for Computational Linguistics*, 12. [arXiv:2308.07633v4](https://arxiv.org/abs/2308.07633v4).
 
