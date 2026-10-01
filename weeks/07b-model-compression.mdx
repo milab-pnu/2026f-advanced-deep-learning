@@ -156,7 +156,7 @@ LLaMA-7B를 50% 지웠을 때 perplexity는 dense 5.68, magnitude 17.29, SparseG
 
 NVIDIA는 Ampere GPU부터 하드웨어가 직접 가속할 수 있는 희소성 패턴을 정했다. 연속된 원소 4개마다 0이 아닌 값을 정확히 2개만 두는 **2:4 sparsity**다. Sparse Tensor Core는 남은 값과 그 위치(원소마다 2 bits)만 읽어, dense 행렬곱의 두 배 연산 속도를 낸다.[^nvidia24] [06b §1-1](/lecture/2026f-advanced-deep-learning/06b-roofline/#1-1-gpu의-두-가지-한계)에서 H100의 사양표가 sparsity 기준으로 1,979 TFLOP/s를 적는다고 했던 그 값이다.
 
-2:4는 비구조적 pruning보다 제약이 강해 품질 손실이 크다. SparseGPT로 OPT-175B를 2:4로 지우면 perplexity가 8.35에서 8.74로 조금 늘었지만, OPT-2.7B에서는 12.47에서 17.18로 크게 늘었다(원논문 Table 1).[^sparsegpt] 속도 이득도 사양표의 두 배에 못 미친다. Wanda 논문에서 2:4 LLaMA-7B의 전체 생성 속도는 1.24배였고,[^wanda] 마스크를 학습하는 MaskLLM은 2:4 LLaMA-2 7B의 perplexity를 다른 방법들의 10 이상에서 6.72(dense 5.12)로 낮추면서, TensorRT-LLM에서 1.36–1.41배의 속도를 보고했다.[^maskllm] 행렬곱 외의 연산은 그대로이기 때문이다. 또 memory-bound인 작은 batch의 decode에서는 연산 속도보다 읽는 bytes가 시간을 정하는데, 2:4는 위치 정보를 함께 저장하므로 FP16 가중치의 bytes를 절반이 아니라 약 44%만 줄인다.[^nvidia24]
+2:4는 비구조적 pruning보다 제약이 강해 품질 손실이 크다. SparseGPT로 OPT-175B를 2:4로 지우면 perplexity가 8.35에서 8.74로 조금 늘었지만, OPT-2.7B에서는 12.47에서 17.18로 크게 늘었다(원논문 Table 1).[^sparsegpt] 속도 이득도 사양표의 두 배에 못 미친다. Wanda 논문에서 2:4 LLaMA-7B의 전체 생성 속도는 1.24배였고,[^wanda] 마스크를 학습하는 MaskLLM은 2:4 LLaMA-2 7B의 perplexity를 다른 방법들의 10 이상에서 6.72(dense 5.12)로 낮추면서, TensorRT-LLM에서 1.36–1.41배의 속도를 보고했다.[^maskllm] 사양표에 못 미치는 까닭은 두 가지다. 행렬곱 외의 연산은 그대로이고, memory-bound인 작은 batch의 decode에서는 연산 속도보다 읽는 bytes가 시간을 정하는데, 2:4는 위치 정보를 함께 저장하므로 FP16 가중치의 bytes를 절반이 아니라 약 44%만 줄인다.[^nvidia24]
 
 ## 3. Structured pruning
 
