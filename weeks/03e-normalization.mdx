@@ -4,7 +4,7 @@ week: 3
 order: 4
 ---
 
-Transformer 블록을 수십 층 쌓으면 벡터의 크기(scale)가 층을 지나며 커지거나, attention score가 지나치게 커져 학습이 흔들리는 일이 생긴다. 이 노트는 **값의 크기를 어디서, 무엇으로 조절하는가**를 따라간다. 정규화(normalization) 기법 전반은 Huang 등의 서베이[^normsurvey]가 정규화 연산을 "어떤 범위의 통계로, 어떤 연산을 하고, 어떻게 표현력을 되돌리는가"로 나누어 정리한다. 각주의 arXiv판을 기준으로 LayerNorm은 §5.1.1, RMSNorm은 §5.1.2에 있다(저널판의 절 번호는 §V-A). 다만 2020년에 쓰인 서베이이므로 LLM(large language model)의 정규화 배치, QK-Norm, attention sink는 이 노트에서 원논문으로 보완한다.
+Transformer 블록을 수십 층 쌓으면 벡터의 크기(scale)가 층을 지나며 커지거나, attention score가 지나치게 커져 학습이 흔들리는 일이 생긴다. 이 노트는 **값의 크기를 어디서, 무엇으로 조절하는가**를 따라간다. 정규화(normalization) 기법 전반은 Huang 등의 서베이[^normsurvey]가 정규화 연산을 "어떤 범위의 통계로, 어떤 연산을 하고, 어떻게 표현력을 되돌리는가"로 나누어 정리한다. 각주의 arXiv판을 기준으로 LayerNorm은 §5.1.1, RMSNorm은 §5.1.2에 있다. 다만 2020년에 쓰인 서베이이므로 LLM(large language model)의 정규화 배치, QK-Norm, attention sink는 이 노트에서 원논문으로 보완한다.
 
 정규화 설계는 서로 독립적인 세 축으로 나누어 보면 헷갈리지 않는다. 같은 "Pre-LN RMSNorm"이라는 표현에도 두 축의 선택이 섞여 있다. 위치 이름의 LN은 LayerNorm(layer normalization)에서 왔지만, RMSNorm을 써도 Pre-LN·Post-LN이라 부른다.
 
@@ -45,7 +45,7 @@ $$
 
 이 불변성은 $\alpha>0$이고 $\epsilon=0$일 때 정확히 성립하며, 원논문의 유도도 $\epsilon$ 없는 식을 기준으로 한다. $\alpha<0$이면 출력의 부호가 바뀌고, 실제 구현처럼 $\epsilon>0$이면 입력 크기가 $\epsilon$에 비해 충분히 클 때의 근사적 성질이 된다.
 
-원논문은 RMSNorm이 번역·독해·이미지-캡션 검색 등의 과제에서 LayerNorm과 비슷한 성능을 내면서 모델에 따라 실행 시간을 7–64% 줄였다고 보고한다.
+원논문은 RMSNorm이 번역·독해·이미지-캡션 검색 등의 과제에서 LayerNorm과 비슷한 성능을 내면서 실행 시간을 줄였다고 보고한다. 초록은 감소 폭을 7–64%로 요약하지만, 64%는 RMS를 입력 성분의 일부로만 추정하는 변형(pRMSNorm)의 값이다(원논문 Table 8). 원논문의 실행 시간 표들에서 일반 RMSNorm은 모델과 구현에 따라 LayerNorm 대비 약 7–41% 빨랐다.
 
 재중심화가 불필요하다는 주장은 원논문의 실험 범위에서 뒷받침된 가설이다. 이후 대형 모델의 선택도 이 방향과 맞는다. ViT-22B는 query·key·value(QKV) 투영의 bias를 없애고 모든 LayerNorm에서 bias와 중심화를 뺀 변경을 함께 적용해, 품질 저하 없이 가속기 활용률을 3% 높였다고 보고한다(두 변경의 효과를 따로 나누지는 않았다).[^vit22b] OLMo 2는 비모수(nonparametric) LayerNorm과 RMSNorm 사이에 차이가 없었다는 ablation을 보고했다.[^olmo2] [02a](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/)의 기준 모델 Llama 3 8B도 RMSNorm을 쓴다.
 
@@ -174,7 +174,7 @@ Post-LN은 residual 경로 자체를 매번 정규화한다. Pre-LN과 Peri-LN�
 
 ### 2-2. Post-LN의 기울기와 warmup
 
-원 Transformer는 Post-LN이었고, 학습 초기에 learning rate를 0 근처에서 서서히 올리는 warmup이 사실상 필수였다. Xiong 등은 그 이유를 초기화 시점의 기울기 크기로 설명했다.[^xiong] 단일 head, Xavier 초기화, query·key 투영을 영행렬로 두어 attention이 균등한 초기 상태라는 단순화 아래 평균장 이론(mean field theory)으로 분석하면, 마지막 FFN 가중치의 기울기 노름 상한이 Post-LN에서는 $O(d\sqrt{\ln d})$로 층 수 $L$과 무관하고, Pre-LN에서는 $O\big(d\sqrt{\ln d/L}\big)$로 층이 깊을수록 작아진다(원논문 Theorem 1). 상한이 이렇게 갈린다는 것만으로 실제 기울기의 크기가 정해지는 것은 아니다. 같은 논문 §3.4의 실험은 encoder와 decoder가 각각 6층부터 14층까지인 모델에서 초기화 시점의 마지막 FFN 기울기 노름을 직접 재서, Post-LN은 층 수와 무관하게 비슷하고 Pre-LN은 깊어질수록 줄어드는 것을 확인했다.
+원 Transformer는 Post-LN이었고, 학습 초기에 learning rate를 0 근처에서 서서히 올리는 warmup이 사실상 필수였다. Xiong 등은 그 이유를 초기화 시점의 기울기 크기로 설명했다.[^xiong] 단일 head, Xavier 초기화, query·key 투영을 영행렬로 두어 attention이 균등한 초기 상태라는 단순화 아래 평균장 이론(mean field theory)으로 분석하면, 마지막 FFN 가중치의 기울기 노름 상한이 Post-LN에서는 $O(d\sqrt{\ln d})$로 층 수 $L$과 무관하고, Pre-LN에서는 $O\big(d\sqrt{\ln d/L}\big)$로 층이 깊을수록 작아진다(원논문 Theorem 1). 이 정리는 hidden state 노름이 기대값 근처에 모인다는 추가 가정을 두고, 높은 확률로 성립하는 Frobenius 노름 상한을 준다. 상한이 이렇게 갈린다는 것만으로 실제 기울기의 크기가 정해지는 것은 아니다. 같은 논문 §3.4의 실험은 encoder와 decoder가 각각 6층부터 14층까지인 모델에서 초기화 시점의 마지막 FFN 기울기 노름을 직접 재서, Post-LN은 층 수와 무관하게 비슷하고 Pre-LN은 깊어질수록 줄어드는 것을 확인했다.
 
 이 차이의 뼈대는 정규화 연산의 미분이다. LayerNorm의 Jacobian은 입력에서 평균을 뺀 벡터 $y=x-\mu\mathbf{1}$의 노름에 반비례해 대략 $\sqrt{d}/\lVert y\rVert$ 크기로 움직인다(원논문 Lemma 3과 부록 D). 모든 성분에 같은 값을 더해 $\lVert x\rVert$만 키우는 이동은 §1-3의 셋째 행처럼 Jacobian을 바꾸지 않는다. 초기화 시점의 분석에서는 성분의 평균이 0 근처이므로 $\lVert y\rVert$와 $\lVert x\rVert$가 같은 규모로 움직인다. Post-LN은 residual 경로를 매 층 정규화하므로 이 노름이 층 수와 무관하게 일정하고, 마지막 층의 기울기 상한도 Jacobian을 그대로 통과해 $L$과 무관하게 같은 규모에 머문다. Pre-LN은 residual 경로를 정규화하지 않아 노름의 제곱이 $\ell$에 비례해 자라므로(§2-3), 마지막 정규화의 Jacobian이 $1/\sqrt{L}$ 배로 줄어든다. 기울기가 지나는 항등 경로가 남아 있다는 점도 Pre-LN이 깊이에 덜 민감한 이유다.
 
@@ -183,7 +183,7 @@ Post-LN은 residual 경로 자체를 매번 정규화한다. Pre-LN과 Peri-LN�
 Pre-LN 자체는 이 분석보다 먼저 쓰이고 있었다. GPT-2(2019)는 LayerNorm을 각 sub-block의 입력으로 옮기고 마지막 self-attention 블록 뒤에 LayerNorm을 하나 더 두었으며,[^gpt2] Xiong 등도 Pre-LN을 깊은 모델의 최적화 문제를 줄이려고 최근 여러 연구에서 제안된 구조로 소개한다. 이 논문의 기여는 이미 쓰이던 Pre-LN의 안정성을 이론적으로 설명한 데 있다. Pre-LN은 초기 기울기가 잘 조절되며, 원논문은 IWSLT14 De-En·WMT14 En-De 번역과 BERT pre-training에서 warmup 없이 Pre-LN을 학습해 비슷한 성능에 더 빨리 도달했다고 보고한다. 이후 Llama 등 많은 decoder-only LLM도 Pre-LN 배치를 쓰지만, 그 채택이 이 논문 하나의 결과라고 보기는 어렵다.
 
 <Callout type="warning">
-Xiong 등의 결과는 **초기화 시점의 기울기 분석과 원논문의 실험 설정**에서 warmup을 없앨 수 있음을 보인 것이다. "Pre-LN이면 warmup이 필요 없다"로 일반화하면 안 된다. 대형 Pre-LN 모델들도 흔히 warmup을 쓴다. [02c](/lecture/2026f-advanced-deep-learning/02c-pre-training/)에서 본 DeepSeek-V3는 Pre-LN 배치의 RMSNorm을 쓰면서도 처음 2K step 동안 learning rate를 0에서 $2.2\times10^{-4}$까지 선형으로 올린다.[^deepseekv3] Warmup은 정규화 위치 외에도 optimizer 상태의 초기 추정, batch 크기 등 다른 이유와 함께 쓰인다.
+Xiong 등의 결과는 **초기화 시점의 기울기 분석과 원논문의 실험 설정**에서 warmup을 없앨 수 있음을 보인 것이다. "Pre-LN이면 warmup이 필요 없다"로 일반화하면 안 된다. 대형 Pre-LN 모델들도 흔히 warmup을 쓴다. [02c](/lecture/2026f-advanced-deep-learning/02c-pre-training/)에서 본 DeepSeek-V3는 Pre-LN 배치의 RMSNorm을 쓰면서도 처음 2K step 동안 learning rate를 0에서 $2.2\times10^{-4}$까지 선형으로 올린다.[^deepseekv3] Warmup을 쓸지는 정규화 위치 하나로 정해지지 않는다.
 </Callout>
 
 ### 2-3. Pre-LN의 새 문제
@@ -236,7 +236,7 @@ Pre-LN 블록에서 attention 입력은 정규화되지만, 그 뒤의 $W_Q$·$W
 
 ### 3-2. QK-Norm
 
-QK-Norm은 attention logit을 계산하기 전에 query와 key에 정규화를 적용한다. ViT-22B는 논문에서 LayerNorm으로 표기하지만 §1-2에서 본 것처럼 bias와 중심화를 뺀 형태를 썼고,[^vit22b] 최근 LLM은 주로 RMSNorm을 쓴다.
+QK-Norm은 attention logit을 계산하기 전에 query와 key에 정규화를 적용한다. 이 발상은 대형 모델의 학습 불안정이 보고되기 전부터 있었다. Henry 등은 저자원 기계 번역에서 softmax 포화를 줄이려고 query와 key를 head 차원에서 L2 정규화하고, $\sqrt{d_h}$ 대신 학습되는 scale을 곱하는 QKNorm을 제안했다.[^qknorm] 대형 모델의 학습 안정화에 쓰이는 지금의 형태는 L2 정규화 대신 LayerNorm 계열 연산을 쓴다. ViT-22B는 논문에서 LayerNorm으로 표기하지만 §1-2에서 본 것처럼 bias와 중심화를 뺀 형태를 썼고,[^vit22b] 최근 LLM은 주로 RMSNorm을 쓴다.
 
 $$
 \text{logit}_{ij}=\frac{\operatorname{Norm}(q_i)\cdot\operatorname{Norm}(k_j)}{\sqrt{d_h}}
@@ -244,7 +244,7 @@ $$
 
 Gain이 1이고 $\epsilon=0$인 RMSNorm을 head 차원 $d_h$에 적용하면 정규화된 벡터의 노름은 $\sqrt{d_h}$다. 따라서 $q_i$와 $k_j$ 사이의 각도를 $\theta$라 하면 $\text{logit}=\sqrt{d_h}\cdot\sqrt{d_h}\cos\theta/\sqrt{d_h}=\sqrt{d_h}\cos\theta$이고, $d_h=128$이면 logit의 절댓값이 약 11.3을 넘지 않는다. QK-Norm이 막는 것은 $q$·$k$ 투영 벡터의 **노름**이 커져 logit이 제한 없이 증폭되는 경로다. Logit의 상한은 학습되는 gain으로 조절되며, gain이 커지면 상한도 커진다. 반면 $W_Q$·$W_K$가 query와 key의 **방향**을 바꾸면 $\cos\theta$가 달라지므로, gain이 고정되어도 logit은 이 범위 안에서 계속 학습된다.
 
-구현 세부는 모델마다 다르다. Qwen3와 Gemma 3의 공개 구현은 head마다 $d_h$ 차원에 정규화를 적용하고, OLMo 2는 여러 head를 합친 query·key 투영 전체에 적용한다.[^hfimpl] 이 구현들은 모두 RoPE(rotary position embedding)를 적용하기 전에 정규화한다.
+구현 세부는 모델마다 다르다. Qwen3와 Gemma 3의 공개 구현은 head마다 $d_h$ 차원에 정규화를 적용하고, OLMo 2는 여러 head를 합친 query·key 투영 전체에 적용한다.[^hfimpl] 이 구현들은 모두 RoPE(rotary position embedding)를 적용하기 전에 정규화한다. 위의 식과 각도 설명은 위치에 따른 회전을 생략한 것이다. RoPE를 쓰면 $\theta$는 회전을 마친 두 벡터 사이의 각도가 되지만, 회전은 노름을 바꾸지 않으므로 같은 상한이 그대로 성립한다.
 
 ### 3-3. Logit soft-capping
 
@@ -331,7 +331,7 @@ $$
 $Y$는 head별 attention 출력, $X$는 pre-normalization을 거친 블록 입력, $W_\theta$는 gate의 파라미터다. Gate가 0에 가까우면 head 출력이 줄어들므로, "가져올 정보가 없다"를 sink에 attention을 버리는 대신 gate로 표현할 수 있다. 원논문 Table 4의 baseline에서는 층 평균으로 attention의 46.7%가 첫 토큰에 갔지만, SDPA 출력에 head별 원소별(elementwise) gate를 둔 모델에서는 4.8%로 줄었다. 같은 연구는 학습 안정성과 긴 문맥 외삽 성능의 개선도 보고한다.
 
 <Callout type="note">
-여기의 gate는 **softmax attention의 출력**에 곱하는 gate다. [03c](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/)의 Gated DeltaNet에서 gate는 linear attention의 **recurrent 상태**를 얼마나 잊을지 정한다. 둘 다 sigmoid류 gate를 곱하지만 적용 대상과 목적이 다르다. Qwen3-Next처럼 두 종류를 한 모델에서 함께 쓰는 경우도 있다.
+여기의 gate는 **softmax attention의 출력**에 곱하는 gate다. [03c](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/)의 Gated DeltaNet에서 gate는 linear attention의 **recurrent 상태**를 얼마나 잊을지 정한다. 둘 다 0과 1 사이의 계수를 곱하지만 적용 대상과 목적이 다르다. Qwen3-Next처럼 두 종류를 한 모델에서 함께 쓰는 경우도 있다.
 </Callout>
 
 Sink를 어떻게 다루든, 이미 sink에 의존하도록 학습된 모델에서 그 장치를 빼는 것은 별개 문제다. Gu 등은 학습 가능한 sink token이나 KV bias로 학습한 모델에서 그것을 제거하면 성능이 크게 떨어졌다고 보고했다.[^gu] Sink는 학습된 모델에서 계산의 일부로 쓰이는 구조라 보는 편이 안전하다.
@@ -368,6 +368,7 @@ Sink를 어떻게 다루든, 이미 sink에 의존하도록 학습된 모델에�
 [^swinv2]: Liu, Z., et al. (2022). *Swin Transformer V2: Scaling Up Capacity and Resolution*. CVPR 2022. [arXiv:2111.09883](https://arxiv.org/abs/2111.09883).
 [^gemma2]: Gemma Team. (2024). *Gemma 2: Improving Open Language Models at a Practical Size*. [arXiv:2408.00118](https://arxiv.org/abs/2408.00118).
 [^wortsman]: Wortsman, M., et al. (2024). *Small-scale proxies for large-scale Transformer training instabilities*. ICLR 2024. [arXiv:2309.14322](https://arxiv.org/abs/2309.14322).
+[^qknorm]: Henry, A., Dachapally, P. R., Pawar, S., & Chen, Y. (2020). *Query-Key Normalization for Transformers*. Findings of EMNLP 2020, 4246–4253. [arXiv:2010.04245](https://arxiv.org/abs/2010.04245).
 [^hfimpl]: Hugging Face. (2026). *Transformers v5.17.0*. [modeling_qwen3.py](https://github.com/huggingface/transformers/blob/v5.17.0/src/transformers/models/qwen3/modeling_qwen3.py), [modeling_gemma3.py](https://github.com/huggingface/transformers/blob/v5.17.0/src/transformers/models/gemma3/modeling_gemma3.py), [modeling_olmo2.py](https://github.com/huggingface/transformers/blob/v5.17.0/src/transformers/models/olmo2/modeling_olmo2.py).
 [^gemma3]: Gemma Team. (2025). *Gemma 3 Technical Report*. [arXiv:2503.19786](https://arxiv.org/abs/2503.19786).
 [^sinksurvey]: Su, Z., et al. (2026). *Attention Sink in Transformers: A Survey on Utilization, Interpretation, and Mitigation*. [arXiv:2604.10098](https://arxiv.org/abs/2604.10098).
@@ -377,7 +378,7 @@ Sink를 어떻게 다루든, 이미 sink에 의존하도록 학습된 모델에�
 [^gated]: Qiu, Z., et al. (2025). *Gated Attention for Large Language Models: Non-linearity, Sparsity, and Attention-Sink-Free*. NeurIPS 2025. [arXiv:2505.06708](https://arxiv.org/abs/2505.06708).
 [^gptoss]: OpenAI. (2025). *gpt-oss-120b & gpt-oss-20b Model Card*. [arXiv:2508.10925](https://arxiv.org/abs/2508.10925).
 [^offbyone]: Miller, E. (2023). *Attention Is Off By One*. [evanmiller.org](https://www.evanmiller.org/attention-is-off-by-one.html).
-[^gptossimpl]: OpenAI. (2025). *gpt-oss reference implementation*. [gpt_oss/torch/model.py](https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py).
-[^llamaimpl]: Meta. (2024). *Llama 3 reference implementation*. [model.py](https://github.com/meta-llama/llama3/blob/main/llama/model.py).
+[^gptossimpl]: OpenAI. (2025). *gpt-oss reference implementation*. [gpt_oss/torch/model.py](https://github.com/openai/gpt-oss/blob/243a1b02767da73bd2e3975be250afa801635866/gpt_oss/torch/model.py).
+[^llamaimpl]: Meta. (2024). *Llama 3 reference implementation*. [model.py](https://github.com/meta-llama/llama3/blob/32b7ddc9b638f0fd6b04b80e1845536a95f7a5d5/llama/model.py).
 [^qwen3]: Qwen Team. (2025). *Qwen3 Technical Report*. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
 [^qwen3next]: Qwen Team. (2025). *Qwen3-Next-80B-A3B-Instruct*. [모델 카드](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct), [modeling_qwen3_next.py](https://github.com/huggingface/transformers/blob/v5.17.0/src/transformers/models/qwen3_next/modeling_qwen3_next.py) (Transformers v5.17.0).
