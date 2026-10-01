@@ -17,13 +17,13 @@ import playbookLicense from "./assets/ultrascale-playbook-LICENSE.txt?url";
 
 모델 크기와 학습 토큰 수를 정해 계산량을 추산했어도, 실제 학습 완료 시간은 아직 정해지지 않는다. GPU(graphics processing unit)의 메모리에 무엇을 저장하고, 장치 사이에 무엇을 전달하는지가 실행 가능성과 속도를 결정한다. 분산 LLM(large language model) 학습 서베이[^survey]를 바탕으로, 8개 노드에 GPU가 8개씩 있는 환경에서 출발해, 같은 64개 GPU에 데이터와 모델을 어떻게 배치할지 살펴본다.
 
-왜 GPU 여러 개가 필요한지부터 숫자로 확인하자. [Scaling 노트](/lecture/2026f-advanced-deep-learning/02d-scaling/)의 근사식처럼 학습 계산량을 $C\approx6ND$로 잡으면, 파라미터 $N=8\times10^9$개인 모델을 $D=15\times10^{12}$개 토큰으로 학습할 때 $C\approx7.2\times10^{23}$ FLOPs다. H100 SXM GPU 한 장의 BF16 dense 최대 연산 속도는 약 $989\times10^{12}$ FLOP/s이지만,[^h100] 실제 학습은 통신·메모리 대기 때문에 그 일부만 쓴다. 최대 속도의 40%를 쓴다고 가정하면 다음과 같다.
+왜 GPU 여러 개가 필요한지부터 숫자로 확인하자. [Scaling 노트](/lecture/2026f-advanced-deep-learning/02d-scaling/)의 근사식처럼 학습 계산량을 $C\approx6ND$로 잡으면, 파라미터 $N=8\times10^9$개인 모델을 $D=15\times10^{12}$개 토큰으로 학습할 때 $C\approx7.2\times10^{23}$ FLOPs(floating-point operations)다. Scaling 노트의 $N$은 embedding을 뺀 파라미터 수지만, 이 노트는 규모를 가늠하려는 계산이므로 계산량과 메모리 모두 전체 8B로 단순화한다. H100 SXM GPU 한 장의 BF16 최대 연산 속도는 사양표에 sparsity 기준 $1{,}979\times10^{12}$ FLOP/s로 적혀 있고, sparsity를 쓰지 않는 dense 연산은 그 절반인 약 $989\times10^{12}$ FLOP/s다.[^h100] 하지만 실제 학습은 통신·메모리 대기 때문에 그 일부만 쓴다. 최대 속도의 40%를 쓴다고 가정하면 다음과 같다.
 
 $$
 \frac{7.2\times10^{23}}{0.4\times989\times10^{12}}\approx1.8\times10^{9}\ \text{초}\approx51\text{만 GPU-hours}
 $$
 
-GPU 한 장으로는 약 58년, 이 노트의 64개 GPU로도 약 11개월이 걸린다. 수천 장을 쓰면 몇 주로 줄지만, 그만큼 모델과 데이터를 여러 장치에 나누고 그 사이의 통신을 관리해야 한다. 이 노트는 그 방법을 다룬다. 40%라는 가정은 §6-1의 MFU(model FLOPs utilization)에서 다시 다룬다.
+GPU 한 장으로는 약 58년, 이 노트의 64개 GPU로도 약 11개월이 걸린다. 같은 효율이 유지된다고 보면 2,048장에서 약 10일, 4,096장에서 약 5일로 줄지만, 그만큼 모델과 데이터를 여러 장치에 나누고 그 사이의 통신을 관리해야 한다. 이 노트는 그 방법을 다룬다. 40%라는 가정은 §6-1의 MFU(model FLOPs utilization)에서 다시 다룬다.
 
 같은 주제를 더 넓게 다룬 자료로 Hugging Face의 [The Ultra-Scale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook)을 함께 읽을 것을 권한다.[^playbook] 각 병렬화 방식의 메모리·통신을 실제 실험 그래프와 함께 설명한다. 강의로 먼저 전체 그림을 보고 싶다면 [Stanford CS336](https://cs336.stanford.edu/)의 병렬화 강의를 권한다.
 
@@ -72,7 +72,7 @@ GPU 하나의 메모리가 80 GB라고 가정하면 노드 하나의 합계는 6
 
 ### 2-1. 부동소수점과 정밀도
 
-지금까지 weight(가중치)와 activation을 실수로 썼지만, 컴퓨터는 무한한 자릿수를 저장할 수 없다. **Bit는 0 또는 1 한 자리, byte는 8 bits**다. FP32는 수 하나에 32 bits, 즉 4 bytes를 쓰는 부동소수점(floating-point) 형식이다. FP16과 BF16(bfloat16, brain floating point)은 각각 16 bits, 즉 2 bytes를 쓴다.<Sidenote>BF16은 구글 브레인(Google Brain) 팀이 AI(artificial intelligence)와 딥러닝 연산을 최적화하려고 만든 16 bits 부동소수점 형식이다.[^bf16-origin]</Sidenote> 
+지금까지 가중치(weight)와 activation을 실수로 썼지만, 컴퓨터는 무한한 자릿수를 저장할 수 없다. **Bit는 0 또는 1 한 자리, byte는 8 bits**다. FP32는 수 하나에 32 bits, 즉 4 bytes를 쓰는 부동소수점(floating-point) 형식이다. FP16과 BF16(bfloat16, brain floating point)은 각각 16 bits, 즉 2 bytes를 쓴다.<Sidenote>BF16은 구글 브레인(Google Brain) 팀이 AI(artificial intelligence)와 딥러닝 연산을 최적화하려고 만든 16 bits 부동소수점 형식이다.[^bf16-origin]</Sidenote>
 
 부동소수점은 과학적 표기 $1.234 \times 10^5$처럼 **자릿수와 크기를 나누어** 담되, 이진수를 사용한다. 부호는 양수·음수를, 지수(exponent)는 표현 범위를, 가수(mantissa)는 같은 크기에서 얼마나 촘촘히 값을 구분하는지, 즉 정밀도(precision)를 정한다.[^bf16]
 
@@ -116,7 +116,7 @@ Adam은 파라미터마다 gradient의 1차 모멘트와 2차 모멘트 두 값�
 | Adam의 1차·2차 모멘트 | 8 | 64 GB |
 | 합계 | 16 | 128 GB |
 
-파라미터당 16 bytes는 ZeRO(Zero Redundancy Optimizer) 논문이 mixed precision Adam 학습의 model state로 분석한 값과 같다.[^zero] 가중치 자체(16 GB)보다 학습에만 필요한 상태가 7배 더 크다. 추론에는 gradient·master weight·Adam 상태가 필요 없다(대신 생성 중의 KV cache 같은 다른 메모리가 든다). 학습에는 이 128 GB가 먼저 필요하다. 80 GB GPU 하나에는 activation을 넣기 전부터 들어가지 않는다.
+파라미터당 16 bytes는 ZeRO(Zero Redundancy Optimizer) 논문이 mixed precision Adam 학습의 model state로 분석한 값과 같다.[^zero] 가중치 자체(16 GB)보다 학습에만 필요한 상태가 7배 더 크다. 추론에는 gradient·master weight·Adam 상태가 필요 없다(대신 생성 중의 KV(key-value) cache 같은 다른 메모리가 든다). 학습에는 이 128 GB가 먼저 필요하다. 80 GB GPU 하나에는 activation을 넣기 전부터 들어가지 않는다.
 
 Activation은 입력의 크기와도 함께 늘어난다. 한 GPU가 한 번에 처리하는 작은 배치(microbatch)에 시퀀스 $b$개를 넣고 길이가 $n$, hidden dimension이 $d$라면, 모양이 $[b,n,d]$인 BF16 텐서 **하나**의 저장량은 다음과 같다.
 
@@ -170,11 +170,11 @@ Backward에 필요한 중간 결과 중 일부만 저장하고 나머지는 필�
 | 뒤 두 블록 backward | 저장된 중간값 사용 | `h₂`에서 뒤 구간을 재실행해 필요한 값 복원 |
 | 앞 두 블록 backward | 저장된 중간값 사용 | `x`에서 앞 구간을 재실행해 필요한 값 복원 |
 
-얼마나 줄고 얼마나 느려지는지 §2-2의 식으로 계산해 보자. 층마다 입력 하나만 저장하고 나머지를 모두 재계산하는 방식을 full activation recomputation이라고 한다. 이 경우 층 하나에 남는 값은 층 입력 $2bnd$ bytes뿐이다. 앞의 예에서 층당 약 1.9 GB가 약 34 MB로, 32층 합계는 약 61 GB가 약 1.1 GB로 준다.[^sp] 대가는 backward 중에 forward를 한 번 더 실행하는 것이다. Backward 계산량은 보통 forward의 약 두 배이므로, forward 한 번을 더하면 이론적인 계산량은 약 3분의 1 늘어난다. Korthikanti 등은 실제 학습에서 full recomputation의 실행 시간 부담을 30–40%로 보고했다.[^sp]
+얼마나 줄고 얼마나 느려지는지 §2-2의 식으로 계산해 보자. 층마다 입력 하나만 저장하고 나머지를 모두 재계산하는 방식을 full activation recomputation이라고 한다. 이 경우 층 하나에 남는 값은 층 입력 $2bnd$ bytes뿐이다. 앞의 예에서 층당 약 1.9 GB가 약 34 MB로, 32층 합계는 약 61 GB가 약 1.1 GB로 준다.[^sp] 이 값은 forward와 backward 사이에 보관하는 양이다. Backward에서는 한 층씩 내부 activation을 다시 만들어 쓰므로, 그 순간에는 그 층의 약 1.9 GB와 gradient·임시 buffer가 더해진다. 대가는 backward 중에 forward를 한 번 더 실행하는 것이다. Backward 계산량은 보통 forward의 약 두 배이므로, forward 한 번을 더하면 이론적인 계산량은 약 3분의 1 늘어난다. Korthikanti 등은 실제 학습에서 full recomputation의 실행 시간 부담을 30–40%로 보고했다(논문 §1).[^sp]
 
-재계산할 부분을 고르면 이 부담을 줄일 수 있다. **Selective activation recomputation**은 저장 공간을 많이 차지하지만 다시 계산하기는 싼 attention의 $n\times n$ 항목만 재계산한다. §2-2 식의 $5hn/d$ 항만 사라지므로 층당 저장량은 $34bnd$, 앞의 예에서 약 0.57 GB가 된다. 같은 논문은 sequence parallelism(§4-3)과 이 방법을 함께 써서 activation 메모리를 약 5배 줄이면서 재계산으로 늘어난 실행 시간을 90% 이상 줄였다고 보고했다.[^sp]
+재계산할 부분을 고르면 이 부담을 줄일 수 있다. **Selective activation recomputation**은 저장 공간을 많이 차지하지만 다시 계산하기는 싼 attention의 $n\times n$ 항목만 재계산한다. §2-2 식의 $5hn/d$ 항만 사라지므로 층당 저장량은 $34bnd$, 앞의 예에서 약 0.57 GB가 된다. 같은 논문은 tensor parallelism을 쓰는 대형 모델에서 sequence parallelism(§4-3)과 이 방법을 함께 써, TP만 쓴 기준보다 activation 메모리를 약 5배 줄였고(§6.1, Figure 7) full recomputation이 더하던 실행 시간 부담의 90% 이상을 없앴다고 보고했다.[^sp] 이 배율은 논문의 병렬 구성 기준이므로 아래 표의 비병렬 예제와 직접 비교하지 않는다.
 
-| 저장 방식 | 층당 activation | 32층 합계 (앞의 예) | 추가 계산 |
+| 저장 방식 | 층당 보관 activation | 32층 합계 (앞의 예) | 추가 계산 |
 |---|---|---|---|
 | 모두 저장 | $bnd(34+5hn/d)$ | 약 61 GB | 없음 |
 | Selective recomputation | $34bnd$ | 약 18 GB | Attention 일부 재계산 |
@@ -196,9 +196,9 @@ $b=2$, $h=32$에서 길이 2,048이면 512 MiB, 길이 8,192이면 8 GiB다. GiB
 
 **FlashAttention**은 작은 블록의 score만 계산해 사용하고 버리므로, $n\times n$ score·확률 행렬 전체를 저장하지 않는다. 여기서는 2022년 **FlashAttention 1**을 기준으로 설명한다.[^flash]<Sidenote>후속 연구로 FlashAttention-2(2023)는 병렬성과 작업 분할을 개선했고,[^flash2] FlashAttention-3(2024)는 Hopper GPU의 비동기 실행과 저정밀도 연산을 활용했다.[^flash3] FlashAttention-4(2026)는 Blackwell GPU에 맞춰 행렬곱·softmax·메모리 작업을 겹치는 실행 구조를 개선했다.[^flash4]</Sidenote>
 
-<Figure src={flashOriginal.src} alt="FlashAttention 1 원본 그림. 왼쪽은 GPU SRAM과 HBM의 메모리 계층, 가운데는 K와 V의 바깥 반복 및 Q의 안쪽 반복, 오른쪽은 GPT-2 attention의 실행 시간 비교." caption="FlashAttention 1의 메모리 계층과 블록 계산 및 fused kernel" source="Dao et al. FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness (2022)." hero />
+<Figure src={flashOriginal.src} alt="FlashAttention 1 원본 그림. 왼쪽은 GPU SRAM과 HBM의 메모리 계층, 가운데는 K와 V의 바깥 반복 및 Q의 안쪽 반복, 오른쪽은 GPT-2 attention의 실행 시간 비교." caption="FlashAttention 1의 메모리 계층과 블록 계산 및 fused kernel" source="Dao et al. (2022), FlashAttention 저장소 · BSD 3-Clause · 수정 없음" hero />
 
-그림 왼쪽의 HBM(high-bandwidth memory)은 GPU의 큰 저장 공간이고, SRAM(static random-access memory)은 칩 내부의 작고 빠른 공간이다. FlashAttention 1은 가운데 그림처럼 K·V 블록을 SRAM에 올린 뒤 여러 Q 블록에 재사용하며, softmax 통계와 출력을 조금씩 갱신한다. 이 과정에서 큰 attention 행렬 전체를 HBM에 저장하지 않아 **메모리 사용량과 데이터 이동을 줄인다.** 계산량 자체가 줄어드는 것은 아니다. Score는 여전히 모든 query·key 쌍에 대해 계산하므로 산술 연산은 길이에 대해 $O(n^2)$이고, 줄어드는 것은 $n\times n$ 중간 행렬을 저장하고 읽고 쓰는 비용이다. Backward에서도 저장해 둔 softmax 통계로 필요한 블록의 확률을 다시 계산한다. Attention의 계산 결과는 반올림 오차 범위에서 유지되며, 오른쪽 그래프는 이러한 방식으로 attention 연산 시간이 줄어든 실험을 보여준다.[^flash] 그림은 FlashAttention 저장소의 BSD 3-Clause 라이선스(<a href={flashLicense}>전문</a>)에 따라 수정 없이 실었다.
+원본 그림의 $N$은 시퀀스 길이로, 본문의 $n$에 해당하며 파라미터 수 $N$과 다르다. 그림 왼쪽의 HBM(high-bandwidth memory)은 GPU의 큰 저장 공간이고, SRAM(static random-access memory)은 칩 내부의 작고 빠른 공간이다. FlashAttention 1은 가운데 그림처럼 K·V 블록을 SRAM에 올린 뒤 여러 Q 블록에 재사용하며, softmax 통계와 출력을 조금씩 갱신한다. 이 과정에서 큰 attention 행렬 전체를 HBM에 저장하지 않아 **메모리 사용량과 데이터 이동을 줄인다.** 계산량 자체가 줄어드는 것은 아니다. Score는 여전히 모든 query·key 쌍에 대해 계산하므로 산술 연산은 길이에 대해 $O(n^2)$이고, 줄어드는 것은 $n\times n$ 중간 행렬을 저장하고 읽고 쓰는 비용이다. Backward에서도 저장해 둔 softmax 통계로 필요한 블록의 확률을 다시 계산한다. Attention의 계산 결과는 반올림 오차 범위에서 유지되며, 오른쪽 그래프는 이러한 방식으로 attention 연산 시간이 줄어든 실험을 보여준다.[^flash] 그림은 FlashAttention 저장소의 BSD 3-Clause 라이선스(<a href={flashLicense}>전문</a>)에 따라 수정 없이 실었다.
 
 블록으로 나누면 한 가지 문제가 생긴다. Softmax는 한 query의 모든 score를 알아야 분모를 정할 수 있는데, 블록 단위로는 score의 일부만 보인다. FlashAttention은 지금까지 본 score의 최댓값 $m$과 지수 합 $\ell$을 들고 다니다가, 새 블록에서 더 큰 score가 나오면 이전 합을 $e^{m_{\text{old}}-m_{\text{new}}}$배로 고쳐 쓴다. 이렇게 하면 score 전체를 저장하지 않고도 정확한 softmax 가중 평균을 얻는다.[^flash]
 
@@ -365,7 +365,7 @@ DP에서 모든 GPU가 optimizer 상태를 똑같이 갖고 있어야 할까? �
 | ZeRO-1·2 | Gradient reduce-scatter → 자기 구간 갱신 → 갱신된 parameter all-gather | $\Psi+\Psi=2\Psi$ |
 | ZeRO-3 | Forward 전 parameter all-gather + backward 전 all-gather + gradient reduce-scatter | $3\Psi$ |
 
-ZeRO-1·2는 all-reduce를 reduce-scatter와 all-gather로 나누어 그 사이에 자기 구간만 갱신하므로, 단순 DP와 통신량이 같으면서 메모리가 준다. ZeRO-3는 parameter를 층마다 다시 모아야 해서 통신량이 1.5배다. 다음 층의 parameter를 현재 층을 계산하는 동안 미리 모으면 이 통신의 상당 부분을 계산 뒤에 숨길 수 있다. Gradient accumulation을 쓰면 비율이 달라진다. 단순 DP는 `no_sync()`로 마지막 microbatch에서만 gradient를 동기화할 수 있지만, ZeRO-3는 microbatch마다 forward·backward 전에 parameter를 다시 모아야 한다. Accumulation 횟수가 많을수록 ZeRO-3의 추가 통신 비중이 커진다.
+ZeRO-1·2는 all-reduce를 reduce-scatter와 all-gather로 나누어 그 사이에 자기 구간만 갱신하므로, 단순 DP와 통신량이 같으면서 메모리가 준다. ZeRO-3는 parameter를 층마다 다시 모아야 해서 통신량이 1.5배다. 다음 층의 parameter를 현재 층을 계산하는 동안 미리 모으면 이 통신의 상당 부분을 계산 뒤에 숨길 수 있다. Gradient accumulation을 쓰면 비율이 달라진다. 단순 DP는 `no_sync()`로 마지막 microbatch에서만 gradient를 동기화할 수 있지만, ZeRO-3에서 사용 후 parameter를 매번 해제하는 위 모형이라면 microbatch마다 forward·backward 전에 parameter를 다시 모아야 하므로, accumulation 횟수가 많을수록 추가 통신 비중이 커진다. 실제 구현은 작은 parameter를 나누지 않거나 곧 다시 쓸 parameter를 유지하는 설정이 있어 통신량이 이 모형과 달라질 수 있다.[^ds-zero3]
 
 FSDP(fully sharded data parallel)도 학습 상태를 분산 저장한다. PyTorch FSDP2에서는 필요한 parameter를 연산 전에 all-gather로 모으고, backward의 gradient를 reduce-scatter로 합산·분할한다. 메모리를 줄이는 대신 필요한 시점에 통신해야 한다.[^fsdp]
 
@@ -622,14 +622,15 @@ CP까지 사용하면 이 예제의 장치 수 계산에 CP 차원도 포함한�
 2. **그래도 모델이 들어가지 않으면 PP로 노드를 이어 붙인다.** PP는 stage 경계에서만 activation을 주고받으므로 노드 사이의 느린 연결에서도 버틸 수 있다.
 3. **모델이 들어가는 최소 TP×PP를 찾았으면, 남은 GPU는 DP로 쓴다.** DP는 서로 다른 데이터를 처리해 처리량을 늘린다.
 
-Meta가 Llama 3 405B를 학습한 구성이 이 순서를 따른다. 아래 표는 Llama 3 논문의 사전학습 구성 중 두 가지다.[^llama3]
+Meta가 Llama 3 405B를 학습한 구성이 이 순서를 따른다. 아래 표는 Llama 3 논문 Table 4가 보고한 사전학습 구성이다.[^llama3] TFLOPS는 초당 $10^{12}$ FLOPs를 뜻한다.
 
 | GPU 수 | TP | CP | PP | DP | 시퀀스 길이 | GPU당 BF16 처리 속도 | MFU |
 |---|---|---|---|---|---|---|---|
+| 8,192 | 8 | 1 | 16 | 64 | 8,192 | 430 TFLOPS | 43% |
 | 16,384 | 8 | 1 | 16 | 128 | 8,192 | 400 TFLOPS | 41% |
 | 16,384 | 8 | 16 | 16 | 8 | 131,072 | 380 TFLOPS | 38% |
 
-$8\times1\times16\times128=16{,}384$이다. TP=8은 노드 하나 안에 두고, 16개 노드를 PP로 이어 모델 복제본 하나를 만든 뒤, 그 복제본을 128개 둔다. 긴 문맥 단계에서는 시퀀스 길이가 16배가 되자 DP를 줄이고 그 자리를 CP=16으로 채웠다. 곱은 여전히 16,384다. GPU 수는 같아도 병렬화 방향의 배분이 학습 단계마다 바뀐다. MFU는 §6-1에서 정의한다.
+둘째 줄에서 $8\times1\times16\times128=16{,}384$이다. TP=8은 노드 하나 안에 두고, 16개 노드를 PP로 이어 모델 복제본 하나를 만든 뒤, 그 복제본을 128개 둔다. 첫째 줄과 비교하면 TP·PP는 그대로 두고 DP만 64에서 128로 늘렸으며, 이때 GPU당 처리 속도는 430에서 400 TFLOPS로 내려갔다. 긴 문맥 단계에서는 시퀀스 길이가 16배가 되자 DP를 줄이고 그 자리를 CP=16으로 채웠다. 곱은 여전히 16,384다. GPU 수는 같아도 병렬화 방향의 배분이 학습 단계마다 바뀐다. MFU는 §6-1에서 정의한다.
 
 ### 5-2. Sequence packing
 
@@ -754,6 +755,7 @@ PP를 더 깊게 다루려면 여러 model chunk를 교대로 실행하는 inter
 [^zero]: Rajbhandari, S., Rasley, J., Ruwase, O., & He, Y. (2020). *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models*. SC 2020. [arXiv:1910.02054](https://arxiv.org/abs/1910.02054).
 [^ddp]: PyTorch Contributors. (v2.8). *DistributedDataParallel*. [공식 문서](https://docs.pytorch.org/docs/2.8/generated/torch.nn.parallel.DistributedDataParallel.html).
 [^deepspeed]: DeepSpeed Team. *Zero Redundancy Optimizer*. [공식 튜토리얼](https://www.deepspeed.ai/tutorials/zero/).
+[^ds-zero3]: DeepSpeed Team. *ZeRO*. [DeepSpeed 공식 문서](https://deepspeed.readthedocs.io/en/latest/zero3.html).
 [^fsdp]: Feng, W., Constable, W., & Mao, Y. (2025). *Getting Started with Fully Sharded Data Parallel (FSDP2)*. [PyTorch 공식 튜토리얼](https://docs.pytorch.org/tutorials/intermediate/FSDP_tutorial.html).
 [^megatron]: Shoeybi, M., et al. (2019). *Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism*. [arXiv:1909.08053](https://arxiv.org/abs/1909.08053).
 [^gpipe]: Huang, Y., et al. (2019). *GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism*. NeurIPS 2019. [arXiv:1811.06965](https://arxiv.org/abs/1811.06965).
@@ -770,9 +772,9 @@ PP를 더 깊게 다루려면 여러 model chunk를 교대로 실행하는 inter
 [^bf16]: Kalamkar, D., et al. (2019). *A Study of BFLOAT16 for Deep Learning Training*. [arXiv:1905.12322](https://arxiv.org/abs/1905.12322).
 [^bf16-origin]: Wang, S., & Kanwar, P. (2019). *BFloat16: The secret to high performance on Cloud TPUs*. [Google Cloud Blog](https://cloud.google.com/blog/products/ai-machine-learning/bfloat16-the-secret-to-high-performance-on-cloud-tpus).
 
-[^amp]: PyTorch. (2025, v2.8). [Automatic Mixed Precision](https://docs.pytorch.org/docs/2.8/amp.html).
+[^amp]: PyTorch Contributors. (v2.8). *Automatic Mixed Precision package*. [공식 문서](https://docs.pytorch.org/docs/2.8/amp.html).
 
-[^accumulation]: PyTorch Contributors. (2025, v2.8). *Automatic Mixed Precision examples*. [공식 문서](https://docs.pytorch.org/docs/2.8/notes/amp_examples.html#gradient-accumulation).
+[^accumulation]: PyTorch Contributors. (v2.8). *Automatic Mixed Precision examples*. [공식 문서](https://docs.pytorch.org/docs/2.8/notes/amp_examples.html#gradient-accumulation).
 
 [^hardware]: NVIDIA. *Introduction to NVIDIA DGX H100/H200 Systems*. [공식 사용자 가이드](https://docs.nvidia.com/dgx/dgxh100-user-guide/introduction-to-dgxh100.html).
 
@@ -781,7 +783,7 @@ PP를 더 깊게 다루려면 여러 model chunk를 교대로 실행하는 inter
 [^flash]: Dao, T., Fu, D. Y., Ermon, S., Rudra, A., & Ré, C. (2022). *FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness*. NeurIPS 2022. [arXiv:2205.14135](https://arxiv.org/abs/2205.14135).
 [^flash2]: Dao, T. (2023). *FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning*. [arXiv:2307.08691](https://arxiv.org/abs/2307.08691).
 [^flash3]: Shah, J., Bikshandi, G., Zhang, Y., Thakkar, V., Ramani, P., & Dao, T. (2024). *FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision*. [arXiv:2407.08608](https://arxiv.org/abs/2407.08608).
-[^flash4]: Dao, T. (2026). *FlashAttention-4: Algorithm and Kernel Pipelining Co-Design for Asymmetric Hardware Scaling*. [저자 해설](https://tridao.me/blog/2026/flash4/).
+[^flash4]: Zadouri, T., Hoehnerbach, M., Shah, J., Liu, T., Thakkar, V., & Dao, T. (2026). *FlashAttention-4: Algorithm and Kernel Pipelining Co-Design for Asymmetric Hardware Scaling*. [arXiv:2603.05451](https://arxiv.org/abs/2603.05451).
 [^ptd]: Narayanan, D., et al. (2021). *Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM*. SC 2021. [arXiv:2104.04473](https://arxiv.org/abs/2104.04473).
 [^cp]: NVIDIA. *core.utils*. [Megatron Core 공식 문서](https://docs.nvidia.com/megatron-core/developer-guide/latest/apidocs/core/core.utils.html).
 [^cp-overview]: NVIDIA. *Context Parallel Package*. [Megatron Core 공식 문서](https://docs.nvidia.com/megatron-core/developer-guide/latest/user-guide/features/context_parallel.html).
@@ -796,6 +798,6 @@ PP를 더 깊게 다루려면 여러 model chunk를 교대로 실행하는 inter
 [^h100]: NVIDIA. *NVIDIA H100 Tensor Core GPU*. [제품 사양](https://www.nvidia.com/en-us/data-center/h100/).
 [^hopper]: Andersch, M., et al. (2022). *NVIDIA Hopper Architecture In-Depth*. NVIDIA Technical Blog. [공식 블로그](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/).
 [^playbook]: Tazi, N., Mom, F., Zhao, H., Nguyen, P., Mekkouri, M., Werra, L., & Wolf, T. (2025). *The Ultra-Scale Playbook: Training LLMs on GPU Clusters*. Hugging Face. [공식 페이지](https://huggingface.co/spaces/nanotron/ultrascale-playbook).
-[^llama3]: Llama Team, AI @ Meta. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
+[^llama3]: Llama Team, AI @ Meta. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783v3](https://arxiv.org/abs/2407.21783v3).
 [^palm]: Chowdhery, A., et al. (2023). *PaLM: Scaling Language Modeling with Pathways*. Journal of Machine Learning Research, 24(240), pp. 1–113. [arXiv:2204.02311](https://arxiv.org/abs/2204.02311).
 [^fsdp-clip]: PyTorch Contributors. (v2.8). *FullyShardedDataParallel.clip_grad_norm_*. [공식 문서](https://docs.pytorch.org/docs/2.8/fsdp.html#torch.distributed.fsdp.FullyShardedDataParallel.clip_grad_norm_).
