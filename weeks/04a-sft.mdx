@@ -136,7 +136,7 @@ Google은 이어서 과제 수를 1,836개로 늘리고 CoT 데이터를 섞은 
 
 첫째 갈래는 이 비용 문제를 모델로 푼다. Self-Instruct는 사람이 쓴 175개의 시드 과제에서 출발해, 모델이 새 지시문을 만들고 그 지시문에 대한 입력과 응답도 만든 뒤, 기존 것과 너무 비슷한 지시문을 걸러 내는 과정을 반복한다. 이렇게 만든 52K 지시 데이터로 GPT-3를 fine-tuning하자 Super-NaturalInstructions 평가에서 정답 텍스트와의 겹침을 재는 ROUGE-L이 6.8에서 39.9로 33.1점 올랐고(원논문 Table 3), 전문가가 새로 쓴 지시 252개에 대한 사람 평가에서는 사소한 오류가 있는 응답까지 유효한 것으로 세는 기준에서 사람 데이터로 학습한 InstructGPT-001과의 차이가 5%p였다(원논문 Figure 6).[^self-instruct] Stanford의 Alpaca는 이 방법을 단순화한 파이프라인을 text-davinci-003으로 실행해 52K 시연을 500달러 미만으로 만들고 LLaMA 7B를 fine-tuning했다.[^alpaca]
 
-모델이 만든 데이터에는 반대 방향의 문제가 있다. 지시문이 서로 비슷해지고 응답의 오류가 그대로 학습된다. 학생 모델이 teacher의 표면적 문체만 배우는 것 아니냐는 우려도 있는데, 이 문제는 [05f Distillation](/lecture/2026f-advanced-deep-learning/05f-distillation/)에서 다시 다룬다.
+모델이 만든 데이터에는 반대 방향의 문제가 있다. 지시문이 서로 비슷해지고 응답의 오류가 그대로 학습된다. 학생 모델이 teacher의 표면적 문체만 배우는 것 아니냐는 우려도 있는데, 이 문제는 5주차 Distillation 노트에서 다시 다룬다.
 
 ### 3-4. LIMA의 소량 고품질 데이터
 
@@ -235,13 +235,13 @@ SFT 단계는 이미 안전 점수가 가장 높고 IFEval도 72.8에 이르지�
 
 SFT는 teacher forcing으로 학습한다. 응답의 각 토큰을 예측할 때 조건이 되는 앞부분은 모델이 생성한 것이 아니라 데이터에 적힌 시연이다. 추론 때는 모델이 자기 출력을 조건으로 다음 토큰을 만들므로, 한 번 시연과 다른 방향으로 가면 학습 때 보지 못한 문맥에 놓일 수 있다. 시연 데이터에 담긴 문맥의 분포와 모델이 스스로 생성하는 문맥의 분포가 다르면, 모델은 학습 때 드물게 본 문맥에서 다음 토큰을 골라야 한다.
 
-이 차이를 뒤 노트에서는 **어느 정책이 학습 데이터를 생성했는가**로 정리한다. 학습되는 모델과 다른 정책(사람, 다른 모델, 자신의 과거 checkpoint)이 만든 데이터로 학습하면 off-policy, 지금 학습 중인 정책이 방금 생성한 데이터로 학습하면 on-policy다. 시연 데이터의 SFT는 off-policy의 대표적인 경우다. 정의와 그 결과는 [04c DPO](/lecture/2026f-advanced-deep-learning/04c-dpo/)에서 다루고, [05f Distillation](/lecture/2026f-advanced-deep-learning/05f-distillation/)에서 이 문제를 직접 겨냥한 방법을 본다.
+이 차이를 뒤 노트에서는 **어느 정책이 학습 데이터를 생성했는가**로 정리한다. 학습되는 모델과 다른 정책(사람, 다른 모델, 자신의 과거 checkpoint)이 만든 데이터로 학습하면 off-policy, 지금 학습 중인 정책이 방금 생성한 데이터로 학습하면 on-policy다. 시연 데이터의 SFT는 off-policy의 대표적인 경우다. 정의와 그 결과는 [04c DPO](/lecture/2026f-advanced-deep-learning/04c-dpo/)에서 다루고, 5주차 Distillation 노트에서 이 문제를 직접 겨냥한 방법을 본다.
 
 ### 5-3. 사고 과정을 담은 SFT의 자리
 
 이 한계에도 SFT의 자리는 남는다. 추론 모델의 recipe에서 SFT는 RL 전에 모델에 **긴 사고 과정의 형식**을 가르치는 cold start 역할을 맡는다. Qwen3는 검증 가능한 수학·코드 문제를 골라 QwQ-32B가 생성한 사고 과정 응답을 걸러 첫 단계 SFT 데이터로 썼고,[^qwen3] Olmo 3 Think의 SFT 데이터는 §3-5에서 본 것처럼 대부분 그런 응답이다. 흥미로운 결과는 사고 과정을 쓰지 않는 Instruct 모델에서도 나온다. §1-1의 그림에서 Olmo 3 Instruct의 SFT가 Think SFT checkpoint에서 출발한 이유다. Instruct 7B의 중간 checkpoint를 비교하면, 사고 과정 SFT를 먼저 거친 뒤 Instruct SFT를 한 쪽이 거치지 않은 쪽보다 평균 3.3점, MATH에서 5.6점 높았다(원논문 Table 29).[^olmo3] 최종 모델이 사고 과정을 출력하지 않아도, 그것을 한 번 배운 가중치가 더 좋은 출발점이 된다는 관찰이다.
 
-다만 SFT 뒤에 무엇을 거치는가도 최종 성능을 바꾼다. Olmo 3의 7B ablation에서 SFT 뒤에 바로 RLVR을 1,000 스텝 돌린 경우의 평균은 71.9, DPO를 거친 뒤 RLVR을 같은 스텝만큼 돌린 경우는 74.1이었다(원논문 Table 22).[^olmo3] RLVR 데이터는 각 출발 checkpoint에 맞춰 따로 걸렀고 평가는 한 번씩만 돌렸으므로, 이 차이는 DPO 초기화만의 효과라기보다 두 recipe 전체의 비교로 읽는 편이 맞다. SFT는 뒤 단계의 **초기화**이고, 초기화의 좋고 나쁨은 뒤 단계를 돌려 봐야 안다. 이 관점은 [05a RLVR](/lecture/2026f-advanced-deep-learning/05a-rlvr/)에서 DeepSeek-R1의 cold start를 볼 때 다시 쓴다.
+다만 SFT 뒤에 무엇을 거치는가도 최종 성능을 바꾼다. Olmo 3의 7B ablation에서 SFT 뒤에 바로 RLVR을 1,000 스텝 돌린 경우의 평균은 71.9, DPO를 거친 뒤 RLVR을 같은 스텝만큼 돌린 경우는 74.1이었다(원논문 Table 22).[^olmo3] RLVR 데이터는 각 출발 checkpoint에 맞춰 따로 걸렀고 평가는 한 번씩만 돌렸으므로, 이 차이는 DPO 초기화만의 효과라기보다 두 recipe 전체의 비교로 읽는 편이 맞다. SFT는 뒤 단계의 **초기화**이고, 초기화의 좋고 나쁨은 뒤 단계를 돌려 봐야 안다. 이 관점은 5주차 RLVR 노트에서 DeepSeek-R1의 cold start를 볼 때 다시 쓴다.
 
 [^survey]: Han, X., et al. (2025). *Towards Alignment-Centric Paradigm: A Survey of Instruction Tuning in Large Language Models*. [arXiv:2508.17184v2](https://arxiv.org/abs/2508.17184v2).
 [^olmo3]: Team Olmo. (2025). *Olmo 3*. [arXiv:2512.13961v2](https://arxiv.org/abs/2512.13961v2).

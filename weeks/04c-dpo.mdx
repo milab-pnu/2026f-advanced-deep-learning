@@ -6,7 +6,7 @@ order: 2
 
 [04b RLHF 노트](/lecture/2026f-advanced-deep-learning/04b-rlhf/)의 파이프라인은 reward model을 학습하고, 그 보상으로 정책이 생성한 응답을 PPO(proximal policy optimization)로 갱신한다. 모델 넷을 관리하고 학습 루프 안에서 응답을 생성해야 하며, 하이퍼파라미터에 민감하다. 이 노트는 그 비용 문제를 푸는 계보를 따라간다. 출발점은 2023년의 <strong>DPO(direct preference optimization)</strong>다. RLHF(reinforcement learning from human feedback)의 목적함수가 가진 닫힌 해를 이용해 명시적 reward model과 강화학습(reinforcement learning, RL)의 정책 최적화 루프를 우회하고, 선호쌍에 바로 손실을 건다. 그 뒤로 DPO의 가정을 하나씩 바꾼 변형들과, 고정된 데이터의 한계를 넘으려는 online 확장이 이어진다.
 
-전체 지도는 Xiao 등이 DPO 연구를 정리한 서베이[^survey]로 잡는다. §II-A가 RLHF의 배경을, §II-B가 DPO의 유도를 다루고, §III은 RLHF와 DPO의 비교(RQ0)에 이어 여섯 개의 연구 질문으로 변형을 분류한다. 그중 implicit reward의 성질(RQ1), 피드백 형식(RQ2), KL(Kullback–Leibler) 계수와 reference model(RQ3), online 방법(RQ4), reward hacking(RQ5)이 이 노트의 §2–5에 대응한다. 04a에서 예고하고 이 노트 §3-1에서 정리하는 **on-policy와 off-policy**는 5주차의 RLVR(reinforcement learning with verifiable rewards) 노트들과 [05f Distillation](/lecture/2026f-advanced-deep-learning/05f-distillation/)에서 다시 쓴다.
+전체 지도는 Xiao 등이 DPO 연구를 정리한 서베이[^survey]로 잡는다. §II-A가 RLHF의 배경을, §II-B가 DPO의 유도를 다루고, §III은 RLHF와 DPO의 비교(RQ0)에 이어 여섯 개의 연구 질문으로 변형을 분류한다. 그중 implicit reward의 성질(RQ1), 피드백 형식(RQ2), KL(Kullback–Leibler) 계수와 reference model(RQ3), online 방법(RQ4), reward hacking(RQ5)이 이 노트의 §2–5에 대응한다. 04a에서 예고하고 이 노트 §3-1에서 정리하는 **on-policy와 off-policy**는 5주차의 RLVR(reinforcement learning with verifiable rewards) 노트들과 Distillation 노트에서 다시 쓴다.
 
 ## 1. RLHF 목적함수의 닫힌 해
 
@@ -170,7 +170,7 @@ Tülu 3는 그 기준으로 on-policy 응답과 다른 모델의 off-policy 응�
 
 ### 5-3. 남는 문제
 
-DPO는 reward model을 없앴지만 보상의 출처인 **선호 판정**은 그대로 남아 있다. 판정자가 긴 응답을 좋아하면 implicit reward도 길이를 보상한다. 판정자가 자신 있는 말투를 좋아한다면 정책은 틀린 답도 자신 있게 쓰는 쪽으로 기울 수 있다. §4의 길이 정규화는 증상 하나에 대한 대응이다. 판정자와 reward model이 어떻게 틀리고 그것을 어떻게 재는지가 [04d](/lecture/2026f-advanced-deep-learning/04d-reward-hacking/)의 주제다. 그리고 판정 대신 **정답 검증**을 보상으로 쓰는 방향이 [5주차](/lecture/2026f-advanced-deep-learning/05a-rlvr/)다. 거기서는 §3-1의 on-policy 표집이 다시 중심이 되고, 04b의 정책 최적화 틀이 그대로 돌아온다.
+DPO는 reward model을 없앴지만 보상의 출처인 **선호 판정**은 그대로 남아 있다. 판정자가 긴 응답을 좋아하면 implicit reward도 길이를 보상한다. 판정자가 자신 있는 말투를 좋아한다면 정책은 틀린 답도 자신 있게 쓰는 쪽으로 기울 수 있다. §4의 길이 정규화는 증상 하나에 대한 대응이다. 판정자와 reward model이 어떻게 틀리고 그것을 어떻게 재는지가 [04d](/lecture/2026f-advanced-deep-learning/04d-reward-hacking/)의 주제다. 그리고 판정 대신 **정답 검증**을 보상으로 쓰는 방향이 5주차다. 거기서는 §3-1의 on-policy 표집이 다시 중심이 되고, 04b의 정책 최적화 틀이 그대로 돌아온다.
 
 [^survey]: Xiao, W., et al. (2026). *A Comprehensive Survey of Direct Preference Optimization: Datasets, Theories, Variants, and Applications*. IEEE Transactions on Pattern Analysis and Machine Intelligence. [arXiv:2410.15595v4](https://arxiv.org/abs/2410.15595v4).
 [^dpo]: Rafailov, R., Sharma, A., Mitchell, E., Manning, C. D., Ermon, S., & Finn, C. (2023). *Direct Preference Optimization: Your Language Model is Secretly a Reward Model*. NeurIPS 2023. [arXiv:2305.18290](https://arxiv.org/abs/2305.18290).

@@ -74,7 +74,7 @@ $$
 \nabla_\phi J(\phi)=\mathbb{E}_{y\sim\pi_\phi}\Big[\sum_{t=1}^{T}\nabla_\phi\log\pi_\phi(y_t\mid x,y_{<t})\,A_t\Big]
 $$
 
-$A_t$는 위치 $t$의 행동이 그 상태에서 평균적으로 기대되는 것보다 얼마나 좋았는지를 나타내는 advantage다. 이 자리에 응답 전체의 보상 $R$을 그대로 넣어도 기대값은 같지만 분산이 커서 학습이 불안정하므로, 상태의 가치 $V(x,y_{<t})$, 즉 그 상태에서 앞으로 받을 보상의 기대값을 추정해 빼 준다. 이 $V$를 학습하는 모델이 value model이고, 여러 스텝의 보상과 가치 추정을 섞어 advantage의 추정치 $\hat A_t$를 만드는 방법이 GAE(generalized advantage estimation)다.[^gae] 실제 구현이 쓰는 것은 정확한 $A_t$가 아니라 이 추정치다. 이 노트는 추정 방법보다 그것이 하는 일에 집중한다. **양수 advantage는 그 토큰의 확률을 올리는 신호, 음수 advantage는 내리는 신호를 준다.** Value model 없이 여러 응답의 보상 평균을 baseline으로 쓰는 방법은 [05c](/lecture/2026f-advanced-deep-learning/05c-policy-optimization/)에서 다룬다.
+$A_t$는 위치 $t$의 행동이 그 상태에서 평균적으로 기대되는 것보다 얼마나 좋았는지를 나타내는 advantage다. 이 자리에 응답 전체의 보상 $R$을 그대로 넣어도 기대값은 같지만 분산이 커서 학습이 불안정하므로, 상태의 가치 $V(x,y_{<t})$, 즉 그 상태에서 앞으로 받을 보상의 기대값을 추정해 빼 준다. 이 $V$를 학습하는 모델이 value model이고, 여러 스텝의 보상과 가치 추정을 섞어 advantage의 추정치 $\hat A_t$를 만드는 방법이 GAE(generalized advantage estimation)다.[^gae] 실제 구현이 쓰는 것은 정확한 $A_t$가 아니라 이 추정치다. 이 노트는 추정 방법보다 그것이 하는 일에 집중한다. **양수 advantage는 그 토큰의 확률을 올리는 신호, 음수 advantage는 내리는 신호를 준다.** Value model 없이 여러 응답의 보상 평균을 baseline으로 쓰는 방법은 5주차 Policy optimization 노트에서 다룬다.
 
 <Details summary="토큰 세 개짜리 응답의 return과 advantage">
 
@@ -133,7 +133,7 @@ $$
 | Reward model | 응답의 점수 | 6B | 고정 |
 | Value model | 상태 가치 추정, reward model에서 초기화 | 6B | 갱신 |
 
-InstructGPT는 175B 정책에도 6B reward model을 썼는데, 175B reward model은 학습 자체가 더 불안정해 value model의 초기화로 덜 적합했고, 175B reward model과 value model을 돌리는 계산 비용도 컸기 때문이다.[^instructgpt] Stiennon 등은 value model을 정책과 완전히 분리된 Transformer로 두고 reward model의 파라미터로 초기화했으며, 정책과 공유하면 초기 value 학습이 정책을 망가뜨린다고 보고했다.[^stiennon] 메모리는 갱신되는 모델(정책, value model)에만 gradient와 optimizer 상태가 필요하고 고정된 모델에는 가중치와 추론 시 activation만 필요하므로, [2주차 Training engineering 노트](/lecture/2026f-advanced-deep-learning/02e-training-engineering/)의 항목별 계산을 모델마다 따로 적용해야 한다. 정책과 value model을 따로 학습하고 reference model과 reward model도 유지하는 구성에서는 그만큼의 모델 상태가 더 필요하며, GPU(graphics processing unit)의 peak memory는 배치·공유·offload 구성에 따라 달라진다. 어느 구성이든 응답 생성이 학습 루프 안에 들어간다. 그 비용은 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)에서 따로 다룬다.
+InstructGPT는 175B 정책에도 6B reward model을 썼는데, 175B reward model은 학습 자체가 더 불안정해 value model의 초기화로 덜 적합했고, 175B reward model과 value model을 돌리는 계산 비용도 컸기 때문이다.[^instructgpt] Stiennon 등은 value model을 정책과 완전히 분리된 Transformer로 두고 reward model의 파라미터로 초기화했으며, 정책과 공유하면 초기 value 학습이 정책을 망가뜨린다고 보고했다.[^stiennon] 메모리는 갱신되는 모델(정책, value model)에만 gradient와 optimizer 상태가 필요하고 고정된 모델에는 가중치와 추론 시 activation만 필요하므로, [2주차 Training engineering 노트](/lecture/2026f-advanced-deep-learning/02e-training-engineering/)의 항목별 계산을 모델마다 따로 적용해야 한다. 정책과 value model을 따로 학습하고 reference model과 reward model도 유지하는 구성에서는 그만큼의 모델 상태가 더 필요하며, GPU(graphics processing unit)의 peak memory는 배치·공유·offload 구성에 따라 달라진다. 어느 구성이든 응답 생성이 학습 루프 안에 들어간다. 그 비용은 5주차 RL systems 노트에서 따로 다룬다.
 
 <Details summary="한 스텝의 흐름">
 
@@ -175,7 +175,7 @@ Reward model은 사람 선호의 근사이며 학습 분포 밖에서는 신뢰�
 
 ### 5-3. 선호와 정확성
 
-선호 비교로 학습한 보상은 "어느 쪽이 더 마음에 드는가"를 잰다. 주석 지침에 정확성을 넣을 수 있으므로 선호 보상이 정확성을 반영할 수는 있지만, 정답을 검증해 준다는 보장은 없다. 수학 문제의 두 풀이 중 틀린 쪽이 더 자신 있게 쓰였다면 판정자는 그쪽을 고를 수 있다. 정답이 있는 과제에서는 보상을 사람이나 모델의 판단 대신 **검증기**(verifier)로 만들 수 있고, 그 방향이 [5주차의 RLVR(reinforcement learning with verifiable rewards)](/lecture/2026f-advanced-deep-learning/05a-rlvr/)이다. 이 노트에서 본 정책 최적화의 틀은 거기서도 그대로 쓰인다. 바뀌는 것은 보상의 출처다.
+선호 비교로 학습한 보상은 "어느 쪽이 더 마음에 드는가"를 잰다. 주석 지침에 정확성을 넣을 수 있으므로 선호 보상이 정확성을 반영할 수는 있지만, 정답을 검증해 준다는 보장은 없다. 수학 문제의 두 풀이 중 틀린 쪽이 더 자신 있게 쓰였다면 판정자는 그쪽을 고를 수 있다. 정답이 있는 과제에서는 보상을 사람이나 모델의 판단 대신 **검증기**(verifier)로 만들 수 있고, 그 방향이 5주차의 RLVR(reinforcement learning with verifiable rewards)이다. 이 노트에서 본 정책 최적화의 틀은 거기서도 그대로 쓰인다. 바뀌는 것은 보상의 출처다.
 
 Reward model과 PPO의 세부를 더 읽으려면 Lambert의 RLHF 교재가 각 구성 요소를 한 권으로 정리한다.[^rlhfbook]
 
