@@ -37,7 +37,7 @@ $$
 보상의 출처만 바뀌었을 뿐 정책을 갱신하는 틀은 04b §3과 같다. 생성과 갱신을 번갈아 하는 기본 절차의 한 반복은 다음과 같다.
 
 1. 문제와 정답 정보를 준비한다. 문제는 정책에 주고, 정답 정보는 검증기만 본다.
-2. 현재 정책이 문제마다 응답을 여러 개 생성한다. 프롬프트 집합은 고정이어도 응답은 매 반복 새로 만들므로 [04c §3-1](/lecture/2026f-advanced-deep-learning/04c-dpo/)의 구분으로 online이고, 갱신 중인 정책과 같은 분포에서 뽑은 응답으로 갱신하는 한 on-policy다. 효율을 위해 한 배치로 여러 번 갱신하거나 생성과 학습을 비동기로 돌리면 응답을 만든 정책이 갱신 대상보다 뒤처지고(Qwen3는 reasoning RL에 off-policy 학습을 썼다고 밝힌다[^qwen3]), 그 차이를 보정해야 한다.
+2. 현재 정책이 문제마다 응답을 여러 개 생성한다. 프롬프트 집합은 고정이어도 응답은 매 반복 새로 만들므로 [04c §3-1](/lecture/2026f-advanced-deep-learning/04c-dpo/#3-1-on-policy와-off-policy)의 구분으로 online이고, 갱신 중인 정책과 같은 분포에서 뽑은 응답으로 갱신하는 한 on-policy다. 효율을 위해 한 배치로 여러 번 갱신하거나 생성과 학습을 비동기로 돌리면 응답을 만든 정책이 갱신 대상보다 뒤처지고(Qwen3는 reasoning RL에 off-policy 학습을 썼다고 밝힌다[^qwen3]), 그 차이를 보정해야 한다.
 3. 검증기가 응답마다 보상을 매긴다.
 4. 보상(과 KL 벌점)으로 policy gradient를 계산해 정책을 갱신하고 1로 돌아간다.
 
@@ -78,9 +78,11 @@ Reward model이 없으므로 04b §3-4의 네 모델 중 reward model이 프로�
 
 ### 3-1. SFT 없는 R1-Zero
 
-DeepSeek-R1-Zero는 DeepSeek-V3-Base에서 출발해 추론 시연의 SFT 없이 §2-1의 규칙 보상과 GRPO로 학습한 모델이다. 프롬프트 템플릿은 사고 과정을 `<think>` 태그에, 답을 `<answer>` 태그에 쓰라는 구조 지시뿐이었고 형식 보상이 그 구조를 강화했으며, 어떻게 추론하라는 예시는 주지 않았다.[^r1] 학습이 진행되면서 AIME 2024의 pass@1이 15.6%에서 77.9%로 올랐고, 응답 16개의 다수결(self-consistency)로는 86.7%였다(원논문 v2 Figure 1(a)).[^r1] 같은 기간 응답의 길이가 계속 늘었고(Figure 1(b)), 모델은 앞의 풀이를 되돌아보고 다른 접근을 시도하는 행동을 스스로 보이기 시작했다. 저자들은 이를 "aha moment"라고 불렀다. 추론 시연을 데이터로 가르치지 않았는데, 구조 지시와 규칙 보상만으로 이런 행동이 늘어난 것이다. 다만 base model이 관련 행동을 전혀 몰랐다는 뜻은 아니다. 저자들 스스로 DeepSeek-V3-Base의 pre-training 데이터에 수학·코드 내용이 많고 웹에 섞인 OpenAI 모델의 답변도 들어 있어 추론 과정을 상당히 접했을 것이며, RL은 그렇게 생성할 수 있게 된 후보 중 좋은 것을 골라 강화한다고 설명한다(arXiv v2 부록 A.1).[^r1] [04a §1-2](/lecture/2026f-advanced-deep-learning/04a-sft/)에서 본 것처럼 출발점의 차이는 결과에 들어 있다.<Sidenote>arXiv v1(2025년 1월)의 같은 곡선은 71.0%까지였다. Nature 게재판(2025년 9월)과 arXiv v2(2026년 1월 개정)의 77.9%는 v1과 다른 값이므로 두 값을 한 곡선으로 합치지 않고, 인용할 때 판본을 적는다.</Sidenote>
+DeepSeek-R1-Zero는 DeepSeek-V3-Base에서 출발해 추론 시연의 SFT 없이 §2-1의 규칙 보상과 GRPO로 학습한 모델이다. 프롬프트 템플릿은 사고 과정을 `<think>` 태그에, 답을 `<answer>` 태그에 쓰라는 구조 지시뿐이었고 형식 보상이 그 구조를 강화했으며, 어떻게 추론하라는 예시는 주지 않았다.[^r1] 학습이 진행되면서 AIME 2024의 pass@1이 15.6%에서 77.9%로 올랐고, 응답 16개의 다수결(self-consistency)로는 86.7%였다(원논문 v2 Figure 1(a)).[^r1] 같은 기간 응답의 길이가 계속 늘었고(Figure 1(b)), 모델은 앞의 풀이를 되돌아보고 다른 접근을 시도하는 행동을 스스로 보이기 시작했다. 저자들은 이를 "aha moment"라고 불렀다. 추론 시연을 데이터로 가르치지 않았는데, 구조 지시와 규칙 보상만으로 이런 행동이 늘어난 것이다.
 
-이것이 R1이 "혁신"으로 불리는 이유다. [04a §5-3](/lecture/2026f-advanced-deep-learning/04a-sft/)에서 SFT는 긴 사고 과정의 형식을 가르치는 cold start 역할이라고 했는데, R1-Zero는 그 SFT 없이도 base model이 구조 지시와 검증 가능한 보상만으로 긴 추론에 도달함을 보였다. 무엇이 어떻게 달라졌는지, 즉 길이의 증가와 반성·검증 행동이 정말 능력의 증가인지는 [05b](/lecture/2026f-advanced-deep-learning/05b-long-cot/)에서 따로 다룬다.
+다만 base model이 관련 행동을 전혀 몰랐다는 뜻은 아니다. 저자들 스스로 DeepSeek-V3-Base의 pre-training 데이터에 수학·코드 내용이 많고 웹에 섞인 OpenAI 모델의 답변도 들어 있어 추론 과정을 상당히 접했을 것이며, RL은 그렇게 생성할 수 있게 된 후보 중 좋은 것을 골라 강화한다고 설명한다(arXiv v2 부록 A.1).[^r1] [04a §1-2](/lecture/2026f-advanced-deep-learning/04a-sft/#1-2-네-recipe-비교)에서 본 것처럼 출발점의 차이는 결과에 들어 있다.<Sidenote>arXiv v1(2025년 1월)의 같은 곡선은 71.0%까지였다. Nature 게재판(2025년 9월)과 arXiv v2(2026년 1월 개정)의 77.9%는 v1과 다른 값이므로 두 값을 한 곡선으로 합치지 않고, 인용할 때 판본을 적는다.</Sidenote>
+
+R1이 주목받은 이유가 여기에 있다. [04a §5-3](/lecture/2026f-advanced-deep-learning/04a-sft/#5-3-사고-과정을-담은-sft의-자리)에서 SFT는 긴 사고 과정의 형식을 가르치는 cold start 역할이라고 했는데, R1-Zero는 그 SFT 없이도 base model이 구조 지시와 검증 가능한 보상만으로 긴 추론에 도달함을 보였다. 무엇이 어떻게 달라졌는지, 즉 길이의 증가와 반성·검증 행동이 정말 능력의 증가인지는 [05b](/lecture/2026f-advanced-deep-learning/05b-long-cot/)에서 따로 다룬다.
 
 ### 3-2. R1-Zero의 문제와 R1의 네 단계
 
@@ -93,7 +95,7 @@ R1-Zero의 출력은 읽기 어려웠다. 사고 과정에 영어와 중국어�
 | 3. Rejection sampling과 SFT | 2단계 모델의 응답을 생성해 걸러 추론 데이터 약 60만 건을 확보하고, 일반 과제 데이터 약 20만 건과 합쳐 base model을 다시 SFT | 추론 능력을 일반 과제와 합침 |
 | 4. 전 과제 RL | 추론 과제는 규칙 보상, 일반 과제는 reward model 보상으로 RL | 사람의 선호와 안전성 |
 
-1단계는 04a의 SFT, 3단계는 04b §3-5의 rejection sampling, 4단계의 reward model 보상은 04b의 RLHF다. 4주차의 요소가 검증 가능한 보상을 축으로 다시 배열된 것이다. Qwen3 flagship 모델의 네 단계(long-CoT cold start, reasoning RL, thinking mode fusion, general RL)와 Olmo 3 Think의 SFT, DPO, RLVR(일반 대화는 RLVR 단계에 함께 섞인다)도 추론 시연의 학습과 검증 보상을 결합하면서 일반 과제의 성능을 함께 유지한다는 점을 공유한다. 단계의 순서와 수는 모델마다 다르다.[^qwen3][^olmo3] [04a §1-2](/lecture/2026f-advanced-deep-learning/04a-sft/)의 recipe 표가 여기서 완성된다.
+1단계는 04a의 SFT, 3단계는 04b §3-5의 rejection sampling, 4단계의 reward model 보상은 04b의 RLHF다. 4주차의 요소가 검증 가능한 보상을 축으로 다시 배열된 것이다. Qwen3 flagship 모델의 네 단계(long-CoT cold start, reasoning RL, thinking mode fusion, general RL)와 Olmo 3 Think의 SFT, DPO, RLVR(일반 대화는 RLVR 단계에 함께 섞인다)도 추론 시연의 학습과 검증 보상을 결합하면서 일반 과제의 성능을 함께 유지한다는 점을 공유한다. 단계의 순서와 수는 모델마다 다르다.[^qwen3][^olmo3] [04a §1-2](/lecture/2026f-advanced-deep-learning/04a-sft/#1-2-네-recipe-비교)의 recipe 표가 여기서 완성된다.
 
 ### 3-3. 데이터의 규모
 
@@ -111,7 +113,9 @@ R1-Zero의 경로, 즉 SFT 없이 base model에 RLVR을 적용하는 실험은 �
 
 ### 4-3. 무작위 보상이라는 반례
 
-RLVR의 효과가 검증기의 정답 신호에서 온다는 가정에 대한 반례도 있다. Shao 등은 Qwen2.5-Math-7B에 정답과 무관한 무작위 보상으로 GRPO를 돌려도 MATH-500이 21.4점 올랐다고 보고했다(원논문 §2.2, Figure 2). 정확한 보상의 29.1점에 가까운 값이다. 저자들은 GRPO의 clipping이 pre-training에서 익힌 행동(이 모델의 경우 코드 형식의 추론)을 증폭하는 편향을 원인 가설로 제시하고, clipping을 끄면 무작위 보상의 효과가 사라지는 실험으로 뒷받침했다(원논문 §4, 부록 B.1). 같은 무작위 보상이 저자들이 실험한 Llama 3와 OLMo 2 모델에서는 대체로 통하지 않았다.[^spurious] 오염이라는 해석도 있다. Olmo 3 저자들은 평가 문제가 pre-training이나 mid-training 데이터에 섞여 있으면 무작위 보상이 암기된 답을 끌어내 정답 보상만큼 효과적으로 보일 수 있다고 보고, 오염을 제거한 Olmo 3 Base에 같은 무작위 보상을 주는 대조 실험을 했다. 성능은 어떤 벤치마크에서도 오르지 않았다(원논문 §6.2, Figure 27).[^olmo3] 두 설명은 서로 배타적이지 않으며, 각각이 얼마나 기여하는지는 아직 정리되지 않았다. 어느 쪽이든 RLVR의 결과를 읽을 때 base model이 무엇을 이미 알고 있었는지를 함께 봐야 한다는 점은 같고, 05c에서 GRPO의 clipping을 볼 때 이 결과로 돌아온다.
+RLVR의 효과가 검증기의 정답 신호에서 온다는 가정에 대한 반례도 있다. Shao 등은 Qwen2.5-Math-7B에 정답과 무관한 무작위 보상으로 GRPO를 돌려도 MATH-500이 21.4점 올랐다고 보고했다(원논문 §2.2, Figure 2). 정확한 보상의 29.1점에 가까운 값이다. 저자들은 GRPO의 clipping이 pre-training에서 익힌 행동(이 모델의 경우 코드 형식의 추론)을 증폭하는 편향을 원인 가설로 제시하고, clipping을 끄면 무작위 보상의 효과가 사라지는 실험으로 뒷받침했다(원논문 §4, 부록 B.1). 같은 무작위 보상이 저자들이 실험한 Llama 3와 OLMo 2 모델에서는 대체로 통하지 않았다.[^spurious]
+
+오염이라는 해석도 있다. Olmo 3 저자들은 평가 문제가 pre-training이나 mid-training 데이터에 섞여 있으면 무작위 보상이 암기된 답을 끌어내 정답 보상만큼 효과적으로 보일 수 있다고 보고, 오염을 제거한 Olmo 3 Base에 같은 무작위 보상을 주는 대조 실험을 했다. 성능은 어떤 벤치마크에서도 오르지 않았다(원논문 §6.2, Figure 27).[^olmo3] 두 설명은 서로 배타적이지 않으며, 각각이 얼마나 기여하는지는 아직 정리되지 않았다. 어느 쪽이든 RLVR의 결과를 읽을 때 base model이 무엇을 이미 알고 있었는지를 함께 봐야 한다는 점은 같고, 05c에서 GRPO의 clipping을 볼 때 이 결과로 돌아온다.
 
 ## 5. 검증기의 조건
 
