@@ -6,7 +6,7 @@ order: 2
 
 입력이 수십만 토큰으로 길어지면 self-attention의 계산은 어떻게 감당할까? 이 노트는 **시퀀스 길이 $n$에 대해 제곱으로 늘어나는 attention 계산**을 줄여 온 설계를 따라간다. 같은 주의 [Attention heads and KV cache](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/) 노트가 다루는 MQA(multi-query attention)·GQA(grouped-query attention)·MLA(multi-head latent attention)는 decode 중에 쌓이는 key·value의 메모리와 대역폭을 줄이려는 설계다. Head를 공유하거나 key·value를 압축해도 query와 모든 과거 key의 쌍을 계산하는 양은 거의 그대로이므로, 두 계보는 출발한 문제가 다르다.
 
-큰 줄기는 **O(n²) 문제 → 두 갈래 → 혼합 설계에서 합류**다. 한 갈래는 각 query가 참조하는 위치를 줄이고(sliding window, sparse attention), 다른 갈래는 위치 쌍을 아예 만들지 않도록 계산 순서를 바꾼다(linear attention, gating과 delta rule, state space model). 두 갈래는 앞뒤 관계가 아니라 같은 문제에 대한 서로 다른 답이고, 각자 남긴 약점을 서로 보완하는 hybrid 구조에서 다시 만난다. 전체 지형은 Tay 등의 efficient Transformer 서베이[^tay]에서 §3의 분류(fixed pattern, learnable pattern, kernel 등)를 먼저 읽으면 잡힌다. 다만 이 서베이는 2022년 판이 마지막이라 MLA, Gated DeltaNet, DeepSeek Sparse Attention처럼 이후에 나온 설계는 들어 있지 않다. 그 부분은 각 절에서 원논문으로 보충한다.
+큰 줄기는 **O(n²) 문제 → 두 갈래 → 혼합 설계에서 합류**다. 한 갈래는 각 query가 참조하는 위치를 줄이고(sliding window, sparse attention), 다른 갈래는 위치 쌍을 아예 만들지 않도록 계산 순서를 바꾼다(linear attention, gating과 delta rule, state space model). 두 갈래는 앞뒤 관계가 아니라 같은 문제에 대한 서로 다른 답이고, 각자 남긴 약점을 서로 보완하는 hybrid 구조에서 다시 만난다. 전체 지형은 Tay 등의 efficient Transformer 서베이[^tay]의 분류(서베이 §3: fixed pattern, learnable pattern, kernel 등)를 먼저 읽으면 잡힌다. 다만 이 서베이는 2022년 판이 마지막이라 MLA, Gated DeltaNet, DeepSeek Sparse Attention처럼 이후에 나온 설계는 들어 있지 않다. 그 부분은 각 절에서 원논문으로 보충한다.
 
 <figure>
 <svg viewBox="0 0 560 476" role="img" aria-label="이 노트의 계보도. 맨 위 dense self-attention은 모든 위치 쌍 n제곱 개를 계산한다. 여기서 두 갈래로 나뉜다. 왼쪽 갈래는 참조 범위 제한으로, sliding window와 fixed pattern(Mistral 7B, Longformer)이 정해진 칸 밖을 보지 못하는 문제를 학습된 sparse 선택(DeepSeek-V3.2 DSA)이 풀고, 남는 문제는 선택에서 빠진 정보다. 오른쪽 갈래는 연산 재구성으로, linear attention이 지우기 없는 누적의 간섭 문제를 gating과 delta rule(DeltaNet, Gated DeltaNet, KDA)로 푸는 줄기와, SSM이 입력과 무관한 갱신(LTI) 문제를 selective SSM(Mamba, Mamba-2)으로 푸는 줄기가 있다. 4-1절의 gated 누적은 Mamba-2의 state space duality로 두 줄기를 연결한다. 남는 문제는 압축 상태의 검색 한계다. 두 갈래는 아래의 hybrid 구조로 합류한다. hybrid에는 local과 global attention, linear와 attention, SSM과 attention의 세 종류가 있고 각각 Gemma 3, Qwen3-Next·Qwen3.5·Kimi Linear, Jamba·Nemotron이 예다. 맨 아래에는 KV cache를 줄이는 head 공유와 latent 압축이 동기가 다른 별개 계보라는 설명이 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -70,7 +70,7 @@ $$
 \operatorname{Attn}(Q,K,V)=\operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}+M\right)V
 $$
 
-$M$은 causal mask다. 문제는 가운데의 $QK^\top$가 $n\times n$ 행렬이라는 점이다. 모든 query가 모든 key와 점수를 한 번씩 만들고, softmax의 분모에는 **mask가 허용한 한 행의 점수가 모두** 들어간다. FlashAttention처럼 블록별로 나눠 계산하며 분모를 갱신할 수는 있지만, 허용된 위치의 점수 계산을 건너뛸 수는 없다. Causal mask로 가려진 절반을 건너뛰는 최적화까지 빼고 세면, 행렬 곱 $QK^\top$와 확률 행렬에 $V$를 곱하는 단계가 각각 약 $2n^2d$ FLOPs(floating-point operations)를 쓴다. 여기서 $d$는 모든 head의 차원을 합한 값이다.
+$M$은 causal mask다. 문제는 가운데의 $QK^\top$가 $n\times n$ 행렬이라는 점이다. 모든 query가 모든 key와 점수를 한 번씩 만들고, softmax의 분모에는 **mask가 허용한 한 행의 점수가 모두** 들어간다. FlashAttention처럼 블록별로 나눠 계산하며 분모를 갱신할 수는 있지만, 허용된 위치의 점수 계산을 건너뛸 수는 없다. Causal mask로 가려진 절반을 건너뛰는 최적화를 적용하지 않고 세면, 행렬 곱 $QK^\top$와 확률 행렬에 $V$를 곱하는 단계가 각각 약 $2n^2d$ FLOPs(floating-point operations)를 쓴다. 여기서 $d$는 모든 head의 차원을 합한 값이다.
 
 반면 Q·K·V·출력 투영과 FFN(feed-forward network)은 토큰마다 독립적으로 적용되므로 비용이 $n$에 비례한다. 길이가 짧을 때는 이 선형 항이 크고, 길이가 길어지면 제곱 항이 역전한다.
 
@@ -116,7 +116,7 @@ $O(n^2)$을 줄이는 방법은 크게 두 가지다.
 
 SWA는 계산과 함께 **KV 저장량도 줄인다.** 앞으로 어떤 query도 $W$칸보다 오래된 key를 보지 않으므로, 위치 $i$의 key·value를 $i \bmod W$ 칸에 덮어쓰는 고정 크기 rolling buffer로 충분하다. Mistral 7B 논문은 32K 길이에서 캐시 메모리가 8배 줄어든다고 보고한다($32{,}768/4096=8$).[^mistral]
 
-반대로 학습은 전체 attention으로 하고 추론 때만 최근 key를 남기는 window cache를 쓰면 문제가 생긴다. 텍스트가 캐시보다 길어지는 순간 성능이 무너진다는 관찰이 있다. 초기 토큰의 key·value만 함께 남겨도 상당 부분 회복되는데, 그 배경에는 초기 토큰에 attention weight가 몰리는 attention sink 현상이 있다.[^streaming] 원인과 대응은 [Normalization and attention sink §4](/lecture/2026f-advanced-deep-learning/03e-normalization/#4-attention-sink)에서 다룬다.
+반대로 학습은 전체 attention으로 하고 추론 때만 최근 key를 남기는 window cache를 쓰면 문제가 생긴다. Xiao 등은 텍스트가 캐시보다 길어지는 순간 성능이 무너지고, 초기 토큰의 key·value만 함께 남겨도 상당 부분 회복된다고 관찰했다. 그 배경에는 초기 토큰에 attention weight가 몰리는 attention sink 현상이 있다.[^streaming] 원인과 대응은 [Normalization and attention sink §4](/lecture/2026f-advanced-deep-learning/03e-normalization/#4-attention-sink)에서 다룬다.
 
 ### 2-2. 고정 패턴과 global token
 
@@ -216,7 +216,7 @@ Query로 읽어 보면 저장한 value가 그대로 나온다.
 - $q=(0,1)$: $S_2q=(0,3)=v_2$
 - $q=(0.6,0.8)$: $S_2q=(1.2,\,3.0)=0.6\,v_1+0.8\,v_2$
 
-두 key가 직교하는 단위 벡터라서 조회가 정확하다. 세 번째 query처럼 저장된 key 사이에 있는 query는 두 value를 섞어 읽는다. 같은 점수 $(0.6,0.8)$에 softmax를 적용하면 가중치는 약 $(0.450,0.550)$이고, $1/\sqrt{2}$ scaling까지 하면 약 $(0.465,0.535)$로 더 균등해진다. Softmax가 한쪽으로 얼마나 쏠리는지는 점수의 크기와 temperature에 달려 있다.
+두 key가 직교하는 단위 벡터라서 조회가 정확하다. 세 번째 query처럼 저장된 key 사이에 있는 query는 두 value를 섞어 읽는다. 섞어 읽는 것은 softmax도 마찬가지이고, softmax가 늘 한쪽을 더 날카롭게 고르는 것도 아니다. 같은 점수 $(0.6,0.8)$에 softmax를 적용하면 가중치는 약 $(0.450,0.550)$으로 오히려 더 균등하고, $1/\sqrt{2}$ scaling까지 하면 약 $(0.465,0.535)$가 된다. 얼마나 쏠리는지는 점수의 크기와 temperature에 달려 있다.
 
 **토큰 3** 이제 같은 key $k_3=(1,0)$에 새 value $v_3=(4,0)$이 들어온다. 예를 들어 코드에서 변수 `x`의 값이 바뀐 상황이다.
 
@@ -272,7 +272,7 @@ $\beta_t\in(0,1)$은 쓰기 강도이며 입력에서 sigmoid로 만든다. Yang
 단위 key와 $\beta=1$에서는 $(I-k_3k_3^\top)$가 $k_3$ 방향의 기억을 정확히 지우고 새 value를 쓴다. 일반적으로는 $\beta_t$가 1보다 작아 일부만 고치고, key가 직교하지 않으면 다른 기억도 조금씩 함께 바뀐다. 핵심은 **예측 오차에 따라 해당 key 방향의 기억을 수정한다**는 점이다.
 </Callout>
 
-Delta rule은 순차적인 갱신이라 긴 시퀀스를 병렬로 학습하기 어려웠다. Yang 등의 DeltaNet(2024)은 $I-\beta_tk_tk_t^\top$를 일반화된 Householder 변환(generalized Householder transformation)으로 보고, 그 곱을 메모리 효율적으로 표현해 chunk 단위 병렬 학습을 가능하게 했다. 직교 반사인 원래 Householder 행렬과 달리, $\beta_t\in(0,1)$에서는 $k_t$ 방향의 기억을 $1-\beta_t$배로 줄이는 변환이다. 1.3B 모델을 100B 토큰으로 학습해 Mamba, GLA(gated linear attention) 같은 linear-time 모델보다 낮은 perplexity를 보고했고, 한 층 걸러 sliding window attention을 둔 hybrid와 global attention 층 두 개를 섞은 hybrid가 Transformer 기준 모델을 앞섰다고 밝힌다(원논문 arXiv v6 표 1).[^deltanet] Query와 key에는 L2 정규화를 적용해, 위 예제의 단위 key 가정에 가까운 조건을 만든다.
+Delta rule은 순차적인 갱신이라 긴 시퀀스를 병렬로 학습하기 어려웠다. Yang 등의 DeltaNet(2024)은 $I-\beta_tk_tk_t^\top$를 일반화된 Householder 변환(generalized Householder transformation)으로 보고, 그 곱을 메모리 효율적으로 표현해 chunk 단위 병렬 학습을 가능하게 했다. 직교 반사인 원래 Householder 행렬과 달리, $\beta_t\in(0,1)$에서는 $k_t$ 방향의 기억을 $1-\beta_t$배로 줄이는 변환이다. Query와 key에는 L2 정규화를 적용해, 위 예제의 단위 key 가정에 가까운 조건을 만든다. 1.3B 모델을 100B 토큰으로 학습해 Mamba, GLA(gated linear attention) 같은 linear-time 모델보다 낮은 perplexity를 보고했고, 한 층 걸러 sliding window attention을 둔 hybrid와 global attention 층 두 개를 섞은 hybrid가 Transformer 기준 모델을 앞섰다고 밝힌다(arXiv v6 표 1).[^deltanet]
 
 ### 4-3. Gated DeltaNet
 
@@ -282,7 +282,7 @@ $$
 S_t=S_{t-1}\,\alpha_t\left(I-\beta_tk_tk_t^\top\right)+\beta_tv_tk_t^\top
 $$
 
-$\alpha_t=1$이면 DeltaNet이다. 지우기 항 $(I-\beta_tk_tk_t^\top)$을 $I$로 바꾸고 $\beta_tv_t$를 새 value로 보면 §4-1의 gated 누적이 된다. 논문은 모든 모델을 1.3B 파라미터, 100B 토큰의 같은 조건으로 학습해 비교했고, 이 조합이 언어 모델링(표 3)과 실제 문맥 검색(표 4)·긴 문맥 이해(표 5)의 평균 점수에서 Mamba-2와 DeltaNet을 앞섰다고 보고한다(원논문 arXiv v3). 개별 과제에서는 앞서지 못한 경우도 있다. 또한 Gated DeltaNet 층에 sliding window attention을 섞은 hybrid(H1)와 Mamba-2까지 함께 쌓은 hybrid(H2)도 실험했다.[^gdn]
+$\alpha_t=1$이면 DeltaNet이다. 지우기 항 $(I-\beta_tk_tk_t^\top)$을 $I$로 바꾸고 $\beta_tv_t$를 새 value로 보면 §4-1의 gated 누적이 된다. 논문은 모든 모델을 1.3B 파라미터, 100B 토큰의 같은 조건으로 학습해 비교했고, 이 조합이 언어 모델링(표 3)과 실제 문맥 검색(표 4)·긴 문맥 이해(표 5)의 평균 점수에서 Mamba-2와 DeltaNet을 앞섰다고 보고한다(arXiv v3 기준). 개별 과제에서는 앞서지 못한 경우도 있다. 또한 Gated DeltaNet 층에 sliding window attention을 섞은 hybrid(H1)와 Mamba-2까지 함께 쌓은 hybrid(H2)도 실험했다.[^gdn]
 
 Gated DeltaNet의 $\alpha_t$는 스칼라라서 한 head의 상태 전체가 같은 비율로 잊힌다. Kimi Linear의 KDA(Kimi Delta Attention)는 이 스칼라를 key 차원마다 값이 다른 대각행렬로 바꾸었다.[^kimilinear]
 
@@ -304,7 +304,7 @@ DeltaNet의 제1저자 Songlin Yang이 쓴 [DeltaNet Explained](https://sustcson
 
 ### 5-1. Attention을 대체하는 sequence mixer
 
-이번 주의 주제는 Transformer 변형이므로, state space model(SSM)은 **decoder 블록의 attention 층 자리에 들어갈 수 있는 sequence mixer**로만 정의한다. Sequence mixer는 위치 사이의 정보를 섞는 층이고, FFN은 그대로 둔다. SSM은 제어 이론의 연속 시간 상태 방정식에서 출발한다. 입력 채널 하나 $x(t)$에 대해 $N$차원 상태 $h(t)$를 둔다.[^mamba]
+이번 주의 주제는 Transformer 변형이므로, state space model(SSM)은 **decoder 블록의 attention 층 자리에 들어갈 수 있는 sequence mixer**로만 정의한다. Sequence mixer는 위치 사이의 정보를 섞는 층이고, FFN은 그대로 둔다. SSM은 제어 이론의 연속 시간 상태 방정식에서 출발한다. 입력 채널 하나 $x(t)$에 대해 $N$차원 상태 $h(t)$를 두고, $A\in\mathbb{R}^{N\times N}$은 상태 전이, $B\in\mathbb{R}^{N\times1}$은 입력을 상태에 쓰는 계수, $C\in\mathbb{R}^{1\times N}$은 상태를 출력으로 읽는 계수다.[^mamba]
 
 $$
 h'(t)=A\,h(t)+B\,x(t),\qquad y(t)=C\,h(t)
@@ -342,7 +342,7 @@ S4 같은 이전 SSM은 $A,B,C,\Delta$가 입력과 무관한 LTI(linear time-in
 
 ### 5-3. Mamba-2와 state space duality
 
-Mamba-2는 SSM과 attention의 관계를 구조적인 조건에서 정리했다.[^mamba2] 이 절의 $A_t$, $B_t$, $C_t$는 §5-1의 $\bar A$, $\bar B$, $C$처럼 이산화를 거친 계수이고, Mamba-2 논문을 따라 bar를 생략한다. 핵심 조건은 **$A_t$를 스칼라 곱하기 단위행렬 $a_tI$로 제한**하는 것이다. 여기서 $a_t$는 §5-1의 $\bar A$에 해당하는 스칼라다. Mamba의 대각 행렬 $A$보다 표현력은 조금 줄지만, 이 조건에서는 전체 시퀀스 변환을 하나의 행렬로 쓸 수 있다.
+Mamba-2는 SSM과 attention의 관계를 구조적인 조건에서 정리했다.[^mamba2] 이 절의 $A_t$, $B_t$, $C_t$는 §5-1의 $\bar A$, $\bar B$, $C$처럼 이산화를 거친 계수이고, Mamba-2 논문을 따라 bar를 생략한다. 또 $B_t$와 $C_t$를 모두 $N$차원 열벡터로 두어 출력을 $y_t=C_t^\top h_t$로 쓴다(§5-1의 행벡터 $C$를 전치한 것). 핵심 조건은 **$A_t$를 스칼라 곱하기 단위행렬 $a_tI$로 제한**하는 것이다. 여기서 $a_t$는 §5-1의 $\bar A$에 해당하는 스칼라다. Mamba의 대각 행렬 $A$보다 표현력은 조금 줄지만, 이 조건에서는 전이 계수의 곱 $A_i\cdots A_{j+1}$이 스칼라 감쇠 $a_i\cdots a_{j+1}$이 되어 따로 떼어 낼 수 있다. 그래서 전체 시퀀스 변환을 감쇠 mask와 $CB^\top$의 원소별 곱으로 쓸 수 있다.
 
 $$
 Y=\left(L\circ CB^\top\right)X,\qquad
@@ -373,7 +373,7 @@ $$
 
 Mamba나 Mamba-2 층만 쌓은 순수 SSM 언어 모델은 attention 없이 시퀀스를 처리하는 **Transformer 밖의 대안**이다. 이 노트는 그 계열을 따라가지 않고, SSM 층을 Transformer 스택 안에서 attention 대신 쓰는 부품으로만 다룬다.
 
-부품으로서 SSM의 한계는 §3-3과 같은 곳에 있다. Mamba-2 논문은 48층 350M 모델에서 attention 층 수를 바꾸는 실험을 보고한다(원논문 표 2). 순수 Mamba-2(attention 0층)의 perplexity는 8.60, 순수 Transformer++는 8.68로 비슷했지만, attention을 6층만 넣으면 8.26으로 가장 낮았다. 저자들은 전체 층의 약 10%를 attention으로 두는 구성이 가장 좋았다고 정리하고, SSM 층은 일반적인 시퀀스 변환을, attention 층은 **모든 문맥을 상태에 압축하는 대신 이전 토큰을 직접 참조하는 검색**을 맡는다는 가설을 제시한다.[^mamba2]
+부품으로서 SSM의 한계는 §3-3과 같은 곳에 있다. Mamba-2 논문은 48층 350M 모델에서 attention 층 수를 바꾸는 실험을 보고한다(표 2). 순수 Mamba-2(attention 0층)의 perplexity는 8.60, 순수 Transformer++는 8.68로 비슷했지만, attention을 6층만 넣으면 8.26으로 가장 낮았다. 저자들은 전체 층의 약 10%를 attention으로 두는 구성이 가장 좋았다고 정리하고, SSM 층은 일반적인 시퀀스 변환을, attention 층은 **모든 문맥을 상태에 압축하는 대신 이전 토큰을 직접 참조하는 검색**을 맡는다는 가설을 제시한다.[^mamba2]
 
 ## 6. Hybrid 구조
 
@@ -383,7 +383,7 @@ Mamba나 Mamba-2 층만 쌓은 순수 SSM 언어 모델은 attention 없이 시�
 
 첫째는 **softmax attention 안에서의 조합**이다. 대부분의 층은 sliding window(local)로 두고, 몇 층만 전체(global) attention을 계산한다. Gemma 3는 local 층 5개마다 global 층 1개를 두고(첫 층은 local), local window를 1024 토큰으로 짧게 잡았다.[^gemma3] 보고서가 밝힌 동기는 긴 문맥에서 커지는 KV cache다. Global 층만 긴 문맥을 직접 보고, local 층은 가까운 문맥을 싸게 처리한다.
 
-보고서의 ablation(원논문 그림 3·4)에서 local:global 비율을 1:1에서 7:1까지 바꿔도 perplexity 변화는 작았고, window도 크게 줄일 수 있었다. 2B 모델, 32K 문맥 기준으로 global만 쓰는 구성의 memory overhead는 60%, local 층을 섞고 window를 1024로 줄인 구성에서는 15% 미만으로 보고한다(그림 5).[^gemma3] 다만 보고서는 이 비율의 분모를 명시하지 않고, 본문·캡션과 그림 범례의 비율 표기도 서로 어긋난다. 아래 보충처럼 계산해 보면 보고값에 가깝지만 정확히 재현되지는 않는다. Local 층과 global 층은 RoPE(rotary position embedding) base도 다르게 쓰는데(10K와 1M), 이는 [Positional encoding and long context §6-3](/lecture/2026f-advanced-deep-learning/03a-positional-encoding/#6-3-층별-rope-base)에서 다룬다.
+보고서의 ablation(그림 3·4)에서 local:global 비율을 1:1에서 7:1까지 바꿔도 perplexity 변화는 작았고, window도 크게 줄일 수 있었다. 2B 모델, 32K 문맥 기준으로 global만 쓰는 구성의 memory overhead는 60%, local 층을 섞고 window를 1024로 줄인 구성에서는 15% 미만으로 보고한다(그림 5).[^gemma3] 다만 보고서는 이 비율의 분모를 명시하지 않고, 본문·캡션과 그림 범례의 비율 표기도 서로 어긋난다. 아래 보충처럼 계산해 보면 보고값에 가깝지만 정확히 재현되지는 않는다. Local 층과 global 층은 RoPE(rotary position embedding) base도 다르게 쓰는데(10K와 1M), 이는 [Positional encoding and long context §6-3](/lecture/2026f-advanced-deep-learning/03a-positional-encoding/#6-3-층별-rope-base)에서 다룬다.
 
 <Details summary="보충: 그림 5의 15%를 재현해 보기">
 
