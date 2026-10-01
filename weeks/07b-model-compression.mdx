@@ -1,0 +1,263 @@
+---
+title: "Pruning, low-rank, distillation"
+week: 7
+order: 1
+---
+
+[07a](/lecture/2026f-advanced-deep-learning/07a-quantization/)의 양자화는 파라미터 하나를 적은 bits로 저장했다. 이 노트는 **파라미터의 수 자체**를 줄이는 방법을 다룬다. [06b §2-2](/lecture/2026f-advanced-deep-learning/06b-roofline/#2-2-시간의-하한)의 하한 식으로 보면 파라미터를 줄이는 일은 읽을 bytes와 할 FLOPs를 함께 줄인다. 그래서 memory-bound인 decode와 compute-bound인 prefill이 모두 빨라지고, 남는 GPU 메모리는 KV cache에 돌아간다.
+
+방법은 세 갈래다. 학습된 모델에서 덜 중요한 가중치를 지우는 pruning, 가중치 행렬을 작은 행렬의 곱으로 바꾸는 low-rank factorization, 작은 모델을 처음부터 큰 모델의 출력으로 학습하는 distillation이다. 실제로는 이 셋이 섞인다. Pruning으로 줄인 모델의 품질을 distillation으로 되살리는 것이 최근의 작은 모델들을 만드는 표준적인 방법이 되었다. 전체 지도는 Zhu 등의 LLM 압축 서베이[^survey]로 잡는다. §4가 pruning을 비구조적(unstructured), 구조적(structured), 반구조적(semi-structured) 방식으로 나누고, §5가 knowledge distillation을, §6이 low-rank factorization을 다룬다. 이 노트의 §1–3은 서베이 §4에, §4는 §5에, §5는 §6에 대응한다. 마지막 §6에서는 파라미터를 줄이는 다른 길인 MoE(mixture of experts)를 작은 dense 모델과 비교한다.
+
+## 1. Pruning의 출발
+
+### 1-1. 재학습의 벽
+
+가장 오래된 pruning은 크기가 작은 가중치를 0으로 만드는 magnitude pruning이다. 작은 모델에서는 가중치를 지운 뒤 재학습으로 품질을 되살리는 방식이 잘 통했다. 그러나 LLM에서는 이 재학습이 사전학습에 버금가는 비용이 든다. 재학습 없이 크기만 보고 지우면 금방 무너진다. Frantar와 Alistarh는 OPT-175B에 magnitude pruning을 하면 sparsity 10%까지만 정확도를 지키고 30%를 넘으면 완전히 무너진다고 보고했다(원논문 Figure 1).[^sparsegpt] 필요한 것은 재학습 없이 한 번에(one-shot) 지우면서도 품질을 지키는 방법이었다.
+
+### 1-2. One-shot pruning
+
+Frantar와 Alistarh의 SparseGPT는 [07a §3-2](/lecture/2026f-advanced-deep-learning/07a-quantization/#3-2-gptq)의 GPTQ와 같은 생각을 pruning에 썼다.[^sparsegpt] 층 하나에서 어떤 가중치를 지울지(mask)를 고르고, 남은 가중치를 고쳐 층 출력 $WX$의 변화를 최소화한다. 지운 가중치의 몫을 남은 가중치가 메우게 하는 것이다. GPTQ의 Cholesky 분해와 묶음 갱신을 그대로 써서, OPT-175B와 BLOOM-176B를 4.5시간 안에 sparsity 60%까지 지우고도 perplexity가 거의 늘지 않았다. OPT-175B를 50% 지웠을 때 WikiText2 perplexity는 dense 8.35에 대해 8.21이었고, 같은 50%를 magnitude pruning으로 지우면 43,000이었다(원논문 Table 1). 원논문은 큰 모델일수록 더 많이 지울 수 있다는 점도 함께 보였다.
+
+Sun 등의 Wanda는 가중치를 고치는 단계마저 없앴다.[^wanda] 가중치 $W_{ij}$의 중요도를 크기만이 아니라 **그 가중치에 들어오는 입력의 크기**와 함께 본다.
+
+$$
+S_{ij}=\lvert W_{ij}\rvert\cdot\lVert X_j\rVert_2
+$$
+
+$\lVert X_j\rVert_2$는 보정 데이터의 모든 토큰에서 입력 channel $j$의 값을 모은 벡터의 크기다. 출력마다(행마다) 점수가 낮은 가중치를 지우고, 남은 가중치는 그대로 둔다. [07a §2](/lecture/2026f-advanced-deep-learning/07a-quantization/#2-weight-activation-양자화와-outlier)의 activation outlier가 이유다. 큰 activation이 들어오는 channel의 가중치는 크기가 작아도 출력에 큰 영향을 준다.
+
+<Callout type="example">
+가중치 한 행이 $(0.8,\,-0.1,\,0.3,\,0.05)$이고, 각 입력 channel의 크기 $\lVert X_j\rVert_2$가 $(0.5,\,10,\,1,\,9)$라고 하자. 절반을 지운다면 magnitude pruning은 크기가 작은 $-0.1$과 $0.05$를 지운다. Wanda의 점수는 $(0.4,\,1.0,\,0.3,\,0.45)$이므로 오히려 $0.3$과 $0.8$을 지운다. 둘째와 넷째 가중치는 작지만 큰 입력에 곱해지므로 출력에 주는 영향이 더 크다.
+</Callout>
+
+LLaMA-7B를 50% 지웠을 때 perplexity는 dense 5.68, magnitude 17.29, SparseGPT 7.22, Wanda 7.26으로 Wanda가 SparseGPT와 비슷했다. 그러면서 LLaMA-65B의 중요도 계산에 걸린 시간은 SparseGPT의 1,353초에 비해 5.6초였다(원논문 Table 3–4).[^wanda]
+
+## 2. 희소성과 실제 속도
+
+### 2-1. 비구조적 희소성의 한계
+
+가중치의 절반을 0으로 만들었다고 행렬곱이 절반의 시간에 끝나지는 않는다. 0이 행렬 곳곳에 불규칙하게 흩어져 있으면, GPU의 dense 행렬곱 kernel은 그 0들을 그대로 곱한다. 0을 건너뛰려면 위치 정보를 따로 저장하고 불규칙한 메모리 접근을 감당하는 특수한 kernel이 필요하다. 서베이도 비구조적 pruning이 모델을 불규칙하게 만들어, inference를 가속하려면 별도의 처리나 소프트웨어 최적화가 필요하다고 정리한다(서베이 §4.1).[^survey] SparseGPT 논문은 CPU용 희소 연산 엔진에서는 sparsity 40–60%로 1.57–2.16배를 얻었지만,[^sparsegpt] GPU에서 같은 이득을 내기는 어렵다.
+
+<figure>
+<svg viewBox="0 0 600 190" role="img" aria-label="세 가지 pruning 패턴을 4행 8열의 가중치 격자로 비교한다. 진한 칸은 남은 가중치, 흰 칸은 지운 가중치다. 왼쪽 unstructured는 위치와 상관없이 절반을 지워 진한 칸이 불규칙하게 흩어져 있다. 가운데 2:4 semi-structured는 각 행의 연속된 네 칸마다 정확히 두 칸만 남아 있고, 네 칸 묶음의 경계가 점선으로 표시되어 있다. 오른쪽 structured는 왼쪽 네 열만 남고 오른쪽 네 열이 통째로 지워져, 남은 부분이 더 작은 dense 행렬이 된다. 아래에는 각 패턴을 GPU에서 가속하는 방법이 적혀 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <text x="300" y="22" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">같은 50% sparsity의 세 가지 패턴</text>
+  <text x="108" y="48" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">Unstructured</text>
+  <rect x="36" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="54" y="60" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="72" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="90" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="108" y="60" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="126" y="60" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="144" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="162" y="60" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="36" y="78" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="54" y="78" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="72" y="78" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="90" y="78" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="108" y="78" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="126" y="78" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="144" y="78" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="162" y="78" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="36" y="96" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="54" y="96" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="72" y="96" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="90" y="96" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="108" y="96" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="126" y="96" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="144" y="96" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="162" y="96" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="36" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="54" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="72" y="114" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="90" y="114" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="108" y="114" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="126" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="144" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="162" y="114" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <text x="108" y="156" font-size="11" text-anchor="middle" fill="#64748b">위치와 상관없이 50%</text>
+  <text x="300" y="48" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">2:4 semi-structured</text>
+  <rect x="228" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="246" y="60" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="264" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="282" y="60" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="300" y="60" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="318" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="336" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="354" y="60" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="228" y="78" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="246" y="78" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="264" y="78" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="282" y="78" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="300" y="78" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="318" y="78" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="336" y="78" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="354" y="78" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="228" y="96" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="246" y="96" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="264" y="96" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="282" y="96" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="300" y="96" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="318" y="96" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="336" y="96" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="354" y="96" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="228" y="114" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="246" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="264" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="282" y="114" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="300" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="318" y="114" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="336" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="354" y="114" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <line x1="300" y1="54" x2="300" y2="138" stroke="#0f172a" stroke-width="2" stroke-dasharray="4 3"/>
+  <text x="300" y="156" font-size="11" text-anchor="middle" fill="#64748b">원소 4개마다 정확히 2개</text>
+  <text x="492" y="48" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">Structured</text>
+  <rect x="420" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="438" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="456" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="474" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="492" y="60" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="510" y="60" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="528" y="60" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="546" y="60" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="420" y="78" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="438" y="78" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="456" y="78" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="474" y="78" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="492" y="78" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="510" y="78" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="528" y="78" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="546" y="78" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="420" y="96" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="438" y="96" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="456" y="96" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="474" y="96" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="492" y="96" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="510" y="96" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="528" y="96" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="546" y="96" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="420" y="114" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="438" y="114" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="456" y="114" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="474" y="114" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
+  <rect x="492" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="510" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="528" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="546" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="420" y="60" width="72" height="72" fill="none" stroke="#0f172a" stroke-width="2"/>
+  <text x="492" y="156" font-size="11" text-anchor="middle" fill="#64748b">열(channel) 단위로 제거</text>
+  <text x="108" y="176" font-size="11" text-anchor="middle" fill="#0f172a">GPU 가속: 특수 kernel 필요</text>
+  <text x="300" y="176" font-size="11" text-anchor="middle" fill="#0f172a">GPU 가속: Sparse Tensor Core</text>
+  <text x="492" y="176" font-size="11" text-anchor="middle" fill="#0f172a">GPU 가속: 일반 dense kernel</text>
+</svg>
+<figcaption>같은 비율을 지워도 남은 가중치의 배치에 따라 GPU에서 얻는 속도가 다르다. 진한 칸이 남은 가중치다. Zhu 등의 서베이 §4의 분류를 바탕으로 직접 구성했다.</figcaption>
+</figure>
+
+### 2-2. 2:4 semi-structured sparsity
+
+NVIDIA는 Ampere GPU부터 하드웨어가 직접 가속할 수 있는 희소성 패턴을 정했다. 연속된 원소 4개마다 0이 아닌 값을 정확히 2개만 두는 **2:4 sparsity**다. Sparse Tensor Core는 남은 값과 그 위치(원소마다 2 bits)만 읽어, dense 행렬곱의 두 배 연산 속도를 낸다.[^nvidia24] [06b §1-1](/lecture/2026f-advanced-deep-learning/06b-roofline/#1-1-gpu의-두-가지-한계)에서 H100의 사양표가 sparsity 기준으로 1,979 TFLOP/s를 적는다고 했던 그 값이다.
+
+2:4는 비구조적 pruning보다 제약이 강해 품질 손실이 크다. SparseGPT로 OPT-175B를 2:4로 지우면 perplexity가 8.35에서 8.74로 조금 늘었지만, OPT-2.7B에서는 12.47에서 17.18로 크게 늘었다(원논문 Table 1).[^sparsegpt] 속도 이득도 사양표의 두 배에 못 미친다. Wanda 논문에서 2:4 LLaMA-7B의 전체 생성 속도는 1.24배였고,[^wanda] 마스크를 학습하는 MaskLLM은 2:4 LLaMA-2 7B의 perplexity를 다른 방법들의 10 이상에서 6.72(dense 5.12)로 낮추면서, TensorRT-LLM에서 1.36–1.41배의 속도를 보고했다.[^maskllm] 행렬곱 외의 연산은 그대로이고, memory-bound인 작은 batch의 decode에서는 연산 속도보다 읽는 bytes가 시간을 정하는데, 2:4는 위치 정보를 함께 저장하므로 FP16 가중치의 bytes를 절반이 아니라 약 44%만 줄인다.[^nvidia24]
+
+## 3. Structured pruning
+
+### 3-1. 구조 단위로 지우기
+
+속도를 확실히 얻는 방법은 **구조 단위**로 지우는 것이다. Attention head, FFN의 중간 channel, hidden 차원, 층 전체를 통째로 없애면, 남은 모델은 그저 더 작은 dense 모델이라 일반 kernel로 바로 빨라진다. 대신 지우는 단위가 커서 품질 손실이 크고, 서베이의 정리대로 대개 미세조정으로 회복해야 한다(서베이 §4.2).[^survey]
+
+구조 단위로 지울 때는 함께 지워야 하는 가중치를 묶어야 한다. Attention head 하나를 지우면 그 head의 Q·K·V 투영 열과 출력 투영의 행이 함께 사라지고, FFN의 중간 channel 하나를 지우면 위 투영의 열과 아래 투영의 행이 함께 사라진다. Ma 등의 LLM-Pruner는 이런 의존 관계를 자동으로 찾아 묶고, gradient로 묶음의 중요도를 추정해 지운 뒤 LoRA(low-rank adaptation)로 회복했다. 파라미터 20%를 지우고도 원래 성능의 94.97%를 유지했다.[^llmpruner]
+
+층 전체를 지우는 깊이 방향 pruning도 있다. Men 등의 ShortGPT는 입력과 출력이 거의 같은 층, 곧 표현을 별로 바꾸지 않는 층을 찾아 지워 파라미터 25%를 줄이고도 성능의 약 90%를 유지했다.[^shortgpt] Gromov 등은 Llama-2-70B에서 층의 절반 가까이 지울 때까지 질의응답 성능이 크게 떨어지지 않다가 40–50% 근처에서 급격히 무너진다는 것을 보였다.[^gromov] 다만 ShortGPT 논문도 밝히듯, 층의 25%를 지우면 요약 같은 생성 작업의 점수는 거의 0으로 떨어졌다. 선다형 문제의 정확도만으로 깊이 pruning의 품질을 판단하면 위험하다.
+
+### 3-2. Pruning과 distillation의 결합
+
+품질 손실을 되살리는 가장 효과적인 방법은 원래 모델을 teacher로 삼는 distillation이었다. Xia 등의 Sheared-LLaMA는 LLaMA2-7B를 1.3B와 2.7B로 구조적으로 줄인 뒤 50B 토큰을 더 학습해, 같은 크기를 처음부터 학습하는 계산의 3%로 비슷한 품질을 얻었다.[^sheared] NVIDIA의 Minitron은 이 과정을 체계화했다.[^minitron]
+
+<Figure src="https://arxiv.org/html/2407.14679v2/minitron_overview2.png" alt="Minitron의 Figure 2. 1단계는 학습된 LLM으로, embedding, Transformer block(layer norm, attention, layer norm, MLP), 마지막 층으로 이루어져 있다. 2단계는 embedding 차원(Emb1–4), attention head(Head1–4), MLP channel(CH1–4)마다 중요도를 추정한다. 3단계는 그 중요도로 순위를 매기고, 4단계는 순위가 낮은 것을 잘라 Emb4·Emb2, Head3·Head1·Head4, CH1·CH4만 남긴다. 5단계는 원래 모델에서 잘라 낸 모델로 distillation해 품질을 되살린다. 가운데의 초록 화살표는 이 과정을 반복한다는 뜻이다." caption="Minitron의 pruning과 distillation 과정. 차원·head·channel의 중요도를 추정해 순위가 낮은 것을 잘라 내고, 원래 모델을 teacher로 distillation하는 과정을 반복한다." source="Muralidharan et al. (2024), Compact Language Models via Pruning and Knowledge Distillation, Figure 2. CC BY 4.0. 원본 그대로 사용." hero />
+
+Minitron은 Nemotron-4 15B에서 너비(embedding 차원, head, MLP channel)와 깊이를 줄여 8B와 4B 모델을 만들고, 원래 학습 데이터의 3% 미만으로 distillation해 품질을 되살렸다. 모델마다 처음부터 학습할 때보다 학습 토큰이 최대 40배 적게 들었고, 모델 계열 전체로는 계산을 1.8배 아꼈으며, 처음부터 학습한 같은 크기의 모델보다 MMLU 점수가 최대 16% 높았다.[^minitron] 원논문은 실험에서 얻은 지침도 정리했다. 이 규모(15B 이하)에서는 깊이보다 너비를 줄이는 편이 낫고, 회복 학습은 일반 언어 모델링 loss 대신 teacher와의 KL divergence만으로 하는 편이 낫다는 것이다. 다만 너비 pruning이 낫다는 결과는 회복 학습을 한 뒤의 이야기이고, 지운 직후의 상태로 비교하면 그렇지 않았다(원논문 Table 1).
+
+후속 보고서는 같은 방법으로 Llama 3.1 8B를 4B로 줄였다.[^minitron-practice] 원래 학습 데이터에 접근할 수 없을 때는 distillation 데이터로 teacher를 먼저 조금 미세조정하는 teacher correction을 더했고, 94B 토큰으로 회복 학습을 마쳤다. TensorRT-LLM에서 원래 8B보다 깊이를 줄인 모델은 2.7배, 너비를 줄인 모델은 1.8배 빨랐다. 깊이 pruning은 순차로 계산할 층 수 자체를 줄이므로 속도 이득이 크고, 너비 pruning은 품질이 더 좋다는 맞교환이다.
+
+## 4. Distillation과 작은 모델
+
+[5주차 Distillation §1](/lecture/2026f-advanced-deep-learning/05f-distillation/#1-1-지식-증류의-원형)에서 teacher의 확률 분포를 학생이 따라 하도록 학습하는 지식 증류를 보았다. 5주차에서는 추론 능력을 작은 모델에 옮기는 post-training의 도구였다면, 여기서는 **작은 모델을 사전학습하는 방법**으로 쓰인다. 정답 토큰 하나만 맞히는 대신 teacher가 다음 토큰들에 준 확률 전체를 목표로 삼으면, 같은 토큰으로 더 많은 정보를 배운다.
+
+Google의 Gemma 2는 2B와 9B 모델을 다음 토큰 예측 대신 큰 모델의 확률을 목표로 하는 distillation으로 사전학습했다.[^gemma2] 2B 모델을 500B 토큰으로 학습한 비교 실험에서 세 벤치마크의 평균이 처음부터 학습하면 60.3, 7B 모델로부터 distillation하면 67.7이었다(원논문 Table 6). 학습 토큰은 이론적인 compute-optimal 양의 50배를 넘었다. Meta의 Llama 3.2 1B와 3B는 §3-2의 두 방법을 함께 썼다. Llama 3.1 8B를 구조적으로 한 번에 pruning하고, 사전학습 단계에서 Llama 3.1 8B와 70B의 logit을 토큰별 목표로 넣어 distillation으로 성능을 되살렸다.[^llama32]
+
+[06a §1-1](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#1-1-학습-계산과-inference-계산)에서 inference 수요가 크면 작은 모델을 오래 학습하는 편이 전체 비용에서 유리하다고 했다. 큰 모델을 한 번 학습해 두고 거기서 여러 크기의 작은 모델을 pruning과 distillation으로 뽑아내는 방식은, 그 작은 모델들을 각각 처음부터 오래 학습하는 비용까지 줄인다.
+
+## 5. Low-rank factorization
+
+### 5-1. 행렬을 작은 행렬의 곱으로
+
+$d\times n$ 가중치 행렬 $W$를 rank $r$의 두 행렬 $U\in\mathbb{R}^{d\times r}$, $V\in\mathbb{R}^{r\times n}$의 곱으로 근사하면, 파라미터와 행렬곱의 FLOPs가 $dn$에서 $(d+n)r$로 바뀐다. 이득을 보려면 $r<dn/(d+n)$이어야 한다. $4096\times4096$ 행렬이라면 $r<2048$이고, $r=1024$로 두면 파라미터가 절반이 된다. 가장 좋은 rank-$r$ 근사는 SVD(singular value decomposition)로 큰 특이값 $r$개만 남겨 얻는다.
+
+문제는 LLM의 가중치가 낮은 rank에 잘 들어맞지 않는다는 점이다. Yuan 등의 ASVD 실험에서 LLaMA-7B의 파라미터를 SVD로 5%만 줄여도 perplexity가 5.68에서 2,800으로 무너졌다(원논문 Table 1).[^asvd] 가중치의 오차를 최소화하는 SVD가 층 출력의 오차를 최소화하지는 않기 때문이다. [07a §2](/lecture/2026f-advanced-deep-learning/07a-quantization/#2-weight-activation-양자화와-outlier)의 activation outlier가 있으면, 가중치에서 작아 보이는 오차도 큰 activation과 곱해져 출력에서 크게 드러난다.
+
+### 5-2. Activation을 고려한 분해
+
+해법은 pruning과 양자화에서 보았던 것과 같다. 가중치만이 아니라 입력 activation의 통계를 함께 본다. ASVD는 activation의 크기로 만든 대각 행렬 $S$를 가중치에 곱한 $WS$를 SVD로 분해한 뒤 $S^{-1}$을 다시 곱해, 큰 activation이 들어오는 방향을 우선 보존한다. 층마다 민감도가 달라서 rank도 층마다 다르게 정한다. 그 결과 LLaMA-7B의 파라미터를 5%, 10%, 15% 줄였을 때 perplexity가 5.78, 6.09, 6.80으로 유지되었다.[^asvd] Wang 등의 SVD-LLM은 activation을 whitening한 뒤 분해해, 작은 특이값을 잘라 내는 것이 층 출력의 오차를 최소화하도록 만들었다. 20%를 줄인 LLaMA-2-7B의 perplexity가 SVD 18,192, ASVD 10.10에 비해 7.73이었다(원래 5.47).[^svdllm]
+
+그래도 가중치 low-rank는 아직 압축률이 높지 않다. 20% 압축에서도 perplexity가 원래보다 꽤 높다. Low-rank는 가중치보다 KV cache에서 더 성공적이었다. [3주차 §5](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/#5-1-latent-압축과-head별-복원)의 MLA는 key와 value를 저차원 latent로 압축하는 low-rank 구조를 처음부터 학습한 것으로 볼 수 있다.
+
+## 6. 작은 dense 모델과 MoE
+
+파라미터를 줄이는 대신 **토큰마다 쓰는 파라미터**만 줄이는 길도 있다. [3주차 Mixture of Experts §2-4](/lecture/2026f-advanced-deep-learning/03f-mixture-of-experts/#2-4-활성-파라미터와-메모리통신-비용)의 MoE는 전체 파라미터는 크게 두되 토큰마다 일부 expert만 계산한다. OpenAI의 gpt-oss-120b는 전체 116.8B 파라미터 가운데 토큰마다 5.1B만 쓴다.[^gptoss] 토큰당 FLOPs로는 5B급 dense 모델과 비슷하지만, inference의 비용은 그렇게 단순하지 않다.
+
+모든 expert를 메모리에 올려 두어야 하므로 메모리 요구량은 전체 파라미터를 따른다. Decode 스텝에서 읽는 가중치는 그 스텝의 batch가 **하나라도 고른 expert 전부**다. 각 토큰이 $E$개 expert 중 $K$개를 고르게 고른다고 가정하면, 토큰 $t$개가 활성화하는 expert 수의 기댓값은 다음과 같다.[^moesd]
+
+$$
+N(t)=E\left(1-\left(\frac{E-K}{E}\right)^{t}\right)
+$$
+
+<Callout type="example">
+층마다 expert 128개 가운데 8개를 고르는 모델(Qwen3-30B-A3B의 구성)이라면,[^qwen3] batch 1에서는 expert 8개만 읽는다. 토큰이 8개면 약 52개, 32개면 약 112개, 64개면 약 126개로, batch가 수십 개만 되어도 거의 모든 expert를 읽는다. 그때 스텝마다 읽는 가중치는 활성 파라미터가 아니라 전체 파라미터에 가까워진다.
+</Callout>
+
+Gupta 등의 Lynx는 이를 실측으로 보였다.[^lynx] Qwen3-30B-A3B의 decode 지연은 batch 1에서는 Qwen3-4B dense 모델과 비슷했지만, batch가 커지면서 Qwen3-32B dense 모델에 가까워졌다. Batch가 커져 거의 모든 expert를 읽게 된 뒤에는, 06b의 roofline에서 보듯 batch를 더 키워도 읽는 양은 그대로이고 토큰당 계산은 작으므로 처리량은 다시 늘어난다. 정리하면 MoE는 메모리가 넉넉하고 batch를 크게 키울 수 있는 서빙에서 같은 품질을 적은 계산으로 내고, 메모리가 작거나 요청이 적은 환경에서는 같은 활성 파라미터의 작은 dense 모델이 더 다루기 쉽다. MoE를 여러 GPU에 나누어 서빙하는 방법은 [06d §4-2](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/#4-2-moe-서빙과-expert-parallelism)에서 보았다.
+
+## 7. 정리
+
+파라미터를 줄이면 bytes와 FLOPs가 함께 준다. LLM 규모에서는 재학습 없이 지워야 하므로, SparseGPT는 남은 가중치를 고쳐 층 출력을 보존했고, Wanda는 가중치와 입력의 크기를 함께 보는 점수로 가중치 수정 없이 비슷한 품질을 얻었다.
+
+그러나 비구조적으로 흩어진 0은 GPU에서 속도로 이어지기 어렵다. 2:4 sparsity는 하드웨어가 가속하는 대신 품질 손실이 크고, 실측 속도도 1.2–1.4배에 그쳤다. 구조 단위로 head, channel, 층을 지우면 작은 dense 모델이 되어 확실히 빨라지지만 품질 손실이 커서, 원래 모델로부터의 distillation으로 회복한다. Minitron, Llama 3.2, Gemma 2가 보여 주듯 큰 모델을 pruning하고 distillation으로 되살리는 방식, 그리고 처음부터 distillation으로 사전학습하는 방식이 작은 모델을 만드는 주된 방법이 되었다.
+
+Low-rank factorization은 가중치에서는 activation을 고려해도 압축률이 아직 높지 않고, KV cache를 압축하는 MLA 같은 구조에서 더 성공적이었다. MoE는 토큰당 계산을 줄이지만 메모리는 전체 파라미터를 요구하고, batch가 커지면 decode에서 읽는 가중치가 전체에 가까워진다. 어떤 방식이 나은지는 06b의 roofline처럼 배포 환경의 메모리와 batch 크기에 따라 다르다.
+
+[^survey]: Zhu, X., Li, J., Liu, Y., Ma, C., & Wang, W. (2024). A Survey on Model Compression for Large Language Models. *Transactions of the Association for Computational Linguistics*, 12. [arXiv:2308.07633v4](https://arxiv.org/abs/2308.07633v4).
+
+[^sparsegpt]: Frantar, E., & Alistarh, D. (2023). SparseGPT: Massive Language Models Can Be Accurately Pruned in One-Shot. *ICML 2023*. [arXiv:2301.00774](https://arxiv.org/abs/2301.00774).
+
+[^wanda]: Sun, M., Liu, Z., Bair, A., & Kolter, J. Z. (2024). A Simple and Effective Pruning Approach for Large Language Models. *ICLR 2024*. [arXiv:2306.11695](https://arxiv.org/abs/2306.11695).
+
+[^nvidia24]: Mishra, A., Albericio Latorre, J., Pool, J., et al. (2021). Accelerating Sparse Deep Neural Networks. [arXiv:2104.08378](https://arxiv.org/abs/2104.08378).
+
+[^maskllm]: Fang, G., Yin, H., Muralidharan, S., et al. (2024). MaskLLM: Learnable Semi-Structured Sparsity for Large Language Models. *NeurIPS 2024*. [arXiv:2409.17481](https://arxiv.org/abs/2409.17481).
+
+[^llmpruner]: Ma, X., Fang, G., & Wang, X. (2023). LLM-Pruner: On the Structural Pruning of Large Language Models. *NeurIPS 2023*. [arXiv:2305.11627](https://arxiv.org/abs/2305.11627).
+
+[^shortgpt]: Men, X., Xu, M., Zhang, Q., et al. (2025). ShortGPT: Layers in Large Language Models are More Redundant Than You Expect. *Findings of ACL 2025*. [arXiv:2403.03853](https://arxiv.org/abs/2403.03853).
+
+[^gromov]: Gromov, A., Tirumala, K., Shapourian, H., Glorioso, P., & Roberts, D. A. (2025). The Unreasonable Ineffectiveness of the Deeper Layers. *ICLR 2025*. [arXiv:2403.17887](https://arxiv.org/abs/2403.17887).
+
+[^sheared]: Xia, M., Gao, T., Zeng, Z., & Chen, D. (2024). Sheared LLaMA: Accelerating Language Model Pre-training via Structured Pruning. *ICLR 2024*. [arXiv:2310.06694](https://arxiv.org/abs/2310.06694).
+
+[^minitron]: Muralidharan, S., Turuvekere Sreenivas, S., Joshi, R., et al. (2024). Compact Language Models via Pruning and Knowledge Distillation. *NeurIPS 2024*. [arXiv:2407.14679](https://arxiv.org/abs/2407.14679).
+
+[^minitron-practice]: Turuvekere Sreenivas, S., Muralidharan, S., Joshi, R., et al. (2024). LLM Pruning and Distillation in Practice: The Minitron Approach. [arXiv:2408.11796](https://arxiv.org/abs/2408.11796).
+
+[^gemma2]: Gemma Team. (2024). Gemma 2: Improving Open Language Models at a Practical Size. [arXiv:2408.00118](https://arxiv.org/abs/2408.00118).
+
+[^llama32]: Meta. (2024). *Llama 3.2: Revolutionizing edge AI and vision with open, customizable models*. [Meta AI Blog](https://ai.meta.com/blog/llama-3-2-connect-2024-vision-edge-mobile-devices/).
+
+[^asvd]: Yuan, Z., Shang, Y., Song, Y., et al. (2023). ASVD: Activation-aware Singular Value Decomposition for Compressing Large Language Models. [arXiv:2312.05821](https://arxiv.org/abs/2312.05821).
+
+[^svdllm]: Wang, X., Zheng, Y., Wan, Z., & Zhang, M. (2025). SVD-LLM: Truncation-aware Singular Value Decomposition for Large Language Model Compression. *ICLR 2025*. [arXiv:2403.07378](https://arxiv.org/abs/2403.07378).
+
+[^gptoss]: OpenAI. (2025). *gpt-oss-120b & gpt-oss-20b Model Card*. [arXiv:2508.10925](https://arxiv.org/abs/2508.10925).
+
+[^moesd]: Huang, Z., Zhu, L., Zhan, Z., et al. (2025). MoESD: Unveil Speculative Decoding's Potential for Accelerating Sparse MoE. *NeurIPS 2025*. [arXiv:2505.19645](https://arxiv.org/abs/2505.19645).
+
+[^qwen3]: Qwen Team. (2025). *Qwen3 Technical Report*. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
+
+[^lynx]: Gupta, V., Ju, J. H., Sinha, K., et al. (2024). Lynx: Enabling Efficient MoE Inference through Dynamic Batch-Aware Expert Selection. [arXiv:2411.08982](https://arxiv.org/abs/2411.08982).
