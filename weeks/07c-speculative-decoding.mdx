@@ -29,13 +29,13 @@ order: 2
 
 앞에서부터 비교해 처음 어긋나는 곳까지 받아들이고, 어긋난 자리에는 target이 고른 토큰을 쓴다. 이번 forward로 `the mat and` 세 토큰이 확정되었다. 세 추측이 모두 맞았다면 마지막 위치의 출력까지 써서 네 토큰을 얻는다. 추측이 모두 틀려도 첫 위치에서 target의 토큰 하나는 얻으므로, **한 번의 forward가 내는 토큰은 최소 1개, 최대 $\gamma+1$개**다. 결과는 target 혼자 greedy decoding한 것과 같다. 위치 4처럼 버린 계산과 draft의 비용이 대가다.
 
-<Figure src="https://arxiv.org/html/2211.17192v2/figure1.png" alt="Leviathan 등의 Figure 1. 무조건 생성 과제에서 문장 'japan's benchmark nikkei 225 index rose 226.69 points, or 1.5 percent, to 10,989.79 in late morning trading.'이 아홉 줄에 걸쳐 만들어진다. 각 줄은 target 모델의 forward 한 번이다. 초록색은 draft가 제안하고 target이 수락한 토큰, 빨간색 취소선은 거부된 토큰, 파란색은 거부 지점에서 target이 고친 토큰이다. 한 줄에 초록 토큰이 여러 개 붙는 경우가 많다." caption="Speculative decoding의 진행. 한 줄이 target의 forward 한 번이고, 초록은 수락된 draft 토큰, 빨강은 거부된 토큰, 파랑은 target이 고친 토큰이다. 한 번의 forward로 여러 토큰이 확정되는 줄이 많다." source="Leviathan, Kalman, & Matias (2023), Fast Inference from Transformers via Speculative Decoding, Figure 1. CC BY 4.0. 원본 그대로 사용." />
+<Figure src="https://arxiv.org/html/2211.17192v2/figure1.png" alt="Leviathan 등의 Figure 1. 무조건 생성 과제에서 문장 'japan's benchmark nikkei 225 index rose 226.69 points, or 1.5 percent, to 10,989.79 in late morning trading.'이 아홉 줄에 걸쳐 만들어진다. 각 줄은 target 모델의 forward 한 번이다. 초록색은 draft가 제안하고 target이 수락한 토큰, 빨간색 취소선은 거부된 토큰, 파란색은 거부 지점에서 target이 고친 토큰이다. 한 줄에 초록 토큰이 여러 개 붙는 경우가 많다." caption="Speculative decoding의 진행. 한 줄이 target의 forward 한 번이고, 초록은 수락된 draft 토큰, 빨강은 거부된 토큰, 파랑은 target이 고친 토큰이다. 한 번의 forward로 여러 토큰이 확정되는 줄이 많다." source="Leviathan, Kalman, & Matias (2023), Fast Inference from Transformers via Speculative Decoding, Figure 1. CC BY 4.0. 원본 그대로 사용." hero />
 
 ### 1-3. 분포를 보존하는 수락 규칙
 
 Sampling으로 생성할 때는 "argmax가 같은가"로 판정할 수 없다. 같은 문맥에서도 target은 매번 다른 토큰을 뽑을 수 있기 때문이다. Leviathan 등과 Chen 등은 같은 시기에 각자 **speculative sampling**을 제안했다. 출력이 target에서 직접 sampling한 것과 정확히 같은 분포를 따르게 하는 수락 규칙이다.[^leviathan][^chen] 아래에서는 Leviathan의 표기대로 target의 분포를 $p$, draft의 분포를 $q$라 쓴다. Chen 등은 반대로 target을 $q$, draft를 $p$로 쓰므로 두 논문을 함께 읽을 때 주의한다.
 
-Draft가 $q$에서 토큰 $x$를 뽑았다면, target은 그 토큰을 확률 $\min(1,\,p(x)/q(x))$로 받아들인다. Draft가 target보다 그 토큰을 덜 좋아했다면($q(x)\le p(x)$) 항상 받고, 더 좋아했다면 그만큼 깎아서 받는다. 거부되면 그 자리의 토큰을 다음 분포에서 새로 뽑는다(Leviathan §2.3).[^leviathan]
+Draft가 $q$에서 토큰 $x$를 뽑았다면, target은 그 토큰을 확률 $\min(1,\,p(x)/q(x))$로 받아들인다. Draft가 target보다 그 토큰을 덜 좋아했다면($q(x)\le p(x)$) 항상 받고, 더 좋아했다면 그만큼 깎아서 받는다. 거부되면 그 자리의 토큰을 다음 분포에서 새로 뽑는다(원논문 §2.3).[^leviathan]
 
 $$
 p'(x)=\frac{\max\bigl(0,\,p(x)-q(x)\bigr)}{\sum_{x'}\max\bigl(0,\,p(x')-q(x')\bigr)}
@@ -47,17 +47,17 @@ Draft가 덜 뽑아 주는 토큰, 곧 $p$가 $q$보다 큰 부분만 남긴 분
 어휘가 A·B·C 셋뿐이고 target은 $p=(0.5,\,0.3,\,0.2)$, draft는 $q=(0.2,\,0.6,\,0.2)$라고 하자. Draft가 A를 뽑으면($q=0.2\le p=0.5$) 항상 받는다. B를 뽑으면 $0.3/0.6=0.5$의 확률로 받는다. C는 두 분포가 같아 항상 받는다. 그래서 수락으로 나오는 확률은 A $0.2$, B $0.6\times0.5=0.3$, C $0.2$이고, 합인 0.7이 전체 수락 확률이다. 거부될 확률 0.3에서는 $p'$에서 새로 뽑는다. $\max(0,p-q)=(0.3,\,0,\,0)$이므로 $p'$는 A만 남는다. 최종 확률은 A $0.2+0.3=0.5$, B $0.3$, C $0.2$로 $p$와 같다.
 </Callout>
 
-이 예에서 전체 수락 확률 0.7은 $\sum_x\min(p(x),q(x))=0.2+0.3+0.2$와 같다. Leviathan 등은 이 값을 $\alpha$로 두고, draft가 target과 비슷할수록 1에 가깝다는 것을 보였다(Corollary 3.6).[^leviathan] Greedy 검증은 $p$와 $q$가 모두 argmax에 확률 1을 둔 특수한 경우다.
+이 예에서 전체 수락 확률 0.7은 $\sum_x\min(p(x),q(x))=0.2+0.3+0.2$와 같다. Leviathan 등은 이 값을 $\alpha$로 두고, draft가 target과 비슷할수록 1에 가깝다는 것을 보였다(원논문 Corollary 3.6).[^leviathan] Greedy 검증은 $p$와 $q$가 모두 argmax에 확률 1을 둔 특수한 경우다.
 
 ### 1-4. 기대 속도 향상
 
-추측 하나하나가 서로 독립으로 확률 $\alpha$로 수락된다고 단순화하면, target의 forward 한 번이 내는 토큰 수의 기댓값은 다음과 같다(Leviathan Eq. (1)).[^leviathan]
+추측 하나하나가 서로 독립으로 확률 $\alpha$로 수락된다고 단순화하면, target의 forward 한 번이 내는 토큰 수의 기댓값은 다음과 같다(원논문 Eq. (1)).[^leviathan]
 
 $$
 \mathbb{E}[\text{토큰 수}]=\frac{1-\alpha^{\gamma+1}}{1-\alpha}
 $$
 
-$\alpha=0.7$, $\gamma=4$라면 $(1-0.7^5)/0.3\approx2.77$개, $\alpha=0.5$라면 1.94개다. 여기에 draft를 $\gamma$번 돌리는 비용이 붙는다. Draft 한 번이 target 한 번의 $c$배 시간이 든다면 전체 시간의 개선 배수는 $(1-\alpha^{\gamma+1})/\bigl((1-\alpha)(\gamma c+1)\bigr)$이다(Theorem 3.8). $\alpha=0.7$, $\gamma=4$, $c=0.05$라면 $2.77/1.2\approx2.3$배다. 이 식은 target이 $\gamma+1$개 위치를 계산하는 데 위치 하나와 같은 시간이 든다는 가정(§3.3)에 기대는데, §1-1에서 본 memory-bound decode가 그 가정을 뒷받침한다.[^leviathan]
+$\alpha=0.7$, $\gamma=4$라면 $(1-0.7^5)/0.3\approx2.77$개, $\alpha=0.5$라면 1.94개다. 여기에 draft를 $\gamma$번 돌리는 비용이 붙는다. Draft 한 번이 target 한 번의 $c$배 시간이 든다면 전체 시간의 개선 배수는 $(1-\alpha^{\gamma+1})/\bigl((1-\alpha)(\gamma c+1)\bigr)$이다(원논문 Theorem 3.8). $\alpha=0.7$, $\gamma=4$, $c=0.05$라면 $2.77/1.2\approx2.3$배다. 이 식은 target이 $\gamma+1$개 위치를 계산하는 데 위치 하나와 같은 시간이 든다는 가정(원논문 §3.3)에 기대는데, §1-1에서 본 memory-bound decode가 그 가정을 뒷받침한다.[^leviathan]
 
 실제로 Leviathan 등은 T5-XXL(11B)에 T5-small을 draft로 붙여 번역에서 2.6–3.4배, 요약에서 2.3–3.1배 빨라졌다고 보고했다(Table 2, batch 1). Chen 등은 Chinchilla 70B에 4B draft를 붙여 2–2.5배를 보고했다.[^leviathan][^chen] 두 결과 모두 출력 분포는 target 그대로다.
 
@@ -69,13 +69,13 @@ $\alpha=0.7$, $\gamma=4$라면 $(1-0.7^5)/0.3\approx2.77$개, $\alpha=0.5$라면
 
 ### 2-2. Medusa
 
-Cai 등의 Medusa는 target의 마지막 hidden state 위에 작은 decoding head를 여러 개 붙인다.[^medusa] $k$번째 head는 지금 위치보다 $k+1$칸 뒤의 토큰을 예측한다. 기존 LM head는 바로 다음 토큰을, head 1은 그다음을, head 2는 그 다음을 맡는 식이다. Head 하나는 residual 연결이 있는 FFN 한 층이어서 target에 비해 매우 작다.
+Cai 등의 Medusa는 target의 마지막 hidden state 위에 작은 decoding head를 여러 개 붙인다.[^medusa] $k$번째 head는 지금 위치보다 $k+1$칸 뒤의 토큰을 예측한다. 기존 LM head는 바로 다음 토큰을, head 1은 그다음을, head 2는 그 뒤를 맡는 식이다. Head 하나는 residual 연결이 있는 FFN 한 층이어서 target에 비해 매우 작다.
 
 Head마다 후보를 여러 개 두면 추측은 한 줄이 아니라 나무가 된다. Head 1의 상위 2개와 head 2의 상위 3개를 조합하면 후보 경로가 6개다. Medusa는 이 나무 전체를 forward 한 번으로 검증하려고 **tree attention**을 쓴다. 각 후보 토큰이 자기 조상만 볼 수 있도록 attention mask를 만들어, 서로 다른 경로를 한 시퀀스 안에 넣어도 섞이지 않게 한다.
 
 <Figure src="https://arxiv.org/html/2401.10774v3/tree_attention.png" alt="Medusa의 Figure 2. 왼쪽은 후보 나무다. Root에서 head 1의 후보 두 개(It, I)가 나오고, 각각에서 head 2의 후보 세 개(is, 따옴표, the)가 이어져 후보 경로가 모두 6개다. 오른쪽은 8×8 attention mask로, 행은 query, 열은 key다. 각 후보 토큰은 자기 자신과 나무에서의 조상에만 체크 표시가 있어, 예를 들어 It 아래의 is는 It과 자기 자신만 본다." caption="Tree attention. Head 1의 상위 2개와 head 2의 상위 3개로 만든 후보 6개 경로를 한 번에 검증한다. Mask는 각 토큰이 나무에서 자기 조상만 보게 한다." source="Cai et al. (2024), Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads, Figure 2. CC BY 4.0. 원본 그대로 사용." hero />
 
-Target을 고정하고 head만 학습하는 Medusa-1은 검증을 표준 규칙으로 하면 출력이 바뀌지 않으며 2.2배 이상, target과 head를 함께 학습하는 Medusa-2는 2.3–2.8배 빨라졌다(카테고리별 최대 3.6배, 주로 batch 1).[^medusa] Medusa는 sampling 온도가 높을 때 수락률이 떨어지는 문제를 줄이려고 typical acceptance라는 완화된 규칙도 제안했다. 이 규칙은 생성 품질을 비슷하게 유지하는 것을 목표로 하며, §1-3처럼 target 분포를 정확히 보존하지는 않는다.
+Target을 고정하고 head만 학습하는 Medusa-1은 2.2배 이상, target과 head를 함께 학습하는 Medusa-2는 2.3–2.8배 빨라졌다(카테고리별 최대 3.6배, 주로 batch 1).[^medusa] Medusa-1은 target이 그대로이므로 §1-3의 규칙으로 검증하면 출력 분포도 그대로이고, Medusa-2는 target 자체가 함께 바뀐다. Medusa는 sampling 온도가 높을 때 수락률이 떨어지는 문제를 줄이려고 typical acceptance라는 완화된 규칙도 제안했다. 이 규칙은 생성 품질을 비슷하게 유지하는 것을 목표로 하며, §1-3처럼 target 분포를 정확히 보존하지는 않는다.
 
 ### 2-3. EAGLE
 
@@ -99,13 +99,13 @@ Fu 등의 lookahead decoding은 프롬프트 대신 모델 자신의 병렬 추�
 
 <Figure src="https://arxiv.org/html/2404.19737v1/img/main_fig_col.png" alt="Gloeckle 등의 Figure 1. 위 그림은 입력 토큰 1–4가 공유 trunk를 지나 head 4개로 갈라지고, 위치마다 다음 토큰 네 개(예: 입력 1에서 토큰 2, 3, 4, 5)를 예측하는 구조다. 첫 head 외의 예측은 추론 때 버리거나 속도를 최대 3배 높이는 데 쓴다고 적혀 있다. 아래 그림은 모델 크기별 MBPP pass@1 변화로, 0.3B와 0.6B에서는 4-token 예측이 기준보다 낮고, 1.3B부터 높아져 13B에서는 기준 26.0에 4.5점을 더한다." caption="Multi-token prediction의 구조(위)와 모델 크기에 따른 MBPP 성능 변화(아래). 작은 모델에서는 손해이고 큰 모델에서 이득이다." source="Gloeckle et al. (2024), Better & Faster Large Language Models via Multi-token Prediction, Figure 1. CC BY 4.0. 원본 그대로 사용." />
 
-이 목표는 모델 크기에 따라 효과가 달랐다. 작은 모델에서는 기준보다 나빴지만 큰 모델에서는 좋아져, 13B 모델은 같은 조건의 next-token 모델보다 HumanEval에서 12%, MBPP에서 17% 더 많은 문제를 풀었다(§3.1, Figure 3).[^gloeckle] 추론 때는 추가 head를 버리고 일반 모델처럼 쓸 수도 있고, 추가 head를 draft로 써서 self-speculative decoding을 할 수도 있다. 4-token 7B 모델은 코드에서 추측 3개 중 평균 2.5개가 수락되어 3.0배, 텍스트에서 2.7배 빨라졌다(§3.2).
+이 목표는 모델 크기에 따라 효과가 달랐다. 작은 모델에서는 기준보다 나빴지만 큰 모델에서는 좋아져, 13B 모델은 같은 조건의 next-token 모델보다 HumanEval에서 12%, MBPP에서 17% 더 많은 문제를 풀었다(원논문 §3.1, Figure 3).[^gloeckle] 추론 때는 추가 head를 버리고 일반 모델처럼 쓸 수도 있고, 추가 head를 draft로 써서 self-speculative decoding을 할 수도 있다. 4-token 7B 모델은 코드에서 추측 3개 중 평균 2.5개가 수락되어 3.0배, 텍스트에서 2.7배 빨라졌다(원논문 §3.2).
 
 ### 3-2. DeepSeek-V3의 순차 MTP
 
-DeepSeek-V3는 MTP를 조금 다르게 구현했다.[^dsv3] Gloeckle 등의 head들은 같은 hidden state에서 서로 다른 미래 토큰을 독립적으로 예측하지만, DeepSeek-V3는 추가 토큰을 **순서대로** 예측해 각 깊이에서 인과 사슬을 유지한다. $k$번째 MTP 모듈은 앞 깊이의 표현과 실제 다음 토큰의 embedding을 이어 붙여 투영하고, Transformer 층 하나를 거쳐 한 칸 더 뒤의 토큰을 예측한다. Embedding과 출력 head는 본체와 공유한다(§2.2, Eq. (21)–(23)). 보고서는 이 구조가 EAGLE과 비슷하지만 EAGLE의 주목적이 speculative decoding인 반면 자신들은 학습 성능을 높이려고 MTP를 쓴다고 밝힌다.
+DeepSeek-V3는 MTP를 조금 다르게 구현했다.[^dsv3] Gloeckle 등의 head들은 같은 hidden state에서 서로 다른 미래 토큰을 독립적으로 예측하지만, DeepSeek-V3는 추가 토큰을 **순서대로** 예측해 각 깊이에서 인과 사슬을 유지한다. $k$번째 MTP 모듈은 앞 깊이의 표현과 실제 다음 토큰의 embedding을 이어 붙여 투영하고, Transformer 층 하나를 거쳐 한 칸 더 뒤의 토큰을 예측한다. Embedding과 출력 head는 본체와 공유한다(보고서 §2.2, Eq. (21)–(23)). 보고서는 이 구조가 EAGLE과 비슷하지만 EAGLE의 주목적이 speculative decoding인 반면 자신들은 학습 성능을 높이려고 MTP를 쓴다고 밝힌다.
 
-실제 학습에서는 깊이 $D=1$, 곧 한 칸 뒤의 토큰 하나만 더 예측했고, MTP loss의 가중치는 처음 10T 토큰에서 0.3, 나머지 4.8T 토큰에서 0.1이었다(§4.2). 추론 때는 MTP 모듈을 버려도 본체가 그대로 동작하고, 남겨 두면 speculative decoding의 draft가 된다. 그렇게 썼을 때 두 번째 토큰의 수락률은 주제에 따라 85–90%였고, 초당 생성 토큰 수는 1.8배가 되었다(§5.4.3).[^dsv3] 이후 MiMo와 GLM-4.5 등도 MTP 층을 두어 추론 가속에 쓰며,[^mimo][^glm45] vLLM은 이런 모델의 MTP 층을 draft로 쓰는 방식을 지원한다.[^vllm-spec]
+실제 학습에서는 깊이 $D=1$, 곧 한 칸 뒤의 토큰 하나만 더 예측했고, MTP loss의 가중치는 처음 10T 토큰에서 0.3, 나머지 4.8T 토큰에서 0.1이었다(보고서 §4.2). 추론 때는 MTP 모듈을 버려도 본체가 그대로 동작하고, 남겨 두면 speculative decoding의 draft가 된다. 그렇게 썼을 때 두 번째 토큰의 수락률은 주제에 따라 85–90%였고, 초당 생성 토큰 수는 1.8배가 되었다(보고서 §5.4.3).[^dsv3] 이후 MiMo와 GLM-4.5 등도 MTP 층을 두어 추론 가속에 쓰며,[^mimo][^glm45] vLLM은 이런 모델의 MTP 층을 draft로 쓰는 방식을 지원한다.[^vllm-spec]
 
 <Callout type="note">
 EAGLE 계열의 draft와 DeepSeek-V3의 MTP 모듈은 모양이 비슷하다. 둘 다 target의 표현과 다음 토큰의 embedding을 받아 작은 Transformer 층으로 한 칸 뒤를 예측하고, embedding과 출력 head를 target과 공유한다. 차이는 언제 학습하느냐다. EAGLE은 다 만든 target을 고정하고 draft만 따로 학습하고, MTP는 pre-training 동안 본체와 함께 학습한다. MTP 쪽이 추가 학습 없이 draft를 얻는 대신, pre-training의 설계 단계에서 정해 두어야 한다.
@@ -126,12 +126,12 @@ EAGLE 계열의 draft와 DeepSeek-V3의 MTP 모듈은 모양이 비슷하다. �
 | 2,048 | 192 | 20.2 ms (memory) | 20.2 ms (memory) | 2.77 | 1.94 |
 | 256 | 192 | 6.7 ms (memory) | 15.7 ms (compute) | 1.18 | 0.83 |
 
-문맥이 짧고 batch가 큰 마지막 행에서는 한 스텝에 $192\times5=960$개 위치를 계산하느라 스텝이 2.3배 길어진다. 수락률이 0.5라면 얻는 토큰보다 늘어난 시간이 커서 오히려 느려진다. 반면 문맥이 2,048토큰이면 batch 192에서도 KV cache를 읽는 시간이 스텝을 지배해, 위치를 다섯 배로 늘려도 스텝 시간이 그대로다.
+문맥이 짧고 batch가 큰 마지막 행에서는 한 스텝에 $192\times5=960$개 위치를 계산하느라 스텝이 2.3배 길어진다. 수락률이 0.5라면 얻는 토큰보다 늘어난 시간이 커서 오히려 느려진다. 반면 문맥이 2,048토큰이면 batch 192에서도 KV cache를 읽는 시간이 스텝을 지배해, 위치를 다섯 배로 늘려도 스텝 시간이 그대로다. Draft 비용을 무시했으므로 memory-bound인 행의 개선 배수는 §1-4의 기대 토큰 수와 같다.
 </Callout>
 
 측정 결과도 같은 방향이다. EAGLE은 LLaMA2-Chat 70B에서 batch 1의 3.01배가 batch 4에서 2.40배로 줄었다(Table 7).[^eagle] EAGLE-3 논문이 SGLang 팀의 측정으로 실은 결과에서는, H100에서 LLaMA-3.1-8B를 돌릴 때 EAGLE이 batch 24에서 처리량을 0.93배로 오히려 낮춘 반면 EAGLE-3는 batch 64에서도 1.38배를 유지했다(Table 3).[^eagle3] vLLM 팀은 Llama 3 70B에서 요청률이 낮을 때 n-gram 방식으로 최대 2.8배를 얻었지만, 요청률이 높을 때는 1.4–1.8배 느려졌다고 보고했다.[^vllm-blog]
 
-예시의 2,048토큰 행이 보여 주듯 긴 문맥은 예외가 될 수 있다. Sadhukhan 등의 MagicDec은 KV cache 읽기가 스텝을 지배하는 긴 문맥에서는 검증 비용의 비율이 1에 가깝게 유지된다는 점을 짚었다. LLaMA-3.1-8B에서는 문맥이 약 4,000토큰보다 짧으면 batch가 커질수록 이득이 줄지만, 그보다 길면 오히려 batch가 커질수록 이득이 커졌다(Figure 2(c)).[^magicdec]
+예시의 2,048토큰 행이 보여 주듯 긴 문맥은 예외가 될 수 있다. Sadhukhan 등의 MagicDec은 KV cache 읽기가 스텝을 지배하는 긴 문맥에서는 target이 $\gamma+1$개 위치를 검증하는 시간이 위치 하나를 처리하는 시간과 거의 같게 유지된다는 점을 짚었다. LLaMA-3.1-8B에서는 문맥이 약 4,000토큰보다 짧으면 batch가 커질수록 이득이 줄지만, 그보다 길면 오히려 batch가 커질수록 이득이 커졌다(Figure 2(c)).[^magicdec]
 
 ### 4-2. Serving에서의 선택
 
@@ -143,7 +143,7 @@ EAGLE 계열의 draft와 DeepSeek-V3의 MTP 모듈은 모양이 비슷하다. �
 
 Memory-bound인 decode에서는 위치 하나를 계산하든 여러 개를 계산하든 시간이 거의 같다. Speculative decoding은 이 여유를 쓰려고 다음 토큰들을 값싸게 추측하고 target이 forward 한 번으로 검증하게 한다. Greedy에서는 처음 어긋나는 곳까지 받아들이고, sampling에서는 $\min(1,p/q)$로 받아들이고 거부되면 $\max(0,p-q)$에서 다시 뽑아 target의 분포를 정확히 유지한다. 수락률 $\alpha$와 추측 길이 $\gamma$가 forward 한 번에 얻는 토큰 수를 정한다.
 
-추측을 만드는 방법은 별도의 작은 모델에서, target 위에 붙인 head(Medusa)와 feature 수준의 draft(EAGLE 계열)로, 그리고 학습 없이 문맥에서 n-gram을 가져오는 방법으로 갈라졌다. Multi-token prediction은 같은 생각을 pre-training으로 옮겨, 큰 모델의 품질을 높이면서 추론 때 draft로 쓸 head를 함께 만든다. DeepSeek-V3는 순차 MTP 모듈 하나로 두 번째 토큰 85–90%의 수락률을 얻었다.
+추측을 만드는 방법은 별도의 작은 모델에서 출발해 두 갈래로 나뉘었다. 하나는 target 위에 head(Medusa)나 feature 수준의 draft(EAGLE 계열)를 붙여 학습하는 길이고, 다른 하나는 학습 없이 문맥에서 n-gram을 가져오는 길이다. Multi-token prediction은 같은 생각을 pre-training으로 옮겨, 큰 모델의 품질을 높이면서 추론 때 draft로 쓸 head를 함께 만든다. DeepSeek-V3는 순차 MTP 모듈 하나로 두 번째 토큰 85–90%의 수락률을 얻었다.
 
 이득은 공짜가 아니다. 추측은 요청마다 계산할 위치를 늘리므로, batch가 커져 스텝이 compute-bound가 되면 거부될 추측의 계산이 시간을 잡아먹어 이득이 줄거나 손해가 된다. 문맥이 길어 KV cache 읽기가 지배하면 큰 batch에서도 이득이 남는다. 그래서 serving에서는 부하에 따라 추측 길이를 조절하고, 효과는 TPOT와 goodput으로 잰다.
 
