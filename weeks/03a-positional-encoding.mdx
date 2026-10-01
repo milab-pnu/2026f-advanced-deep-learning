@@ -6,9 +6,9 @@ order: 0
 
 Self-attention은 토큰 사이의 관계를 계산하지만, 그 자체로는 토큰의 순서를 알지 못한다. 그렇다면 위치 정보를 어디에, 어떤 형태로 넣어야 할까? 그리고 그렇게 넣은 위치 정보는 학습 때보다 긴 입력에서도 통할까? 이 노트는 두 질문을 한 줄기로 따라간다. 입력에 위치 벡터를 더하는 **절대 위치 인코딩**에서 출발해, attention score에 상대 거리를 반영하는 **상대 위치 인코딩**, query와 key를 회전시키는 **RoPE**(rotary position embedding), 그리고 RoPE를 학습 길이 밖으로 늘리는 **long context 확장**(position interpolation → NTK(neural tangent kernel)-aware·YaRN(Yet another RoPE extensioN) → LongRoPE)으로 이어진다. 마지막으로 이 계보와 별개인 설계 축으로, 위치 신호를 어느 층과 어느 차원에 둘지를 다룬다.
 
-전체 지도는 Zhao 등이 위치 인코딩의 관점에서 길이 외삽(length extrapolation)을 정리한 서베이[^survey]로 잡는다. §3(외삽을 염두에 둔 위치 인코딩)이 이 노트의 §2–4에, §4.1(position interpolation)이 §5-3·5-4에 대응한다. LongRoPE는 서베이 §4.1에서 동적 배율 방법의 예로 인용만 될 뿐 방법은 설명하지 않고, §6의 층별·차원별 배치도 서베이 범위 밖이라 둘 다 원논문과 공식 구현으로 보충했다.
+전체 지도는 Zhao 등이 위치 인코딩의 관점에서 길이 외삽(length extrapolation)을 정리한 서베이[^survey]로 잡는다. 서베이의 §3(외삽을 염두에 둔 위치 인코딩)이 이 노트의 §2–4에, §4.1(position interpolation)이 §5-3·5-4에 대응한다. 서베이는 LongRoPE를 이름만 언급하고, §6의 층별·차원별 배치는 다루지 않으므로 이 둘은 원논문과 공식 구현으로 보충했다.
 
-이번 주 노트 여섯 개는 02a에서 본 [Llama 3 8B 블록](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/)의 부품을 하나씩 바꿔 보는 구성이다. 각 노트는 부품 하나의 발전 계보를 다룬다. 아래 표는 각 노트가 다루는 기법을 본문 순서로 늘어놓은 색인이고, 기법 사이의 계보(앞 방식의 어떤 문제를 풀었는지)는 각 노트 본문에서 밝힌다.
+이번 주 노트 여섯 개는 02a에서 본 [Llama 3 8B 블록](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/#2-2-llama-3-8b-구조)의 부품을 하나씩 바꿔 보는 구성이다. 각 노트는 부품 하나의 발전 계보를 다룬다. 아래 표는 각 노트가 다루는 기법을 본문 순서로 늘어놓은 색인이고, 기법 사이의 계보(앞 방식의 어떤 문제를 풀었는지)는 각 노트 본문에서 밝힌다.
 
 | 노트 | 다루는 블록 부품 | 다루는 기법(본문 순서) |
 |---|---|---|
@@ -19,11 +19,11 @@ Self-attention은 토큰 사이의 관계를 계산하지만, 그 자체로는 �
 | [03e](/lecture/2026f-advanced-deep-learning/03e-normalization/) | Normalization과 attention 출력 | LayerNorm과 RMSNorm, Post-LN과 Pre-LN, QK-Norm과 logit soft-capping, attention sink |
 | [03f](/lecture/2026f-advanced-deep-learning/03f-mixture-of-experts/) | FFN의 조건부 계산 | Dense FFN, sparse MoE(mixture of experts), load balancing, fine-grained·shared expert, MoD(mixture-of-depths)·MoR(mixture-of-recursions) |
 
-이 부품들이 실제 모델에서 어떻게 조합되는지는 Sebastian Raschka의 [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/)에서 볼 수 있다.[^gallery] 모델마다 블록 구성도와 config·기술 보고서 링크를 모아 두었고, 두 모델의 구조를 나란히 비교하는 기능도 있다. 이 노트에서 다루는 RoPE base나 NoPE 층 같은 설정이 모델마다 어떻게 다른지 확인할 때 유용하다. 갤러리의 그림에는 별도의 재사용 라이선스 표시가 없어(페이지에 © 표기) 이 노트에는 링크로만 둔다.
+이 부품들이 실제 모델에서 어떻게 조합되는지는 Sebastian Raschka의 [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/)에서 볼 수 있다.[^gallery] 모델마다 블록 구성도와 config·기술 보고서 링크를 모아 두었고, 두 모델의 구조를 나란히 비교하는 기능도 있다. 이 노트에서 다루는 RoPE base나 NoPE 층 같은 설정이 모델마다 어떻게 다른지 확인할 때 유용하다.
 
 ## 1. 위치 정보의 필요성
 
-[01a](/lecture/2026f-advanced-deep-learning/01a-transformer/)의 §3-1에서 보았듯이, 위치 정보와 mask가 모두 없는 self-attention은 순열 등변(permutation equivariant)이다. 토큰 세 개로 된 입력 `[dog, bites, man]`을 같은 토큰의 재배열인 `[man, bites, dog]`로 바꾸어 보자. `dog`의 출력 벡터는 첫 번째 자리에 있을 때와 세 번째 자리에 있을 때 똑같고, 세 토큰의 출력은 입력과 같은 방식으로 자리만 바뀐다. $q_i^\top k_j$가 두 토큰의 내용만으로 정해지고, 각 토큰이 참조하는 토큰의 집합도 같기 때문이다. 이 상태에서는 누가 물고 누가 물렸는지 구분할 방법이 없다.
+[01a §3-1](/lecture/2026f-advanced-deep-learning/01a-transformer/#3-1-위치-정보)에서 보았듯이, 위치 정보와 mask가 모두 없는 self-attention은 순열 등변(permutation equivariant)이다. 토큰 세 개로 된 입력 `[dog, bites, man]`을 같은 토큰의 재배열인 `[man, bites, dog]`로 바꾸어 보자. `dog`의 출력 벡터는 첫 번째 자리에 있을 때와 세 번째 자리에 있을 때 똑같고, 세 토큰의 출력은 입력과 같은 방식으로 자리만 바뀐다. $q_i^\top k_j$가 두 토큰의 내용만으로 정해지고, 각 토큰이 참조하는 토큰의 집합도 같기 때문이다. 이 상태에서는 누가 물고 누가 물렸는지 구분할 방법이 없다.
 
 Decoder-only 모델은 causal mask를 쓰므로 사정이 조금 다르다. 위치 $i$는 $i$개의 토큰만 볼 수 있으니, mask 자체가 앞뒤의 비대칭을 준다. 예를 들어 첫 토큰(BOS, beginning of sequence)의 value만 1이고 나머지 value가 0이라고 하자. 모든 앞 토큰에 균등하게 attention하면 위치 1의 출력은 1, 위치 2는 1/2, 위치 4는 1/4이 된다. 출력값에서 위치를 거꾸로 읽어 낼 수 있는 셈이다. Kazemnejad 등은 이런 원리로 위치 인코딩이 없는(NoPE, no positional encoding) decoder의 첫 층이 절대 위치를 복원할 수 있고, 이후 층에서 상대 위치도 표현할 수 있음을 보였다.[^nope]
 
@@ -55,7 +55,7 @@ Learned embedding은 데이터에 맞춰 위치 표현을 자유롭게 조정할
 
 절대 위치 방식에는 두 가지 한계가 있다.
 
-첫째, **학습 길이 밖으로 일반화하기 어렵다.** Learned embedding은 아예 값이 없고, sinusoidal은 값을 계산할 수는 있어도 모델이 그 값을 본 적이 없다. Press 등의 측정에서 $L=512$로 학습한 sinusoidal 모델은 평가 길이를 20토큰 늘릴 때까지만 perplexity가 개선되었고, 50토큰을 넘기자 나빠지기 시작했다.[^alibi] 01a에서 언급한 "공식만으로 긴 위치의 값을 만들 수 있다"는 성질이 곧 외삽 성능을 뜻하지는 않는다.
+첫째, **학습 길이 밖으로 일반화하기 어렵다.** Learned embedding은 아예 값이 없고, sinusoidal은 값을 계산할 수는 있어도 모델이 그 값을 본 적이 없다. Press 등의 측정에서 $L=512$로 학습한 sinusoidal 모델은 평가 길이를 20토큰 늘릴 때까지만 perplexity가 개선되었고, 50토큰을 넘기자 나빠지기 시작했다.[^alibi] 01a에서 본 "학습 시 본 것보다 긴 문장에도 공식만으로 값을 만들 수 있다"는 성질이 곧 외삽 성능을 뜻하지는 않는다.
 
 둘째, **상대 거리를 모델이 간접적으로 추론해야 한다.** 행벡터 표기에서 $W=W_QW_K^\top$라 두면, 위치 벡터를 더한 두 토큰의 attention score는 네 항으로 나뉜다.
 
@@ -102,7 +102,7 @@ $$
 | $1/2$ | 0.102 | 0.167 | 0.276 | 0.455 |
 | $1/16$ | 0.227 | 0.242 | 0.257 | 0.274 |
 
-기울기가 큰 head는 가까운 토큰에 집중하고, 작은 head는 넓게 본다. 벌점이 거리에 선형이므로 학습 때보다 먼 거리에서도 "더 멀수록 더 약하게"라는 규칙이 그대로 이어진다. 이것이 ALiBi가 외삽에 유리한 이유다.
+기울기가 큰 head는 가까운 토큰에 집중하고, 작은 head는 넓게 본다. 벌점이 거리에 선형이므로 학습 때보다 먼 거리에서도 "더 멀수록 더 약하게"라는 규칙이 그대로 이어진다. ALiBi가 외삽에 유리하다고 보는 근거가 이것이다.
 
 </Callout>
 
@@ -122,7 +122,7 @@ $$
 \big\langle f_q(x_m, m),\; f_k(x_n, n)\big\rangle = g(x_m, x_n, m-n)
 $$
 
-왼쪽에서는 각 토큰이 자기 위치 $m$ 또는 $n$만 알면 된다. 오른쪽은 결과가 두 위치의 차이에만 의존하라는 요구다. 이 조건을 만족하면 위치 정보는 곱셈 형태로 들어가고, score 식에 거리 항을 따로 둘 필요가 없다. RoFormer는 이 성질 덕분에 score 행렬을 명시적으로 만들지 않는 linear attention에도 상대 위치를 넣을 수 있다고 주장했다. 이는 RoFormer가 내세운 설계상의 장점이며, 앞의 상대 위치 방식들이 가진 한계를 모두 해결했다는 뜻은 아니다.
+왼쪽에서는 각 토큰이 자기 위치 $m$ 또는 $n$만 알면 된다. 오른쪽은 결과가 두 위치의 차이에만 의존하라는 요구다. 이 조건을 만족하면 위치 정보는 곱셈 형태로 들어가고, score 식에 거리 항을 따로 둘 필요가 없다. RoFormer는 이 성질 덕분에 score 행렬을 명시적으로 만들지 않는 linear attention([03c §3](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/#3-linear-attention))에도 상대 위치를 넣을 수 있다는 점을 장점으로 내세웠다.
 
 ## 4. Rotary position embedding (RoPE)
 
@@ -142,7 +142,7 @@ $$
 = q^\top R\big((n-m)\theta\big)\,k
 $$
 
-두 벡터를 같은 방향으로 함께 돌리면 사이각은 변하지 않는다. 따라서 내적에는 두 위치의 차이 $n-m$만 남는다.
+내적에는 두 위치의 차이 $n-m$만 남는다. 기하학적으로 보면, 두 위치를 똑같이 한 칸씩 옮길 때 query와 key가 같은 각도 $\theta$만큼 함께 돌아가므로 사이각이 변하지 않는 것이다.
 
 <Callout type="example">
 
@@ -199,7 +199,7 @@ $b$는 RoPE base다. RoFormer와 초기 모델은 $b=10{,}000$을 썼고, Llama 
 
 적용 위치도 절대 위치 인코딩과 다르다. RoPE는 입력 embedding이 아니라 **각 층의 attention 안에서 query와 key에** 적용하며, value에는 적용하지 않는다. 절대 위치로 회전을 계산하지만 그 효과는 내적 안에서만 상대 위치로 나타난다. 회전을 적용한 뒤의 key는 이후 토큰이 생성되어도 바뀌지 않으므로(RoPE 배율 같은 설정이 생성 도중에 바뀌지 않는다면), KV cache에 그대로 저장할 수 있다.
 
-쌍별 기여를 모두 더하면 RoPE의 attention score는 거리 $m-n$에 대한 $d/2$개 사인파의 가중합이 되고, 각 사인파의 진폭과 위상은 토큰 내용이 정한다. 이 표현은 §5-2에서 외삽 실패를 설명할 때 다시 쓴다. 유도는 아래 접힌 부분에 있다.
+쌍별 기여를 모두 더하면 RoPE의 attention score는 거리 $m-n$에 대한 $d/2$개 사인파의 가중합이 되고, 각 사인파의 진폭과 위상은 토큰 내용이 정한다. 이 표현은 §5-2에서 외삽 실패를 설명할 때 다시 쓴다.
 
 <Details summary="복소수로 본 RoPE">
 
@@ -236,7 +236,7 @@ RoFormer는 $\theta_i=10000^{-2i/d}$일 때 score의 상한이 거리가 멀어�
 
 ## 5. Long context 확장
 
-RoPE도 학습 길이를 크게 넘기면 성능이 무너진다. Press 등의 실험에서 RoPE 모델은 sinusoidal보다 나았지만, 학습 길이보다 100–200토큰 긴 입력까지만 perplexity가 개선되었다.[^alibi] 긴 문맥 모델을 얻는 가장 직접적인 방법은 긴 시퀀스로 추가 학습하는 것이다([02c](/lecture/2026f-advanced-deep-learning/02c-pre-training/) §1의 긴 문맥 학습 단계). 이 절의 방법들은 그 추가 학습을 짧게 끝낼 수 있도록 RoPE 자체를 고친다.
+RoPE도 학습 길이를 넘어서면 오래 버티지 못한다. Press 등의 실험에서 RoPE 모델은 sinusoidal보다 나았지만, 학습 길이보다 100–200토큰 긴 입력까지만 perplexity가 개선되었다.[^alibi] 긴 문맥 모델을 얻는 가장 직접적인 방법은 긴 시퀀스로 추가 학습하는 것이다([02c §1](/lecture/2026f-advanced-deep-learning/02c-pre-training/#1-llm-학습-과정)의 긴 문맥 학습 단계). 이 절의 방법들은 그 추가 학습을 짧게 끝낼 수 있도록 RoPE 자체를 고친다.
 
 ### 5-1. 학습 길이·설정 길이·유효 길이
 
@@ -250,7 +250,7 @@ RoPE도 학습 길이를 크게 넘기면 성능이 무너진다. Press 등의 �
 
 ### 5-2. RoPE의 외삽 실패
 
-그렇다면 RoPE는 왜 학습 길이 밖에서 무너질까? RoPE는 상대 위치 방식이니 거리만 같으면 괜찮을 것 같지만, 학습 길이 $L$을 넘는 입력에서는 $L$보다 먼 **거리** 자체가 처음 등장한다. 문제는 그 거리에서 모든 성분이 낯선 값을 갖는 것은 아니라는 점이다. 파장이 짧은 쌍은 학습 중에 이미 여러 바퀴를 돌아 원 위의 각도를 촘촘히 지나갔으므로, 새 거리에서의 각도도 학습 중에 본 각도와 거의 같다(실제 RoPE의 파장에서는 정수 위치에서 같은 각도가 정확히 반복되지는 않으므로 "거의"다). 낯선 것은 **여러 쌍의 각도가 한꺼번에 만드는 조합**, 그리고 한 바퀴도 돌지 못한 저주파 쌍의 새 각도다.
+그렇다면 RoPE는 왜 학습 길이 밖에서 무너질까? RoPE는 상대 위치 방식이니 거리만 같으면 괜찮을 것 같지만, 학습 길이 $L$을 넘는 입력에서는 $L$보다 먼 **거리** 자체가 처음 등장한다. 다만 그 거리에서 모든 성분이 낯선 값을 갖는 것은 아니다. 파장이 짧은 쌍은 학습 중에 이미 여러 바퀴를 돌아 원 위의 각도를 촘촘히 지나갔으므로, 새 거리에서의 각도도 학습 중에 본 각도와 거의 같다(실제 RoPE의 파장에서는 정수 위치에서 같은 각도가 정확히 반복되지는 않으므로 "거의"다). 낯선 것은 **여러 쌍의 각도가 한꺼번에 만드는 조합**, 그리고 한 바퀴도 돌지 못한 저주파 쌍의 새 각도다.
 
 <Callout type="example">
 
@@ -337,7 +337,7 @@ Chen 등은 보간한 위치의 score가 양쪽 정수 위치의 score를 선형
 
 </Details>
 
-실험에서는 LLaMA 7B–65B를 최대 32,768까지 늘리는 데 1,000 step 이내의 미세조정이면 충분했고, 원래 2,048 범위의 벤치마크에서는 약간의 성능 저하가 있었다. 비교로 PI 없이 긴 시퀀스로 바로 미세조정하자, 10,000 batch 넘게 학습해도 유효 길이가 2,048에서 2,560으로만 늘었다.
+실험에서는 LLaMA 7B–65B를 최대 32,768까지 늘리는 데 1,000 step 이내의 미세조정이면 충분했고, 원래 2,048 범위의 벤치마크에서는 약간의 성능 저하가 있었다. 비교를 위해 PI 없이 긴 시퀀스로 바로 미세조정했을 때는 10,000 batch 넘게 학습해도 유효 길이가 2,048에서 2,560으로만 늘었다.
 
 **남은 문제: 고주파 쌍의 해상도도 함께 떨어진다.** PI는 모든 쌍을 똑같이 $s$배 느리게 만든다. 가장 빠른 $i=0$ 쌍에서 인접 토큰의 각도 차이는 원래 1 rad인데, $s=2$에서는 0.5 rad, $s=8$에서는 0.125 rad로 줄어든다. 저주파 쌍은 원래 이웃 위치를 구분하는 역할이 아니어서 느려져도 영향이 작지만, 가까운 거리를 구분하던 고주파 쌍은 인접 위치의 각도 차이가 그만큼 줄어 해상도를 잃는다. Peng 등은 PI 기반 미세조정이 대체로 $s=8$ 정도를 넘기면 출력 품질이 떨어졌다고 정리했다.[^yarn]
 
@@ -384,7 +384,9 @@ $$
 \operatorname{softmax}\!\left(\frac{q_m^\top k_n}{t\sqrt{d}}\right),\qquad \sqrt{1/t}=0.1\ln s+1
 $$
 
-$s=16$이면 $\sqrt{1/t}\approx1.277$이고, query와 key에 각각 이 값을 곱하면 logit은 $1/t\approx1.63$배가 되어 분포가 날카로워진다. 1.277을 RoPE의 sin·cos 계수에 미리 곱해 두면 query와 key가 회전과 함께 배율을 받으므로 attention 코드를 고칠 필요가 없다(RoPE가 head 차원 전체에 걸릴 때 성립하는 방법이다). 온도식은 LLaMA 7B–65B에서 perplexity가 가장 낮은 값을 $s$별로 찾아 적합한 경험식이다. YaRN은 Llama 2 7B·13B를 64K용 배율로 400 step, 이어서 128K용 배율로 200 step 미세조정해 128K 문맥으로 늘렸다. 논문은 이를 원래 사전학습 데이터의 약 0.1% 미만이라고 표현한다. Step 수·batch·시퀀스 길이로 다시 계산하면 600 × 64 × 64K ≈ 2.5B 토큰이고, Llama 2의 사전학습 2T 토큰에 대해 약 0.13%다. 자릿수는 맞지만 엄밀히 0.1% 미만은 아니다. 방법 간 비교는 LLaMA 7B를 32K로 늘리는 같은 400 step 예산에서 했고, YaRN이 PI·NTK-aware보다 낮은 perplexity를 보였다.
+$s=16$이면 $\sqrt{1/t}\approx1.277$이고, query와 key에 각각 이 값을 곱하면 logit은 $1/t\approx1.63$배가 되어 분포가 날카로워진다. 1.277을 RoPE의 sin·cos 계수에 미리 곱해 두면 query와 key가 회전과 함께 배율을 받으므로 attention 코드를 고칠 필요가 없다(RoPE가 head 차원 전체에 걸릴 때 성립하는 방법이다). 온도식은 LLaMA 7B–65B에서 perplexity가 가장 낮은 값을 $s$별로 찾아 적합한 경험식이다.
+
+YaRN은 Llama 2 7B·13B를 64K용 배율로 400 step, 이어서 128K용 배율로 200 step 미세조정해 128K 문맥으로 늘렸다. 논문은 이를 원래 사전학습 데이터의 약 0.1% 미만이라고 표현한다. Step 수·batch·시퀀스 길이로 다시 계산하면 600 × 64 × 64K ≈ 2.5B 토큰이고, Llama 2의 사전학습 2T 토큰에 대해 약 0.13%다. 자릿수는 맞지만 엄밀히 0.1% 미만은 아니다. 방법 간 비교는 LLaMA 7B를 32K로 늘리는 같은 400 step 예산에서 했고, YaRN이 PI·NTK-aware보다 낮은 perplexity를 보였다.
 
 Llama 3.1의 RoPE 조정도 같은 아이디어의 한 예다. Meta의 공식 구현은 주석에 grid search로 얻었다고 적힌 값을 쓴다. 원래 학습 길이 8,192에 대해 파장이 2,048보다 짧은 쌍(8,192 안에서 네 바퀴 넘게 도는 쌍)은 그대로 두고, 8,192보다 긴 쌍은 파장을 8배로 늘리며, 그 사이는 부드럽게 잇는다.[^llama-code] $r=8192/\lambda$로 바꿔 쓰면 NTK-by-parts에서 $\alpha=1$, $\beta=4$, $s=8$로 둔 것과 같은 형태이고, 공식 구현에 attention temperature는 없다. §5-2 그림의 점선이 그 결과다.
 
@@ -395,13 +397,13 @@ Llama 3.1의 RoPE 조정도 같은 아이디어의 한 예다. Meta의 공식 �
 Ding 등의 LongRoPE는 대역 규칙을 사람이 정하는 대신 **쌍별 배율을 탐색**한다.[^longrope] 탐색하는 비균일성은 두 축이다.
 
 - **차원 축:** 쌍 $i$마다 rescale 배율 $s_i$를 따로 둔다(원논문 표기는 $\lambda_i$지만 §4-2의 파장과 겹쳐 여기서는 $s_i$로 쓴다). 탐색 공간을 줄이기 위해 $s_i\le s_{i+1}$, 즉 고주파 쌍일수록 덜 늘린다는 단조 제약을 건다. NTK 계열의 직관을 제약으로 남긴 것이다.
-- **위치 축:** 처음 $\hat n$개 위치는 보간하지 않고 원래 RoPE를 쓴다. 문서 앞쪽 토큰은 attention을 많이 받으므로 위치 정보를 덜 훼손해야 한다는 가설이다. 이 현상은 [03e](/lecture/2026f-advanced-deep-learning/03e-normalization/)의 attention sink와 연결된다.
+- **위치 축:** 처음 $\hat n$개 위치는 보간하지 않고 원래 RoPE를 쓴다. 문서 앞쪽 토큰은 attention을 많이 받으므로 위치 정보를 덜 훼손해야 한다는 가설이다. 이 현상은 [03e §4](/lecture/2026f-advanced-deep-learning/03e-normalization/#4-attention-sink)의 attention sink와 연결된다.
 
-위치 $n$에서 쌍 $i$의 회전각은 $n<\hat n$이면 $n\theta_i$, 그 외에는 $n\theta_i/s_i$가 된다. $s_i$와 $\hat n$은 목표 길이의 perplexity를 기준으로 진화 탐색(evolutionary search)으로 찾는다. 초기 후보에는 PI·NTK·YaRN의 배율을 넣어, 기존 규칙에서 출발해 개선하도록 했다. 원논문의 사전 분석에서는 PI와 Dynamic-NTK에 앞쪽 토큰을 보간하지 않는 규칙만 더해도 perplexity가 좋아졌고, 가장 좋은 $\hat n$은 목표 길이에 따라 달랐다.
+위치 $n$에서 쌍 $i$의 회전각은 $n<\hat n$이면 $n\theta_i$, 그 외에는 $n\theta_i/s_i$가 된다. $s_i$와 $\hat n$은 목표 길이의 perplexity를 기준으로 진화 탐색(evolutionary search)으로 찾는다. 초기 후보에는 PI·NTK·YaRN의 배율을 넣어, 기존 규칙에서 출발해 개선하도록 했다. 원논문의 사전 분석에서는 PI와 Dynamic-NTK(입력 길이에 맞춰 NTK-aware 배율을 바꾸는 변형)에 앞쪽 토큰을 보간하지 않는 규칙만 더해도 perplexity가 좋아졌고, 가장 좋은 $\hat n$은 목표 길이에 따라 달랐다.
 
 <Callout type="example">
 
-**경계를 가로지르는 쌍.** 어느 저주파 쌍의 각주파수가 $\theta=0.01$ rad, 배율 $s_i=4$, $\hat n=100$이라 하자. 위치 $n<100$은 $0.01n$, 그 외는 $0.01n/4$만큼 돈다. 거리가 2로 같은 세 쌍의 회전각 차이(query에서 key를 뺀 값)는 다음과 같다.
+**경계를 가로지르는 query와 key.** 어느 저주파 쌍의 각주파수가 $\theta=0.01$ rad, 배율 $s_i=4$, $\hat n=100$이라 하자. 위치 $n<100$은 $0.01n$, 그 외는 $0.01n/4$만큼 돈다. 거리가 2로 같은 세 위치 조합에서 회전각 차이(query에서 key를 뺀 값)는 다음과 같다.
 
 | Query·key 위치 | Query 각도 (rad) | Key 각도 (rad) | 차이 (rad) |
 |---|---|---|---|
@@ -409,11 +411,11 @@ Ding 등의 LongRoPE는 대역 규칙을 사람이 정하는 대신 **쌍별 배
 | (201, 199) 둘 다 경계 뒤 | 0.5025 | 0.4975 | 0.005 |
 | (101, 99) 경계를 가로지름 | 0.2525 | 0.99 | −0.7375 |
 
-경계 앞 구간과 뒤 구간은 같은 거리 2에 각각 0.02와 0.005를 주어 축척부터 다르고, 경계를 가로지르는 쌍은 그와도 전혀 다른 값을 갖는다. §4-1의 "내적은 거리에만 의존한다"는 성질이 보간 구간과 비보간 구간 사이에서 깨지고 경계를 가로지를 때 가장 크게 깨지는 셈이고, LongRoPE는 앞쪽 몇 토큰에서 이 불일치를 감수하는 대신 perplexity가 좋아지는 쪽을 택했다.
+경계 앞 구간과 뒤 구간은 같은 거리 2에 각각 0.02와 0.005를 주어 축척부터 다르고, 경계를 가로지르는 조합은 그와도 전혀 다른 값을 갖는다. §4-1의 "내적은 거리에만 의존한다"는 성질이 두 구간 사이에서 깨지고, 경계를 가로지를 때 가장 크게 깨지는 셈이다. LongRoPE는 앞쪽 몇 토큰에서 이 불일치를 감수하는 대신 perplexity가 좋아지는 쪽을 택했다.
 
 </Callout>
 
-탐색 결과는 미세조정 없이 Llama 2의 문맥을 4K에서 32K(8배)까지 늘렸다.
+탐색한 배율만으로, 미세조정 없이 Llama 2의 문맥을 4K에서 32K(8배)까지 늘릴 수 있었다.
 
 <Details summary="LongRoPE의 점진적 확장과 비용">
 
@@ -427,7 +429,9 @@ Ding 등의 LongRoPE는 대역 규칙을 사람이 정하는 대신 **쌍별 배
 
 ### 6-1. 위치 신호를 생략하는 층
 
-§1에서 본 것처럼 causal decoder는 명시적 위치 신호 없이도 위치를 추론할 수 있다. Kazemnejad 등은 추론·수학 합성 과제의 길이 일반화에서 NoPE decoder가 APE(absolute position embedding)·ALiBi·RoPE보다 낫고 T5 bias와는 비슷하거나 조금 나은 결과를 냈으며, 코드 데이터(StarCoder)로 1.3B 규모·1,024 길이를 학습한 추가 실험(부록 F)에서는 RoPE의 perplexity가 학습 길이 밖에서 폭발한 반면 NoPE와 ALiBi는 약 1,800토큰(학습 길이의 약 1.8배)까지 일반화했다고 요약한다.[^nope] 다만 같은 부록의 표 3을 보면 두 모델 모두 문맥 1,600부터 perplexity가 뚜렷이 오르고, ALiBi는 일부 길이 구간에서 1,200–1,400부터 조금씩 오른다. 예컨대 문서 길이 2,500–2,750 구간에서 문맥을 1,400에서 1,800토큰으로 늘리면 NoPE는 2.37에서 25.7로, ALiBi는 2.58에서 12.4로 오른다. 저자 요약보다 표가 보수적이다. 동기는 **학습 길이 밖의 위치에서 낯선 위치 신호를 아예 만들지 않는 것**이다.
+§1에서 본 것처럼 causal decoder는 명시적 위치 신호 없이도 위치를 추론할 수 있다. 그렇다면 일부 층, 혹은 모든 층에서 위치 신호를 빼면 어떨까? 동기는 **학습 길이 밖의 위치에서 낯선 위치 신호를 아예 만들지 않는 것**이다.
+
+Kazemnejad 등은 추론·수학 합성 과제의 길이 일반화에서 NoPE decoder가 APE(absolute position embedding)·ALiBi·RoPE보다 낫고, T5 bias와는 비슷하거나 조금 나은 결과를 냈다고 보고했다. 코드 데이터(StarCoder)로 1.3B 모델을 1,024 길이로 학습한 추가 실험(부록 F)에서는 RoPE의 perplexity가 학습 길이 밖에서 폭발한 반면, NoPE와 ALiBi는 약 1,800토큰(학습 길이의 약 1.8배)까지 일반화했다고 요약한다.[^nope] 다만 같은 부록의 표 3은 저자 요약보다 보수적으로 읽힌다. 두 모델 모두 문맥 1,600부터 perplexity가 뚜렷이 오르고, ALiBi는 일부 길이 구간에서 1,200–1,400부터 조금씩 오른다. 예컨대 문서 길이 2,500–2,750 구간에서 문맥을 1,400에서 1,800토큰으로 늘리면 NoPE는 2.37에서 25.7로, ALiBi는 2.58에서 12.4로 오른다.
 
 Meta는 Llama 4에서 위치 인코딩이 없는 attention 층을 RoPE 층 사이에 끼워 넣고, 긴 문맥에서 추론 시점에 attention temperature를 조정하는 구조를 iRoPE(interleaved RoPE)라 불렀다.[^llama4-blog] 공식 구현에서는 `nope_layer_interval`마다 한 층이 NoPE 층이 된다.[^llama4-code] RoPE 층은 일정 길이(chunk) 단위의 지역 attention을, NoPE 층은 전체 문맥 attention을 맡는다. Hugging Face 구현의 기본값은 네 층마다 NoPE 한 층, chunk 8,192다.[^llama4-hf] 온도 조정은 NoPE 층의 query에만 곱한다.
 
@@ -439,7 +443,7 @@ $$
 
 ### 6-2. Head 차원 일부에만 적용하는 RoPE
 
-Partial RoPE는 head 차원 중 일부 쌍에만 회전을 적용하고, 나머지 성분은 위치와 무관하게 내용만으로 내적한다. GPT-NeoX-20B는 GPT-J를 따라 차원의 25%에만 RoPE를 적용했고, 초기 실험에서 이것이 성능과 계산 효율의 균형이 가장 좋았다고 밝혔다.[^neox] 이때 각주파수의 분모에 들어가는 차원도 달라진다. 회전을 받는 차원을 $d_{\mathrm{rot}}$이라 하면, Hugging Face Transformers 구현은 §4-1의 식에서 $d$ 대신 $d_{\mathrm{rot}}$을 써서 $\theta_i=b^{-2i/d_{\mathrm{rot}}}$($i=0,\ldots,d_{\mathrm{rot}}/2-1$)로 계산한다.[^hf-rope] 전체 head 차원으로 만든 주파수 목록에서 일부를 고르는 것이 아니라, 줄어든 차원 안에서 가장 빠른 주파수부터 가장 느린 주파수까지를 다시 촘촘히 나누는 셈이다. 예를 들어 GLM-4.5는 head 차원 128 중 64차원($d_{\mathrm{rot}}=64$, 32개 쌍)에만 RoPE를 적용한다(§7 표). 거리와 무관하게 내용만 비교하는 성분을 남겨 두는 효과로도 해석할 수 있지만, 이 해석을 직접 검증한 결과는 모델마다 다르므로 일반화하지 않는다. [03b](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/)의 MLA는 다른 이유(KV 압축과 RoPE의 충돌)로 RoPE를 받는 작은 key 성분을 따로 두는데, 결과적으로 head 차원의 일부에만 RoPE가 걸린다는 점은 같다.
+Partial RoPE는 head 차원 중 일부 쌍에만 회전을 적용하고, 나머지 성분은 위치와 무관하게 내용만으로 내적한다. GPT-NeoX-20B는 GPT-J를 따라 차원의 25%에만 RoPE를 적용했고, 초기 실험에서 이것이 성능과 계산 효율의 균형이 가장 좋았다고 밝혔다.[^neox] 이때 각주파수의 분모에 들어가는 차원도 달라진다. 회전을 받는 차원을 $d_{\mathrm{rot}}$이라 하면, Hugging Face Transformers 구현은 §4-1의 식에서 $d$ 대신 $d_{\mathrm{rot}}$을 써서 $\theta_i=b^{-2i/d_{\mathrm{rot}}}$($i=0,\ldots,d_{\mathrm{rot}}/2-1$)로 계산한다.[^hf-rope] 전체 head 차원으로 만든 주파수 목록에서 일부를 고르는 것이 아니라, 가장 빠른 주파수부터 가장 느린 주파수까지의 거의 같은 범위를 더 적은 쌍으로 다시 나누는 셈이다. 예를 들어 GLM-4.5는 head 차원 128 중 64차원($d_{\mathrm{rot}}=64$, 32개 쌍)에만 RoPE를 적용한다(§7 표). 거리와 무관하게 내용만 비교하는 성분을 남겨 두는 효과로 해석할 수도 있다. 다만 이 해석을 직접 검증한 결과는 모델마다 달라 일반화하기 어렵다. [03b §5-4](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/#5-4-decoupled-rope-key)의 MLA는 다른 이유(KV 압축과 RoPE의 충돌)로 RoPE를 받는 작은 key 성분을 따로 두는데, 결과적으로 head 차원의 일부에만 RoPE가 걸린다는 점은 같다.
 
 ### 6-3. 층별 RoPE base
 
@@ -447,7 +451,7 @@ Gemma 3는 1,024토큰 sliding window를 쓰는 지역 attention 층 다섯 개�
 
 ## 7. 최근 모델의 선택
 
-아래 값은 공식 기술 보고서, 공식 구현, 모델 카드·config에서 확인한 위치 관련 설정이다. Attention 층의 종류(sliding window·linear attention 등)와 그 비율은 03c에서 다룬다.
+아래 값은 공식 기술 보고서, 공식 구현, 모델 카드·config에서 확인한 위치 관련 설정이다. Attention 층의 종류(sliding window·linear attention 등)와 그 비율은 [03c §7](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/#7-최근-모델의-선택)에서 다룬다.
 
 | 모델 | 위치 신호의 배치 | RoPE base | 학습 → 지원 길이 | 확장 방법 |
 |---|---|---|---|---|

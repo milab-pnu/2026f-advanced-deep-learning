@@ -6,7 +6,9 @@ order: 5
 
 Dense Transformer는 모든 토큰에 같은 가중치와 같은 계산량을 쓴다. 모델을 키우면 파라미터와 토큰당 계산이 함께 늘어난다. 이 노트는 **토큰마다 네트워크의 일부만 계산하는 conditional computation**을 두 방향에서 살펴본다. 폭 방향에서는 FFN(feed-forward network)을 여러 expert로 나누고 router가 일부만 고르는 MoE(mixture of experts)가 있다. 깊이 방향에서는 토큰마다 통과하는 블록 수를 바꾸는 Mixture-of-Depths와 Mixture-of-Recursions가 있다.
 
-MoE 부분의 전체 지도는 Cai 등의 서베이[^moe-survey]가 좋다. arXiv v3 기준으로 2절에서 dense MoE와 sparse MoE의 식과 load balancing loss를, 4.1–4.2절에서 gating 함수와 expert 설계(shared expert 포함)를, 5절에서 계산·통신·저장의 시스템 문제를 정리한다. 이 노트의 계보는 **dense FFN → sparse MoE와 top-k routing**에서 출발해 두 갈래로 나뉜다. 한 갈래는 routing이 낳은 expert 쏠림과 처리 용량 초과를 다루는 load balancing과 capacity(§3)이고, 다른 갈래는 expert 하나가 여러 종류의 지식을 섞어 담거나 expert끼리 같은 지식을 중복해 배우는 문제를 다루는 expert 구성의 설계(§4)다. 깊이 방향의 두 기법은 동기가 달라 §5에서 따로 다루며, 이 부분은 서베이 대신 원논문을 따른다.
+MoE 부분의 전체 지도는 Cai 등의 서베이[^moe-survey]가 좋다. arXiv v3 기준으로 2절에서 dense MoE와 sparse MoE의 식과 load balancing loss를, 4.1–4.2절에서 gating 함수와 expert 설계(shared expert 포함)를, 5절에서 계산·통신·저장의 시스템 문제를 정리한다.
+
+이 노트의 계보는 **dense FFN → sparse MoE와 top-k routing**에서 출발해 두 갈래로 나뉜다. 한 갈래는 routing이 낳은 expert 쏠림과 처리 용량 초과를 다루는 load balancing과 capacity(§3)이고, 다른 갈래는 expert 하나가 여러 종류의 지식을 섞어 담거나 expert끼리 같은 지식을 중복해 배우는 문제를 다루는 expert 구성의 설계(§4)다. 깊이 방향의 두 기법은 동기가 달라 §5에서 따로 다루며, 이 부분은 서베이 대신 원논문을 따른다.
 
 ## 1. Dense FFN의 확장 한계
 
@@ -84,7 +86,7 @@ $k=1$에는 조건이 하나 붙는다. 예제의 4단계처럼 선택된 확률
 
 둘째 행에서 GShard는 top-2 확률을 합으로 나누고,[^gshard] Mixtral은 top-2 logit에 softmax를 적용한다.[^mixtral] 두 방법은 수학적으로 같다. Shazeer 등(2017)은 여기에 top-k 전에 학습 가능한 크기의 Gaussian noise를 더해 여러 expert가 선택될 기회를 주었다(noisy top-k gating).[^shazeer]
 
-셋째 행의 DeepSeek-V3는 expert마다 독립적인 sigmoid 점수 $s_i=\sigma(z_i)$를 쓰고, 선택된 점수끼리 정규화한다. 예제에서는 $\sigma(2)\approx0.881$, $\sigma(1)\approx0.731$이므로 $0.881/(0.881+0.731)\approx0.546$이다.[^dsv3] 공식 구현은 여기에 한 단계를 더한다. 정규화한 gate에 config의 `routed_scaling_factor` 2.5를 곱하므로, 실제 gate는 약 $0.546\times2.5\approx1.366$, $0.454\times2.5\approx1.134$가 된다(반올림 전 값으로 계산한 결과이며, 표시된 세 자리 값으로 곱하면 마지막 자리가 1 다르다).[^dsv3-config] 표의 셋째 행은 함수 모양만 비교하려고 이 배율을 생략한 값이다.
+셋째 행의 DeepSeek-V3는 expert마다 독립적인 sigmoid 점수 $s_i=\sigma(z_i)$를 쓰고, 선택된 점수끼리 정규화한다. 예제에서는 $\sigma(2)\approx0.881$, $\sigma(1)\approx0.731$이므로 $0.881/(0.881+0.731)\approx0.546$이다.[^dsv3] 공식 구현은 여기에 한 단계를 더한다. 정규화한 gate에 config의 `routed_scaling_factor` 2.5를 곱하므로, 실제 gate는 약 1.37과 1.13이 된다.[^dsv3-config] 표의 셋째 행은 함수 모양만 비교하려고 이 배율을 생략한 값이다.
 
 실제로는 이 모델들의 router가 서로 다른 값을 학습하므로, 같은 logit을 넣은 이 표는 함수의 차이만 보여 준다.
 
@@ -136,9 +138,7 @@ f_i=\frac{1}{T}\sum_{x\in\mathcal{B}}\mathbb{1}\{\arg\max_j p_j(x)=i\},\qquad
 P_i=\frac{1}{T}\sum_{x\in\mathcal{B}}p_i(x)
 $$
 
-$f_i$는 expert $i$로 실제로 보내진 토큰의 비율이고, $P_i$는 router가 expert $i$에 준 확률의 평균이다. $f_i$는 argmax로 정해지므로 미분할 수 없고, gradient는 $P_i$를 통해서만 흐른다. 모든 expert가 토큰과 확률을 $1/N$씩 받는 균등 배정에서 $N\sum f_iP_i$는 1이다. 이 식은 토큰을 많이 받은 expert일수록 그 expert의 확률을 더 강하게 낮추는 학습 신호를 준다(아래 예제).
-
-다만 균등 배정이 이 식의 전역 최솟값은 아니다. Expert 2개, 토큰 4개에서 세 토큰의 확률이 $(0.51,0.49)$, 한 토큰이 $(0.01,0.99)$이면 $f=(0.75,0.25)$, $P=(0.385,0.615)$이고 $2\sum f_iP_i=0.885$로 1보다 작다. 배정은 한쪽에 몰렸지만 확률 평균이 반대쪽으로 기울어 값이 작아진 경우다. GShard도 같은 발상으로, 미분할 수 없는 배정 비율 대신 평균 gate 값을 곱한 보조 손실을 쓴다.[^gshard]
+$f_i$는 expert $i$로 실제로 보내진 토큰의 비율이고, $P_i$는 router가 expert $i$에 준 확률의 평균이다. $f_i$는 argmax로 정해지므로 미분할 수 없고, gradient는 $P_i$를 통해서만 흐른다. 모든 expert가 토큰과 확률을 $1/N$씩 받는 균등 배정에서 $N\sum f_iP_i$는 1이다. 이 식은 토큰을 많이 받은 expert일수록 그 expert의 확률을 더 강하게 낮추는 학습 신호를 준다. GShard도 같은 발상으로, 미분할 수 없는 배정 비율 대신 평균 gate 값을 곱한 보조 손실을 쓴다.[^gshard]
 
 <Callout type="example">
 
@@ -151,6 +151,8 @@ Expert 4개, top-1, 토큰 8개인 batch를 생각하자(교육용 가상 값). 
 완전히 균형을 이루면 1.0이다. $P_i$에 대한 기울기는 $N f_i=[2.5,\,0.5,\,0.5,\,0.5]$로, 토큰을 많이 받은 expert 1의 확률을 가장 강하게 낮춘다. Softmax 확률은 합이 1이므로 그만큼 다른 expert의 확률이 올라간다.
 
 </Callout>
+
+다만 균등 배정이 이 식의 전역 최솟값은 아니다. Expert 2개, 토큰 4개에서 세 토큰의 확률이 $(0.51,0.49)$, 한 토큰이 $(0.01,0.99)$이면 $f=(0.75,0.25)$, $P=(0.385,0.615)$이고 $2\sum f_iP_i=0.885$로 1보다 작다. 배정은 한쪽에 몰렸지만 확률 평균이 반대쪽으로 기울어 값이 작아진 경우다.
 
 위 식은 top-1인 Switch Transformer의 것이다. Top-k 모델에서는 $f_i$를 argmax 하나가 아니라 선택된 $k$개 배정 전체로 센다. 이때 무엇으로 나누는지가 구현마다 다르다. Hugging Face Transformers의 Qwen3-MoE 구현은 배정 수를 토큰 수 $T$로 나누므로 $f_i$의 합이 $k$가 되고, 균등 배정에서 손실 값도 1이 아니라 $k$다.[^qwen3-config] DeepSeek-V3가 함께 쓰는 보조 손실(§3-3)은 배정 수를 $kT$로 나누고 expert 수를 곱해, 균등 배정에서 값이 1이 되도록 맞춘다.[^dsv3] 그래서 같은 $\alpha$라도 구현에 따라 실제 손실의 세기가 다르고, 논문의 계수를 옮겨 쓸 때는 정규화 관례를 함께 확인해야 한다.
 
@@ -317,7 +319,7 @@ Expert-choice routing은 인과성(causality)을 지키지 않는다. 한 토큰
 
 ### 5-3. Mixture-of-Recursions
 
-Bae 등(2025)의 **Mixture-of-Recursions**(MoR)은 두 갈래를 합친다. 가중치는 recursive Transformer처럼 공유하고, 토큰마다 공유 블록을 몇 번 반복할지는 MoD처럼 router가 정한다.[^mor] [Decoder-only LLM overview](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/#2-2-llama-3-8b-구조)의 곁주에서 "블록 가중치 공유와 토큰별 반복 횟수 선택을 결합한 변형"이라고 소개한 모델이다. Universal Transformer도 위치별로 반복을 멈추는 halting 장치를 두었지만,[^ut] MoR 논문은 기존의 동적 반복 방식들이 별도 학습 절차나 배포 효율의 제약 때문에 실제로는 고정 횟수 반복으로 돌아가는 경우가 많았다고 설명한다.[^mor]
+Bae 등(2025)의 **Mixture-of-Recursions**(MoR)은 두 갈래를 합친다. 가중치는 recursive Transformer처럼 공유하고, 토큰마다 공유 블록을 몇 번 반복할지는 MoD처럼 router가 정한다.[^mor] [Decoder-only LLM overview §2-2](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/#2-2-llama-3-8b-구조)의 곁주에서 "블록 가중치 공유와 토큰별 반복 횟수 선택을 결합한 변형"이라고 소개한 모델이다. Universal Transformer도 위치별로 반복을 멈추는 halting 장치를 두었지만,[^ut] MoR 논문은 기존의 동적 반복 방식들이 별도 학습 절차나 배포 효율의 제약 때문에 실제로는 고정 횟수 반복으로 돌아가는 경우가 많았다고 설명한다.[^mor]
 
 **Routing.** 방식은 두 가지다. **Expert-choice**에서는 반복 단계마다 router가 계속 진행할 상위 $k$개 토큰을 고르고, 이번 단계에서 선택된 토큰만 다음 단계의 후보가 된다. 단계 $r$마다 남길 토큰 수 $k_r$을 미리 정해 두므로 balancing은 필요 없다. 논문 설정에서 $k_r$은 전체 토큰의 $1,\,2/3,\,1/3$로 단계가 깊어질수록 줄어든다. 다만 상위 $k_r$개를 고르려면 시퀀스 전체를 봐야 하므로 §5-1에서 본 non-causal 문제가 그대로 따라온다. MoR도 추론용 보조 router나 보조 손실로 이를 우회하며, 논문의 비교에서는 보조 손실 쪽이 나았다. **Token-choice**에서는 첫 단계에서 토큰마다 반복 횟수를 한 번에 정한다. 미래 토큰을 보지 않아 인과성 문제는 없지만, 반복 횟수별 토큰 수가 고르지 않을 수 있어 §3의 balancing loss나 bias 방식이 필요하다. 논문은 balancing loss 쪽이 더 안정적이었다고 보고한다.[^mor]
 
@@ -343,7 +345,7 @@ $N_r=3$에서 균형 잡힌 token-choice로 토큰의 1/3씩이 1·2·3회 반�
 
 </Details>
 
-논문은 vanilla 기준 135M–1.7B 규모에서(embedding을 뺀 MoR의 고유 파라미터는 $N_r=3$ 기준 vanilla의 40% 안팎, Appendix D의 Table 9 기준 37–42%), 같은 학습 FLOPs 조건으로 MoR이 기존 recursive 모델보다 일관되게 낮은 validation loss를 보였다고 보고한다. Vanilla와의 비교는 규모에 따라 다르다. 135M에서는 vanilla보다 나빴고, 360M 이상에서는 여러 계산 예산에서 vanilla와 같거나 나았지만 모든 설정에서 그런 것은 아니다(Table 9에는 360M과 730M의 가장 큰 예산 16.5e18에서 vanilla에 뒤진 값도 있다). 처리량 개선은 360M 기준 모델로 측정했다.[^mor] 저자들도 계산 자원의 제약으로 실험이 1.7B까지였다고 밝히며, 3B 이상으로의 확장을 후속 과제로 둔다. MoD와 MoR은 §6의 공개 모델 중 채택한 것이 없는 연구 단계의 기법이다. 폭 방향의 MoE가 토큰마다 쓰는 가중치를 바꾸듯, 깊이 방향에서 토큰마다 계산량을 바꾸는 연구로 읽는 것이 적절하다.
+실험은 vanilla 기준 135M–1.7B 규모에서 같은 학습 FLOPs로 비교했다. $N_r=3$일 때 embedding을 뺀 MoR의 고유 파라미터는 vanilla의 40% 안팎이다(원논문 Appendix D의 Table 9 기준 37–42%). 이 조건에서 MoR은 기존 recursive 모델보다 일관되게 낮은 validation loss를 보였다. Vanilla와의 비교는 규모에 따라 다르다. 135M에서는 vanilla보다 나빴고, 360M 이상에서는 여러 계산 예산에서 vanilla와 같거나 나았지만 모든 설정에서 그런 것은 아니다. Table 9에는 360M과 730M의 가장 큰 예산(16.5e18)에서 vanilla에 뒤진 값도 있다. 처리량 개선은 360M 기준 모델로 측정했다.[^mor] 저자들도 계산 자원의 제약으로 실험이 1.7B까지였다고 밝히며, 3B 이상으로의 확장을 후속 과제로 둔다. MoD와 MoR은 §6의 공개 모델 중 채택한 것이 없는 연구 단계의 기법이다. 폭 방향의 MoE가 토큰마다 쓰는 가중치를 바꾸듯, 깊이 방향에서 토큰마다 계산량을 바꾸는 연구로 읽는 것이 적절하다.
 
 ## 6. 최근 모델의 선택
 

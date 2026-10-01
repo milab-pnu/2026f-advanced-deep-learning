@@ -4,15 +4,17 @@ week: 3
 order: 1
 ---
 
-LLM(large language model)이 토큰을 하나씩 생성할 때마다 과거 위치의 key와 value가 층마다 쌓인다. 이 저장소가 KV(key-value) cache이고, 문맥이 길어질수록 메모리를 차지할 뿐 아니라 토큰을 하나 만들 때마다 전부 다시 읽어야 한다. 이 노트는 **토큰 하나가 캐시에 남기는 원소 수를 어떻게 줄여 왔는가**를 따라간다. KV cache 관리 기법을 정리한 Li 등의 서베이[^kvsurvey]는 §II-B에서 KV cache의 동작과 복잡도를, §V-A1에서 head를 묶는 MQA·GQA를, §V-B1에서 attention 구조를 바꾼 MLA를 다룬다(절 번호는 arXiv v3 HTML판 기준이며, 같은 판의 PDF에서는 2.2, 5.1.1, 5.2.1이다). 이 노트는 그 세 범위를 원논문 수준으로 풀어 쓴다.
+LLM(large language model)이 토큰을 하나씩 생성할 때마다 과거 위치의 key와 value가 층마다 쌓인다. 이 저장소가 KV(key-value) cache이고, 문맥이 길어질수록 메모리를 차지할 뿐 아니라 토큰을 하나 만들 때마다 전부 다시 읽어야 한다. 이 노트는 **토큰 하나가 캐시에 남기는 원소 수를 어떻게 줄여 왔는가**를 따라간다.
 
-계보는 다음과 같다. Multi-head attention(MHA)은 query head마다 K/V head를 따로 두어 캐시가 head 수에 비례한다. Multi-query attention(MQA)은 모든 query head가 K/V head 하나를 공유해 캐시를 크게 줄였지만 품질 저하와 학습 불안정이 보고되었다. Grouped-query attention(GQA)은 그 중간을 택했지만, 캐시는 여전히 K/V head 수와 head 차원에 비례한다. Multi-head latent attention(MLA)은 head를 공유하는 대신 토큰마다 작은 latent 벡터 하나를 저장하고 head별 K/V를 그로부터 복원한다. 같은 서베이가 다루는 시퀀스 축의 절감(sliding window, 토큰 선택)은 [Efficient attention 노트](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/)의 별도 계보이고, 정밀도를 낮추는 양자화와 서빙 시스템은 6주차에서 다룬다.
+계보는 다음과 같다. Multi-head attention(MHA)은 query head마다 K/V head를 따로 두어 캐시가 head 수에 비례한다. Multi-query attention(MQA)은 모든 query head가 K/V head 하나를 공유해 캐시를 크게 줄였지만 품질 저하와 학습 불안정이 보고되었다. Grouped-query attention(GQA)은 그 중간을 택했지만, 캐시는 여전히 K/V head 수와 head 차원에 비례한다. Multi-head latent attention(MLA)은 head를 공유하는 대신 토큰마다 작은 latent 벡터 하나를 저장하고 head별 K/V를 그로부터 복원한다.
+
+KV cache 관리 기법을 정리한 Li 등의 서베이[^kvsurvey]는 §II-B에서 KV cache의 동작과 복잡도를, §V-A1에서 head를 묶는 MQA·GQA를, §V-B1에서 attention 구조를 바꾼 MLA를 다룬다(절 번호는 arXiv v3 HTML판 기준이며, 같은 판의 PDF에서는 2.2, 5.1.1, 5.2.1이다). 이 노트는 그 세 범위를 원논문 수준으로 풀어 쓴다. 같은 서베이가 다루는 다른 절감 중 sliding window처럼 참조 위치 자체를 줄이는 방법은 [Efficient attention 노트](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/)의 별도 계보이고, 정밀도를 낮추는 양자화와 서빙 시스템은 6주차에서 다룬다.
 
 ## 1. KV cache
 
 ### 1-1. Decode 단계에서 재사용되는 key와 value
 
-[2주차 Decoder-only LLM 노트](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/)에서 본 것처럼, 생성은 마지막 위치의 출력으로 다음 토큰을 고르고 그 토큰을 입력 뒤에 붙이는 반복이다. 프롬프트 전체를 한 번에 처리하는 첫 단계를 **prefill**, 이후 토큰을 하나씩 만드는 단계를 **decode**라고 부른다. 두 단계의 비용 차이와 서빙 방식은 6주차에서 다루고, 여기서는 decode 한 스텝에서 무엇이 재사용되는지만 본다. 층 하나, head $i$ 하나만 보면 위치 $t$의 attention 출력은 다음과 같다.
+[2주차 Decoder-only LLM 노트](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/#3-3-생성-루프-autoregressive-generation)에서 본 것처럼, 생성은 마지막 위치의 출력으로 다음 토큰을 고르고 그 토큰을 입력 뒤에 붙이는 반복이다. 프롬프트 전체를 한 번에 처리하는 첫 단계를 **prefill**, 이후 토큰을 하나씩 만드는 단계를 **decode**라고 부른다. 두 단계의 비용 차이와 서빙 방식은 6주차에서 다루고, 여기서는 decode 한 스텝에서 무엇이 재사용되는지만 본다. 층 하나, head $i$ 하나만 보면 위치 $t$의 attention 출력은 다음과 같다.
 
 $$
 q_{t,i}=x_tW^Q_i,\qquad k_{j,i}=x_jW^K_i,\qquad v_{j,i}=x_jW^V_i
@@ -24,7 +26,7 @@ $$
 
 $x_j$는 그 층에 들어오는 위치 $j$의 벡터이고 $d_h$는 head 차원이다. Causal mask 때문에 $x_j$는 위치 $j$까지의 토큰에만 의존한다. 그래서 새 토큰이 뒤에 붙어도 과거 위치의 $x_j$, 따라서 $k_{j,i}$와 $v_{j,i}$는 바뀌지 않는다. 한 번 계산한 과거 K/V를 층마다 보관해 두면 다시 계산할 필요가 없다.
 
-Query는 사정이 다르다. 다음 토큰을 고르는 데 필요한 것은 새 위치 $t$의 출력 $o_{t,i}$뿐이고, 그 계산에는 $q_{t,i}$ 하나만 쓰인다. 과거 위치의 출력은 이미 계산했고, 그 위치가 다음 층에 주는 영향도 다음 층의 캐시된 K/V로 전달된다. 따라서 decode 한 스텝에서는 **새 토큰의 Q·K·V만 계산하고, 새 K/V를 캐시 뒤에 붙인 뒤, 새 Q로 캐시 전체를 읽는다.**[^kvsurvey] Llama 3 공식 구현도 RoPE(rotary position embedding)를 적용한 key를 캐시 텐서 `cache_k`에 쓰고, 지금까지의 구간 전체를 읽어 attention을 계산한다.[^llama-impl] 위치 회전은 [Positional encoding 노트](/lecture/2026f-advanced-deep-learning/03a-positional-encoding/)에서 다룬다. 여기서는 회전이 위치에 따라 정해지므로 회전된 key를 그대로 저장해도 된다는 점만 기억해 두자. 이 성질은 §5에서 다시 문제가 된다.
+Query는 사정이 다르다. 다음 토큰을 고르는 데 필요한 것은 새 위치 $t$의 출력 $o_{t,i}$뿐이고, 그 계산에는 $q_{t,i}$ 하나만 쓰인다. 과거 위치의 출력은 이미 계산했고, 그 위치가 다음 층에 주는 영향도 다음 층의 캐시된 K/V로 전달된다. 따라서 decode 한 스텝에서는 **새 토큰의 Q·K·V만 계산하고, 새 K/V를 캐시 뒤에 붙인 뒤, 새 Q로 캐시 전체를 읽는다.**[^kvsurvey] Llama 3 공식 구현도 RoPE(rotary position embedding)를 적용한 key를 캐시 텐서 `cache_k`에 쓰고, 지금까지의 구간 전체를 읽어 attention을 계산한다.[^llama-impl] [Positional encoding 노트 §4-1](/lecture/2026f-advanced-deep-learning/03a-positional-encoding/#4-1-회전과-내적)에서 보았듯 회전 각도는 그 key의 위치만으로 정해지므로, 회전된 key를 그대로 저장해도 된다. 이 성질은 §5에서 다시 문제가 된다.
 
 ### 1-2. 캐시 텐서의 모양과 원소 수
 
@@ -77,7 +79,7 @@ $n\le d$ 가정 덕분에 전체 연산량을 투영 계산의 $\Theta(bnd^2)$�
 
 </Details>
 
-그렇다면 head 수나 head 차원을 그냥 줄이면 어떨까? Shazeer는 파라미터 수를 맞춘 비교 실험에서 $h$나 $d_k, d_v$를 줄인 모델이 MQA보다 품질이 더 떨어졌다고 보고했다. WMT14 영어-독일어 번역에서 기준 MHA의 dev BLEU(bilingual evaluation understudy, 높을수록 좋다)가 26.7일 때, head 1개 모델은 25.8, head 8개에 $d_k=d_v=16$인 모델은 25.8이었다(원논문 Table 1). Query 쪽 표현력은 유지하고 K/V만 줄이는 설계가 필요했다.
+그렇다면 head 수나 head 차원을 그냥 줄이면 어떨까? Shazeer는 파라미터 수를 맞춘 비교 실험에서 $h$나 $d_k, d_v$를 줄인 모델이 MQA보다 품질이 더 떨어졌다고 보고했다. WMT14 영어-독일어 번역에서 기준 MHA의 dev BLEU(bilingual evaluation understudy, 높을수록 좋다)가 26.7일 때, head 1개 모델과 head 8개에 $d_k=d_v=16$인 모델은 모두 25.8이었고, 다음 절의 MQA는 26.5였다(원논문 Table 1). Query 쪽 표현력은 유지하고 K/V만 줄이는 설계가 필요했다.
 
 ## 3. Multi-query attention
 
@@ -99,7 +101,7 @@ Head 공유는 **캐시 크기와 캐시를 읽어 오는 메모리 전송량**�
 
 ### 3-2. 품질 저하와 학습 불안정
 
-MQA의 문제는 두 가지로 보고되었다. 하나는 **품질 저하**다. 모든 head가 같은 K/V를 봐야 하므로 head마다 다른 관계를 표현할 여지가 줄어든다. Shazeer의 실험에서는 차이가 작았지만, 이후 Ainslie 등은 MQA가 품질 저하를 일으킬 수 있고 추론용 모델을 따로 학습하는 것 자체가 부담이라고 지적했다.[^gqa]
+MQA의 문제는 두 가지로 보고되었다. 하나는 **품질 저하**다. 모든 head가 같은 K/V를 봐야 하므로 head마다 다른 관계를 표현할 여지가 줄어든다. Shazeer의 실험에서는 차이가 작았지만, 이후 Ainslie 등은 MQA가 품질 저하를 일으킬 수 있고, 빠른 추론만을 위해 MQA 모델을 따로 학습하는 것도 부담이라고 지적했다.[^gqa]
 
 다른 하나는 **학습 불안정**이다. Ainslie 등이 T5-Large를 MQA로 처음부터 학습했을 때 pre-training에서 loss spike가 잦았고, 긴 입력 과제에 fine-tuning하자 바로 발산했다(원논문 Appendix A).[^gqa] 서베이도 MQA를 품질 저하와 학습 불안정을 함께 부를 수 있는 급진적인 선택으로 정리한다.[^kvsurvey]
 
@@ -179,7 +181,9 @@ $$
 k_{t,i}^C=W_i^{UK}c_t^{KV},\qquad v_{t,i}^C=W_i^{UV}c_t^{KV}\qquad(i=1,\dots,n_h)
 $$
 
-$W^{DKV}\in\mathbb{R}^{d_c\times d}$는 down-projection, $W_i^{UK},W_i^{UV}\in\mathbb{R}^{d_h\times d_c}$는 head $i$의 up-projection이다. 추론 때 캐시하는 것은 $c_t^{KV}$ 하나이므로 토큰당 캐시는 $d_cL$개 원소다. 캐시는 head 수와 무관하게 정해지는데, 복원된 K/V는 head마다 다르다. 같은 K/V를 여러 head가 그대로 나눠 쓰는 GQA와 다른 점이다. 대신 제약도 있다. 모든 head의 K/V가 같은 $d_c$차원 벡터에서 선형으로 복원되므로, 한 토큰의 모든 head의 key와 value를 이어 붙인 $2n_hd_h$차원 벡터는 많아야 $d_c$차원인 고정된 부분공간 안에 놓인다. latent를 정규화한 뒤 캐시하는 실제 구현에서도 이 제약은 그대로다. DeepSeek-V2·V3 설정($d_h=128$, $d_c=512$)에서는 head 하나의 key만 보면 $W_i^{UK}$의 rank가 $d_h$일 때 $d_h$차원 전체를 쓸 수 있어 차원상의 제약은 없지만, head들이 서로 독립인 K/V를 가질 수는 없다.
+$W^{DKV}\in\mathbb{R}^{d_c\times d}$는 down-projection, $W_i^{UK},W_i^{UV}\in\mathbb{R}^{d_h\times d_c}$는 head $i$의 up-projection이다. 추론 때 캐시하는 것은 $c_t^{KV}$ 하나이므로 토큰당 캐시는 $d_cL$개 원소다. 캐시는 head 수와 무관하게 정해지는데, 복원된 K/V는 head마다 다르다. 같은 K/V를 여러 head가 그대로 나눠 쓰는 GQA와 다른 점이다.
+
+대신 제약도 있다. 모든 head의 K/V가 같은 $d_c$차원 벡터에서 선형으로 복원되므로, 한 토큰의 모든 head의 key와 value를 이어 붙인 $2n_hd_h$차원 벡터는 많아야 $d_c$차원인 고정된 부분공간 안에 놓인다. Latent를 정규화한 뒤 캐시하는 실제 구현에서도 이 제약은 그대로다. DeepSeek-V2·V3 설정($d_h=128$, $d_c=512$)에서는 head 하나의 key만 보면 $W_i^{UK}$의 rank가 $d_h$일 때 $d_h$차원 전체를 쓸 수 있어 차원상의 제약은 없지만, head들이 서로 독립인 K/V를 가질 수는 없다.
 
 작은 예로 $n_h=2$, $d_h=4$, $d_c=3$이라고 하자(교육용 값이라 $d_h>d_c$이고, 이 경우에는 head 하나의 key도 rank가 3 이하로 제한된다). MHA라면 토큰 하나가 층마다 K 2개·V 2개, 즉 $2\cdot2\cdot4=16$개 원소를 남긴다. MLA는 길이 3인 $c_t^{KV}$만 남긴다. Attention을 계산할 때 $W_1^{UK}$($4\times3$)로 head 1의 길이 4짜리 key를, $W_2^{UK}$로 head 2의 key를 만들고, value도 같은 방식으로 만든다.
 
@@ -305,13 +309,13 @@ $$
 
 여덟 비교 중 small 모델의 C-Eval 하나를 빼면 MLA가 높았고, 캐시는 MHA의 14%(small)와 4%(large)였다. 저자들은 이를 근거로 MLA가 MHA보다 성능이 좋으면서 캐시가 훨씬 작다고 주장한다. 다만 이 근거는 한 연구팀의 두 규모, 네 벤치마크에 대한 결과다. 저차원 latent가 일반적으로 MHA와 같은 품질을 보장한다는 뜻으로 넓혀 읽지 않는다.
 
-**연산량**도 따로 보아야 한다. DeepSeek-V3 추론 코드의 absorb 모드에서 캐시 텐서에는 head 축이 없고, query head 128개가 같은 latent와 RoPE key를 읽는다.[^dsv3-code] 캐시를 읽는 방식은 MQA와 닮았고, 그만큼 head당 계산은 늘어난다. 원논문의 차원으로 계산해 보면 head 하나가 캐시된 토큰 하나에 대해 하는 곱셈-덧셈은, K/V를 복원해 계산하는 방식에서는 점수 192번과 가중합 128번이지만 흡수한 방식에서는 점수 576번과 가중합 512번이다. 흡수는 캐시와 읽는 양을 줄이는 대신 head당 attention 계산을 늘리는 선택이다. §3의 주의와 마찬가지로 KV cache의 크기와 attention 연산량은 별개의 축이다.
+**연산량**도 따로 보아야 한다. DeepSeek-V3 추론 코드의 absorb 모드에서 캐시 텐서에는 head 축이 없고, query head 128개가 같은 latent와 RoPE key를 읽는다.[^dsv3-code] 캐시를 읽는 방식은 MQA와 닮았고, 그만큼 head당 계산은 늘어난다. 원논문의 차원으로 계산해 보면 head 하나가 캐시된 토큰 하나에 대해 하는 곱셈-덧셈은, K/V를 복원해 계산하는 방식에서는 점수 192번과 가중합 128번이지만 흡수한 방식에서는 점수 576번과 가중합 512번이다. 흡수는 캐시와 읽는 양을 줄이는 대신 head당 attention 계산을 늘리는 선택이다. §3-1의 주의와 마찬가지로 KV cache의 크기와 attention 연산량은 별개의 축이다.
 
 <Video src="https://www.youtube.com/watch?v=0VLAoVGf_74" caption="Welch Labs, How DeepSeek Rewrote the Transformer [MLA] (2025). Attention과 KV cache에서 출발해 MLA의 latent 압축을 시각적으로 설명한다." />
 
 ## 6. 최근 모델의 선택
 
-공개 보고서와 공식 config로 확인한 KV 표현과 head 구성만 모았다. Head 수와 층 수는 보고서 값이고, 나머지는 공식 config 값이다. GQA 모델의 $d_h$는 Qwen3는 config의 `head_dim`, Llama 3는 참조 구현이 모델 폭을 head 수로 나눈 값(4096/32)이고, MLA 모델의 $d_h$는 `qk_nope_head_dim`과 `v_head_dim`(둘 다 128), latent와 RoPE key 차원은 `kv_lora_rank`와 `qk_rope_head_dim`이다. 토큰당 원소 수는 표의 값으로 이 노트에서 계산했으며, 모든 층이 전체 문맥을 캐시한다고 본 값이다.
+공개 보고서와 공식 config로 확인한 KV 표현과 head 구성만 모았다.<Sidenote>Head 수와 층 수는 보고서 값이고, 나머지는 공식 config 값이다. GQA 모델의 $d_h$는 Qwen3가 config의 `head_dim`, Llama 3가 참조 구현이 모델 폭을 head 수로 나눈 값(4096/32)이다. MLA 모델의 $d_h$는 `qk_nope_head_dim`과 `v_head_dim`(둘 다 128), latent와 RoPE key 차원은 `kv_lora_rank`와 `qk_rope_head_dim`이다.</Sidenote> 토큰당 원소 수는 표의 값으로 이 노트에서 계산했으며, 모든 층이 전체 문맥을 캐시한다고 본 값이다.
 
 | 모델 | Attention | Query head | K/V head 또는 캐시 벡터 | $d_h$ | 층 수 | 토큰당 캐시 원소 |
 |---|---|---|---|---|---|---|

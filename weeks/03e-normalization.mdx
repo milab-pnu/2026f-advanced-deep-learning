@@ -14,13 +14,13 @@ Transformer 블록을 수십 층 쌓으면 벡터의 크기(scale)가 층을 지
 | Residual 대비 위치 | 덧셈 경로의 어디에 두는가 | Post-LN, Pre-LN, Peri-LN(sandwich) | §2 |
 | 적용 대상 | 무엇을 정규화하는가 | 블록 입력·출력, query와 key(QK-Norm) | §3 |
 
-§4의 attention sink는 정규화 기법이 아니라 softmax attention에서 관측되는 현상이다. 특정 위치에 attention weight가 몰리는 현상으로, §3과 같은 softmax 식에서 출발한다. 대응책의 일부(gated attention)는 최근 모델의 구조 선택으로 이어진다.
+§4의 attention sink는 정규화 기법이 아니라, 특정 위치에 attention weight가 몰리는 현상이다. 그래도 이 노트에서 함께 다루는 데는 이유가 있다. §3과 같은 softmax 식에서 출발하고, 원인 가설 하나가 §2의 정규화 위치와 이어진다. 대응책의 일부(gated attention)는 최근 모델의 구조 선택으로도 이어진다.
 
 ## 1. LayerNorm과 RMSNorm
 
 ### 1-1. LayerNorm의 두 단계
 
-[1주차 Transformer 노트](/lecture/2026f-advanced-deep-learning/01a-transformer/)에서 본 LayerNorm은 토큰 벡터 하나의 $d$개 성분에 대해 평균과 표준편차를 구한다.[^layernorm] Batch 축을 쓰지 않으므로 batch 크기나 시퀀스 길이와 무관하다.
+[1주차 Transformer 노트 §3-4](/lecture/2026f-advanced-deep-learning/01a-transformer/#3-4-residual과-정규화)에서 본 LayerNorm은 토큰 벡터 하나의 $d$개 성분에 대해 평균과 표준편차를 구한다.[^layernorm] Batch 축을 쓰지 않으므로 batch 크기나 시퀀스 길이와 무관하다.
 
 $$
 \mu=\frac{1}{d}\sum_{i=1}^{d}x_i,\qquad
@@ -47,7 +47,7 @@ $$
 
 원논문은 RMSNorm이 번역·독해·이미지-캡션 검색 등의 과제에서 LayerNorm과 비슷한 성능을 내면서 실행 시간을 줄였다고 보고한다. 초록은 감소 폭을 7–64%로 요약하지만, 64%는 RMS를 입력 성분의 일부로만 추정하는 변형(pRMSNorm)의 값이다(원논문 Table 8). 원논문의 실행 시간 표들에서 일반 RMSNorm은 모델과 구현에 따라 LayerNorm 대비 약 7–41% 빨랐다.
 
-재중심화가 불필요하다는 주장은 원논문의 실험 범위에서 뒷받침된 가설이다. 이후 대형 모델의 선택도 이 방향과 맞는다. ViT-22B는 query·key·value(QKV) 투영의 bias를 없애고 모든 LayerNorm에서 bias와 중심화를 뺀 변경을 함께 적용해, 품질 저하 없이 가속기 활용률을 3% 높였다고 보고한다(두 변경의 효과를 따로 나누지는 않았다).[^vit22b] OLMo 2는 비모수(nonparametric) LayerNorm과 RMSNorm 사이에 차이가 없었다는 ablation을 보고했다.[^olmo2] [02a](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/)의 기준 모델 Llama 3 8B도 RMSNorm을 쓴다.
+재중심화가 불필요하다는 주장은 원논문의 실험 범위에서 뒷받침된 가설이다. 이후 대형 모델의 선택도 이 방향과 맞는다. ViT-22B는 query·key·value(QKV) 투영의 bias를 없애고 모든 LayerNorm에서 bias와 중심화를 뺀 변경을 함께 적용해, 품질 저하 없이 가속기 활용률을 3% 높였다고 보고한다(두 변경의 효과를 따로 나누지는 않았다).[^vit22b] OLMo 2는 비모수(nonparametric) LayerNorm과 RMSNorm 사이에 차이가 없었다는 ablation을 보고했다.[^olmo2] [02a](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/#2-2-llama-3-8b-구조)의 기준 모델 Llama 3 8B도 RMSNorm을 쓴다.
 
 ### 1-3. 네 성분 벡터의 비교
 
@@ -174,7 +174,9 @@ Post-LN은 residual 경로 자체를 매번 정규화한다. Pre-LN과 Peri-LN�
 
 ### 2-2. Post-LN의 기울기와 warmup
 
-원 Transformer는 Post-LN이었고, 학습 초기에 learning rate를 0 근처에서 서서히 올리는 warmup이 사실상 필수였다. Xiong 등은 그 이유를 초기화 시점의 기울기 크기로 설명했다.[^xiong] 단일 head, Xavier 초기화, query·key 투영을 영행렬로 두어 attention이 균등한 초기 상태라는 단순화 아래 평균장 이론(mean field theory)으로 분석하면, 마지막 FFN 가중치의 기울기 노름 상한이 Post-LN에서는 $O(d\sqrt{\ln d})$로 층 수 $L$과 무관하고, Pre-LN에서는 $O\big(d\sqrt{\ln d/L}\big)$로 층이 깊을수록 작아진다(원논문 Theorem 1). 이 정리는 hidden state 노름이 기대값 근처에 모인다는 추가 가정을 두고, 높은 확률로 성립하는 Frobenius 노름 상한을 준다. 상한이 이렇게 갈린다는 것만으로 실제 기울기의 크기가 정해지는 것은 아니다. 같은 논문 §3.4의 실험은 encoder와 decoder가 각각 6층부터 14층까지인 모델에서 초기화 시점의 마지막 FFN 기울기 노름을 직접 재서, Post-LN은 층 수와 무관하게 비슷하고 Pre-LN은 깊어질수록 줄어드는 것을 확인했다.
+원 Transformer는 Post-LN이었고, 학습 초기에 learning rate를 0 근처에서 서서히 올리는 warmup이 사실상 필수였다. Xiong 등은 그 이유를 초기화 시점의 기울기 크기로 설명했다.[^xiong] 단일 head, Xavier 초기화, query·key 투영을 영행렬로 두어 attention이 균등한 초기 상태라는 단순화 아래 평균장 이론(mean field theory)으로 분석하면, 마지막 FFN 가중치의 기울기 노름 상한이 Post-LN에서는 $O(d\sqrt{\ln d})$로 층 수 $L$과 무관하고, Pre-LN에서는 $O\big(d\sqrt{\ln d/L}\big)$로 층이 깊을수록 작아진다(원논문 Theorem 1). 이 정리는 hidden state 노름이 기대값 근처에 모인다는 추가 가정을 두고, 높은 확률로 성립하는 Frobenius 노름 상한을 준다.
+
+상한이 이렇게 갈린다는 것만으로 실제 기울기의 크기가 정해지는 것은 아니다. 같은 논문 §3.4의 실험은 encoder와 decoder가 각각 6층부터 14층까지인 모델에서 초기화 시점의 마지막 FFN 기울기 노름을 직접 재서, Post-LN은 층 수와 무관하게 비슷하고 Pre-LN은 깊어질수록 줄어드는 것을 확인했다.
 
 이 차이의 뼈대는 정규화 연산의 미분이다. LayerNorm의 Jacobian은 입력에서 평균을 뺀 벡터 $y=x-\mu\mathbf{1}$의 노름에 반비례해 대략 $\sqrt{d}/\lVert y\rVert$ 크기로 움직인다(원논문 Lemma 3과 부록 D). 모든 성분에 같은 값을 더해 $\lVert x\rVert$만 키우는 이동은 §1-3의 셋째 행처럼 Jacobian을 바꾸지 않는다. 초기화 시점의 분석에서는 성분의 평균이 0 근처이므로 $\lVert y\rVert$와 $\lVert x\rVert$가 같은 규모로 움직인다. Post-LN은 residual 경로를 매 층 정규화하므로 이 노름이 층 수와 무관하게 일정하고, 마지막 층의 기울기 상한도 Jacobian을 그대로 통과해 $L$과 무관하게 같은 규모에 머문다. Pre-LN은 residual 경로를 정규화하지 않아 노름의 제곱이 $\ell$에 비례해 자라므로(§2-3), 마지막 정규화의 Jacobian이 $1/\sqrt{L}$ 배로 줄어든다. 기울기가 지나는 항등 경로가 남아 있다는 점도 Pre-LN이 깊이에 덜 민감한 이유다.
 
@@ -262,7 +264,7 @@ $$
 
 10은 거의 그대로이고 100과 200은 둘 다 50 가까이에 머문다. 상한이 50이면 §3-1 예시와 같은 one-hot 분포는 여전히 가능하다. Soft-capping은 분포를 평평하게 만드는 장치라기보다 logit이 무한히 커지는 것을 막는 장치다.
 
-두 해법은 같은 문제의 다른 지점을 건드린다. Gemma 3는 Gemma 2의 soft-capping을 QK-Norm으로 교체했다고 밝힌다.[^gemma3]
+실제 모델에서는 한쪽에서 다른 쪽으로 옮겨 간 사례도 있다. Gemma 3는 Gemma 2의 soft-capping을 QK-Norm으로 교체했다고 밝힌다.[^gemma3]
 
 ## 4. Attention sink
 
@@ -274,7 +276,7 @@ Xiao 등은 Llama-2-7B의 attention map에서, 첫 두 층을 제외한 거의 �
 
 <Figure src="https://arxiv.org/html/2309.17453v4/attention_weights.png" alt="Llama-2-7B의 평균 attention logit 지도 일곱 개. Layer 0과 Layer 1의 head 0은 대각선 근처, 즉 최근 토큰 쪽 값이 크다. Layer 2, 9, 16, 23, 31의 head 0은 모든 query 행에서 첫 번째 열, 즉 첫 토큰의 값이 두드러지게 크다." caption="길이 16인 문장 256개에 대한 Llama-2-7B의 평균 attention logit. 가로축은 key 위치, 세로축은 query 위치다. Layer 2부터 첫 열(첫 토큰)이 두드러진다." source="Xiao et al. · Efficient Streaming Language Models with Attention Sinks, Figure 2 · CC BY 4.0 · 수정 없음" />
 
-이 현상은 실제 동작에도 영향을 준다. 최근 토큰만 KV(key-value) cache에 남기는 window attention으로 긴 텍스트를 처리하면, 첫 토큰들이 cache에서 밀려나는 순간 perplexity가 급증했다. PG19 시험 집합의 첫 책(65K 토큰)으로 측정한 원논문 Table 1에서, Llama-2-13B는 최근 1,024 토큰만 남기면 perplexity가 5158.07이었지만 처음 4 토큰을 함께 남기면(4+1020) 5.40으로 돌아왔다. 처음 4 토큰을 줄바꿈 토큰 `\n`으로 바꾸어도 5.60으로 거의 회복되었다. 첫 토큰의 **의미**보다 **위치**가 중요하다는 증거다.
+이 현상은 실제 동작에도 영향을 준다. 최근 토큰만 KV(key-value) cache에 남기는 window attention으로 긴 텍스트를 처리하면, 첫 토큰들이 cache에서 밀려나는 순간 perplexity가 급증했다. PG19 시험 집합의 첫 책(65K 토큰)으로 측정한 원논문 Table 1에서, Llama-2-13B는 최근 1,024 토큰만 남기면 perplexity가 5158.07이었지만 처음 4 토큰을 함께 남기면(4+1020) 5.40으로 돌아왔다. 처음 4 토큰을 줄바꿈 토큰 `\n`으로 바꾸어도 5.60으로 거의 회복되었다. 첫 토큰의 **의미**보다 **위치**가 중요하다는 것을 시사한다.
 
 Gu 등은 이 현상이 다양한 입력과 작은 모델을 포함한 여러 자기회귀 언어모델에서 나타나며, pre-training 도중 충분한 데이터로 효과적으로 최적화된 뒤에 생긴다고 보고했다.[^gu] 학습 데이터에서 특정 위치에 고정 토큰을 두면 sink가 그 위치로 옮겨 가기도 했다.
 
