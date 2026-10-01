@@ -157,7 +157,7 @@ Batch를 1에서 192로 늘리면 스텝 시간은 약 4배 늘지만 처리량�
 식당 주방으로 비유해 보자. 요리사(연산 장치)는 아주 빠르고, 냉장고(HBM)에서 재료를 나르는 통로(대역폭)는 좁다. 공용 양념(가중치)은 한 번 꺼내 오면 여러 접시에 쓸 수 있으니 주문을 많이 받을수록 이득이다. 그런데 손님마다 따로 보관하는 재료(KV cache)도 있어서, 주문이 늘면 그 재료를 나르는 일도 같이 늘고, 냉장고 칸이 다 차면 더 받을 수도 없다. 비유가 놓치는 점도 있다. 실제 GPU에서는 재료를 나르는 일과 요리를 동시에 할 수 있어서, 둘 중 오래 걸리는 쪽이 전체 시간을 정한다.
 </Callout>
 
-문맥이 길수록 벽은 더 가깝다. 요청마다 8,192토큰이면 KV cache가 요청당 1.07 GB라 49개, 32,768토큰이면 12개에서 멈춘다. 그때 스텝마다 읽는 데이터의 대부분은 KV cache다. 그래서 긴 문맥의 decode에서는 가중치보다 KV cache의 bytes를 줄이는 기법이 처리량을 직접 늘린다. 이 계산이 6주차 KV cache 노트의 동기이고, 3주차의 GQA·MLA가 서빙에서 중요한 이유다.
+문맥이 길수록 벽은 더 가깝다. 요청마다 8,192토큰이면 KV cache가 요청당 1.07 GB라 49개, 32,768토큰이면 12개에서 멈춘다. 그때 스텝마다 읽는 데이터의 대부분은 KV cache다. 그래서 긴 문맥의 decode에서는 가중치보다 KV cache의 bytes를 줄이는 기법이 처리량을 직접 늘린다. 이 계산이 [06c](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/)의 동기이고, 3주차의 GQA·MLA가 서빙에서 중요한 이유다.
 
 ## 5. 하드웨어 효율 지표
 
@@ -195,9 +195,9 @@ MBU는 batch가 커져도 쓸 수 있다. 분자의 KV cache bytes가 batch 안�
 
 | 기법 | Roofline에서의 효과 | 다루는 곳 |
 |---|---|---|
-| Batching | 가중치 bytes를 여러 요청에 나누어 선형층의 점을 오른쪽으로 | 6주차 batching 노트 |
+| Batching | 가중치 bytes를 여러 요청에 나누어 선형층의 점을 오른쪽으로 | [06d](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/) |
 | GQA·MLA | Decode attention의 bytes를 줄이고 intensity를 $g$ 또는 그 이상으로 | 3주차 03b |
-| KV cache 관리·양자화 | KV cache bytes를 줄여 같은 메모리에 더 큰 batch | 6주차 KV cache 노트 |
+| KV cache 관리·양자화 | KV cache bytes를 줄여 같은 메모리에 더 큰 batch | [06c](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/) |
 | 가중치 양자화 | 가중치 bytes를 줄여 memory-bound 스텝을 직접 단축. 저정밀 연산은 peak도 높임 | 7주차 |
 | Pruning·distillation | 파라미터 수를 줄여 FLOPs와 bytes를 함께 감소 | 7주차 |
 | Speculative decoding | 가중치를 한 번 읽어 토큰 여러 개를 검증해 decode의 점을 오른쪽으로 | 7주차 |
