@@ -6,7 +6,7 @@ order: 0
 
 Self-attention은 토큰 사이의 관계를 계산하지만, 그 자체로는 토큰의 순서를 알지 못한다. 그렇다면 위치 정보를 어디에, 어떤 형태로 넣어야 할까? 그리고 그렇게 넣은 위치 정보는 학습 때보다 긴 입력에서도 통할까? 이 노트는 두 질문을 한 줄기로 따라간다. 입력에 위치 벡터를 더하는 **절대 위치 인코딩**에서 출발해, attention score에 상대 거리를 반영하는 **상대 위치 인코딩**, query와 key를 회전시키는 **RoPE**(rotary position embedding), 그리고 RoPE를 학습 길이 밖으로 늘리는 **long context 확장**(position interpolation → NTK(neural tangent kernel)-aware·YaRN(Yet another RoPE extensioN method) → LongRoPE)으로 이어진다. 마지막으로 이 계보와 별개인 설계 축으로, 위치 신호를 어느 층과 어느 차원에 둘지를 다룬다.
 
-전체 지도는 Zhao 등이 위치 인코딩의 관점에서 길이 외삽(length extrapolation)을 정리한 서베이[^survey]로 잡는다. 서베이의 §3(외삽을 염두에 둔 위치 인코딩)이 이 노트의 §2–4에, §4.1(position interpolation)이 §5-3·5-4에 대응한다. 서베이는 LongRoPE를 이름만 언급하고, §6의 층별·차원별 배치는 다루지 않으므로 이 둘은 원논문과 공식 구현으로 보충했다.
+전체 지도는 Zhao 등이 위치 인코딩의 관점에서 길이 외삽(length extrapolation)을 정리한 서베이[^survey]로 잡는다. 서베이의 §3(외삽을 염두에 둔 위치 인코딩)이 이 노트의 §2–4에, §4.1(position interpolation)이 §5-3·5-4에 대응한다. 서베이는 LongRoPE를 이름만 언급하고 이 노트 §6의 층별·차원별 배치는 다루지 않으므로 이 둘은 원논문과 공식 구현으로 보충했다.
 
 이번 주 노트 여섯 개는 02a에서 본 [Llama 3 8B 블록](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/#2-2-llama-3-8b-구조)의 부품을 하나씩 바꿔 보는 구성이다. 각 노트는 부품 하나의 발전 계보를 다룬다. 아래 표는 각 노트가 다루는 기법을 본문 순서로 늘어놓은 색인이고, 기법 사이의 계보(앞 방식의 어떤 문제를 풀었는지)는 각 노트 본문에서 밝힌다.
 
@@ -49,13 +49,13 @@ $$
 
 다른 선택은 위치 벡터 자체를 학습하는 것이다. 최대 길이 $L_{\max}$에 대해 $P\in\mathbb{R}^{L_{\max}\times d}$ 표를 두고 token embedding처럼 gradient로 갱신한다. GPT-2는 1,024개 위치의 표를 학습했다.[^gpt2] Vaswani 등도 learned embedding을 시험해 sinusoidal과 거의 같은 번역 성능을 얻었고, 학습 때보다 긴 문장으로 외삽할 가능성 때문에 sinusoidal을 택했다고 밝혔다.[^aiayn]
 
-Learned embedding은 데이터에 맞춰 위치 표현을 자유롭게 조정할 수 있다. 대신 표에 없는 위치, 즉 1,025번째 토큰의 벡터는 정의되지 않는다. 설정 길이를 늘리려면 새 위치의 표현을 어떻게든 정해야 하고, 표에 새 행을 추가해 추가 학습하는 것이 그 한 방법이다.
+Learned embedding은 데이터에 맞춰 위치 표현을 자유롭게 조정할 수 있다. 대신 표에 없는 위치, 즉 1,025번째 토큰의 벡터는 정의되지 않는다. 최대 길이를 늘리려면 새 위치의 표현을 어떻게든 정해야 하고, 표에 새 행을 추가해 추가 학습하는 것이 그 한 방법이다.
 
 ### 2-3. 절대 위치의 한계
 
 절대 위치 방식에는 두 가지 한계가 있다.
 
-첫째, **학습 길이 밖으로 일반화하기 어렵다.** Learned embedding은 아예 값이 없고, sinusoidal은 값을 계산할 수는 있어도 모델이 그 값을 본 적이 없다. Press 등의 측정에서 $L=512$로 학습한 sinusoidal 모델은 평가 길이를 20토큰 늘릴 때까지만 perplexity가 개선되었고, 50토큰을 넘기자 나빠지기 시작했다.[^alibi] 01a에서 본 "학습 시 본 것보다 긴 문장에도 공식만으로 값을 만들 수 있다"는 성질이 곧 외삽 성능을 뜻하지는 않는다.
+첫째, **학습 길이 밖으로 일반화하기 어렵다.** Learned embedding은 아예 값이 없고, sinusoidal은 값을 계산할 수는 있어도 모델이 그 값을 본 적이 없다. Press 등의 측정에서 $L=512$로 학습한 sinusoidal 모델은 평가 길이를 20토큰 늘릴 때까지만 perplexity가 개선되었고, 50토큰을 넘기자 나빠지기 시작했다(그림 1).[^alibi] 01a에서 본 "학습 시 본 것보다 긴 문장에도 공식만으로 값을 만들 수 있다"는 성질이 곧 외삽 성능을 뜻하지는 않는다.
 
 둘째, **상대 거리를 모델이 간접적으로 추론해야 한다.** 행벡터 표기에서 $W=W_QW_K^\top$라 두면, 위치 벡터를 더한 두 토큰의 attention score는 네 항으로 나뉜다.
 
@@ -81,7 +81,7 @@ e_{ij}=\frac{x_iW^Q\,\big(x_jW^K+a^K_{ij}\big)^\top}{\sqrt{d_z}},\qquad
 a^K_{ij}=w^K_{\operatorname{clip}(j-i,\,k)}
 $$
 
-$d_z$는 head의 query·key 차원이고, $\operatorname{clip}$은 거리를 $[-k,k]$로 자른다. 먼 거리의 정확한 값은 크게 필요하지 않을 것이라는 가정이고, 덕분에 학습할 벡터가 $2k+1$개로 고정되어 학습에서 보지 못한 길이에도 적용할 수 있다. 원논문은 value 쪽에도 같은 방식의 $a^V_{ij}$를 더했고, base 모델에서 $k=16$, big 모델에서 $k=8$을 썼다. WMT 2014 번역에서 big 모델 기준으로 절대 위치 대비 영어–독일어 1.3 BLEU, 영어–프랑스어 0.3 BLEU가 올랐고, $k\ge2$에서는 $k$에 따른 차이가 크지 않았다.
+$d_z$는 head의 query·key 차원이고, $\operatorname{clip}$은 거리를 $[-k,k]$로 자른다. 먼 거리의 정확한 값은 크게 필요하지 않을 것이라는 가정이고, 덕분에 학습할 벡터가 $2k+1$개로 고정되어 학습에서 보지 못한 길이에도 적용할 수 있다. 원논문은 value 쪽에도 같은 방식의 $a^V_{ij}$를 더했고, base 모델에서 $k=16$, big 모델에서 $k=8$을 썼다. WMT 2014 번역에서 big 모델 기준으로 절대 위치 대비 영어–독일어 1.3 BLEU, 영어–프랑스어 0.3 BLEU가 올랐고(표 1), $k\ge2$에서는 $k$에 따른 차이가 크지 않았다(표 2).
 
 **T5(2020): 거리별 scalar bias.** 벡터 대신 scalar 하나를 attention logit에 더한다.[^t5] 각 head는 자기 bias 표를 갖고, 이 표는 모든 층이 공유한다. 거리는 32개 bucket으로 묶이는데, 가까운 거리는 촘촘하게, 먼 거리는 로그 간격으로 넓게 나누며 128 이상은 모두 같은 bucket에 들어간다. 한 층은 128 너머의 거리를 구분하지 못하지만, 층을 거치며 지역 정보를 조합해 더 먼 거리에 대한 감도를 얻을 수 있다는 것이 저자들의 설명이다.
 
@@ -236,13 +236,13 @@ RoFormer는 $\theta_i=10000^{-2i/d}$일 때 score의 상한이 거리가 멀어�
 
 ## 5. Long context 확장
 
-RoPE도 학습 길이를 넘어서면 오래 버티지 못한다. Press 등의 실험에서 RoPE 모델은 sinusoidal보다 나았지만, 학습 길이보다 100–200토큰 긴 입력까지만 perplexity가 개선되었다.[^alibi] 긴 문맥 모델을 얻는 가장 직접적인 방법은 긴 시퀀스로 추가 학습하는 것이다([02c §1](/lecture/2026f-advanced-deep-learning/02c-pre-training/#1-llm-학습-과정)의 긴 문맥 학습 단계). 이 절의 방법들은 그 추가 학습을 짧게 끝낼 수 있도록 RoPE 자체를 고친다.
+RoPE도 학습 길이를 넘어서면 오래 버티지 못한다. Press 등의 실험에서 RoPE 모델은 sinusoidal보다 나았지만, 학습 길이보다 100–200토큰 긴 입력까지만 perplexity가 개선되었다(그림 1).[^alibi] 긴 문맥 모델을 얻는 가장 직접적인 방법은 긴 시퀀스로 추가 학습하는 것이다([02c §1](/lecture/2026f-advanced-deep-learning/02c-pre-training/#1-llm-학습-과정)의 긴 문맥 학습 단계). 이 절의 방법들은 그 추가 학습을 짧게 끝낼 수 있도록 RoPE 자체를 고친다.
 
 ### 5-1. 학습 길이·설정 길이·유효 길이
 
 "문맥 길이"라는 말은 세 가지를 가리킬 수 있어 먼저 구분해 둔다.
 
-- **학습 길이**: 학습 시퀀스의 최대 길이. 모델이 실제로 경험한 위치와 거리의 범위다. Llama 3는 8,192로 사전학습한 뒤 긴 문맥 단계를 거쳤고, 405B는 여섯 단계에 걸쳐 128K까지 늘리는 데 약 800B 토큰을 썼다.[^llama3]
+- **학습 길이**: 학습 시퀀스의 최대 길이. 모델이 실제로 경험한 위치와 거리의 범위다. Llama 3.1은 8,192로 사전학습한 뒤 긴 문맥 단계를 거쳤고(기술 보고서는 3.1 모델도 Llama 3라 부른다), 405B는 여섯 단계에 걸쳐 128K까지 늘리는 데 약 800B 토큰을 썼다.[^llama3]
 - **설정 길이**: config나 모델 카드에 적힌 최대 위치. Qwen3-8B의 config에는 `max_position_embeddings: 40960`이 적혀 있지만, 모델 카드는 기본 문맥을 32,768로 소개하고 40,960은 출력 32,768과 프롬프트 8,192를 합한 할당이라고 설명한다.[^qwen3-card] 설정 길이가 곧 학습 길이는 아니다.
 - **유효 길이**: 모델이 실제로 정보를 활용하는 길이. Needle-in-a-haystack이나 RULER 같은 과제로 측정하며, 설정 길이보다 짧을 수 있다.
 
@@ -268,7 +268,7 @@ RoPE도 학습 길이를 넘어서면 오래 버티지 못한다. Press 등의 �
 
 </Callout>
 
-§4-1에서 보았듯 RoPE의 score는 거리에 대한 사인파들의 가중합이다. 모델은 학습 범위에서 나타난 위상 조합에 맞춰 query와 key를 만들도록 학습되었으므로, 처음 보는 조합에서는 score가 학습 때와 전혀 다른 값을 낼 수 있다. Chen 등은 이 가중합을 거리 0–2,048 구간에 맞춰 적합하면 구간 안에서는 대략 $[-1,1]$에 머물지만 구간 밖에서는 8,000을 넘는 값까지 커질 수 있음을 보였다(원논문 [그림 2](https://arxiv.org/abs/2306.15595)).[^pi]
+§4-1에서 보았듯 RoPE의 score는 거리에 대한 사인파들의 가중합이다. 모델은 학습 범위에서 나타난 위상 조합에 맞춰 query와 key를 만들도록 학습되었으므로, 처음 보는 조합에서는 score가 학습 때와 전혀 다른 값을 낼 수 있다. Chen 등은 이 가중합을 거리 0–2,048 구간에 맞춰 적합하면 구간 안에서는 대략 $[-1,1]$에 머물지만 구간 밖에서는 8,000을 넘는 값까지 커질 수 있음을 보였다([그림 2](https://arxiv.org/abs/2306.15595)).[^pi]
 
 <figure>
 <svg viewBox="0 0 560 330" role="img" aria-label="Llama 3 8B의 RoPE 차원 쌍 64개의 파장을 로그 축으로 그린 선 그래프. 실선은 쌍 0의 약 6.3토큰에서 쌍 63의 약 256만 토큰까지 직선으로 증가한다. 8,192와 131,072에 수평 점선이 있다. 쌍 35 부근부터 파장이 8,192를 넘어 학습 길이 안에서 한 바퀴도 돌지 못한다. 점선인 Llama 3.1 조정 후 곡선은 파장 2,048 미만인 쌍 28까지 실선과 같고, 쌍 28부터 35 사이에서 부드럽게 올라가며, 그 뒤로는 실선보다 8배 긴 파장을 유지한다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -337,7 +337,7 @@ Chen 등은 보간한 위치의 score가 양쪽 정수 위치의 score를 선형
 
 </Details>
 
-Chen 등의 실험에서는 LLaMA 7B–65B를 최대 32,768까지 늘리는 데 1,000 step 이내의 미세조정이면 충분했고, 원래 2,048 범위의 벤치마크에서는 약간의 성능 저하가 있었다. 비교를 위해 PI 없이 긴 시퀀스로 바로 미세조정했을 때는 10,000 batch 넘게 학습해도 유효 길이가 2,048에서 2,560으로만 늘었다.
+Chen 등의 실험에서는 LLaMA 7B–65B를 최대 32,768까지 늘리는 데 1,000 step 이내의 미세조정이면 충분했고, 원래 2,048 범위의 벤치마크에서는 약간의 성능 저하가 있었다. 비교를 위해 PI 없이 긴 시퀀스로 바로 미세조정했을 때는 10,000 batch 넘게 학습해도 유효 길이가 2,048에서 2,560으로만 늘었다(표 4).
 
 **남은 문제: 고주파 쌍의 해상도도 함께 떨어진다.** PI는 모든 쌍을 똑같이 $s$배 느리게 만든다. 가장 빠른 $i=0$ 쌍에서 인접 토큰의 각도 차이는 원래 1 rad인데, $s=2$에서는 0.5 rad, $s=8$에서는 0.125 rad로 줄어든다. 저주파 쌍은 원래 이웃 위치를 구분하는 역할이 아니어서 느려져도 영향이 작지만, 가까운 거리를 구분하던 고주파 쌍은 인접 위치의 각도 차이가 그만큼 줄어 해상도를 잃는다. Peng 등은 PI 기반 미세조정이 대체로 $s=8$ 정도를 넘기면 출력 품질이 떨어졌다고 정리했다.[^yarn]
 
@@ -451,18 +451,18 @@ Gemma 3는 1,024토큰 sliding window를 쓰는 지역 attention 층 다섯 개�
 
 ## 7. 최근 모델의 선택
 
-아래 값은 공식 기술 보고서, 공식 구현, 모델 카드·config에서 확인한 위치 관련 설정이다. Attention 층의 종류(sliding window·linear attention 등)와 그 비율은 [03c §7](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/#7-최근-모델의-선택)에서 다룬다.
+아래 값은 공식 기술 보고서, 공식 구현, 모델 카드·config에서 확인한 위치 관련 설정이다. 학습 길이는 학습 시퀀스의 최대 길이(§5-1)이고, 확인하지 못한 칸은 —로 둔다. Attention 층의 종류(sliding window·linear attention 등)와 그 비율은 [03c §7](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/#7-최근-모델의-선택)에서 다룬다.
 
-| 모델 | 위치 신호의 배치 | RoPE base | 학습 → 지원 길이 | 확장 방법 |
-|---|---|---|---|---|
-| Llama 3 8B[^llama3] | 모든 층에 RoPE | 500,000 | 8,192 | 없음 |
-| Llama 3.1 8B[^llama-code] | 모든 층에 RoPE | 500,000 | 8,192에서 늘려 128K | 대역별 조정(§5-4), 배율 8 |
-| Llama 4 Scout[^llama4-blog][^llama4-code] | RoPE 층과 NoPE 층의 교대(iRoPE) | checkpoint 값 미확인(접근 제한) | 256K → 10M 발표 | RoPE scaling 배율 16(공식 구현 기본값), NoPE 층 temperature |
-| Gemma 3 (4B·12B·27B)[^gemma3] | 지역 5 : 전체 1, 층별 base | 지역 10,000 / 전체 1,000,000 | 32K → 128K | 전체 층에 PI 방식, 배율 8 |
-| Qwen3-8B[^qwen3][^qwen3-card] | 모든 층에 RoPE | 1,000,000 (ABF) | 32,768 → 131,072 | 추론 시 YaRN(배율 4)과 DCA(dual chunk attention) |
-| DeepSeek-V3[^deepseek3] | Decoupled RoPE key(03b) | 10,000 | 4K → 32K → 128K | YaRN $s=40$, $\alpha=1$, $\beta=32$ |
-| GLM-4.5[^glm45] | Head 차원의 50%에 RoPE | 1,000,000 | 설정 131,072 | config에 scaling 없음 |
-| Qwen3-Next-80B-A3B[^qwen3next] | Full attention 층에서 head 차원의 25%에 RoPE | 10,000,000 | 설정 262,144 | config에 scaling 없음 |
+| 모델 | 위치 신호의 배치 | RoPE base | 학습 길이 | 지원 길이 | 확장 방법 |
+|---|---|---|---|---|---|
+| Llama 3 8B[^llama3] | 모든 층에 RoPE | 500,000 | 8,192 | 8,192 | 없음 |
+| Llama 3.1 8B[^llama3][^llama-code] | 모든 층에 RoPE | 500,000 | 8,192에서 단계적으로 128K | 128K | 대역별 조정(§5-4), 배율 8 |
+| Llama 4 Scout[^llama4-blog][^llama4-code] | RoPE 층과 NoPE 층의 교대(iRoPE) | checkpoint 값 미확인(접근 제한) | 256K | 10M(발표) | RoPE scaling 배율 16(공식 구현 기본값), NoPE 층 temperature |
+| Gemma 3 (4B·12B·27B)[^gemma3] | 지역 5 : 전체 1, 층별 base | 지역 10,000 / 전체 1,000,000 | 32K, 사전학습 말미에 128K로 확장 | 128K | 전체 층에 PI 방식, 배율 8 |
+| Qwen3-8B[^qwen3][^qwen3-card] | 모든 층에 RoPE | 1,000,000 (ABF) | 32,768 | 131,072(YaRN 사용 시) | 추론 시 YaRN(배율 4)과 DCA(dual chunk attention) |
+| DeepSeek-V3[^deepseek3] | Decoupled RoPE key(03b) | 10,000 | 4K → 32K → 128K | 128K | YaRN $s=40$, $\alpha=1$, $\beta=32$ |
+| GLM-4.5[^glm45] | Head 차원의 50%에 RoPE | 1,000,000 | — | 설정 131,072 | config에 scaling 없음 |
+| Qwen3-Next-80B-A3B[^qwen3next] | Full attention 층에서 head 차원의 25%에 RoPE | 10,000,000 | — | 설정 262,144 | config에 scaling 없음 |
 
 몇 가지를 덧붙인다.
 
