@@ -30,7 +30,7 @@ Query는 사정이 다르다. 다음 토큰을 고르는 데 필요한 것은 �
 
 ### 1-2. 캐시 텐서의 모양과 원소 수
 
-작은 예로 층 1개, head 2개, $d_h=4$인 attention을 가정하자. 프롬프트 토큰 2개를 prefill한 뒤 decode 스텝을 두 번 진행한다. 각 스텝의 마지막 위치 출력으로 다음 토큰을 고르므로, prefill이 위치 3의 토큰을, Decode 1이 위치 4의 토큰을 고르고, Decode 2는 위치 4의 토큰을 입력받아 위치 5의 토큰을 고른다. Head마다 K와 V가 각각 "위치 수 × 4" 행렬로 쌓이므로, 캐시 원소 수는 $2\,(\text{K, V})\times2\,(\text{head})\times t\times4=16t$이다.
+작은 예로 층 1개, head 2개, $d_h=4$인 attention을 가정하자. 프롬프트 토큰 2개를 prefill한 뒤 decode 스텝을 두 번 진행한다. 각 스텝의 마지막 위치 출력으로 다음 토큰을 고르므로, prefill이 위치 3의 토큰을 고르고, Decode 1은 위치 3의 토큰을 입력받아 위치 4의 토큰을, Decode 2는 위치 4의 토큰을 입력받아 위치 5의 토큰을 고른다. Head마다 K와 V가 각각 "위치 수 × 4" 행렬로 쌓이므로, 캐시된 위치가 $t$개일 때 캐시 원소 수는 $2\,(\text{K, V})\times2\,(\text{head})\times t\times4=16t$이다.
 
 | 단계 | 입력 위치 | 새로 계산하는 Q | 캐시에 추가하는 K/V | Head별 K 캐시 모양 | 캐시 원소 수 | 출력으로 고르는 토큰 |
 |---|---|---|---|---|---|---|
@@ -309,7 +309,7 @@ $$
 
 여덟 비교 중 small 모델의 C-Eval 하나를 빼면 MLA가 높았고, 캐시는 MHA의 14%(small)와 4%(large)였다. 저자들은 이를 근거로 MLA가 MHA보다 성능이 좋으면서 캐시가 훨씬 작다고 주장한다. 다만 이 근거는 한 연구팀의 두 규모, 네 벤치마크에 대한 결과다. 저차원 latent가 일반적으로 MHA와 같은 품질을 보장한다는 뜻으로 넓혀 읽지 않는다.
 
-**연산량**도 따로 보아야 한다. DeepSeek-V3 추론 코드의 absorb 모드에서 캐시 텐서에는 head 축이 없고, query head 128개가 같은 latent와 RoPE key를 읽는다.[^dsv3-code] 캐시를 읽는 방식은 MQA와 닮았고, 그만큼 head당 계산은 늘어난다. 원논문의 차원으로 계산해 보면 head 하나가 캐시된 토큰 하나에 대해 하는 곱셈-덧셈은, K/V를 복원해 계산하는 방식에서는 점수 192번과 가중합 128번이지만 흡수한 방식에서는 점수 576번과 가중합 512번이다. 흡수는 캐시와 읽는 양을 줄이는 대신 head당 attention 계산을 늘리는 선택이다. §3-1의 주의와 마찬가지로 KV cache의 크기와 attention 연산량은 별개의 축이다.
+**연산량**도 따로 보아야 한다. DeepSeek-V3 추론 코드의 absorb 모드에서 캐시 텐서에는 head 축이 없고, query head 128개가 같은 latent와 RoPE key를 읽는다.[^dsv3-code] 캐시를 읽는 방식은 MQA와 닮았지만, 각 head가 $d_h$차원이 아니라 latent 차원에서 내적하므로 head당 계산은 늘어난다. 원논문의 차원으로 계산해 보면 head 하나가 캐시된 토큰 하나에 대해 하는 곱셈-덧셈은, K/V를 복원해 계산하는 방식에서는 점수 192번과 가중합 128번이지만 흡수한 방식에서는 점수 576번과 가중합 512번이다. 흡수는 캐시와 읽는 양을 줄이는 대신 head당 attention 계산을 늘리는 선택이다. §3-1의 주의와 마찬가지로 KV cache의 크기와 attention 연산량은 별개의 축이다.
 
 <Video src="https://www.youtube.com/watch?v=0VLAoVGf_74" caption="Welch Labs, How DeepSeek Rewrote the Transformer [MLA] (2025). Attention과 KV cache에서 출발해 MLA의 latent 압축을 시각적으로 설명한다." />
 
