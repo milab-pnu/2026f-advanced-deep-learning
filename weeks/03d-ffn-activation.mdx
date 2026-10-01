@@ -257,7 +257,7 @@ ReGLU(ReLU-gated linear unit)는 $\max(0,\cdot)$, bilinear는 항등 함수를 �
 | GeGLU | 행렬 3개, gate GELU | 1.633 |
 | SwiGLU | 행렬 3개, gate Swish | 1.636 |
 
-같은 표의 65,536 step 결과에서 GeGLU(1.942 ± 0.004)와 SwiGLU(1.944 ± 0.010)의 차이는 반복 실험의 표준편차 안에 있다. GLUE·SuperGLUE fine-tuning에서도 GLU 계열이 대부분의 과제에서 좋았지만 원논문 스스로 결과에 잡음이 많다고 적었다. 이 결과가 decoder-only 사전학습에도 그대로 옮겨지는지는 이 논문이 검증한 범위 밖이다. 논문은 왜 잘 되는지도 설명하지 않는다.<Sidenote>논문의 결론은 이렇게 끝난다. “We offer no explanation as to why these architectures seem to work; we attribute their success, as all else, to divine benevolence.”[^glu]</Sidenote>
+같은 표의 65,536 step 결과에서 GeGLU(1.942 ± 0.004)와 SwiGLU(1.944 ± 0.010)의 차이는 반복 실험의 표준편차 안에 있다. GLUE·SuperGLUE fine-tuning에서도 GLU 계열이 대부분의 과제에서 좋았지만 원논문 스스로 결과에 잡음이 많다고 적었다. 이 결과가 decoder-only 사전학습으로 그대로 옮겨지는지는 이 논문이 검증하지 않았고, 왜 잘 되는지도 설명하지 않는다.<Sidenote>논문의 결론은 이렇게 끝난다. “We offer no explanation as to why these architectures seem to work; we attribute their success, as all else, to divine benevolence.”[^glu]</Sidenote>
 
 Llama 3의 공식 구현에서 SwiGLU FFN은 한 줄이다.[^llamacode] `w1`이 $W$, `w3`가 $V$, `w2`가 $W_2$에 해당하고, Hugging Face 구현에서는 각각 `gate_proj`, `up_proj`, `down_proj`라고 부른다.[^hfcode] `F.silu`는 $\operatorname{Swish}_1$과 같은 함수다.
 

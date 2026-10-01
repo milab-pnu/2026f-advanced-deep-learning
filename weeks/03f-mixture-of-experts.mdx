@@ -252,7 +252,7 @@ $$
 
 $u_t$는 보고서가 정의한 토큰 $t$의 FFN 입력이고, $h'_t$는 residual 경로 $u_t$까지 포함한 FFN 출력이다. 이 식은 정규화를 생략한 개략식이다. 공식 구현의 실제 순서는 attention residual 합산, RMSNorm(root mean square normalization), MoE, residual 합산이므로 expert가 받는 벡터는 정규화된 값이다.[^dsv3-config] $N_s$개의 shared expert에는 gate가 없고, $N_r$개의 routed expert 중 선택된 것만 gate 값 $g_{i,t}$를 곱해 더한다. DeepSeek-V3는 shared expert 1개와 routed expert 256개를 두고 routed expert 중 8개를 고른다. 토큰마다 계산하는 expert는 모두 9개다.
 
-DeepSeekMoE 원논문은 2B 규모에서 두 선택을 적용한 모델이 expert 파라미터와 계산이 1.5배인 GShard 2.9B와 비슷한 성능을 냈다고 보고했다(원논문 Table 2).[^dsmoe] 그러나 이후 모델들이 모두 같은 선택을 한 것은 아니다. Qwen3는 fine-grained expert segmentation은 따르지만, 이전 Qwen2.5-MoE와 달리 shared expert를 두지 않았다. 보고서의 해당 절은 이유를 따로 설명하지 않는다.[^qwen3]
+DeepSeekMoE 원논문은 2B 규모에서 두 선택을 적용한 모델이 expert 파라미터와 계산이 1.5배인 GShard 2.9B와 비슷한 성능을 냈다고 보고했다(Table 2).[^dsmoe] 그러나 이후 모델들이 모두 같은 선택을 한 것은 아니다. Qwen3는 fine-grained expert segmentation은 따르지만, 이전 Qwen2.5-MoE와 달리 shared expert를 두지 않았다. 보고서의 해당 절은 이유를 따로 설명하지 않는다.[^qwen3]
 
 ## 5. Mixture-of-Depths와 Mixture-of-Recursions
 
