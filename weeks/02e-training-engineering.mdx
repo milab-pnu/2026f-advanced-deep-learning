@@ -699,6 +699,8 @@ PyTorch Profiler는 CPU·GPU의 연산 시간과 메모리 사용, 실행 시간
 
 예를 들어 준비 실행 이후 100개 optimizer step에서, 매 step 시작에 GPU가 오래 쉬고 그 시간에 CPU가 다음 batch를 준비한다고 하자. 메모리에 여유가 있어도 이것만으로 GPU 계산이 빨라지지는 않는다. 입력 읽기·전처리·전송 중 어디서 지연되는지 확인하고, 미리 데이터를 준비하는 prefetch나 데이터 로더의 worker 구성을 조정한 뒤 같은 구간을 다시 측정한다.
 
+같은 진단은 kernel(§2-4) 단위에서도 쓰인다. 네이버클라우드는 Nemotron-3 Nano 30B 구성의 Mamba-2 층([03c §5-3](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/#5-3-mamba-2와-state-space-duality)) 하나를 B200 한 장에서 profiling해, 상위 10개 kernel이 이 층 연산 시간의 82%를 차지한다는 것을 확인했다. 비중이 가장 큰 `_layer_norm_bwd`는 A100 기준으로 정해진 병렬화 설정 때문에 느렸다. B200의 메모리 대역폭은 A100의 약 4배인데, 기존 규칙대로 정한 설정으로는 이를 다 쓰지 못했다. 설정을 B200에 맞춰 다시 탐색하자 이 kernel은 최대 3.18배 빨라졌다. 상위 kernel 여러 개를 함께 최적화한 결과, 층 하나의 forward와 backward는 약 1.33배 빨라졌다(bf16, batch 2, 시퀀스 길이 8192). 같은 최적화를 32개 노드의 실제 학습에 적용하자 학습 step은 약 1.12배 빨라졌다.[^clova-mamba2] 개별 kernel의 가속 배율이 그대로 전체 step의 가속 배율이 되지는 않는다. 고친 kernel들이 step 시간에서 차지하던 몫만큼만 줄어들기 때문이다.
+
 | 관찰한 현상 | 먼저 구분할 원인 | 검토할 변경 |
 |---|---|---|
 | Activation이 쌓이기 전부터 용량이 부족함 | Parameter·gradient·optimizer 상태의 크기 | ZeRO/FSDP, TP·PP, 필요하면 offload |
@@ -791,6 +793,7 @@ PP를 더 깊게 다루려면 여러 model chunk를 교대로 실행하는 inter
 [^infinity]: Rajbhandari, S., Ruwase, O., Rasley, J., Smith, S., & He, Y. (2021). *ZeRO-Infinity: Breaking the GPU Memory Wall for Extreme Scale Deep Learning*. SC 2021. [arXiv:2104.07857](https://arxiv.org/abs/2104.07857).
 [^profiler]: Raikundalia, S. (2026). *PyTorch Profiler*. [PyTorch 공식 튜토리얼](https://docs.pytorch.org/tutorials/recipes/recipes/profiler_recipe.html).
 [^cuda]: PyTorch Contributors. (v2.8). *CUDA semantics*. [공식 문서](https://docs.pytorch.org/docs/2.8/notes/cuda.html).
+[^clova-mamba2]: 네이버클라우드. (2026). *최신 GPU의 잠재력을 깨우다: B200을 위한 Mamba-2 커널 최적화*. CLOVA Tech Blog. [원문](https://clova.ai/tech-blog/%EC%B5%9C%EC%8B%A0-gpu%EC%9D%98-%EC%9E%A0%EC%9E%AC%EB%A0%A5%EC%9D%84-%EA%B9%A8%EC%9A%B0%EB%8B%A4-b200%EC%9D%84-%EC%9C%84%ED%95%9C-mamba-2-%EC%BB%A4%EB%84%90-%EC%B5%9C%EC%A0%81%ED%99%94).
 [^resume]: Inkawhich, M. (2025). *Saving and Loading Models*. [PyTorch 공식 튜토리얼](https://docs.pytorch.org/tutorials/beginner/saving_loading_models.html).
 [^compile]: Wen, W. (2026). *Introduction to torch.compile*. [PyTorch 공식 튜토리얼](https://docs.pytorch.org/tutorials/intermediate/torch_compile_tutorial.html).
 
