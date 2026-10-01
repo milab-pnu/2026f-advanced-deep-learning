@@ -56,7 +56,7 @@ vLLM의 기본 블록 크기는 16토큰이다(원논문 §7.2).[^vllm] Llama 3 
 
 이 설계를 구현한 것이 vLLM이다. 원논문은 같은 지연 수준에서 FasterTransformer와 Orca보다 처리량이 2–4배 높았다고 보고했다.[^vllm] §1-2에서 20.4–38.2%였던 KV cache 공간의 실제 사용률은 96.3%로 올랐다(원논문 Figure 2).
 
-공간을 쓰는 만큼만 주면 새로운 문제가 생긴다. 생성 도중 빈 블록이 바닥날 수 있다는 것이다. 그때는 실행 중인 요청 일부를 멈추고(preemption) 그 블록을 회수해야 한다. 원논문은 두 방법을 비교했다. 멈춘 요청의 블록을 CPU 메모리로 옮겨 두었다가 다시 가져오는 swapping과, 블록을 버리고 나중에 다시 prefill해 KV cache를 재계산하는 recomputation이다(원논문 §4.5). 재계산은 이미 생성한 토큰까지 프롬프트처럼 한 번에 처리하므로 원래의 decode보다 훨씬 빠르다. 현재 vLLM은 recomputation을 기본으로 쓴다.[^vllm-opt] 어떤 요청을 멈추고 어떤 요청을 먼저 실행할지는 다음 노트의 scheduling 문제다.
+공간을 쓰는 만큼만 주면 새로운 문제가 생긴다. 생성 도중 빈 블록이 바닥날 수 있다는 것이다. 그때는 실행 중인 요청 일부를 멈추고(preemption) 그 블록을 회수해야 한다. 원논문은 두 방법을 비교했다. 멈춘 요청의 블록을 CPU 메모리로 옮겨 두었다가 다시 가져오는 swapping과, 블록을 버리고 나중에 다시 prefill해 KV cache를 재계산하는 recomputation이다(원논문 §4.5). 재계산은 이미 생성한 토큰까지 프롬프트처럼 한 번에 처리하므로 원래의 decode보다 훨씬 빠르다. 현재 vLLM은 recomputation을 기본으로 쓴다.[^vllm-opt] 어떤 요청을 멈추고 어떤 요청을 먼저 실행할지는 [06d](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/#3-대기열과-선점)의 scheduling 문제다.
 
 ## 3. Prefix 재사용
 
@@ -140,7 +140,7 @@ KV cache 공간은 06a·06b에서 batch 크기와 처리량의 상한이었다. 
 
 앞의 두 문제의 해법은 계산 결과를 바꾸지 않고 공간과 계산의 낭비만 없앤다. 셋째 문제의 양자화와 eviction은 근사이므로 품질을 확인해야 하고, offloading은 결과를 바꾸지 않는 대신 전송 시간을 치른다. 모델 구조를 바꿔 KV cache 자체를 작게 만드는 GQA·MLA는 이 모든 방법과 함께 쓸 수 있다.
 
-공간을 쓰는 만큼만 주고 prefix를 재사용하면, 이제 여러 요청을 어떤 순서로 묶어 실행할지가 성능을 좌우한다. 어떤 요청을 먼저 prefill하고, 공간이 모자랄 때 누구를 멈추고, prefill과 decode를 한 batch에 섞을지가 다음 노트의 주제다.
+공간을 쓰는 만큼만 주고 prefix를 재사용하면, 이제 여러 요청을 어떤 순서로 묶어 실행할지가 성능을 좌우한다. 어떤 요청을 먼저 prefill하고, 공간이 모자랄 때 누구를 멈추고, prefill과 decode를 한 batch에 섞을지가 [06d](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/)의 주제다.
 
 [^survey]: Jiang, J., Yang, P., Zhang, R., & Liu, F. (2026). Towards Efficient Large Language Model Serving: A Survey on System-Aware KV Cache Optimization. *Findings of ACL 2026*, 38450–38476. [arXiv:2607.08057](https://arxiv.org/abs/2607.08057).
 

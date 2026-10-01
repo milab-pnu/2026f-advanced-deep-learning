@@ -128,7 +128,7 @@ Kernel 최적화는 roofline이 정한 상한에 실제 성능을 가깝게 하�
 
 Attention에서는 query가 하나라 FlashAttention의 query 방향 병렬화가 통하지 않는다. Flash-Decoding은 key·value 시퀀스를 조각으로 나누어 동시에 계산하고 log-sum-exp로 합쳐 긴 문맥의 decode를 SM 전체로 퍼뜨렸고, FlashInfer는 page table을 block-sparse 행렬로 보아 흩어진 블록, 공유 prefix, 다양한 길이를 하나의 형식과 균형 잡힌 계획으로 처리했다. 선형층에서는 작은 batch의 납작한 행렬곱을 대역폭 한계로 읽는 kernel과, 4-bit 가중치를 레지스터에서 되돌리는 Marlin 같은 kernel이 쓰이며, 그 이득은 roofline대로 batch가 커지면 줄어든다. MoE는 크기가 다른 expert별 행렬곱을 kernel 하나로 묶는다.
 
-Kernel 사이의 시간도 줄여야 한다. CUDA graph는 kernel 제출 비용을 한 번의 재생으로 줄이고, 서빙 엔진은 여러 batch 크기의 그래프를 미리 기록해 둔다. `torch.compile`과 Triton은 fusion을 자동화하고, 성능이 중요한 attention 같은 kernel은 직접 작성한 kernel이 맡는다. 다음 노트는 이 kernel들과 6·7주차의 기법이 vLLM과 SGLang 안에서 어떻게 하나의 엔진으로 묶이는지 본다.
+Kernel 사이의 시간도 줄여야 한다. CUDA graph는 kernel 제출 비용을 한 번의 재생으로 줄이고, 서빙 엔진은 여러 batch 크기의 그래프를 미리 기록해 둔다. `torch.compile`과 Triton은 fusion을 자동화하고, 성능이 중요한 attention 같은 kernel은 직접 작성한 kernel이 맡는다. 다음 노트 [07e](/lecture/2026f-advanced-deep-learning/07e-inference-engines/)는 이 kernel들과 6·7주차의 기법이 vLLM과 SGLang 안에서 어떻게 하나의 엔진으로 묶이는지 본다.
 
 [^survey]: Pan, J., & Li, G. (2025). A Survey of LLM Inference Systems. [arXiv:2506.21901](https://arxiv.org/abs/2506.21901).
 
