@@ -4,7 +4,7 @@ week: 7
 order: 0
 ---
 
-6주차는 inference의 비용을 bytes와 FLOPs로 계산하고, 그 비용을 시스템 쪽에서 줄이는 방법을 보았다. 7주차는 모델과 계산 쪽으로 넘어간다. 첫 주제는 숫자 하나를 저장하는 bytes를 줄이는 **양자화(quantization)**다. [06b §6](/lecture/2026f-advanced-deep-learning/06b-roofline/#6-roofline-위의-최적화-기법)의 표에서 보았듯 가중치를 적은 bits로 저장하면 memory-bound인 decode 스텝의 하한이 바로 내려간다. Llama 3 8B의 가중치를 BF16 16 GB에서 INT4 약 4 GB로 줄이면, H100에서 batch 1 스텝의 하한이 4.9 ms에서 약 1.3 ms가 된다. 연산 자체를 낮은 정밀도로 하면 06b의 roofline에서 연산의 지붕도 높아진다.
+6주차는 inference의 비용을 bytes와 FLOPs로 계산하고, 그 비용을 시스템 쪽에서 줄이는 방법을 보았다. 7주차는 모델과 계산 쪽으로 넘어간다. 첫 주제는 숫자 하나를 저장하는 bytes를 줄이는 <strong>양자화(quantization)</strong>다. [06b §6](/lecture/2026f-advanced-deep-learning/06b-roofline/#6-roofline-위의-최적화-기법)의 표에서 보았듯 가중치를 적은 bits로 저장하면 memory-bound인 decode 스텝의 하한이 바로 내려간다. Llama 3 8B의 가중치를 BF16 16 GB에서 INT4 약 4 GB로 줄이면, H100에서 batch 1 스텝의 하한이 4.9 ms에서 약 1.3 ms가 된다. 연산 자체를 낮은 정밀도로 하면 06b의 roofline에서 연산의 지붕도 높아진다.
 
 문제는 정밀도를 낮추면 오차가 생긴다는 점이다. LLM(large language model)에서는 그 오차가 특히 다루기 어려운 모양으로 나타나고, 양자화 연구의 계보는 대부분 그 모양을 다루는 방법의 역사다. 전체 지도는 Gong 등의 저비트 LLM 서베이[^survey]로 잡는다. §2가 숫자 형식과 양자화 단위(granularity)를, §3.2가 가중치만 양자화하는 경우와 가중치와 activation을 함께 양자화하는 경우의 실행 방식을, §5가 양자화 알고리즘을 다룬다. 이 노트의 §1은 서베이 §2와 §3.2에, §2–3은 §5.2의 PTQ(post-training quantization) 알고리즘에, §4는 §2.1의 형식에, §5는 §5.1의 QAT(quantization-aware training)에 대응한다. KV cache의 양자화는 [06c §4-1](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/#4-1-양자화)에서 보았다.
 
