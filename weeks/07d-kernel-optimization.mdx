@@ -4,9 +4,9 @@ week: 7
 order: 3
 ---
 
-[06b §5-2](/lecture/2026f-advanced-deep-learning/06b-roofline/#5-2-mbu)의 예시에서 Llama 3 8B를 H100 한 대에서 batch 1로 돌릴 때 TPOT가 8.0 ms라면, 하한 4.9 ms의 약 1.6배이고 MBU는 61%라고 했다. 남은 39%는 계산이나 데이터의 양이 아니라 **그 계산을 GPU에서 실행하는 방식**에서 생긴다. 06b의 roofline이 점의 위치를 정한다면, kernel 최적화는 같은 위치의 점을 지붕에 얼마나 가깝게 올리느냐의 문제다.
+[06b §5-2](/lecture/2026f-advanced-deep-learning/06b-roofline/#5-2-mbu)의 예시에서 Llama 3 8B를 H100 한 대에서 batch 1로 돌릴 때 TPOT가 8.0 ms라면, 하한 4.9 ms의 약 1.6배이고 MBU는 61%라고 했다. 남은 39%는 주로 계산이나 데이터의 양이 아니라 **그 계산을 GPU에서 실행하는 방식**에서 생긴다. 06b의 roofline이 점의 위치를 정한다면, kernel 최적화는 같은 위치의 점을 지붕에 얼마나 가깝게 올리느냐의 문제다.
 
-전체 지도는 Pan과 Li의 inference 시스템 서베이[^survey]로 잡는다. §3.1이 kernel을 다루며, 그 가운데 §3.1.1은 attention kernel의 계보를 작업을 GPU 연산 단위에 나누어 주는 방식으로 정리한다. FlashAttention은 차례로 돌아가며 나누고, Flash-Decoding은 고정된 수로 쪼개고, FlashInfer 등은 흐르듯이 나누어 준다는 것이다. 이 노트는 그 계보를 따라 decode의 attention kernel(§2), 선형층과 MoE의 kernel(§3), 그리고 kernel 바깥에서 새는 시간(§4)을 차례로 본다.
+전체 지도는 Pan과 Li의 inference 시스템 서베이[^survey]로 잡는다. §3.1이 kernel을 다루며, 그 가운데 §3.1.1은 attention kernel의 계보를 작업을 GPU 연산 단위에 나누어 주는 방식으로 정리한다. FlashAttention은 작업 조각을 SM에 돌아가며 배정하고(round-robin), Flash-Decoding은 KV cache를 정해진 수로 쪼개 배정하며(fixed-split), FlashInfer 등은 길이가 다른 작업을 이어 붙여 고르게 흘려 보낸다(streaming)는 것이다. 이 노트는 그 계보를 따라 decode의 attention kernel(§2), 선형층과 MoE의 kernel(§3), 그리고 kernel 바깥에서 새는 시간(§4)을 차례로 본다.
 
 ## 1. GPU에서 kernel이 실행되는 방식
 
@@ -23,7 +23,7 @@ order: 3
 Decode에서는 요청마다 query가 하나뿐이다. Query 방향으로 나눌 것이 없으므로 병렬성은 batch × head만 남는다. Dao 등은 batch가 GPU의 SM 수보다 작으면 이 연산이 GPU의 작은 일부만 쓰고, batch 1에서는 1%도 쓰지 못한다고 지적했다.[^flashdecoding]
 
 <Callout type="example">
-Llama 3 8B를 batch 1로 decode한다고 하자. Query head가 32개이므로 thread block은 많아야 32개이고, H100의 SM 132개 가운데 100개가 논다. 문맥이 32,768토큰이라면 KV head 하나의 key·value는 $32768\times128\times2\times2\ \text{bytes}\approx16.8$ MB다. Thread block 하나가 이 16.8 MB를 처음부터 끝까지 혼자 읽어야 하므로, SM 하나가 낼 수 있는 대역폭이 그 시간을 정한다. GPU 전체의 대역폭 3.35 TB/s를 SM 32개로만 나누어 쓰는 셈이다.
+Llama 3 8B를 batch 1로 decode한다고 하자. Query head가 32개이므로 thread block은 많아야 32개이고, H100의 SM 132개 가운데 100개가 논다. 문맥이 32,768토큰이라면 KV head 하나의 key·value는 $32768\times128\times2\times2\ \text{bytes}\approx16.8$ MB다. Thread block 하나가 이 16.8 MB를 처음부터 끝까지 혼자 읽어야 하므로, SM 하나가 낼 수 있는 대역폭이 그 시간을 정한다. SM 132개가 함께 쓰도록 설계된 3.35 TB/s를 SM 32개만으로 끌어 쓰려는 셈이라 다 쓰기 어렵다.
 </Callout>
 
 ### 2-2. Flash-Decoding
@@ -100,7 +100,7 @@ Decode의 선형층은 batch가 작으면 행렬과 벡터의 곱에 가깝다. 
 
 [07a §1-3](/lecture/2026f-advanced-deep-learning/07a-quantization/#1-3-두-가지-쓰임)의 weight-only 양자화는 kernel 안에서 가중치를 되돌려야 한다. Frantar 등의 Marlin은 4-bit 가중치와 FP16 activation의 행렬곱을 위한 kernel이다.[^marlin] 4-bit 가중치를 HBM에서 읽어 shared memory를 거쳐 레지스터로 가져오는 동안 앞선 데이터의 계산을 겹치고, 레지스터 안에서 FP16으로 되돌려 Tensor Core에 넣는다.
 
-원논문은 이 kernel이 언제까지 이득을 내는지 roofline으로 설명한다. 토큰 하나는 가중치 하나마다 2 FLOP을 쓰는데, 4-bit 가중치 하나는 0.5 byte다. 같은 계산을 H100에 대입하면 batch $b$에서 intensity는 약 $2b/0.5=4b$이고, ridge point 295를 넘기 전, 곧 $b$가 약 70보다 작은 동안은 가중치를 읽는 시간이 행렬곱을 지배한다. 그동안은 읽는 bytes가 4분의 1로 줄어든 만큼 빨라지고, 그 이상에서는 계산은 FP16 그대로이므로 이득이 사라진다. 실제로 Marlin은 batch 16–32까지 이상적인 값에 가까운 약 3.87배를 냈고, batch 128에서는 1.5배 정도로 줄었다(원논문 §1, §5.1).[^marlin] vLLM에 넣었을 때 전체 속도 향상은 최대 2.8배였다. 07a §6에서 weight-only 양자화의 이득이 batch가 커질수록 준다고 한 것이 kernel 수준에서 이렇게 나타난다.
+원논문은 이 kernel이 언제까지 이득을 내는지 roofline으로 설명한다. 토큰 하나는 가중치 하나마다 2 FLOP을 쓰는데, 4-bit 가중치 하나는 0.5 byte다. 원논문은 A10 GPU로 계산해 batch가 약 50보다 작은 동안 가중치 읽기가 시간을 지배한다고 보였다. 같은 계산을 H100에 대입하면 batch $b$에서 intensity는 약 $2b/0.5=4b$이고, ridge point 295를 넘기 전, 곧 $b$가 약 70보다 작은 동안은 가중치를 읽는 시간이 행렬곱을 지배한다. 그동안은 읽는 bytes가 4분의 1로 줄어든 만큼 빨라지고, 그 이상에서는 계산은 FP16 그대로이므로 이득이 사라진다. 실제로 Marlin은 batch 16–32까지 이상적인 값에 가까운 약 3.87배를 냈고, batch 128에서는 1.5배 정도로 줄었다(원논문 §1, §5.1).[^marlin] vLLM에 넣었을 때 전체 속도 향상은 최대 2.8배였다. 07a §6에서 weight-only 양자화의 이득이 batch가 커질수록 준다고 한 것이 kernel 수준에서 이렇게 나타난다.
 
 ### 3-3. MoE의 grouped GEMM
 
@@ -112,7 +112,7 @@ MoE 층에서는 batch의 토큰들이 서로 다른 expert로 흩어지고, exp
 
 Kernel 자체가 빨라도 그 사이가 빈다면 GPU는 논다. CPU는 kernel을 하나씩 GPU에 제출하는데, 제출마다 마이크로초 단위의 비용이 든다. NVIDIA의 측정에서 V100에서 2.9 μs짜리 kernel을 하나씩 동기화하며 실행하면 kernel당 9.6 μs가 걸렸다.[^cudagraph-nv] Decode 한 스텝은 층마다 정규화, 투영, attention, 활성화 같은 kernel 여러 개를 수십 층에 걸쳐 실행하므로 kernel이 수백 개다. vLLM 팀도 H100에서 Llama 8B의 GPU 실행 시간이 스텝당 약 5 ms에 불과해, CPU 쪽의 비용이 무시할 수 없게 된다고 밝혔다.[^vllm-v1]
 
-**CUDA graph**는 이 비용을 줄인다. 한 스텝에서 실행할 kernel들의 순서와 인자를 한 번 기록(capture)해 두고, 이후에는 기록한 그래프 전체를 한 번에 재생(replay)한다. NVIDIA의 같은 측정에서 kernel당 시간이 3.4 μs로 줄었다. 대신 재생은 같은 kernel을 같은 인자, 같은 메모리 주소로 실행하므로 입력의 모양이 고정되어야 한다.[^cudagraph-pt] Batch 크기가 스텝마다 바뀌는 서빙에서는 이것이 문제다. vLLM은 batch 크기 1, 2, 4, 8, 16, 24, …처럼 여러 크기의 그래프를 미리 기록해 두고, 실제 batch를 그보다 큰 가장 가까운 크기로 채워(padding) 재생한다. Attention은 요청마다 길이가 달라 그래프에 담기 어려우므로, 기본 설정에서는 decode만 있는 batch는 전체를 그래프 하나로, 나머지는 attention 사이의 구간만 그래프로 기록한다.[^vllm-cg]
+**CUDA graph**는 이 비용을 줄인다. 한 스텝에서 실행할 kernel들의 순서와 인자를 한 번 기록(capture)해 두고, 이후에는 기록한 그래프 전체를 한 번에 재생(replay)한다. NVIDIA의 같은 측정에서 동기화 없이 이어 제출하면 kernel당 3.8 μs, CUDA graph로 재생하면 3.4 μs였다. 대신 재생은 같은 kernel을 같은 인자, 같은 메모리 주소로 실행하므로 입력의 모양이 고정되어야 한다.[^cudagraph-pt] Batch 크기가 스텝마다 바뀌는 서빙에서는 이것이 문제다. vLLM은 batch 크기 1, 2, 4, 8, 16, 24, …처럼 여러 크기의 그래프를 미리 기록해 두고, 실제 batch를 그보다 큰 가장 가까운 크기로 채워(padding) 재생한다. Attention은 요청마다 길이가 달라 그래프에 담기 어려우므로, 기본 설정에서는 decode만 있는 batch는 전체를 그래프 하나로, 나머지는 attention 사이의 구간만 그래프로 기록한다.[^vllm-cg]
 
 <Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.30.0/docs/assets/design/cuda_graphs/current_design.png" alt="vLLM 문서의 CUDA graph 설계 그림. 위쪽에서 모델은 torch.compile로 attention 사이의 submodule들로 쪼개지고(piecewise compilation), submodule마다 CUDA graph wrapper가 붙는다. 실행 시 요청 batch의 종류와 크기에 따라 세 가지 방식 가운데 하나가 고른다. PIECEWISE는 submodule 구간은 CUDA graph로, attention은 그래프 없이(eager) 번갈아 실행한다. FULL은 모델 전체를 CUDA graph 하나로 실행한다. NONE은 그래프 없이 모두 eager로 실행한다." caption="vLLM의 CUDA graph 실행 방식. Attention 사이의 구간만 그래프로 재생하는 PIECEWISE, 모델 전체를 재생하는 FULL, 그래프를 쓰지 않는 NONE 가운데 batch에 맞는 것을 고른다." source="vLLM Project, CUDA Graphs 설계 문서 그림(docs/assets/design/cuda_graphs/current_design.png, v0.30.0). Apache License 2.0. 원본 그대로 사용." />
 
