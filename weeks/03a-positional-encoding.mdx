@@ -13,7 +13,7 @@ Self-attention은 토큰 사이의 관계를 계산하지만, 그 자체로는 �
 | 노트 | 다루는 블록 부품 | 다루는 기법(본문 순서) |
 |---|---|---|
 | 03a (이 노트) | Query·key의 위치 신호 | 절대 위치, 상대 위치, RoPE, long context 확장 |
-| [03b](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/) | Attention head 구성과 KV(key–value) cache | MHA(multi-head attention), MQA(multi-query attention), GQA(grouped-query attention), MLA(multi-head latent attention) |
+| [03b](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/) | Attention head 구성과 KV(key-value) cache | MHA(multi-head attention), MQA(multi-query attention), GQA(grouped-query attention), MLA(multi-head latent attention) |
 | [03c](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/) | Attention 층 자체(sequence mixer) | O(n²) 문제의 두 갈래인 sparse·sliding window와 linear·gating·SSM(state space model), 둘이 합류하는 hybrid |
 | [03d](/lecture/2026f-advanced-deep-learning/03d-ffn-activation/) | FFN(feed-forward network) 활성화 함수 | ReLU(rectified linear unit), GELU(Gaussian error linear unit)·SiLU(sigmoid linear unit), GLU(gated linear unit)와 SwiGLU, 같은 파라미터 예산의 FFN 폭 |
 | [03e](/lecture/2026f-advanced-deep-learning/03e-normalization/) | Normalization과 attention 출력 | LayerNorm과 RMSNorm, Post-LN과 Pre-LN, QK-Norm과 logit soft-capping, attention sink |

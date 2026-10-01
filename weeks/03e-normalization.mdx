@@ -274,7 +274,7 @@ Xiao 등은 Llama-2-7B의 attention map에서, 첫 두 층을 제외한 거의 �
 
 <Figure src="https://arxiv.org/html/2309.17453v4/attention_weights.png" alt="Llama-2-7B의 평균 attention logit 지도 일곱 개. Layer 0과 Layer 1의 head 0은 대각선 근처, 즉 최근 토큰 쪽 값이 크다. Layer 2, 9, 16, 23, 31의 head 0은 모든 query 행에서 첫 번째 열, 즉 첫 토큰의 값이 두드러지게 크다." caption="길이 16인 문장 256개에 대한 Llama-2-7B의 평균 attention logit. 가로축은 key 위치, 세로축은 query 위치다. Layer 2부터 첫 열(첫 토큰)이 두드러진다." source="Xiao et al. · Efficient Streaming Language Models with Attention Sinks, Figure 2 · CC BY 4.0 · 수정 없음" />
 
-이 현상은 실제 동작에도 영향을 준다. 최근 토큰만 KV(key–value) cache에 남기는 window attention으로 긴 텍스트를 처리하면, 첫 토큰들이 cache에서 밀려나는 순간 perplexity가 급증했다. PG19 시험 집합의 첫 책(65K 토큰)으로 측정한 원논문 Table 1에서, Llama-2-13B는 최근 1,024 토큰만 남기면 perplexity가 5158.07이었지만 처음 4 토큰을 함께 남기면(4+1020) 5.40으로 돌아왔다. 처음 4 토큰을 줄바꿈 토큰 `\n`으로 바꾸어도 5.60으로 거의 회복되었다. 첫 토큰의 **의미**보다 **위치**가 중요하다는 증거다.
+이 현상은 실제 동작에도 영향을 준다. 최근 토큰만 KV(key-value) cache에 남기는 window attention으로 긴 텍스트를 처리하면, 첫 토큰들이 cache에서 밀려나는 순간 perplexity가 급증했다. PG19 시험 집합의 첫 책(65K 토큰)으로 측정한 원논문 Table 1에서, Llama-2-13B는 최근 1,024 토큰만 남기면 perplexity가 5158.07이었지만 처음 4 토큰을 함께 남기면(4+1020) 5.40으로 돌아왔다. 처음 4 토큰을 줄바꿈 토큰 `\n`으로 바꾸어도 5.60으로 거의 회복되었다. 첫 토큰의 **의미**보다 **위치**가 중요하다는 증거다.
 
 Gu 등은 이 현상이 다양한 입력과 작은 모델을 포함한 여러 자기회귀 언어모델에서 나타나며, pre-training 도중 충분한 데이터로 효과적으로 최적화된 뒤에 생긴다고 보고했다.[^gu] 학습 데이터에서 특정 위치에 고정 토큰을 두면 sink가 그 위치로 옮겨 가기도 했다.
 

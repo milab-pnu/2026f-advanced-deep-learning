@@ -24,7 +24,7 @@ MoE layer는 dense FFN 하나를 **expert** $E$개와 **router**(gating network)
 
 <Figure src="https://arxiv.org/html/2401.04088v1/images/smoe.png" alt="Mixtral 논문의 MoE layer 그림. 입력이 router로 들어가고, router는 겹쳐 그려진 여러 expert 중 두 개로 입력을 보낸다. Router가 낸 gating weights가 점선으로 출력 쪽에 전달되고, 두 expert의 출력이 가중합되어 layer의 출력이 된다." caption="Mixtral 8x7B의 MoE layer. 각 입력 벡터는 router에 의해 8개 expert 중 2개로 보내지고, 출력은 두 expert 출력의 가중합이다." source="Jiang et al. · Mixtral of Experts (arXiv:2401.04088) Figure 1 · CC BY 4.0 · 수정 없음" />
 
-Mixtral 8x7B는 이 구조를 이해하기 좋은 사례다. 층 수 32, hidden dimension 4096, FFN 중간 차원 14336, query head 32개와 key–value head 8개로, attention과 FFN 한 개의 모양이 Llama 3 8B와 같다. 차이는 각 층의 FFN 자리에 같은 모양의 SwiGLU FFN 8개를 두고, 토큰마다 2개를 고른다는 점이다.[^mixtral]
+Mixtral 8x7B는 이 구조를 이해하기 좋은 사례다. 층 수 32, hidden dimension 4096, FFN 중간 차원 14336, query head 32개와 key-value head 8개로, attention과 FFN 한 개의 모양이 Llama 3 8B와 같다. 차이는 각 층의 FFN 자리에 같은 모양의 SwiGLU FFN 8개를 두고, 토큰마다 2개를 고른다는 점이다.[^mixtral]
 
 $$
 y=\sum_{i\in\mathcal{T}(x)} g_i(x)\,E_i(x),\qquad \mathcal{T}(x)=\text{점수 상위 }k\text{개 expert의 번호}
@@ -321,7 +321,7 @@ Bae 등(2025)의 **Mixture-of-Recursions**(MoR)은 두 갈래를 합친다. 가�
 
 **Routing.** 방식은 두 가지다. **Expert-choice**에서는 반복 단계마다 router가 계속 진행할 상위 $k$개 토큰을 고르고, 이번 단계에서 선택된 토큰만 다음 단계의 후보가 된다. 단계 $r$마다 남길 토큰 수 $k_r$을 미리 정해 두므로 balancing은 필요 없다. 논문 설정에서 $k_r$은 전체 토큰의 $1,\,2/3,\,1/3$로 단계가 깊어질수록 줄어든다. 다만 상위 $k_r$개를 고르려면 시퀀스 전체를 봐야 하므로 §5-1에서 본 non-causal 문제가 그대로 따라온다. MoR도 추론용 보조 router나 보조 손실로 이를 우회하며, 논문의 비교에서는 보조 손실 쪽이 나았다. **Token-choice**에서는 첫 단계에서 토큰마다 반복 횟수를 한 번에 정한다. 미래 토큰을 보지 않아 인과성 문제는 없지만, 반복 횟수별 토큰 수가 고르지 않을 수 있어 §3의 balancing loss나 bias 방식이 필요하다. 논문은 balancing loss 쪽이 더 안정적이었다고 보고한다.[^mor]
 
-**KV cache.** 반복 단계마다 계산하는 토큰이 달라지므로 KV(key–value) cache도 설계해야 한다. **Recursion-wise caching**은 단계마다 그 단계에 남은 토큰의 key·value만 새로 만들어 저장하고, 남은 토큰끼리만 attention한다. **Recursive KV sharing**은 첫 반복에서 모든 토큰의 key·value를 계산해 두고 이후 단계가 재사용하므로, 남은 토큰의 query가 전체 문맥을 본다.[^mor] 두 방식의 세부 trade-off는 원논문 §2.2.2와 실험을 참고한다.
+**KV cache.** 반복 단계마다 계산하는 토큰이 달라지므로 KV(key-value) cache도 설계해야 한다. **Recursion-wise caching**은 단계마다 그 단계에 남은 토큰의 key·value만 새로 만들어 저장하고, 남은 토큰끼리만 attention한다. **Recursive KV sharing**은 첫 반복에서 모든 토큰의 key·value를 계산해 두고 이후 단계가 재사용하므로, 남은 토큰의 query가 전체 문맥을 본다.[^mor] 두 방식의 세부 trade-off는 원논문 §2.2.2와 실험을 참고한다.
 
 <Figure src="https://arxiv.org/html/2507.10524v3/overview_main3.png" alt="Mixture-of-Recursions의 토큰별 반복 예시. 위쪽 격자는 층과 시퀀스 위치에 따라 계산된 칸(진한 색)과 건너뛴 칸(연한 색)을 보여 주며, 맨 아래 층은 모든 위치가 계산되고 위로 갈수록 일부 위치만 계산된다. 아래쪽에는 영어 문장의 subword 토큰이 세 가지 색으로 칠해져 있어 토큰마다 반복 횟수가 1, 2, 3회로 다름을 나타낸다." caption="MoR에서 학습된 토큰별 반복 횟수의 예. 진한 칸은 반복 블록을 계산한 위치이고, 아래 문장의 색은 각 subword 토큰의 반복 횟수(1·2·3회)를 나타낸다." source="Bae et al. · Mixture-of-Recursions (arXiv:2507.10524v3) Figure 1 오른쪽 패널 · CC BY 4.0 · 수정 없음" />
 

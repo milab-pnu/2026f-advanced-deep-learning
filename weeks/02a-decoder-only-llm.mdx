@@ -124,7 +124,7 @@ $$
 
 더하는 두 행렬의 모양이 같아야 하므로 attention과 FFN은 각각 $n\times d$ 형태로 결과를 돌려준다. 전체 구조도에 표시한 부품들은 이 두 연산을 구체화한다.
 
-- **GQA(grouped-query attention):** 여러 query head가 key–value head를 공유한다. Llama 3 8B에서는 query head 4개가 한 쌍의 key–value head를 공유한다.
+- **GQA(grouped-query attention):** 여러 query head가 key-value head를 공유한다. Llama 3 8B에서는 query head 4개가 한 쌍의 key-value head를 공유한다.
 - **RoPE(rotary position embedding):** 각 층의 query와 key에 위치에 따른 회전을 적용해 위치 관계를 반영한다.
 - **SwiGLU(Swish-gated linear unit):** FFN의 두 입력 투영 중 한 경로에 활성화 함수를 적용하고, 다른 경로와 원소별로 곱한 뒤 출력 차원으로 투영한다.
 
@@ -228,7 +228,7 @@ Top-k는 후보 수를 고정하지만, top-p는 그 시점의 분포에 따라 
 
 실제 문자열은 ID에 대응하는 바이트 조각을 이어 붙여 복원하며, 한 토큰이 항상 한 단어나 완성된 글자인 것은 아니다.
 
-정해진 종료 토큰이나 길이 제한에 도달하면 생성을 멈춘다. 효율적인 구현에서는 과거 위치의 key와 value를 KV(key–value) cache에 보관해 재사용한다. 캐시는 이전 계산을 반복하는 비용을 줄인다.
+정해진 종료 토큰이나 길이 제한에 도달하면 생성을 멈춘다. 효율적인 구현에서는 과거 위치의 key와 value를 KV(key-value) cache에 보관해 재사용한다. 캐시는 이전 계산을 반복하는 비용을 줄인다.
 
 ## 4. 정리 영상
 

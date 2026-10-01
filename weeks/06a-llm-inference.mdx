@@ -7,7 +7,7 @@ order: 0
 2주차에서 decoder-only LLM(large language model)의 구조와 학습 비용을 살펴봤다. Zhao 등의 서베이[^llmsurvey]를 길잡이로, 이 노트는 그 모델로
 **문장을 생성할 때 실제로 무엇이 비싼가**를 다룬다. 학습과 달리 inference 는
 autoregressive 라서, 비용 구조가 크게 다르고 하드웨어를 잘 못 쓰기 쉽다. 기준 모델은
-계속 **Llama 3 8B**($L = 32$, query head 32 / KV(key–value) head 8, $d_{\text{head}} = 128$,
+계속 **Llama 3 8B**($L = 32$, query head 32 / KV(key-value) head 8, $d_{\text{head}} = 128$,
 $d = 4096$, $V = 128{,}256$)[^llama3] 이다.
 
 ## 1. 학습과 무엇이 다른가
