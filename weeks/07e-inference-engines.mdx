@@ -4,9 +4,9 @@ week: 7
 order: 4
 ---
 
-6·7주차에 본 기법은 따로 쓰이지 않는다. 요청 하나가 서버에 들어오면 [06d](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/)의 scheduler가 batch에 넣고, [06c](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/)의 KV cache 관리자가 블록을 내주고 prefix cache를 찾고, [07d](/lecture/2026f-advanced-deep-learning/07d-kernel-optimization/)의 kernel이 [07a](/lecture/2026f-advanced-deep-learning/07a-quantization/)의 양자화된 가중치로 계산하고, 경우에 따라 [07c](/lecture/2026f-advanced-deep-learning/07c-speculative-decoding/)의 draft가 다음 토큰을 추측한다. 이 모두를 한 프로그램 안에서 맞물려 돌리는 것이 **inference engine**이다. 이 노트는 대표적인 공개 엔진인 vLLM과 SGLang이 앞의 기법들을 어떻게 묶는지 보고, 엔진의 성능을 재는 절차로 6·7주차를 마무리한다.
+6·7주차에 본 기법은 따로따로 쓰이는 일이 드물다. 요청 하나가 서버에 들어오면 [06d](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/)의 scheduler가 batch에 넣고, [06c](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/)의 KV cache 관리자가 블록을 내주고 prefix cache를 찾고, [07d](/lecture/2026f-advanced-deep-learning/07d-kernel-optimization/)의 kernel이 [07a](/lecture/2026f-advanced-deep-learning/07a-quantization/)의 양자화된 가중치로 계산하고, 경우에 따라 [07c](/lecture/2026f-advanced-deep-learning/07c-speculative-decoding/)의 draft가 다음 토큰을 추측한다. 이 모두를 한 프로그램 안에서 맞물려 돌리는 것이 **inference engine**이다. 이 노트는 대표적인 공개 엔진인 vLLM과 SGLang이 앞의 기법들을 어떻게 묶는지 보고, 엔진의 성능을 재는 절차로 6·7주차를 마무리한다.
 
-전체 지도는 Park 등의 inference engine 서베이[^survey]로 잡는다. 이 서베이는 공개 엔진 25개를 하나씩 살펴보고(§4), 엔진들이 쓰는 최적화를 batching, 병렬화, 압축, caching, attention 등으로 분류한다(§5). 절 번호는 arXiv v2 기준이다. 이 노트의 §1–3은 서베이 §4 가운데 vLLM과 SGLang 부분에, 그 밖의 엔진을 다루는 §4는 §4의 나머지에 대응하고, §5의 측정 절차는 엔진의 공식 문서를 따른다.
+전체 지도는 Park 등의 inference engine 서베이[^survey]로 잡는다. 이 서베이는 공개 엔진 25개를 하나씩 살펴보고(§4), 엔진들이 쓰는 최적화를 batching, 병렬화, 압축, caching, attention 등으로 분류한다(§5). 절 번호는 arXiv v2 기준이다. 이 노트의 §2–3은 서베이 §4 가운데 vLLM과 SGLang 절에, 그 밖의 엔진을 다루는 §4는 §4의 나머지 절에 대응하고, §5의 측정 절차는 엔진의 공식 문서를 따른다.
 
 ## 1. 엔진의 구성
 
@@ -18,7 +18,7 @@ order: 4
 4. **Model runner**가 batch의 입력 텐서를 준비하고, attention·선형층 kernel과 CUDA graph로 모델을 한 번 실행한다(07d).
 5. **Sampler**가 마지막 위치의 logits로 다음 토큰을 고르고, speculative decoding이라면 추측을 검증한다(07c).
 
-[06b §4-1](/lecture/2026f-advanced-deep-learning/06b-roofline/#4-1-batch-크기에-따른-decode-스텝)에서 Llama 3 8B의 decode 한 스텝의 하한이 H100에서 약 5 ms라고 계산했다. 이 짧은 시간 안에 1–3과 5의 CPU 작업까지 끝내야 GPU가 놀지 않는다. 최근 엔진 설계의 상당 부분이 이 CPU 쪽 시간을 GPU 실행 뒤에 숨기는 데 쓰이는 이유다.
+[06b §4-1](/lecture/2026f-advanced-deep-learning/06b-roofline/#4-1-batch-크기에-따른-decode-스텝)에서 Llama 3 8B의 decode 한 스텝의 하한이 H100에서 약 5 ms라고 계산했다. 이 짧은 시간 안에 1–3의 작업과 입력 텐서 준비 같은 CPU 쪽 작업까지 끝내야 GPU가 놀지 않는다. 최근 엔진 설계의 상당 부분이 이 CPU 쪽 시간을 GPU 실행 뒤에 숨기는 데 쓰이는 이유다.
 
 ## 2. vLLM
 
@@ -79,7 +79,7 @@ vLLM과 SGLang 말고도 목적이 다른 엔진이 여럿 있다.[^survey] NVID
 
 ### 5-1. 측정 조건
 
-엔진이나 설정을 비교할 때는 결과에 영향을 주는 조건을 모두 고정한다. 모델과 그 버전, GPU의 종류와 수, 가중치와 KV cache의 정밀도, 입력과 출력 길이의 분포, sampling 설정이 같아야 한다. 출력 길이를 고정하려면 종료 토큰을 무시하고 정해진 길이까지 생성하게 한다. 첫 측정은 warmup으로 버리고, prefix caching이 있는 엔진에서는 cache가 비어 있는 상태와 채워진 상태를 구분한다. vLLM과 SGLang 모두 측정 사이에 prefix cache를 비우는 방법을 제공한다.[^sglang-bench] 같은 데이터라도 [06a §3-1](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#3-1-요청-하나의-지연)에서 보았듯 도구마다 지표의 정의가 조금씩 다르므로, 지표 이름보다 정의를 확인한다. NVIDIA의 측정 안내는 ITL을 TPOT와 같은 값으로 정의하지만, vLLM은 둘을 따로 보고한다.[^nvidia-bench][^vllm-bench]
+엔진이나 설정을 비교할 때는 결과에 영향을 주는 조건을 모두 고정한다. 모델과 그 버전, GPU의 종류와 수, 가중치와 KV cache의 정밀도, 입력과 출력 길이의 분포, sampling 설정이 같아야 한다. 출력 길이를 고정하려면 종료 토큰을 무시하고 정해진 길이까지 생성하게 한다.[^nvidia-bench] 첫 측정은 warmup으로 버리고, prefix caching이 있는 엔진에서는 cache가 비어 있는 상태와 채워진 상태를 구분한다. vLLM과 SGLang 모두 측정 사이에 prefix cache를 비우는 방법을 제공한다.[^sglang-bench] 같은 데이터라도 [06a §3-1](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#3-1-요청-하나의-지연)에서 보았듯 도구마다 지표의 정의가 조금씩 다르므로, 지표 이름보다 정의를 확인한다. NVIDIA의 측정 안내는 ITL을 TPOT와 같은 값으로 정의하지만, vLLM은 둘을 따로 보고한다.[^nvidia-bench][^vllm-bench]
 
 ### 5-2. 부하를 걸고 곡선 그리기
 
@@ -88,7 +88,7 @@ vLLM과 SGLang 말고도 목적이 다른 엔진이 여럿 있다.[^survey] NVID
 [06a §3-3](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#3-3-slo와-goodput)의 goodput도 직접 잴 수 있다. `vllm bench serve`의 `--goodput` 옵션에 TTFT와 TPOT의 목표치를 밀리초로 주면, 목표를 지킨 요청만 센 처리량을 함께 보고한다.[^vllm-bench]
 
 <Callout type="example">
-기말 프로젝트에서 Llama 3 8B를 H100 한 대로 서빙한다고 하자. BF16과 FP8 가중치 가운데 무엇이 나은지 알고 싶다면, 같은 엔진 버전과 설정으로 서버를 두 번 띄우고 각각 다음처럼 잰다.
+기말 프로젝트에서 Llama 3.1 8B를 H100 한 대로 서빙한다고 하자. BF16과 FP8 가중치 가운데 무엇이 나은지 알고 싶다면, 같은 엔진 버전과 설정으로 서버를 두 번 띄우고 각각 다음처럼 잰다.
 
 ```bash
 vllm bench serve --model meta-llama/Llama-3.1-8B-Instruct \
