@@ -6,7 +6,7 @@ order: 4
 
 6·7주차에 본 기법은 따로따로 쓰이는 일이 드물다. 요청 하나가 서버에 들어오면 [06d](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/)의 scheduler가 batch에 넣고, [06c](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/)의 KV cache 관리자가 블록을 내주고 prefix cache를 찾고, [07d](/lecture/2026f-advanced-deep-learning/07d-kernel-optimization/)의 kernel이 [07a](/lecture/2026f-advanced-deep-learning/07a-quantization/)의 양자화된 가중치로 계산하고, 경우에 따라 [07c](/lecture/2026f-advanced-deep-learning/07c-speculative-decoding/)의 draft가 다음 토큰을 추측한다. 이 모두를 한 프로그램 안에서 맞물려 돌리는 것이 **inference engine**이다. 이 노트는 대표적인 공개 엔진인 vLLM과 SGLang이 앞의 기법들을 어떻게 묶는지 보고, 엔진의 성능을 재는 절차로 6·7주차를 마무리한다.
 
-전체 지도는 Park 등의 inference engine 서베이[^survey]로 잡는다. 이 서베이는 공개 엔진 25개를 하나씩 살펴보고(§4), 엔진들이 쓰는 최적화를 batching, 병렬화, 압축, caching, attention 등으로 분류한다(§5). 절 번호는 arXiv v2 기준이다. 이 노트의 §2–3은 서베이 §4 가운데 vLLM과 SGLang 절에, 그 밖의 엔진을 다루는 §4는 §4의 나머지 절에 대응하고, §5의 측정 절차는 엔진의 공식 문서를 따른다.
+전체 지도는 Park 등의 inference engine 서베이[^survey]로 잡는다. 이 서베이는 공개 엔진 25개를 하나씩 살펴보고(서베이 §4), 엔진들이 쓰는 최적화를 batching, 병렬화, 압축, caching, attention 등으로 분류한다(서베이 §5). 절 번호는 arXiv v2 기준이다. 이 노트의 §2–3은 서베이 §4 가운데 vLLM과 SGLang 절에, 그 밖의 엔진을 다루는 §4는 §4의 나머지 절에 대응하고, §5의 측정 절차는 엔진의 공식 문서를 따른다.
 
 ## 1. 엔진의 구성
 
