@@ -6,11 +6,11 @@ order: 5
 
 Dense Transformer는 모든 토큰에 같은 가중치와 같은 계산량을 쓴다. 모델을 키우면 파라미터와 토큰당 계산이 함께 늘어난다. 이 노트는 **토큰마다 네트워크의 일부만 계산하는 conditional computation**을 두 방향에서 살펴본다. 폭 방향에서는 FFN(feed-forward network)을 여러 expert로 나누고 router가 일부만 고르는 MoE(mixture of experts)가 있다. 깊이 방향에서는 토큰마다 통과하는 블록 수를 바꾸는 Mixture-of-Depths와 Mixture-of-Recursions가 있다.
 
-MoE 부분의 전체 지도는 Cai 등의 서베이[^moe-survey]가 좋다. §II에서 dense MoE와 sparse MoE의 식과 load balancing loss를, §IV-A·IV-B에서 gating 함수와 expert 설계(shared expert 포함)를, §V에서 계산·통신·저장의 시스템 문제를 정리한다. 이 노트의 계보는 **dense FFN → sparse MoE와 top-k routing → expert 쏠림과 처리 용량 문제 → expert 구성의 설계 선택**으로 이어진다. 깊이 방향의 두 기법은 동기가 달라 §5에서 따로 다루며, 이 부분은 서베이 대신 원논문을 따른다.
+MoE 부분의 전체 지도는 Cai 등의 서베이[^moe-survey]가 좋다. arXiv v3 기준으로 2절에서 dense MoE와 sparse MoE의 식과 load balancing loss를, 4.1–4.2절에서 gating 함수와 expert 설계(shared expert 포함)를, 5절에서 계산·통신·저장의 시스템 문제를 정리한다. 이 노트의 계보는 **dense FFN → sparse MoE와 top-k routing**에서 출발해 두 갈래로 나뉜다. 한 갈래는 routing이 낳은 expert 쏠림과 처리 용량 초과를 다루는 load balancing과 capacity(§3)이고, 다른 갈래는 expert 하나가 여러 종류의 지식을 섞어 담거나 expert끼리 같은 지식을 중복해 배우는 문제를 다루는 expert 구성의 설계(§4)다. 깊이 방향의 두 기법은 동기가 달라 §5에서 따로 다루며, 이 부분은 서베이 대신 원논문을 따른다.
 
 ## 1. Dense FFN의 확장 한계
 
-[FFN activations](/lecture/2026f-advanced-deep-learning/03d-ffn-activation/#1-ffn의-역할)에서 계산했듯이, 기준 모델 Llama 3 8B에서는 SwiGLU FFN이 전체 8.03B 파라미터의 약 70%를 차지한다.
+[FFN activations](/lecture/2026f-advanced-deep-learning/03d-ffn-activation/#1-ffn의-역할)에서 계산했듯이, 기준 모델 Llama 3 8B에서는 SwiGLU(Swish-gated linear unit) FFN이 전체 8.03B 파라미터의 약 70%를 차지한다.
 
 Dense 구조에서는 이 FFN 가중치를 **모든 토큰이 전부** 사용한다. FFN 폭을 두 배로 키우면 저장할 파라미터도 두 배, 토큰마다 곱해야 하는 행렬도 두 배가 된다. [Scaling](/lecture/2026f-advanced-deep-learning/02d-scaling/#1-1-모델데이터계산량)에서 본 근사 $C\approx6ND$도 같은 가정을 깔고 있다. 파라미터 $N$을 늘리면 토큰당 계산 $6N$이 같이 늘어난다.
 
@@ -105,7 +105,7 @@ Mixtral 8x7B로 앞의 두 값을 계산해 보자. 층마다 attention은 약 4
 | Embedding + LM head | 0.26B | 0.26B | 0.26B |
 | 합계 | 약 7.2B | 약 46.7B | 약 12.9B |
 
-공개 config의 차원으로 직접 계산한 값이며, 논문이 보고한 47B·13B와 정수 자리에서 맞는다.[^mixtral] 이름의 "8x7B"와 달리 전체가 $8\times7.2=58$B가 아닌 이유는 attention과 embedding은 복제하지 않고 FFN만 8개로 늘렸기 때문이다.
+공개 config의 차원으로 직접 계산한 값이며, 논문이 보고한 47B·13B와 정수 자리에서 맞는다.[^mixtral] 이름의 "8x7B"와 달리 전체가 $8\times7.2=57.6\approx58$B가 아닌 이유는 attention과 embedding은 복제하지 않고 FFN만 8개로 늘렸기 때문이다.
 
 **학습 계산량.** $C\approx6ND$의 $N$에는 dense 모델과 같은 관례로 입력 embedding과 LM head를 뺀 블록 파라미터를 넣되, MoE에서는 그중 **활성 파라미터**만 넣는다. Forward에서 토큰 하나가 거치는 행렬곱이 그만큼이기 때문이다(문맥 길이에 따라 늘어나는 attention score 계산은 02d와 같이 생략한다). Mixtral의 블록 활성 파라미터는 $12.9-0.26\approx12.6$B이므로 토큰당 학습 계산은 약 $6\times12.6\text{B}\approx7.6\times10^{10}$ FLOPs다. 전체 블록 파라미터 46.4B를 넣으면 약 3.7배 과대 추정한다. DeepSeek-V3에 같은 근사를 적용하면, 보고된 활성 37B와 학습 토큰 14.8T로 $6\times37\text{B}\times14.8\text{T}\approx3.3\times10^{24}$ FLOPs가 나온다(이 노트에서 계산한 근사치이며, 37B는 embedding 포함 여부를 따로 밝히지 않은 값이다).[^dsv3] 이 근사에는 router 계산, capacity를 맞추려고 채우는 padding(§3-4), 장치 간 통신 시간이 들어가지 않는다.
 
@@ -151,6 +151,8 @@ Expert 4개, top-1, 토큰 8개인 batch를 생각하자(교육용 가상 값). 
 완전히 균형을 이루면 1.0이다. $P_i$에 대한 기울기는 $N f_i=[2.5,\,0.5,\,0.5,\,0.5]$로, 토큰을 많이 받은 expert 1의 확률을 가장 강하게 낮춘다. Softmax 확률은 합이 1이므로 그만큼 다른 expert의 확률이 올라간다.
 
 </Callout>
+
+위 식은 top-1인 Switch Transformer의 것이다. Top-k 모델에서는 $f_i$를 argmax 하나가 아니라 선택된 $k$개 배정 전체로 센다. 이때 무엇으로 나누는지가 구현마다 다르다. Hugging Face Transformers의 Qwen3-MoE 구현은 배정 수를 토큰 수 $T$로 나누므로 $f_i$의 합이 $k$가 되고, 균등 배정에서 손실 값도 1이 아니라 $k$다.[^qwen3-config] DeepSeek-V3가 함께 쓰는 보조 손실(§3-3)은 배정 수를 $kT$로 나누고 expert 수를 곱해, 균등 배정에서 값이 1이 되도록 맞춘다.[^dsv3] 그래서 같은 $\alpha$라도 구현에 따라 실제 손실의 세기가 다르고, 논문의 계수를 옮겨 쓸 때는 정규화 관례를 함께 확인해야 한다.
 
 계수 $\alpha$가 문제다. Switch Transformer는 $10^{-1}$부터 $10^{-5}$까지 탐색해 $\alpha=10^{-2}$가 학습 loss를 방해하지 않으면서 빠르게 균형을 잡았다고 보고했다.[^switch] 그러나 보조 손실은 언어 모델링과 다른 목표이므로 계수를 키우면 router가 "다음 토큰 예측에 좋은 expert"보다 "균형에 좋은 expert"를 고르도록 밀린다. Wang 등(2024)은 큰 보조 손실이 학습에 무시할 수 없는 간섭 gradient를 만들어 성능을 떨어뜨린다고 지적했다.[^lossfree] 계수가 작으면 간섭은 줄지만 균형이 약해진다.
 
@@ -228,7 +230,7 @@ ST-MoE는 전체 loss를 $L_{CE}+c_BL_B+c_zL_z$로 두고 $c_z=0.001$을 썼다.
 
 ## 4. Fine-grained expert와 shared expert
 
-§2–3의 MoE는 "dense FFN과 같은 크기의 expert 몇 개 중 한두 개 선택"이었다. DeepSeekMoE는 이 구성에서 expert 수와 크기, 항상 켜 두는 expert를 바꾸는 두 가지 선택을 제안했다.[^dsmoe] 두 선택 모두 MoE가 동작하는 데 필수는 아니며, 최근 모델들도 서로 다르게 고른다(§6).
+§2–3의 MoE는 "dense FFN과 같은 크기의 expert 몇 개 중 한두 개 선택"이었다. DeepSeekMoE는 부하 균형과는 다른 문제, 즉 각 expert가 얼마나 뚜렷하게 특화되는가에 주목해 이 구성에서 expert 수와 크기, 항상 켜 두는 expert를 바꾸는 두 가지 선택을 제안했다.[^dsmoe] 두 선택 모두 MoE가 동작하는 데 필수는 아니며, 최근 모델들도 서로 다르게 고른다(§6).
 
 ### 4-1. Fine-grained expert segmentation
 
@@ -236,7 +238,7 @@ DeepSeekMoE는 expert가 8개나 16개뿐이면 한 expert에 성격이 다른 �
 
 바뀌는 것은 **고를 수 있는 조합의 수**다. 논문의 예에서 expert 16개 중 2개를 고르면 조합은 $\binom{16}{2}=120$가지다. 각 expert를 4개로 쪼개 64개 중 8개를 고르면 $\binom{64}{8}=4{,}426{,}165{,}368$가지가 된다.[^dsmoe] 토큰마다 더 세밀하게 맞춘 expert 조합을 쓸 수 있다는 것이 동기다.
 
-실제 모델에서 이 차이는 expert의 크기로 드러난다. Mixtral의 expert 중간 차원은 hidden dimension의 3.5배(14336)다. DeepSeek-V3는 hidden 7168에 expert 중간 차원 2048, Qwen3-235B-A22B는 hidden 4096에 1536으로, expert 하나가 hidden dimension보다 좁다.[^dsv3][^qwen3-config] 대신 expert 수가 수백 개이고 토큰마다 8개를 고른다. Expert가 작고 많아지면 router 계산과 토큰 배정 관리가 복잡해지고, 토큰이 흩어지는 장치가 늘어 통신 부담이 커지는 비용이 생긴다.
+실제 모델에서 이 차이는 expert의 크기로 드러난다. Mixtral의 expert 중간 차원은 hidden dimension의 3.5배(14336)다. DeepSeek-V3는 hidden 7168에 expert 중간 차원 2048, Qwen3-235B-A22B는 hidden 4096에 1536으로, expert 하나가 hidden dimension보다 좁다.[^dsv3][^qwen3-config] 대신 expert 수가 128–256개이고 토큰마다 8개를 고른다. Expert가 작고 많아지면 router 계산과 토큰 배정 관리가 복잡해진다. 활성 expert 수가 늘면 토큰 하나를 보낼 목적지도 늘 수 있는데, 실제 통신량은 expert의 배치와 routing 제한에 따라 달라진다. DeepSeek-V3가 토큰당 목적지 노드를 4개로 제한한 것(§2-4)이 그 예다.[^dsv3]
 
 ### 4-2. Shared expert
 
@@ -246,7 +248,7 @@ $$
 h'_t=u_t+\sum_{i=1}^{N_s}\mathrm{FFN}^{(s)}_i(u_t)+\sum_{i=1}^{N_r}g_{i,t}\,\mathrm{FFN}^{(r)}_i(u_t)
 $$
 
-$u_t$는 보고서가 정의한 토큰 $t$의 FFN 입력이고, $h'_t$는 residual 경로 $u_t$까지 포함한 FFN 출력이다. 이 식은 정규화를 생략한 개략식이다. 공식 구현의 실제 순서는 attention residual 합산, RMSNorm, MoE, residual 합산이므로 expert가 받는 벡터는 정규화된 값이다.[^dsv3-config] $N_s$개의 shared expert에는 gate가 없고, $N_r$개의 routed expert 중 선택된 것만 gate 값 $g_{i,t}$를 곱해 더한다. DeepSeek-V3는 shared expert 1개와 routed expert 256개를 두고 routed expert 중 8개를 고른다. 토큰마다 계산하는 expert는 모두 9개다.
+$u_t$는 보고서가 정의한 토큰 $t$의 FFN 입력이고, $h'_t$는 residual 경로 $u_t$까지 포함한 FFN 출력이다. 이 식은 정규화를 생략한 개략식이다. 공식 구현의 실제 순서는 attention residual 합산, RMSNorm(root mean square normalization), MoE, residual 합산이므로 expert가 받는 벡터는 정규화된 값이다.[^dsv3-config] $N_s$개의 shared expert에는 gate가 없고, $N_r$개의 routed expert 중 선택된 것만 gate 값 $g_{i,t}$를 곱해 더한다. DeepSeek-V3는 shared expert 1개와 routed expert 256개를 두고 routed expert 중 8개를 고른다. 토큰마다 계산하는 expert는 모두 9개다.
 
 DeepSeekMoE 원논문은 2B 규모에서 두 선택을 적용한 모델이 expert 파라미터와 계산이 1.5배인 GShard 2.9B와 비슷한 성능을 냈다고 보고했다(논문 Table 2).[^dsmoe] 그러나 이후 모델들이 모두 같은 선택을 한 것은 아니다. Qwen3는 fine-grained expert segmentation은 따르지만, 이전 Qwen2.5-MoE와 달리 shared expert를 두지 않았다. 보고서의 해당 절은 이유를 따로 설명하지 않는다.[^qwen3]
 
@@ -289,7 +291,7 @@ MoE는 층의 **폭** 방향에서 토큰마다 다른 가중치를 쓴다. 하�
 
 ### 5-1. Mixture-of-Depths
 
-Dense Transformer에서는 모든 토큰이 모든 블록의 attention과 FFN을 거친다. Raposo 등(2024)은 모든 토큰에 같은 계산이 필요하지는 않을 것이라는 가설에서 출발해 **Mixture-of-Depths**(MoD)를 제안했다.[^mod] 블록마다 router가 토큰별 점수를 내고, 점수가 높은 상위 $k$개 토큰만 그 블록의 attention과 MLP(multi-layer perceptron, 이 노트의 FFN)를 계산한다. 나머지 토큰은 residual 경로로 블록을 건너뛴다. MoE가 여러 FFN 중 하나를 골라 토큰당 계산량은 그대로 두는 반면, MoD는 "블록 계산"과 "아무것도 하지 않음" 두 경로 중 하나를 골라 계산량 자체를 줄인다.[^mod]
+Dense Transformer에서는 모든 토큰이 모든 블록의 attention과 FFN을 거친다. Raposo 등(2024)은 모든 토큰에 같은 계산이 필요하지는 않을 것이라는 가설에서 출발해 **Mixture-of-Depths**(MoD)를 제안했다.[^mod] 블록마다 router가 토큰별 점수를 내고, 점수가 높은 상위 $k$개 토큰만 그 블록의 attention과 MLP(multi-layer perceptron, 이 노트의 FFN)를 계산한다. 나머지 토큰은 residual 경로로 블록을 건너뛴다. MoE가 토큰마다 정해진 수 $k$개의 expert를 골라 토큰당 계산량을 일정하게 유지하는 반면, MoD는 "블록 계산"과 "아무것도 하지 않음" 두 경로 중 하나를 골라 계산량 자체를 줄인다.[^mod]
 
 $$
 x^{l+1}_i=\begin{cases} r^l_i\,f(\tilde{X}^l)_i+x^l_i, & r^l_i\text{가 상위 }k\text{개 안에 들 때}\\ x^l_i, & \text{그 외}\end{cases}
@@ -303,7 +305,7 @@ $f$는 attention과 MLP이고, $\tilde{X}^l$은 선택된 토큰들의 집합이
 
 MoD는 토큰별 선택 대신 블록이 상위 $k$개 토큰을 고르는 **expert-choice routing**을 쓴다. 블록마다 처리할 토큰 수가 정확히 $k$로 고정되므로 §3의 load balancing 문제와 보조 손실이 필요 없다. 이 $k$가 MoD의 capacity다. 논문에서 가장 좋았던 설정은 한 블록 걸러 하나씩 routing 블록을 두고 capacity를 12.5%로 둔 것이다. 시퀀스 길이 2048에서 256개 토큰만 블록을 계산하고 1792개는 건너뛴다. 이 블록에서 MLP 계산은 1/8로, attention의 query–key 곱은 $(256/2048)^2=1/64$로 줄어든다(이 노트에서 계산한 값이다).
 
-Expert-choice routing에는 추론 시 문제가 있다. 상위 $k$개인지는 시퀀스 전체의 점수를 봐야 알 수 있으므로, 뒤에 올 토큰을 모르는 자기회귀 생성에서는 그대로 쓸 수 없다(non-causal). MoD는 router 출력으로 "상위 $k$개에 들지"를 예측하도록 작은 보조 손실이나 별도의 예측기를 학습해 이를 우회했고, 생성 시 성능 저하가 작았다고 보고한다.[^mod] 실험은 60M–3B 규모의 isoFLOP 비교였다.
+Expert-choice routing은 인과성(causality)을 지키지 않는다. 한 토큰이 상위 $k$개에 드는지는 그 뒤에 오는 토큰들의 점수에도 달려 있으므로, 학습 중에는 미래 토큰의 정보가 앞 토큰의 계산 경로에 새어 들어가고, 뒤에 올 토큰을 모르는 자기회귀 생성에서는 같은 규칙을 그대로 쓸 수 없다(non-causal). MoD는 router 출력으로 "상위 $k$개에 들지"를 예측하도록 작은 보조 손실이나 별도의 예측기를 학습해 이를 우회했고, 생성 시 성능 저하가 작았다고 보고한다.[^mod] 실험은 60M–3B 규모의 isoFLOP 비교였다.
 
 ### 5-2. 가중치 공유와 recursive Transformer
 
@@ -360,7 +362,7 @@ $N_r=3$에서 균형 잡힌 token-choice로 토큰의 1/3씩이 1·2·3회 반�
 
 표에서 몇 가지 경향을 읽을 수 있다. 초기의 "큰 expert 8개 중 2개"(Mixtral) 이후 DeepSeek-V3, Qwen3, gpt-oss-120b는 expert를 100개 이상으로 늘리고 4–8개를 고른다(gpt-oss-20b는 32개). 활성 파라미터 비율은 Mixtral의 약 28%에서 DeepSeek-V3의 약 5.5%, gpt-oss-120b의 약 4.4%까지 낮아졌다. Shared expert는 DeepSeek-V3에만 있고, Qwen3와 gpt-oss는 두지 않았다. 전체 파라미터가 비슷한 모델이라도 활성 파라미터와 expert 구성이 크게 다르므로, MoE 모델을 비교할 때는 두 숫자와 expert 구성을 함께 보아야 한다.
 
-[^moe-survey]: Cai, W., Jiang, J., Wang, F., Tang, J., Kim, S., & Huang, J. (2025). *A Survey on Mixture of Experts in Large Language Models*. IEEE Transactions on Knowledge and Data Engineering (accepted). [arXiv:2407.06204v3](https://arxiv.org/abs/2407.06204v3).
+[^moe-survey]: Cai, W., Jiang, J., Wang, F., Tang, J., Kim, S., & Huang, J. (2025). *A Survey on Mixture of Experts in Large Language Models*. *IEEE Transactions on Knowledge and Data Engineering*. [doi:10.1109/TKDE.2025.3554028](https://doi.org/10.1109/TKDE.2025.3554028). [arXiv:2407.06204v3](https://arxiv.org/abs/2407.06204v3).
 [^shazeer]: Shazeer, N., Mirhoseini, A., Maziarz, K., Davis, A., Le, Q., Hinton, G., & Dean, J. (2017). *Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer*. ICLR 2017. [arXiv:1701.06538](https://arxiv.org/abs/1701.06538).
 [^gshard]: Lepikhin, D., et al. (2021). *GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding*. ICLR 2021. [arXiv:2006.16668](https://arxiv.org/abs/2006.16668).
 [^switch]: Fedus, W., Zoph, B., & Shazeer, N. (2022). *Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity*. Journal of Machine Learning Research, 23(120), pp. 1–39. [arXiv:2101.03961](https://arxiv.org/abs/2101.03961).
@@ -373,7 +375,7 @@ $N_r=3$에서 균형 잡힌 token-choice로 토큰의 1/3씩이 1·2·3회 반�
 [^stmoe]: Zoph, B., Bello, I., Kumar, S., Du, N., Huang, Y., Dean, J., Shazeer, N., & Fedus, W. (2022). *ST-MoE: Designing Stable and Transferable Sparse Expert Models*. [arXiv:2202.08906](https://arxiv.org/abs/2202.08906).
 [^megablocks]: Gale, T., Narayanan, D., Young, C., & Zaharia, M. (2023). *MegaBlocks: Efficient Sparse Training with Mixture-of-Experts*. Proceedings of Machine Learning and Systems 5 (MLSys 2023). [arXiv:2211.15841](https://arxiv.org/abs/2211.15841).
 [^dsmoe]: Dai, D., et al. (2024). *DeepSeekMoE: Towards Ultimate Expert Specialization in Mixture-of-Experts Language Models*. ACL 2024. [arXiv:2401.06066](https://arxiv.org/abs/2401.06066).
-[^qwen3-config]: Qwen. (2025). *Qwen3-235B-A22B* [config.json](https://huggingface.co/Qwen/Qwen3-235B-A22B/blob/main/config.json), *Qwen3-30B-A3B* [model card](https://huggingface.co/Qwen/Qwen3-30B-A3B). Hugging Face Transformers, [modeling_qwen3_moe.py](https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3_moe/modeling_qwen3_moe.py).
+[^qwen3-config]: Qwen. (2025). *Qwen3-235B-A22B* [config.json](https://huggingface.co/Qwen/Qwen3-235B-A22B/blob/main/config.json), *Qwen3-30B-A3B* [model card](https://huggingface.co/Qwen/Qwen3-30B-A3B). Hugging Face Transformers, [modeling_qwen3_moe.py](https://github.com/huggingface/transformers/blob/7cd73d9df0c14b151c684b708a9f27d8d0349dfe/src/transformers/models/qwen3_moe/modeling_qwen3_moe.py).
 [^mod]: Raposo, D., Ritter, S., Richards, B., Lillicrap, T., Humphreys, P. C., & Santoro, A. (2024). *Mixture-of-Depths: Dynamically allocating compute in transformer-based language models*. [arXiv:2404.02258](https://arxiv.org/abs/2404.02258).
 [^ut]: Dehghani, M., Gouws, S., Vinyals, O., Uszkoreit, J., & Kaiser, Ł. (2019). *Universal Transformers*. ICLR 2019. [arXiv:1807.03819](https://arxiv.org/abs/1807.03819).
 [^albert]: Lan, Z., et al. (2020). *ALBERT: A Lite BERT for Self-supervised Learning of Language Representations*. ICLR 2020. [arXiv:1909.11942](https://arxiv.org/abs/1909.11942).
