@@ -128,7 +128,7 @@ REINFORCE++에는 두 변형이 있다. 기본형은 프롬프트당 응답이 �
 | RLOO[^rloo] | PPO의 부품이 불필요 | REINFORCE에 leave-one-out baseline, clipping 없음 | 응답 단위 KL을 보상에 포함 |
 | REINFORCE++[^rpp] | 그룹 정규화의 편향·불안정·프롬프트 과적합 | PPO clipping 유지, advantage를 배치 전체로 정규화(기본형) 또는 그룹 평균을 뺀 뒤 배치 정규화(baseline형), value model 없음 | 기본형은 토큰별 KL을 보상에 포함, baseline형은 별도 KL 손실($k_2$) |
 
-실제 recipe는 이 중 여러 개를 섞는다. Olmo 3의 RL은 GRPO를 바탕으로 DAPO의 clip-higher·token-level loss, Dr. GRPO의 표준편차 정규화 제거, KL 항 제거에 더해, 보상이 모두 같은 프롬프트를 걸러 배치를 채우는 active sampling과 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)에서 볼 truncated importance sampling을 함께 채택했다.[^olmo3] 서베이 §3.2는 이 알고리즘들을 critic 유무와 off-policy 보정 방식으로 분류하고, §3.2.5에서 KL 정규화의 역할을 논쟁적인 주제로 정리하며 추론 RL에서는 그 필요성을 다시 따져야 한다고 본다.[^survey]
+실제 recipe는 이 중 여러 개를 섞는다. Olmo 3의 RL은 GRPO를 바탕으로 DAPO의 clip-higher·token-level loss, Dr. GRPO의 표준편차 정규화 제거, KL 항 제거에 더해, 보상이 모두 같은 프롬프트를 걸러 배치를 채우는 active sampling과 [05d §4-2](/lecture/2026f-advanced-deep-learning/05d-rl-systems/#4-2-확률비-보정과-정밀도-변경)에서 볼 truncated importance sampling을 함께 채택했다.[^olmo3] 서베이 §3.2는 이 알고리즘들을 critic 유무와 off-policy 보정 방식으로 분류하고, §3.2.5에서 KL 정규화의 역할을 논쟁적인 주제로 정리하며 추론 RL에서는 그 필요성을 다시 따져야 한다고 본다.[^survey]
 
 ## 3. 남는 문제
 

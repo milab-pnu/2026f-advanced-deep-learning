@@ -82,7 +82,7 @@ DeepSeek-R1-Zero는 DeepSeek-V3-Base에서 출발해 추론 시연의 SFT 없이
 
 다만 base model이 관련 행동을 전혀 몰랐다는 뜻은 아니다. 저자들 스스로 DeepSeek-V3-Base의 pre-training 데이터에 수학·코드 내용이 많고 웹에 섞인 OpenAI 모델의 답변도 들어 있어 추론 과정을 상당히 접했을 것이며, RL은 그렇게 생성할 수 있게 된 후보 중 좋은 것을 골라 강화한다고 설명한다(arXiv v2 부록 A.1).[^r1] [04a §1-2](/lecture/2026f-advanced-deep-learning/04a-sft/#1-2-네-recipe-비교)에서 본 것처럼 출발점의 차이는 결과에 들어 있다.<Sidenote>arXiv v1(2025년 1월)의 같은 곡선은 71.0%까지였다. Nature 게재판(2025년 9월)과 arXiv v2(2026년 1월 개정)의 77.9%는 v1과 다른 값이므로 두 값을 한 곡선으로 합치지 않고, 인용할 때 판본을 적는다.</Sidenote>
 
-R1이 주목받은 이유가 여기에 있다. [04a §5-3](/lecture/2026f-advanced-deep-learning/04a-sft/#5-3-사고-과정을-담은-sft의-자리)에서 SFT는 긴 사고 과정의 형식을 가르치는 cold start 역할이라고 했는데, R1-Zero는 그 SFT 없이도 base model이 구조 지시와 검증 가능한 보상만으로 긴 추론에 도달함을 보였다. 무엇이 어떻게 달라졌는지, 즉 길이의 증가와 반성·검증 행동이 정말 능력의 증가인지는 [05b](/lecture/2026f-advanced-deep-learning/05b-long-cot/)에서 따로 다룬다.
+그래도 R1-Zero의 결과가 주목받은 이유는 분명하다. [04a §5-3](/lecture/2026f-advanced-deep-learning/04a-sft/#5-3-사고-과정을-담은-sft의-자리)에서 SFT는 긴 사고 과정의 형식을 가르치는 cold start 역할이라고 했는데, R1-Zero는 그 SFT 없이도 base model이 구조 지시와 검증 가능한 보상만으로 긴 추론에 도달함을 보였다. 무엇이 어떻게 달라졌는지, 즉 길이의 증가와 반성·검증 행동이 정말 능력의 증가인지는 [05b](/lecture/2026f-advanced-deep-learning/05b-long-cot/)에서 따로 다룬다.
 
 ### 3-2. R1-Zero의 문제와 R1의 네 단계
 
