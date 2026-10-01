@@ -1,0 +1,178 @@
+---
+title: "Quantization"
+week: 7
+order: 0
+---
+
+6주차는 inference의 비용을 bytes와 FLOPs로 계산하고, 그 비용을 시스템 쪽에서 줄이는 방법을 보았다. 7주차는 모델과 계산 쪽으로 넘어간다. 첫 주제는 숫자 하나를 저장하는 bytes를 줄이는 **양자화(quantization)**다. [06b §6](/lecture/2026f-advanced-deep-learning/06b-roofline/#6-roofline-위의-최적화-기법)의 표에서 보았듯 가중치를 적은 bits로 저장하면 memory-bound인 decode 스텝의 하한이 바로 내려간다. Llama 3 8B의 가중치를 BF16 16 GB에서 INT4 약 4 GB로 줄이면, H100에서 batch 1 스텝의 하한이 4.9 ms에서 약 1.3 ms가 된다. 연산 자체를 낮은 정밀도로 하면 06b의 roofline에서 연산의 지붕도 높아진다.
+
+문제는 정밀도를 낮추면 오차가 생긴다는 점이다. LLM(large language model)에서는 그 오차가 특히 다루기 어려운 모양으로 나타나고, 양자화 연구의 계보는 대부분 그 모양을 다루는 방법의 역사다. 전체 지도는 Gong 등의 저비트 LLM 서베이[^survey]로 잡는다. §2가 숫자 형식과 양자화 단위(granularity)를, §3.2가 가중치만 양자화하는 경우와 가중치와 activation을 함께 양자화하는 경우의 실행 방식을, §5가 양자화 알고리즘을 다룬다. 이 노트의 §1은 서베이 §2와 §3.2에, §2–3은 §5.2의 PTQ(post-training quantization) 알고리즘에, §4는 §2.1의 형식에, §5는 §5.1의 QAT(quantization-aware training)에 대응한다. KV cache의 양자화는 [06c §4-1](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/#4-1-양자화)에서 보았다.
+
+## 1. 양자화의 기본
+
+### 1-1. 균일 양자화
+
+[2주차 Training engineering §2-1](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#2-1-부동소수점과-정밀도)에서 FP32와 BF16 같은 부동소수점 형식을 보았다. 양자화는 실숫값을 더 적은 bits의 정수 격자에 대응시킨다. 가장 기본적인 균일 양자화는 간격(scale) $s$와 영점(zero-point) $z$로 실숫값 $x$를 $b$-bit 정수로 바꾸고, 계산에 쓸 때 다시 실숫값으로 되돌린다.[^nagel]
+
+$$
+x_{\text{int}}=\operatorname{clamp}\!\left(\left\lfloor \frac{x}{s}\right\rceil+z;\ 0,\ 2^b-1\right),
+\qquad
+\hat{x}=s\,(x_{\text{int}}-z)
+$$
+
+$\lfloor\cdot\rceil$는 가장 가까운 정수로의 반올림이다. 반올림 오차는 $[-s/2,\,s/2]$ 안에 있고, 범위를 벗어난 값은 잘린다(clipping). 영점을 0으로 두고 0을 중심으로 대칭인 격자를 쓰는 대칭(symmetric) 양자화는 계산이 단순해 가중치에 흔히 쓰이고, 영점을 두는 비대칭(asymmetric) 양자화는 한쪽으로 치우친 값의 범위를 더 알뜰하게 쓴다.[^nagel] 대칭 INT4라면 $-8$부터 $7$까지의 정수를 쓰고, 보통 $s=\max\lvert x\rvert/7$로 정한다.
+
+<Callout type="example">
+가중치 네 개 $w=(0.12,\,-0.50,\,0.33,\,0.04)$를 대칭 INT4로 양자화하자. $s=0.50/7\approx0.0714$이므로 $w/s\approx(1.68,\,-7,\,4.62,\,0.56)$을 반올림해 $(2,\,-7,\,5,\,1)$을 저장한다. 되돌리면 $(0.143,\,-0.500,\,0.357,\,0.071)$로, 오차는 모두 $s/2\approx0.036$ 이하다.
+
+여기에 값 하나가 $4.0$인 원소가 끼어 있다면 사정이 달라진다. $s=4.0/7\approx0.571$로 커져, 원래의 네 값은 $(0.21,\,-0.88,\,0.58,\,0.07)$배의 격자 간격이 되고 반올림하면 $(0,\,-1,\,1,\,0)$이 된다. 되돌린 값은 $(0,\,-0.571,\,0.571,\,0)$이다. 큰 값 하나 때문에 0.12와 0.04는 0이 되고, 0.33은 0.571로 부풀었다. 범위를 정하는 값이 클수록 나머지 값의 정밀도가 떨어진다.
+</Callout>
+
+### 1-2. 양자화 단위
+
+예시가 보여 주듯 scale을 몇 개의 값이 함께 쓰느냐가 오차를 크게 좌우한다. 행렬 전체가 scale 하나를 쓰는 per-tensor, 출력 channel마다 쓰는 per-channel, activation의 토큰마다 쓰는 per-token, 연속된 몇 개의 원소마다 쓰는 per-group이 있다.[^survey] 범위를 작게 나눌수록 큰 값의 영향이 그 묶음 안에 갇히지만, scale을 저장할 공간이 늘어난다. LLM의 4-bit 가중치 양자화에서는 원소 128개마다 scale을 두는 group 크기 128이 흔한 기본값이다. GPTQ 논문은 이때 scale 저장에 원소당 약 0.15 bits가 더 든다고 계산했다.[^gptq]
+
+<Callout type="example">
+Llama 3 8B의 가중치를 group 128의 INT4로 저장하고 group마다 16-bit scale을 둔다면 원소당 $4+16/128=4.125$ bits다. 파라미터 8.03B개에 곱하면 약 4.1 GB로, BF16의 16.1 GB에서 약 4분의 1이 된다. [06a §4-3](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#4-3-동시에-처리할-수-있는-요청-수)의 H100 한 대라면 KV cache에 쓸 공간이 약 12 GB 늘어난다.
+</Callout>
+
+### 1-3. 두 가지 쓰임
+
+양자화를 inference에 쓰는 방식은 크게 둘이다. 하나는 **가중치만** 낮은 bits로 저장하고, 계산할 때 kernel 안에서 BF16으로 되돌려 BF16 행렬곱을 하는 weight-only 양자화다. 가중치 4-bit, activation 16-bit라는 뜻에서 W4A16처럼 부른다. 다른 하나는 가중치와 **activation을 모두** 낮은 bits로 바꿔 INT8이나 FP8 행렬곱을 직접 하는 weight-activation 양자화로, W8A8처럼 부른다.
+
+<Figure src="https://arxiv.org/html/2409.16694v3/fig_matmul_process.png" alt="Gong 등의 서베이 Figure 5. (a)는 가중치를 미리 양자화해 4-bit 값 8개를 32-bit 정수 하나에 묶어 두는 준비 과정으로, 저장 공간이 약 8배 줄어든다. (b)는 weight-only 양자화의 실행 흐름이다. 묶인 가중치를 GPU 메모리에서 레지스터로 읽어 와 FP16으로 되돌린(dequantize) 뒤, FP16 activation과 함께 FP16 행렬곱 kernel로 계산한다. 왼쪽 시간축에서 가중치를 읽는 구간은 빨라지고 되돌리는 구간은 느려진다. (c)는 weight와 activation을 모두 양자화하는 흐름으로, activation도 레지스터에서 4-bit로 양자화한 뒤 정수 행렬곱 kernel로 계산하고 결과만 FP16으로 바꾼다." caption="Weight-only 양자화(b)는 가중치를 읽는 시간을 줄이는 대신 kernel 안에서 가중치를 되돌리는 시간이 들고, weight-activation 양자화(c)는 행렬곱 자체를 낮은 정밀도의 연산 장치로 한다." source="Gong et al. (2025), A Survey of Low-bit Large Language Models: Basics, Systems, and Algorithms, Figure 5. CC BY 4.0. 원본 그대로 사용." hero />
+
+두 방식이 줄이는 비용은 다르다. 06b의 roofline으로 보면 weight-only는 읽는 가중치 bytes를 줄일 뿐 계산량은 그대로이고, 오히려 되돌리는 계산이 더해진다. 그래서 memory-bound인 decode, 특히 batch가 작을 때 효과가 크다. Weight-activation 양자화는 행렬곱을 BF16보다 빠른 저정밀 연산 장치로 하므로 compute-bound인 prefill과 큰 batch에서도 빨라진다. Zhou 등의 서베이는 AWQ 4-bit 가중치로 Llama-2를 실험해, weight-only가 decode를 크게 빠르게 하지만 prefill에서는 되돌리는 비용 때문에 오히려 느려질 수 있고, batch와 입력이 커질수록 이득이 줄어든다고 정리했다(서베이 §V-B1).[^zhou] 이 노트의 §2는 weight-activation 양자화의 계보를, §3은 weight-only의 계보를 따라간다.
+
+## 2. Weight-activation 양자화와 outlier
+
+### 2-1. LLM.int8()
+
+8-bit 정도면 반올림만 해도 충분할 것 같지만, 큰 LLM에서는 그렇지 않았다. Dettmers 등은 activation에 **outlier feature**가 나타난다는 것을 발견했다.[^llmint8] 크기가 6 이상인 값이 층의 25% 이상, 시퀀스 위치의 6% 이상에서 같은 hidden 차원에 나타나는 것을 outlier로 정의했는데, 모델이 6B에서 6.7B로 커지는 사이에 이런 outlier가 갑자기 모든 층과 시퀀스 위치의 약 75%로 퍼졌다. 6.7B 모델에서는 이런 값이 단 6개의 hidden 차원에 몰려 있었다(원논문 §4.2, Figure 3). §1-1의 예시처럼, 이런 값이 있는 행렬을 per-tensor나 per-token으로 양자화하면 나머지 값의 정밀도가 무너진다. 원논문은 이 outlier 차원들을 0으로 만들면 성능이 크게 떨어진다는 것도 보여, 단순히 잘라 낼 수 있는 값이 아님을 확인했다.
+
+LLM.int8()의 해법은 **나누어 계산하기**다. Outlier가 있는 차원(전체 값의 약 0.1%)은 FP16 행렬곱으로, 나머지 99.9%는 INT8 행렬곱으로 계산한 뒤 결과를 더한다(원논문 §3.2).[^llmint8] 이것으로 BLOOM-176B를 성능 손실 없이 8-bit로 돌려 메모리를 1.96배 줄였다. 다만 행렬을 둘로 나누고 따로 계산하는 부담 때문에 속도는 이득이 없었다. BLOOM-176B에서 토큰당 시간이 BF16보다 약간 길었고, 원논문도 작은 모델에서는 분해의 부담이 크다고 밝혔다(원논문 Appendix D).
+
+### 2-2. SmoothQuant
+
+Xiao 등의 SmoothQuant는 outlier가 **같은 channel에 고정되어 나타난다**는 점에 주목했다.[^smoothquant] Activation $X$의 outlier는 특정 channel에 몰려 있지만, 그 channel에 곱해지는 가중치 $W$의 행은 평범한 크기다. Activation은 양자화하기 어렵고 가중치는 쉬운 셈이다. 그런데 activation을 channel마다 다른 scale로 양자화하면 정확도는 유지되지만, INT8 행렬곱 kernel은 행렬곱의 바깥 차원(토큰, 출력 channel)으로만 scale을 다룰 수 있어서 안쪽 차원인 입력 channel마다의 scale은 쓸 수 없다.
+
+SmoothQuant는 그 어려움을 가중치 쪽으로 옮긴다. 입력 channel $j$마다 smoothing factor $s_j$를 정해 activation을 $s_j$로 나누고 가중치의 해당 행에 $s_j$를 곱하면, 행렬곱의 결과는 그대로다.
+
+$$
+Y=\bigl(X\operatorname{diag}(s)^{-1}\bigr)\bigl(\operatorname{diag}(s)\,W\bigr),
+\qquad
+s_j=\frac{\max\lvert X_j\rvert^{\alpha}}{\max\lvert W_j\rvert^{1-\alpha}}
+$$
+
+$\alpha$는 어려움을 얼마나 옮길지를 정하고, OPT와 BLOOM에서는 $\alpha=0.5$가 균형점이었다(원논문 §4).[^smoothquant] Activation을 나누는 연산은 앞 층의 LayerNorm이나 선형층에 미리 합쳐 두므로 실행 중 추가 비용이 없다.
+
+<Callout type="example">
+입력 channel $j$의 activation 최댓값이 64, 그 channel에 곱해지는 가중치의 최댓값이 0.25라고 하자. $\alpha=0.5$이면 $s_j=\sqrt{64}/\sqrt{0.25}=8/0.5=16$이다. 나눈 activation의 최댓값은 $64/16=4$, 곱한 가중치의 최댓값은 $0.25\times16=4$로, 두 쪽의 범위가 같아진다. 이 channel이 activation 행렬의 per-token scale을 홀로 키우던 문제가 사라지고, 그 대가로 가중치 행 하나의 범위가 커진다. 가중치는 per-channel scale을 쓸 수 있으므로 그 정도는 감당할 수 있다.
+</Callout>
+
+<Figure src="https://arxiv.org/html/2211.10438v7/aw-dist-long.png" alt="SmoothQuant 논문의 Figure 4. OPT-13B 한 층의 activation과 가중치 크기를 3차원으로 그린 네 그림이다. 첫째, 원래 activation은 몇몇 channel에서 값이 70에 이르는 빨간 벽처럼 솟아 있고 나머지는 2 이하로 낮다. 둘째, smoothing 후 activation은 모든 channel이 10 이하로 고르다. 셋째, 원래 가중치는 전체가 평평하다. 넷째, smoothing 후 가중치는 일부 입력 channel에 작은 봉우리가 생겼지만 여전히 낮다. 위쪽 화살표는 양자화의 어려움을 activation에서 가중치로 옮긴다는 뜻이다." caption="SmoothQuant 전후의 activation(왼쪽 두 그림)과 가중치(오른쪽 두 그림). Activation의 outlier channel이 평평해지는 대신 가중치에 작은 봉우리가 생긴다." source="Xiao et al. (2023), SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models, Figure 4. CC BY 4.0. 원본 그대로 사용." hero />
+
+이렇게 모든 선형층의 행렬곱을 INT8로 하면서도 정확도를 유지했고, 최대 1.56배 빨라지고 메모리를 2배 줄였다. OPT-175B를 GPU 8대 대신 4대로 비슷하거나 더 짧은 지연에 돌렸다(원논문 §5.3).[^smoothquant] 원논문은 같은 실험에서 LLM.int8()이 대부분의 경우 FP16보다 느렸다고 비교했다.
+
+## 3. Weight-only 양자화
+
+### 3-1. 반올림의 한계
+
+Decode가 memory-bound라면 가중치만 4-bit 이하로 줄이는 쪽이 이득이 크다. 가중치에는 activation 같은 극단적인 outlier가 드물어 8-bit에서는 단순 반올림(RTN, round-to-nearest)으로도 괜찮지만, 4-bit 이하로 내려가면 오차가 쌓인다. GPTQ 논문의 OPT-175B 실험에서 WikiText2 perplexity는 FP16이 8.34, RTN 4-bit이 10.54였고, RTN 3-bit은 7,300으로 모델이 무너졌다(원논문 Table 5).[^gptq]
+
+### 3-2. GPTQ
+
+Frantar 등의 GPTQ는 층 하나를 양자화할 때 가중치 자체의 오차가 아니라 **층 출력의 오차** $\lVert WX-\hat{W}X\rVert^2$를 줄이는 문제로 본다.[^gptq] 가중치를 하나 양자화해 오차가 생기면, 아직 양자화하지 않은 다른 가중치를 조금씩 고쳐 그 오차를 출력에서 상쇄한다. 어떤 가중치를 얼마나 고칠지는 입력 $X$의 통계로 만든 Hessian $H=2XX^\top$이 알려 준다. 함께 움직이는 입력 차원에 곱해지는 가중치끼리는 서로의 오차를 메워 줄 수 있기 때문이다.
+
+<Callout type="example">
+출력이 $y=w_1x_1+w_2x_2$이고, 두 입력이 늘 같은 값($x_1=x_2=1$)이라고 하자. 가중치는 $w=(0.35,\,0.35)$, 격자 간격은 0.25다. 각자 반올림하면 $(0.25,\,0.25)$가 되어 $y$가 0.70에서 0.50으로 0.20 줄어든다. 대신 $w_1$만 먼저 0.25로 반올림하고, 생긴 오차 0.10을 $w_2$에 더해 0.45로 고친 뒤 반올림하면 $w_2=0.50$이 된다. 출력은 $0.25+0.50=0.75$로 오차가 0.05다. 두 입력이 늘 함께 움직이므로 $w_1$의 손실을 $w_2$가 메울 수 있었다. 실제 GPTQ는 입력의 상관을 담은 $H^{-1}$로 이 보정량을 계산한다.
+</Callout>
+
+이 생각은 원래 가중치를 하나씩 양자화하는 OBQ(optimal brain quantization)에서 왔지만, OBQ는 수십억 파라미터에 쓰기엔 너무 느렸다. GPTQ는 모든 행이 같은 열 순서로 양자화하게 해 $H^{-1}$을 공유하고, 열 128개씩 묶어 갱신을 미루고, Cholesky 분해로 수치 안정성을 확보했다. 그 결과 OPT-175B를 A100 한 대에서 약 4시간에 양자화했고, 4-bit perplexity가 8.37, 3-bit이 8.68로 FP16(8.34)에 가까웠다. 3-bit OPT-175B는 A100 다섯 대 대신 한 대에 올라가 토큰당 시간이 3.24배 짧아졌다(원논문 Table 6). 이 속도 향상은 계산이 줄어서가 아니라 읽는 bytes가 줄어서 생긴다는 점도 원논문이 직접 밝힌다.
+
+### 3-3. AWQ
+
+Lin 등의 AWQ는 가중치마다 중요도가 다르다는 데서 출발했다.[^awq] 가중치의 1%만 FP16으로 남겨도 양자화 오차가 크게 줄었는데, 어느 1%를 남기느냐가 중요했다. 가중치 크기가 아니라 **그 가중치에 곱해지는 activation의 크기**로 고른 1%를 남겼을 때 효과가 컸다. INT3, group 128의 OPT-6.7B에서 RTN의 perplexity 23.54가, activation 기준으로 고른 1%를 FP16으로 두면 11.39가 되었지만, 가중치 크기 기준으로 고르면 22.37에 그쳤다(원논문 Table 1). §2의 activation outlier가 여기서도 열쇠다.
+
+다만 일부만 FP16으로 두는 혼합 정밀도는 하드웨어에서 다루기 번거롭다. AWQ는 중요한 channel의 가중치에 1보다 큰 scale을 곱해 키운 뒤 양자화하고, 대응하는 activation을 그만큼 나눈다. 가중치가 커지면 격자 간격에 대한 상대 오차가 줄어 중요한 가중치가 더 정밀하게 표현된다. SmoothQuant와 같은 등가 변환이지만, 목적이 activation을 고르게 하는 것이 아니라 중요한 가중치를 보호하는 것이다. Scale은 activation 크기의 거듭제곱 꼴로 두고 지수를 몇 개의 후보에서 고르므로, 역전파나 재구성 없이 보정 데이터 조금으로 정해진다. AWQ는 MLSys 2024 최우수 논문으로 뽑혔고, 함께 공개한 TinyChat은 데스크톱과 모바일 GPU에서 Hugging Face의 FP16 구현보다 3배 이상 빨랐다.[^awq]
+
+## 4. 저정밀 부동소수점 형식
+
+### 4-1. FP8
+
+정수 대신 bits가 적은 부동소수점을 쓸 수도 있다. Micikevicius 등이 제안한 FP8은 두 가지다. 지수 4 bits와 가수 3 bits의 E4M3는 최댓값이 448이고, 지수 5 bits와 가수 2 bits의 E5M2는 최댓값이 57,344다. 제안자들은 가중치와 activation에는 정밀도가 높은 E4M3를, 범위가 넓어야 하는 gradient에는 E5M2를 권했다.[^fp8] 부동소수점은 0 근처에 격자가 촘촘하고 큰 값 쪽으로 성기므로, 정수 격자보다 outlier가 섞인 분포를 덜 손상시킨다. 16-bit로 학습한 GPT-3 6.7B를 그대로 양자화했을 때 perplexity가 16-bit 8.51, INT8 10.29, E4M3 8.41이었다(원논문 Table 5).[^fp8]
+
+FP8의 다른 장점은 하드웨어 지원이다. H100의 FP8 Tensor Core는 dense 기준 약 1,979 TFLOP/s로 BF16의 두 배다.[^h100] 06b의 roofline에서 연산의 지붕이 두 배로 높아지는 셈이라, compute-bound인 prefill과 큰 batch가 직접 빨라진다.
+
+### 4-2. Microscaling 형식
+
+4-bit 부동소수점까지 내려가면 표현할 수 있는 값이 16개뿐이라, 값의 범위를 맞춰 주는 scale이 결정적이다. AMD, Arm, Intel, Meta, Microsoft, NVIDIA, Qualcomm 등이 OCP(Open Compute Project) 규격으로 함께 정한 MX(microscaling) 형식은 원소 32개를 한 블록으로 묶고 블록마다 8-bit scale 하나를 둔다.[^mx] Scale은 지수만 있는 E8M0 형식이라 2의 거듭제곱만 표현한다. 원소가 지수 2 bits와 가수 1 bit의 E2M1이면 MXFP4로, 원소 하나가 표현하는 값은 0, 0.5, 1, 1.5, 2, 3, 4, 6과 그 음수다. 원소당 저장량은 $4+8/32=4.25$ bits다. NVIDIA가 Blackwell GPU와 함께 내놓은 NVFP4는 블록을 16개로 줄이고, 블록 scale을 2의 거듭제곱 대신 FP8(E4M3)로 두며, 텐서 전체에 FP32 scale을 하나 더 둔다. 원소당 약 4.5 bits다.[^nvfp4]
+
+<Callout type="example">
+네 값 $(0.9,\,-2.7,\,0.2,\,5.1)$을 E2M1 원소와 블록 scale 하나로 저장한다고 하자. 최댓값 5.1을 E2M1의 최댓값 6 안에 넣으려면 scale이 $5.1/6=0.85$ 이상이어야 한다. 2의 거듭제곱 scale이라면 1을 쓴다. 값을 그대로 가장 가까운 격자점에 맞추면 $(1,\,-3,\,0,\,6)$이 되어, 오차가 $(0.1,\,0.3,\,0.2,\,0.9)$다. FP8 scale이라면 0.85를 그대로 쓸 수 있다. 값을 0.85로 나눈 $(1.06,\,-3.18,\,0.24,\,6.0)$을 격자에 맞추면 $(1,\,-3,\,0,\,6)$이고, 되돌린 값은 $(0.85,\,-2.55,\,0,\,5.1)$로 오차가 $(0.05,\,0.15,\,0.2,\,0)$이다. Scale을 더 자유롭게 고를 수 있으면 블록의 최댓값을 격자의 끝에 정확히 맞출 수 있다. 교육용 계산이다.
+</Callout>
+
+이런 형식은 하드웨어가 블록 scale을 직접 처리하므로, 정수 양자화처럼 kernel 안에서 따로 되돌리는 부담이 작다. Blackwell 세대에서는 FP4 연산이 FP8의 두 배 속도다.[^b200] 모델 배포에도 쓰이기 시작했다. OpenAI의 gpt-oss는 MoE 가중치를 MXFP4로 양자화해 원소당 4.25 bits로 저장했고, MoE 가중치가 전체 파라미터의 90% 이상을 차지하므로 116.8B 파라미터의 120b 모델이 80 GB GPU 한 대에 올라간다(모델 카드 §2.1).[^gptoss]
+
+## 5. 양자화를 고려한 학습
+
+지금까지 본 방법은 모두 다 학습한 모델에 보정 데이터만 조금 써서 양자화하는 PTQ다. Bits를 더 낮추면 PTQ만으로는 품질을 지키기 어렵고, 그때는 학습 중에 양자화의 효과를 반영하는 **QAT**를 쓴다. Forward에서 가중치를 양자화한 값으로 계산하고, backward에서는 반올림을 통과하는 gradient를 근사해 모델이 양자화 오차에 맞춰 적응하게 한다.
+
+LLM에서는 사전학습 데이터 전체로 다시 학습하기 어려우므로, 원래 모델을 teacher로 삼는 distillation과 함께 쓰는 경우가 많다. Liu 등의 LLM-QAT는 원래 모델이 직접 생성한 텍스트로 양자화 모델을 distillation해, 학습 데이터 없이 가중치·activation·KV cache를 4-bit까지 양자화했다.[^llmqat] Google은 Gemma 3를 약 5,000스텝 동안 원래 정밀도 모델의 확률을 목표로 QAT해, 4-bit로 양자화할 때의 perplexity 하락을 54% 줄였다고 밝혔다. 27B 모델이 BF16의 54 GB에서 INT4의 14.1 GB로 줄었다.[^gemma3qat] Distillation 자체는 [5주차 Distillation](/lecture/2026f-advanced-deep-learning/05f-distillation/)에서 보았다.
+
+## 6. 방법의 선택
+
+어떤 양자화를 쓸지는 그 배포의 병목이 어디에 있느냐로 정해진다. 06b의 roofline을 다시 쓰면 다음과 같다.
+
+| 상황 | 병목 | 알맞은 선택 |
+|---|---|---|
+| 작은 batch의 decode, 메모리가 작은 GPU | 가중치 읽기 | Weight-only 4-bit(GPTQ, AWQ) |
+| 큰 batch, 긴 prefill | 행렬곱 연산 | W8A8(SmoothQuant), FP8 |
+| 긴 문맥, 많은 동시 요청 | KV cache 읽기와 용량 | KV cache 양자화(06c §4-1) |
+| FP4를 지원하는 최신 GPU | 연산과 읽기 모두 | MXFP4, NVFP4 |
+
+Weight-only 양자화의 이득은 batch가 커질수록 줄어든다. 4-bit 가중치를 FP16으로 되돌리는 계산은 batch가 작을 때는 놀던 연산 장치가 맡지만, batch가 커져 연산 장치가 바빠지면 그 자체가 비용이 된다. Frantar 등의 Marlin kernel은 batch 16–32까지는 4배에 가까운 이득을 유지하고 그보다 크면 이득이 점차 줄어든다고 보고했고,[^marlin] Lin 등의 QServe는 기존 4-bit 방법이 작은 batch에서만 빨라지고 큰 batch의 서빙에서는 이득이 없다고 지적하며 가중치 4-bit, activation 8-bit, KV cache 4-bit을 함께 쓰는 설계를 제안했다.[^qserve] 이런 kernel의 설계는 7주차 kernel 노트에서 다룬다.
+
+품질도 같은 기준으로 확인해야 한다. Perplexity 같은 평균 지표가 거의 같아도, 긴 추론이나 특정 언어처럼 원래 모델이 간신히 해내던 작업에서는 차이가 커질 수 있다. 양자화 모델을 평가할 때는 그 모델이 실제로 쓰일 작업으로, 원래 정밀도 모델과 같은 조건에서 비교한다.
+
+## 7. 정리
+
+양자화는 실숫값을 적은 bits의 격자에 대응시키고, 그 격자의 간격을 scale로 정한다. 범위를 정하는 큰 값이 있으면 나머지 값의 정밀도가 무너지므로, scale을 얼마나 작은 묶음마다 둘지가 오차와 저장 공간을 함께 정한다. Inference에서는 가중치만 줄여 읽는 bytes를 줄이는 weight-only와, activation까지 줄여 행렬곱을 저정밀 연산 장치로 하는 weight-activation이 서로 다른 병목을 겨냥한다.
+
+LLM의 어려움은 6.7B 무렵부터 특정 channel에 나타나는 activation outlier였다. LLM.int8()은 outlier 차원을 따로 FP16으로 계산해 정확도를 지켰지만 느렸고, SmoothQuant는 channel별 scale로 그 어려움을 가중치로 옮겨 모든 행렬곱을 INT8로 했다. Weight-only 쪽에서는 GPTQ가 층 출력의 오차를 기준으로 남은 가중치를 보정하고, AWQ가 activation으로 고른 중요한 가중치를 scale로 보호해 4-bit 이하에서도 품질을 지켰다.
+
+하드웨어는 FP8과, 블록마다 scale을 두는 MXFP4·NVFP4 같은 형식으로 저정밀 연산을 직접 지원하며 연산의 지붕을 높이고 있다. PTQ로 부족한 bits에서는 QAT를 distillation과 함께 쓴다. 어느 방법이든 효과는 배포의 병목과 batch 크기에 따라 다르므로, roofline으로 병목을 먼저 확인하고 실제 작업으로 품질을 잰다. 다음 노트는 bits가 아니라 파라미터 수 자체를 줄이는 pruning, low-rank, distillation을 다룬다.
+
+[^survey]: Gong, R., Ding, Y., Wang, Z., et al. (2025). A Survey of Low-bit Large Language Models: Basics, Systems, and Algorithms. *Neural Networks*, 192, 107856. [arXiv:2409.16694v3](https://arxiv.org/abs/2409.16694v3).
+
+[^nagel]: Nagel, M., Fournarakis, M., Amjad, R. A., Bondarenko, Y., van Baalen, M., & Blankevoort, T. (2021). A White Paper on Neural Network Quantization. [arXiv:2106.08295](https://arxiv.org/abs/2106.08295).
+
+[^gptq]: Frantar, E., Ashkboos, S., Hoefler, T., & Alistarh, D. (2023). GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers. *ICLR 2023*. [arXiv:2210.17323](https://arxiv.org/abs/2210.17323).
+
+[^zhou]: Zhou, Z., Ning, X., Hong, K., et al. (2024). A Survey on Efficient Inference for Large Language Models. [arXiv:2404.14294v3](https://arxiv.org/abs/2404.14294v3).
+
+[^llmint8]: Dettmers, T., Lewis, M., Belkada, Y., & Zettlemoyer, L. (2022). LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale. *NeurIPS 2022*. [arXiv:2208.07339](https://arxiv.org/abs/2208.07339).
+
+[^smoothquant]: Xiao, G., Lin, J., Seznec, M., Wu, H., Demouth, J., & Han, S. (2023). SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models. *ICML 2023*. [arXiv:2211.10438](https://arxiv.org/abs/2211.10438).
+
+[^awq]: Lin, J., Tang, J., Tang, H., et al. (2024). AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration. *MLSys 2024*. [arXiv:2306.00978](https://arxiv.org/abs/2306.00978).
+
+[^fp8]: Micikevicius, P., Stosic, D., Burgess, N., et al. (2022). FP8 Formats for Deep Learning. [arXiv:2209.05433](https://arxiv.org/abs/2209.05433).
+
+[^h100]: NVIDIA. *NVIDIA H100 Tensor Core GPU*. [제품 사양](https://www.nvidia.com/en-us/data-center/h100/).
+
+[^mx]: Rouhani, B. D., Zhao, R., More, A., et al. (2023). Microscaling Data Formats for Deep Learning. [arXiv:2310.10537](https://arxiv.org/abs/2310.10537).
+
+[^nvfp4]: Alvarez, E., Almog, O., Chung, E., Layton, S., Stosic, D., Krashinsky, R., & Aubrey, K. (2025). *Introducing NVFP4 for Efficient and Accurate Low-Precision Inference*. NVIDIA Technical Blog. [블로그](https://developer.nvidia.com/blog/introducing-nvfp4-for-efficient-and-accurate-low-precision-inference/).
+
+[^b200]: NVIDIA. *NVIDIA DGX B200*. [제품 사양](https://www.nvidia.com/en-us/data-center/dgx-b200/).
+
+[^gptoss]: OpenAI. (2025). *gpt-oss-120b & gpt-oss-20b Model Card*. [arXiv:2508.10925](https://arxiv.org/abs/2508.10925).
+
+[^llmqat]: Liu, Z., Oguz, B., Zhao, C., et al. (2024). LLM-QAT: Data-Free Quantization Aware Training for Large Language Models. *Findings of ACL 2024*. [arXiv:2305.17888](https://arxiv.org/abs/2305.17888).
+
+[^gemma3qat]: Yvinec, E., & Culliton, P. (2025). *Gemma 3 QAT Models: Bringing state-of-the-Art AI to consumer GPUs*. Google Developers Blog. [블로그](https://developers.googleblog.com/en/gemma-3-quantized-aware-trained-state-of-the-art-ai-to-consumer-gpus/).
+
+[^marlin]: Frantar, E., Castro, R. L., Chen, J., Hoefler, T., & Alistarh, D. (2025). MARLIN: Mixed-Precision Auto-Regressive Parallel Inference on Large Language Models. *PPoPP 2025*. [arXiv:2408.11743](https://arxiv.org/abs/2408.11743).
+
+[^qserve]: Lin, Y., Tang, H., Yang, S., et al. (2025). QServe: W4A8KV4 Quantization and System Co-design for Efficient LLM Serving. *MLSys 2025*. [arXiv:2405.04532](https://arxiv.org/abs/2405.04532).
