@@ -69,7 +69,7 @@ $$
 \mathcal{L}_{\mathrm{DPO}}(\theta)=-\mathbb{E}_{(x,y_w,y_l)\sim\mathcal{D}}\Big[\log\sigma\Big(\beta\log\frac{\pi_\theta(y_w\mid x)}{\pi_{\mathrm{ref}}(y_w\mid x)}-\beta\log\frac{\pi_\theta(y_l\mid x)}{\pi_{\mathrm{ref}}(y_l\mid x)}\Big)\Big]
 $$
 
-$\hat r_\theta(x,y)=\beta\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}$를 **implicit reward**라고 부른다. 명시적 reward model은 없지만, 정책 자체가 보상 함수의 역할을 한다. 이 손실을 최소화하는 것은 "정책이 정의하는 implicit reward로 관측된 선호의 likelihood를 최대화"하는 것이다. 선호가 실제로 어떤 보상 $r$의 Bradley–Terry 모형에서 나왔고 비교가 충분히 넓게 덮여 있으며 정책의 표현력이 충분하다면, 모집단 손실의 최적점은 §1-2의 $\pi^*$다. 유한한 데이터로 하는 학습은 이를 추정하는 것이며, 그 간격이 §4의 IPO와 §5의 문제로 이어진다. 학습에는 선호쌍 데이터셋 $\mathcal{D}$와 두 모델, 즉 갱신되는 정책과 고정된 reference model만 있으면 된다. 응답의 log 확률은 [04a §2-3](/lecture/2026f-advanced-deep-learning/04a-sft/)의 토큰별 log 확률을 응답 구간에서 합한 값이다.
+$\hat r_\theta(x,y)=\beta\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}$를 **implicit reward**라고 부른다. 명시적 reward model은 없지만, 정책 자체가 보상 함수의 역할을 한다. 이 손실을 최소화하는 것은 "정책이 정의하는 implicit reward로 관측된 선호의 likelihood를 최대화"하는 것이다. 선호가 실제로 어떤 보상 $r$의 Bradley–Terry 모형에서 나왔고 비교가 충분히 넓게 덮여 있으며 정책의 표현력이 충분하다면, 모집단 손실의 최적점은 §1-2의 $\pi^*$다. 유한한 데이터로 하는 학습은 이를 추정하는 것이며, 그 차이가 §4의 IPO와 §5의 문제로 이어진다. 학습에는 선호쌍 데이터셋 $\mathcal{D}$와 두 모델, 즉 갱신되는 정책과 고정된 reference model만 있으면 된다. 응답의 log 확률은 [04a §2-3](/lecture/2026f-advanced-deep-learning/04a-sft/#2-3-loss-mask)의 토큰별 log 확률을 응답 구간에서 합한 값이다.
 
 ### 2-2. Gradient가 하는 일
 
@@ -100,7 +100,7 @@ Implicit reward의 차이는 $0.2$이고 $\sigma(0.2)=0.550$이므로 손실은 
 
 ### 2-3. 원논문의 결과
 
-Rafailov 등은 과제별로 다른 방식으로 DPO를 PPO 기반 RLHF와 비교했다.[^dpo] 감성 제어 생성(IMDb)에서는 감성 분류기를 정답 보상으로 두고 보상과 KL 거리의 관계를 그렸는데, DPO가 같은 KL에서 PPO보다 높은 보상에 도달했다(원논문 Figure 2 왼쪽). Reddit TL;DR 요약에서는 GPT-4를 판정자로 사람이 쓴 참조 요약과 비교한 승률이 sampling temperature 0에서 DPO 61%, PPO 57%였다(원논문 Figure 2 오른쪽). Anthropic HH 대화에서는 DPO가 데이터셋의 선호 응답보다 나은 응답을 낸 유일한 효율적 방법이었다. 2024년의 Llama 3와 Tülu 3 같은 공개 recipe도 선호 학습 단계에 PPO 대신 DPO 계열을 썼는데, 근거는 각 팀의 자체 비교였다(Llama 3는 계산량과 지시 따르기 성능, Tülu 3는 여러 손실을 비교한 ablation).[^llama][^tulu3] 다만 §3-3에서 보듯 이 비교는 그 뒤에 다시 검토되었다.
+Rafailov 등은 과제별로 다른 방식으로 DPO를 PPO 기반 RLHF와 비교했다.[^dpo] 감성 제어 생성(IMDb)에서는 감성 분류기를 정답 보상으로 두고 보상과 KL 거리의 관계를 그렸는데, DPO가 같은 KL에서 PPO보다 높은 보상에 도달했다(원논문 Figure 2 왼쪽). Reddit TL;DR 요약에서는 GPT-4를 판정자로 사람이 쓴 참조 요약과 비교한 승률이 sampling temperature 0에서 DPO 61%, PPO 57%였다(원논문 Figure 2 오른쪽). Anthropic HH 대화에서는 계산 비용이 작은 방법 중 DPO만 데이터셋의 선호 응답보다 나은 응답을 냈다. 2024년의 Llama 3와 Tülu 3 같은 공개 recipe도 선호 학습 단계에 PPO 대신 DPO 계열을 썼는데, 근거는 각 팀의 자체 비교였다(Llama 3는 계산량과 지시 따르기 성능, Tülu 3는 여러 손실을 비교한 ablation).[^llama][^tulu3] 다만 §3-3에서 보듯 이 비교는 그 뒤에 다시 검토되었다.
 
 ## 3. DPO와 RL의 관계
 
@@ -108,7 +108,7 @@ Rafailov 등은 과제별로 다른 방식으로 DPO를 PPO 기반 RLHF와 비�
 
 먼저 용어를 정한다. 강화학습 교재의 구분(Sutton과 Barto 2판 §5.5)을 따르면, 학습 데이터를 생성한 정책을 **behavior policy**, 학습으로 개선하려는 정책을 **target policy**라고 부르고, 둘이 같으면 on-policy, 다르면 off-policy다.[^sutton] 여기에 KL 벌점의 기준이 되는 고정된 **reference policy**(SFT 모델)가 하나 더 있다. 이것은 역할의 이름이라 behavior policy나 초기 target policy와 같은 분포일 수 있다. 원래 DPO 절차에서는 reference policy에서 응답을 뽑아 선호쌍을 만들고, 고정 데이터로 최적화하는 동안에는 확률 계산에만 쓴다.
 
-언어 모델의 post-training에서는 이렇게 읽으면 된다. 학습에 쓰는 응답을 **지금 갱신 중인 정책이 방금 생성했으면** on-policy이고, 사람이 썼거나 다른 모델이 만들었거나 자신의 과거 checkpoint가 만들었으면 off-policy다. 엄밀히는 같은 가중치라도 temperature 같은 decoding 설정이 다르면 표집 분포가 달라지므로, 기준은 "누가 만들었는가"보다 **표집 분포가 target policy와 같은가**다. [04a](/lecture/2026f-advanced-deep-learning/04a-sft/)의 SFT는 남이 쓴 시연으로 학습하므로 이 노트에서는 데이터 분포의 관점에서 off-policy라고 부른다. RL 알고리즘의 분류를 SFT까지 넓혀 쓰는 용례이며, 5주차에서 같은 뜻으로 쓴다.
+언어 모델의 post-training에서는 이렇게 읽으면 된다. 학습에 쓰는 응답을 **지금 갱신 중인 정책이 방금 생성했으면** on-policy이고, 사람이 썼거나 다른 모델이 만들었거나 자신의 과거 checkpoint가 만들었으면 off-policy다. 엄밀히는 같은 가중치라도 temperature 같은 decoding 설정이 다르면 표집 분포가 달라지므로, 기준은 "누가 만들었는가"보다 **표집 분포가 target policy와 같은가**다. [04a §5-2](/lecture/2026f-advanced-deep-learning/04a-sft/#5-2-학습-문맥과-생성-문맥의-차이)의 SFT는 남이 쓴 시연으로 학습하므로 이 노트에서는 데이터 분포의 관점에서 off-policy라고 부른다. RL 알고리즘의 분류를 SFT까지 넓혀 쓰는 용례이며, 5주차에서 같은 뜻으로 쓴다.
 
 이와 별개의 축이 **online과 offline**이다. 학습 중에 데이터를 새로 모으면 online, 미리 모은 고정 데이터만 쓰면 offline이다.[^levine] 두 축은 독립이다. 04b의 PPO는 rollout마다 최신 정책으로 응답을 모으고 그 배치로 확률비를 써서 여러 번 갱신하므로 online이며 관례상 on-policy 알고리즘으로 분류한다. 고정 데이터로만 학습하는 offline RL 알고리즘도 있고, 학습 중 데이터를 모으되 오래된 데이터를 함께 쓰는 online off-policy 알고리즘도 있다. 뒤 절과 5주차에서 이 두 축이 계속 필요하다.
 
