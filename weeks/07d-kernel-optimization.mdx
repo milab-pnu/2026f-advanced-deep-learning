@@ -1,0 +1,165 @@
+---
+title: "Kernel optimization"
+week: 7
+order: 3
+---
+
+[06b §5-2](/lecture/2026f-advanced-deep-learning/06b-roofline/#5-2-mbu)의 예시에서 Llama 3 8B를 H100 한 대에서 batch 1로 돌릴 때 TPOT가 8.0 ms라면, 하한 4.9 ms의 약 1.6배이고 MBU는 61%라고 했다. 남은 39%는 계산이나 데이터의 양이 아니라 **그 계산을 GPU에서 실행하는 방식**에서 생긴다. 06b의 roofline이 점의 위치를 정한다면, kernel 최적화는 같은 위치의 점을 지붕에 얼마나 가깝게 올리느냐의 문제다.
+
+전체 지도는 Pan과 Li의 inference 시스템 서베이[^survey]로 잡는다. §3.1이 kernel을 다루며, 그 가운데 §3.1.1은 attention kernel의 계보를 작업을 GPU 연산 단위에 나누어 주는 방식으로 정리한다. FlashAttention은 차례로 돌아가며 나누고, Flash-Decoding은 고정된 수로 쪼개고, FlashInfer 등은 흐르듯이 나누어 준다는 것이다. 이 노트는 그 계보를 따라 decode의 attention kernel(§2), 선형층과 MoE의 kernel(§3), 그리고 kernel 바깥에서 새는 시간(§4)을 차례로 본다.
+
+## 1. GPU에서 kernel이 실행되는 방식
+
+[2주차 Training engineering §2-4](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#2-4-attention-메모리와-flashattention)에서 kernel을 GPU가 많은 데이터를 병렬로 처리하도록 실행하는 프로그램으로, kernel fusion을 이어지는 연산을 한 kernel에 묶어 중간값의 HBM 왕복을 줄이는 방법으로 보았다. 여기에 한 가지를 더한다. GPU는 수많은 연산 장치를 SM(streaming multiprocessor)이라는 단위로 묶어 두고, kernel은 일을 thread block 단위로 쪼개 SM들에 나누어 준다. H100 SXM에는 SM이 132개 있고, SM마다 최대 228 KB의 shared memory(02e의 SRAM)가 있다.[^hopper]
+
+이 구조에서 kernel이 하드웨어를 다 쓰려면 두 가지가 필요하다. 첫째, **thread block이 SM 수보다 충분히 많아야** 한다. 일이 thread block 40개로만 나뉘면 SM 132개 가운데 92개가 논다. 둘째, 각 thread block이 HBM에서 데이터를 읽는 동안에도 연산 장치가 놀지 않도록 읽기와 계산을 겹쳐야 한다. Decode는 두 조건을 모두 어렵게 만든다. 처리할 토큰이 적어 일이 잘게 나뉘지 않고, 한 스텝이 수 ms로 짧아 작은 비효율도 크게 드러난다.
+
+## 2. Decode의 attention kernel
+
+### 2-1. FlashAttention의 병렬화
+
+02e에서 본 FlashAttention은 query를 블록으로 나누고, 블록마다 key·value 블록을 차례로 읽으며 online softmax로 결과를 갱신했다. 일을 SM에 나누는 단위는 batch와 attention head였고, FlashAttention-2는 여기에 **query의 시퀀스 길이**를 더해 query 행 블록마다 thread block을 두었다.[^fa2] 학습과 prefill에서는 query가 수천 개라 thread block이 넉넉하다.
+
+Decode에서는 요청마다 query가 하나뿐이다. Query 방향으로 나눌 것이 없으므로 병렬성은 batch × head만 남는다. Dao 등은 batch가 GPU의 SM 수보다 작으면 이 연산이 GPU의 작은 일부만 쓰고, batch 1에서는 1%도 쓰지 못한다고 지적했다.[^flashdecoding]
+
+<Callout type="example">
+Llama 3 8B를 batch 1로 decode한다고 하자. Query head가 32개이므로 thread block은 많아야 32개이고, H100의 SM 132개 가운데 100개가 논다. 문맥이 32,768토큰이라면 KV head 하나의 key·value는 $32768\times128\times2\times2\ \text{bytes}\approx16.8$ MB다. Thread block 하나가 이 16.8 MB를 처음부터 끝까지 혼자 읽어야 하므로, SM 하나가 낼 수 있는 대역폭이 그 시간을 정한다. GPU 전체의 대역폭 3.35 TB/s를 SM 32개로만 나누어 쓰는 셈이다.
+</Callout>
+
+### 2-2. Flash-Decoding
+
+Dao 등의 Flash-Decoding은 나눌 방향을 하나 더 만들었다. **Key·value의 시퀀스 길이**다.[^flashdecoding] 긴 KV cache를 여러 조각(split)으로 나누고, 조각마다 thread block을 하나씩 두어 동시에 계산한다. 각 thread block은 자기 조각에 대한 부분 출력과 함께, 그 조각의 softmax 분모를 나타내는 스칼라 하나(log-sum-exp)를 남긴다. 마지막에 짧은 reduce kernel이 이 값들로 부분 출력의 비중을 맞춰 합친다.
+
+<figure>
+<svg viewBox="0 0 600 250" role="img" aria-label="Flash-Decoding의 계산 흐름. 위쪽 왼편에 새 토큰의 query q가 있고, 오른쪽으로 긴 KV cache 막대가 네 조각(split 1–4)으로 나뉘어 있다. 각 조각 아래에 thread block 1–4가 있어, query와 자기 조각의 key·value로 부분 출력 o_i와 log-sum-exp ℓ_i를 동시에 계산한다. 네 결과는 아래의 reduce 상자로 모이고, reduce는 log-sum-exp로 각 부분 출력의 비중을 맞춰 최종 출력 o를 만든다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <text x="300" y="22" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Flash-Decoding: key·value 시퀀스를 나누어 병렬 계산</text>
+  <rect x="24" y="46" width="64" height="34" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="56" y="68" font-size="13" text-anchor="middle" fill="#0f172a">query q</text>
+  <rect x="112" y="46" width="112" height="34" fill="#f8fafc" stroke="#0f172a"/>
+  <rect x="224" y="46" width="112" height="34" fill="#f8fafc" stroke="#0f172a"/>
+  <rect x="336" y="46" width="112" height="34" fill="#f8fafc" stroke="#0f172a"/>
+  <rect x="448" y="46" width="112" height="34" fill="#f8fafc" stroke="#0f172a"/>
+  <text x="168" y="68" font-size="12" text-anchor="middle" fill="#0f172a">KV split 1</text>
+  <text x="280" y="68" font-size="12" text-anchor="middle" fill="#0f172a">KV split 2</text>
+  <text x="392" y="68" font-size="12" text-anchor="middle" fill="#0f172a">KV split 3</text>
+  <text x="504" y="68" font-size="12" text-anchor="middle" fill="#0f172a">KV split 4</text>
+  <line x1="168" y1="80" x2="168" y2="104" stroke="#0f172a"/>
+  <line x1="280" y1="80" x2="280" y2="104" stroke="#0f172a"/>
+  <line x1="392" y1="80" x2="392" y2="104" stroke="#0f172a"/>
+  <line x1="504" y1="80" x2="504" y2="104" stroke="#0f172a"/>
+  <rect x="122" y="104" width="92" height="46" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="234" y="104" width="92" height="46" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="346" y="104" width="92" height="46" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
+  <rect x="458" y="104" width="92" height="46" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="168" y="123" font-size="11" text-anchor="middle" fill="#64748b">thread block 1</text>
+  <text x="280" y="123" font-size="11" text-anchor="middle" fill="#64748b">thread block 2</text>
+  <text x="392" y="123" font-size="11" text-anchor="middle" fill="#64748b">thread block 3</text>
+  <text x="504" y="123" font-size="11" text-anchor="middle" fill="#64748b">thread block 4</text>
+  <text x="168" y="141" font-size="12" text-anchor="middle" fill="#0f172a">o₁, ℓ₁</text>
+  <text x="280" y="141" font-size="12" text-anchor="middle" fill="#0f172a">o₂, ℓ₂</text>
+  <text x="392" y="141" font-size="12" text-anchor="middle" fill="#0f172a">o₃, ℓ₃</text>
+  <text x="504" y="141" font-size="12" text-anchor="middle" fill="#0f172a">o₄, ℓ₄</text>
+  <line x1="88" y1="63" x2="112" y2="63" stroke="#94a3b8"/>
+  <line x1="168" y1="150" x2="300" y2="184" stroke="#0f172a"/>
+  <line x1="280" y1="150" x2="300" y2="184" stroke="#0f172a"/>
+  <line x1="392" y1="150" x2="300" y2="184" stroke="#0f172a"/>
+  <line x1="504" y1="150" x2="300" y2="184" stroke="#0f172a"/>
+  <rect x="220" y="184" width="160" height="40" rx="6" fill="#f8fafc" stroke="#0f172a"/>
+  <text x="300" y="201" font-size="12" text-anchor="middle" fill="#0f172a">reduce kernel</text>
+  <text x="300" y="217" font-size="11" text-anchor="middle" fill="#64748b">ℓᵢ로 비중을 맞춰 o를 합침</text>
+  <text x="300" y="244" font-size="11" text-anchor="middle" fill="#64748b">query 하나가 조각 수만큼의 thread block을 만든다</text>
+</svg>
+<figcaption>Flash-Decoding의 계산 흐름. 조각마다 부분 출력과 log-sum-exp를 동시에 계산하고, 마지막에 하나로 합친다. Dao 등의 Flash-Decoding 글의 설명을 바탕으로 직접 구성했으며, 원래 글의 애니메이션은 <a href="https://crfm.stanford.edu/2023/10/12/flashdecoding.html">Stanford CRFM 블로그</a>에서 볼 수 있다.</figcaption>
+</figure>
+
+<Callout type="example">
+02e §2-4의 예시를 다시 쓰자. Query 하나의 점수가 $[1,2,3,0]$, value가 $[10,20,30,40]$이고 정답 출력은 약 26.21이었다. 02e에서는 thread block 하나가 두 블록을 차례로 처리하며 통계를 고쳐 나갔다. Flash-Decoding은 두 조각을 동시에 계산한다. 조각 1($[1,2]$)은 최댓값 2, 지수 합 $e^{-1}+1\approx1.368$, 부분 출력 약 17.31을, 조각 2($[3,0]$)는 최댓값 3, 지수 합 $1+e^{-3}\approx1.050$, 부분 출력 약 30.47을 각자 낸다. Reduce는 두 조각의 지수 합을 공통 최댓값 3에 맞춘 $1.368\times e^{2-3}\approx0.503$과 $1.050$을 비중으로 써서 $(0.503\times17.31+1.050\times30.47)/1.553\approx26.21$을 얻는다. 정답과 같다. 순서대로 갱신하든 따로 계산해 합치든 결과가 같으므로, 조각을 나누어 병렬로 계산할 수 있다.
+</Callout>
+
+Flash-Decoding은 CodeLlama-34B에서 아주 긴 시퀀스의 decode를 최대 8배 빠르게 했고, A100의 미시 벤치마크에서는 attention 자체가 FlashAttention보다 최대 50배 빨랐다. 시퀀스 길이 32K까지는 attention 시간이 거의 일정했다.[^flashdecoding] 긴 KV cache를 읽는 일이 이제 SM 전체로 퍼졌기 때문이다.
+
+조각을 나누는 데도 대가가 있다. 부분 결과를 HBM에 썼다가 reduce kernel이 다시 읽어야 하고, kernel이 하나 늘어난다. Batch × head만으로 이미 SM이 꽉 찬다면 쪼갤 이유가 없다. vLLM의 초기 PagedAttention kernel이 이 선택을 그대로 보여 준다. 시퀀스를 512토큰 단위로 나누어 계산하고 reduce kernel로 합치는 V2 kernel과 나누지 않는 V1 kernel을 두고, 최대 길이가 8,192토큰 이하일 때, 시퀀스가 한 조각(512토큰) 안에 들어가거나 `num_seqs × num_heads`가 512를 넘어 thread block이 이미 충분하면 V1을 골랐다.[^vllm-pa]
+
+### 2-3. 흩어진 KV cache와 FlashInfer
+
+[06c §2](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/#2-pagedattention)의 PagedAttention은 요청 하나의 KV cache를 GPU 메모리 곳곳의 블록에 흩어 둔다. Attention kernel은 block table을 따라 그 블록들을 찾아 읽어야 하고, 06c §2-1에서 보았듯 vLLM 원논문의 kernel은 이 때문에 연속 메모리를 쓰는 kernel보다 20–26% 느렸다. 게다가 실제 서빙의 batch에는 prefill 조각과 decode가 섞이고, 요청마다 길이가 다르며, 06c의 prefix caching으로 여러 요청이 일부 블록을 공유한다.
+
+Ye 등의 FlashInfer는 이런 경우를 하나의 틀로 다룬다.[^flashinfer] 먼저 page table을 **block-sparse 행렬**로 본다. 행은 query, 열은 KV cache의 블록이고, 어떤 query가 어떤 블록을 읽는지가 0이 아닌 칸이다. PagedAttention의 흩어진 블록, 여러 요청이 공유하는 prefix, 요청마다 다른 길이가 모두 이 형식 하나로 표현된다. Kernel은 흩어진 블록을 GPU 메모리에서 shared memory의 연속된 공간으로 모은 뒤, 거기서 dense한 Tensor Core 연산을 한다. 공유 prefix는 큰 블록으로 따로 저장해 여러 query가 shared memory의 같은 데이터를 재사용하게 한다.
+
+FlashInfer는 §2-2의 부분 결과 합치기도 일반화했다. Query 하나에 대한 (부분 출력, log-sum-exp) 쌍을 attention state라 부르고, 두 state를 합치는 연산이 결합법칙과 교환법칙을 만족하므로 행렬곱의 덧셈처럼 어떤 순서로든 나누어 계산하고 합칠 수 있다고 정리한다.[^flashinfer] 그 위에서 요청마다 다른 KV 길이를 SM들에 고르게 나누는 계획을 CPU에서 미리 세우고(plan), GPU kernel은 그 계획대로 실행한다(run). 같은 계획을 모든 층에서 재사용하고, kernel의 thread block 수를 고정해 §4의 CUDA graph와도 함께 쓸 수 있게 했다. 합치는 순서를 원자적 연산에 맡기지 않아, 같은 입력에 늘 같은 출력을 낸다.
+
+SGLang에 붙여 비교한 실험에서 FlashInfer는 Triton으로 작성한 attention backend보다 ITL을 29–69% 줄였다.[^flashinfer] 지금은 vLLM과 SGLang 모두 FlashInfer를 attention backend의 하나로 쓴다.
+
+## 3. 선형층과 MoE의 kernel
+
+### 3-1. 작은 batch의 행렬곱
+
+Decode의 선형층은 batch가 작으면 행렬과 벡터의 곱에 가깝다. [06b §3-1](/lecture/2026f-advanced-deep-learning/06b-roofline/#3-1-선형층)에서 이런 연산의 intensity가 토큰 수와 거의 같다고 했다. 이때 kernel의 목표는 연산이 아니라 **가중치를 대역폭의 한계 속도로 흘려 읽는 것**이다. 큰 행렬곱에 맞춰 조율한 kernel을 그대로 쓰면, 한쪽 차원이 아주 작은 이 납작한 행렬곱에서는 대역폭을 다 쓰지 못한다. Hong 등의 FlashDecoding++는 decode의 행렬곱이 batch 1에서는 행렬-벡터 곱이 되는 납작한 모양이라는 점에 맞춰 kernel을 따로 최적화했다.[^fdpp]
+
+### 3-2. 양자화 가중치의 kernel
+
+[07a §1-3](/lecture/2026f-advanced-deep-learning/07a-quantization/#1-3-두-가지-쓰임)의 weight-only 양자화는 kernel 안에서 가중치를 되돌려야 한다. Frantar 등의 Marlin은 4-bit 가중치와 FP16 activation의 행렬곱을 위한 kernel이다.[^marlin] 4-bit 가중치를 HBM에서 읽어 shared memory를 거쳐 레지스터로 가져오는 동안 앞선 데이터의 계산을 겹치고, 레지스터 안에서 FP16으로 되돌려 Tensor Core에 넣는다.
+
+원논문은 이 kernel이 언제까지 이득을 내는지 roofline으로 설명한다. 토큰 하나는 가중치 하나마다 2 FLOP을 쓰는데, 4-bit 가중치 하나는 0.5 byte다. 같은 계산을 H100에 대입하면 batch $b$에서 intensity는 약 $2b/0.5=4b$이고, ridge point 295를 넘기 전, 곧 $b$가 약 70보다 작은 동안은 가중치를 읽는 시간이 행렬곱을 지배한다. 그동안은 읽는 bytes가 4분의 1로 줄어든 만큼 빨라지고, 그 이상에서는 계산은 FP16 그대로이므로 이득이 사라진다. 실제로 Marlin은 batch 16–32까지 이상적인 값에 가까운 약 3.87배를 냈고, batch 128에서는 1.5배 정도로 줄었다(원논문 §1, §5.1).[^marlin] vLLM에 넣었을 때 전체 속도 향상은 최대 2.8배였다. 07a §6에서 weight-only 양자화의 이득이 batch가 커질수록 준다고 한 것이 kernel 수준에서 이렇게 나타난다.
+
+### 3-3. MoE의 grouped GEMM
+
+MoE 층에서는 batch의 토큰들이 서로 다른 expert로 흩어지고, expert마다 받는 토큰 수가 다르다. 모든 expert에 같은 수의 토큰을 맞춰 하나의 batched 행렬곱으로 계산하는 단순한 구현은, 넘치는 토큰을 버리거나 모자란 자리를 0으로 채워야 했다. Gale 등의 MegaBlocks는 이 계산을 크기가 다른 블록들로 이루어진 block-diagonal 행렬의 곱, 곧 block-sparse 행렬곱으로 바꿔 토큰을 버리지 않고 계산했다.[^megablocks] Inference 엔진도 같은 생각을 쓴다. vLLM의 fused MoE kernel은 토큰을 expert 순서로 정렬한 뒤, 블록마다 어떤 expert의 가중치를 쓸지를 표시해 모든 expert의 행렬곱을 kernel 하나로 처리한다.[^vllm-fusedmoe] [06d §4-2](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/#4-2-moe-서빙과-expert-parallelism)의 expert parallelism에서 토큰을 GPU 사이로 보내고 받는 all-to-all도 전용 kernel이 맡는다. DeepSeek가 공개한 DeepEP가 그 예다.[^deepep]
+
+## 4. Kernel 바깥의 시간
+
+### 4-1. Kernel launch와 CUDA graph
+
+Kernel 자체가 빨라도 그 사이가 빈다면 GPU는 논다. CPU는 kernel을 하나씩 GPU에 제출하는데, 제출마다 마이크로초 단위의 비용이 든다. NVIDIA의 측정에서 V100에서 2.9 μs짜리 kernel을 하나씩 동기화하며 실행하면 kernel당 9.6 μs가 걸렸다.[^cudagraph-nv] Decode 한 스텝은 층마다 정규화, 투영, attention, 활성화 같은 kernel 여러 개를 수십 층에 걸쳐 실행하므로 kernel이 수백 개다. vLLM 팀도 H100에서 Llama 8B의 GPU 실행 시간이 스텝당 약 5 ms에 불과해, CPU 쪽의 비용이 무시할 수 없게 된다고 밝혔다.[^vllm-v1]
+
+**CUDA graph**는 이 비용을 줄인다. 한 스텝에서 실행할 kernel들의 순서와 인자를 한 번 기록(capture)해 두고, 이후에는 기록한 그래프 전체를 한 번에 재생(replay)한다. NVIDIA의 같은 측정에서 kernel당 시간이 3.4 μs로 줄었다. 대신 재생은 같은 kernel을 같은 인자, 같은 메모리 주소로 실행하므로 입력의 모양이 고정되어야 한다.[^cudagraph-pt] Batch 크기가 스텝마다 바뀌는 서빙에서는 이것이 문제다. vLLM은 batch 크기 1, 2, 4, 8, 16, 24, …처럼 여러 크기의 그래프를 미리 기록해 두고, 실제 batch를 그보다 큰 가장 가까운 크기로 채워(padding) 재생한다. Attention은 요청마다 길이가 달라 그래프에 담기 어려우므로, 기본 설정에서는 decode만 있는 batch는 전체를 그래프 하나로, 나머지는 attention 사이의 구간만 그래프로 기록한다.[^vllm-cg]
+
+<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.30.0/docs/assets/design/cuda_graphs/current_design.png" alt="vLLM 문서의 CUDA graph 설계 그림. 위쪽에서 모델은 torch.compile로 attention 사이의 submodule들로 쪼개지고(piecewise compilation), submodule마다 CUDA graph wrapper가 붙는다. 실행 시 요청 batch의 종류와 크기에 따라 세 가지 방식 가운데 하나가 고른다. PIECEWISE는 submodule 구간은 CUDA graph로, attention은 그래프 없이(eager) 번갈아 실행한다. FULL은 모델 전체를 CUDA graph 하나로 실행한다. NONE은 그래프 없이 모두 eager로 실행한다." caption="vLLM의 CUDA graph 실행 방식. Attention 사이의 구간만 그래프로 재생하는 PIECEWISE, 모델 전체를 재생하는 FULL, 그래프를 쓰지 않는 NONE 가운데 batch에 맞는 것을 고른다." source="vLLM Project, CUDA Graphs 설계 문서 그림(docs/assets/design/cuda_graphs/current_design.png, v0.30.0). Apache License 2.0. 원본 그대로 사용." />
+
+### 4-2. 컴파일러
+
+Kernel을 하나하나 손으로 쓰지 않고 컴파일러에 맡기는 길도 있다. Tillet 등의 Triton은 GPU의 thread 대신 데이터 타일 단위로 연산을 쓰게 하는 언어이자 컴파일러로, 행렬곱에서 cuBLAS에 비견하는 성능을 냈다.[^triton] PyTorch 2의 `torch.compile`은 Python 프로그램을 실행 중에 그래프로 잡아(TorchDynamo), GPU에서는 Triton kernel로 바꾼다(TorchInductor). A100에서 180개 넘는 모델의 inference를 기하평균 2.27배 빠르게 했다.[^pt2] 02e §2-4에서 본 kernel fusion을 사람이 일일이 하지 않아도 컴파일러가 찾아 준다.
+
+Inference 엔진은 둘을 섞어 쓴다. vLLM은 attention 사이의 토큰별 연산을 `torch.compile`로 묶어 fusion하고 그 구간을 §4-1의 CUDA graph로 기록하며,[^vllm-cg] attention은 FlashAttention이나 FlashInfer처럼 직접 최적화한 kernel을 쓴다. FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kernel만큼 빠르지 않아 CUDA 코드를 생성한다고 밝힌다.[^flashinfer] 성능이 가장 중요한 몇 개의 kernel은 손으로, 나머지는 컴파일러로 처리하는 분업이다.
+
+## 5. 정리
+
+Kernel 최적화는 roofline이 정한 상한에 실제 성능을 가깝게 하는 일이다. GPU는 일을 thread block으로 쪼개 SM들에 나누므로, kernel이 하드웨어를 다 쓰려면 일이 충분히 잘게 나뉘고 읽기와 계산이 겹쳐야 한다. Decode는 처리할 토큰이 적고 스텝이 짧아 이 조건을 맞추기 어렵다.
+
+Attention에서는 query가 하나라 FlashAttention의 query 방향 병렬화가 통하지 않는다. Flash-Decoding은 key·value 시퀀스를 조각으로 나누어 동시에 계산하고 log-sum-exp로 합쳐 긴 문맥의 decode를 SM 전체로 퍼뜨렸고, FlashInfer는 page table을 block-sparse 행렬로 보아 흩어진 블록, 공유 prefix, 다양한 길이를 하나의 형식과 균형 잡힌 계획으로 처리했다. 선형층에서는 작은 batch의 납작한 행렬곱을 대역폭 한계로 읽는 kernel과, 4-bit 가중치를 레지스터에서 되돌리는 Marlin 같은 kernel이 쓰이며, 그 이득은 roofline대로 batch가 커지면 줄어든다. MoE는 크기가 다른 expert별 행렬곱을 kernel 하나로 묶는다.
+
+Kernel 사이의 시간도 줄여야 한다. CUDA graph는 kernel 제출 비용을 한 번의 재생으로 줄이고, 서빙 엔진은 여러 batch 크기의 그래프를 미리 기록해 둔다. `torch.compile`과 Triton은 fusion을 자동화하고, 성능이 중요한 attention 같은 kernel은 직접 작성한 kernel이 맡는다. 다음 노트는 이 kernel들과 6·7주차의 기법이 vLLM과 SGLang 안에서 어떻게 하나의 엔진으로 묶이는지 본다.
+
+[^survey]: Pan, J., & Li, G. (2025). A Survey of LLM Inference Systems. [arXiv:2506.21901](https://arxiv.org/abs/2506.21901).
+
+[^hopper]: NVIDIA. *NVIDIA Hopper Tuning Guide*. [CUDA 문서](https://docs.nvidia.com/cuda/hopper-tuning-guide/index.html).
+
+[^fa2]: Dao, T. (2024). FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning. *ICLR 2024*. [arXiv:2307.08691](https://arxiv.org/abs/2307.08691).
+
+[^flashdecoding]: Dao, T., Haziza, D., Massa, F., & Sizov, G. (2023). *Flash-Decoding for long-context inference*. Stanford CRFM Blog. [블로그](https://crfm.stanford.edu/2023/10/12/flashdecoding.html).
+
+[^vllm-pa]: vLLM Project. *vLLM Paged Attention*. [vLLM 설계 문서](https://docs.vllm.ai/en/latest/design/paged_attention.html); [attention kernel 소스(v0.5.0)](https://github.com/vllm-project/vllm/blob/v0.5.0/vllm/attention/ops/paged_attn.py).
+
+[^flashinfer]: Ye, Z., Chen, L., Lai, R., et al. (2025). FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving. *MLSys 2025*. [arXiv:2501.01005](https://arxiv.org/abs/2501.01005).
+
+[^fdpp]: Hong, K., Dai, G., Xu, J., et al. (2024). FlashDecoding++: Faster Large Language Model Inference with Asynchronization, Flat GEMM Optimization, and Heuristics. *MLSys 2024*. [arXiv:2311.01282](https://arxiv.org/abs/2311.01282).
+
+[^marlin]: Frantar, E., Castro, R. L., Chen, J., Hoefler, T., & Alistarh, D. (2025). MARLIN: Mixed-Precision Auto-Regressive Parallel Inference on Large Language Models. *PPoPP 2025*, 239–251. [arXiv:2408.11743](https://arxiv.org/abs/2408.11743).
+
+[^megablocks]: Gale, T., Narayanan, D., Young, C., & Zaharia, M. (2023). MegaBlocks: Efficient Sparse Training with Mixture-of-Experts. *MLSys 2023*. [arXiv:2211.15841](https://arxiv.org/abs/2211.15841).
+
+[^vllm-fusedmoe]: vLLM Project. *fused_moe.py* (v0.30.0). [소스](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/model_executor/layers/fused_moe/fused_moe.py).
+
+[^deepep]: DeepSeek-AI. *DeepEP*. [GitHub](https://github.com/deepseek-ai/DeepEP).
+
+[^cudagraph-nv]: Gray, A. (2019). *Getting Started with CUDA Graphs*. NVIDIA Technical Blog. [블로그](https://developer.nvidia.com/blog/cuda-graphs/).
+
+[^vllm-v1]: vLLM Team. (2025). *vLLM V1: A Major Upgrade to vLLM's Core Architecture*. [vLLM Blog](https://blog.vllm.ai/2025/01/27/v1-alpha-release.html).
+
+[^cudagraph-pt]: Nguyen, V., Carilli, M., Eryilmaz, S. B., et al. (2021). *Accelerating PyTorch with CUDA Graphs*. PyTorch Blog. [블로그](https://pytorch.org/blog/accelerating-pytorch-with-cuda-graphs/).
+
+[^vllm-cg]: vLLM Project. *CUDA Graphs*. [vLLM 설계 문서](https://docs.vllm.ai/en/latest/design/cuda_graphs.html).
+
+[^triton]: Tillet, P., Kung, H. T., & Cox, D. (2019). Triton: An Intermediate Language and Compiler for Tiled Neural Network Computations. *MAPL 2019*, 10–19. [doi:10.1145/3315508.3329973](https://doi.org/10.1145/3315508.3329973).
+
+[^pt2]: Ansel, J., Yang, E., He, H., et al. (2024). PyTorch 2: Faster Machine Learning Through Dynamic Python Bytecode Transformation and Graph Compilation. *ASPLOS 2024*, 929–947. [doi:10.1145/3620665.3640366](https://doi.org/10.1145/3620665.3640366).
