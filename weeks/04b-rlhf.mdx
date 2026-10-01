@@ -6,21 +6,21 @@ order: 1
 
 [04a Supervised fine-tuning 노트](/lecture/2026f-advanced-deep-learning/04a-sft/)의 마지막에서 SFT(supervised fine-tuning)의 한계를 두 가지로 정리했다. 시연 데이터는 선택된 응답만 주고 응답 사이의 선호 순서를 직접 감독하지 않으며, 학습 때의 문맥과 모델이 스스로 생성할 때의 문맥이 다를 수 있다. 이 노트는 첫 번째 한계를 푸는 계보를 따라간다. 사람에게 응답을 쓰게 하는 대신 **두 응답 중 어느 쪽이 나은지 고르게** 하고, 그 선택을 배운 reward model의 점수를 모델 자신이 생성한 응답에 매겨 강화학습(reinforcement learning, RL)으로 올리는 방법, 즉 <strong>RLHF(reinforcement learning from human feedback)</strong>다.
 
-전체 지도는 Srivastava와 Aggarwal이 LLM(large language model)을 위한 RL 기법을 정리한 서베이[^survey]로 잡는다. §2.2가 policy gradient 같은 RL 기초를, §3.1이 PPO(proximal policy optimization)를, §4.1이 SFT·reward model·PPO의 세 단계 파이프라인을, §4.2가 사람 대신 AI(artificial intelligence) 모델이 피드백을 주는 RLAIF(reinforcement learning from AI feedback)를 다룬다. Reward model 없이 선호쌍에 직접 손실을 거는 DPO(direct preference optimization)는 서베이 §4.4이고 [04c](/lecture/2026f-advanced-deep-learning/04c-dpo/)에서, reward model이 틀리는 방식과 그 평가는 [04d](/lecture/2026f-advanced-deep-learning/04d-reward-hacking/)에서 다룬다. 이 노트는 reward model과 PPO를 원논문 수준으로 풀어 쓴다.
+전체 지도는 Srivastava와 Aggarwal이 LLM(large language model)을 위한 RL 기법을 정리한 서베이[^survey]로 잡는다. §2.2가 policy gradient 같은 RL 기초를, §3.1이 PPO(proximal policy optimization)를, §4.1이 SFT·reward model·PPO의 세 단계 파이프라인을, §4.2가 사람 대신 AI(artificial intelligence) 모델이 피드백을 주는 RLAIF(reinforcement learning from AI feedback)를, §4.3이 그 대표 사례인 Constitutional AI를 다룬다. Reward model 없이 선호쌍에 직접 손실을 거는 DPO(direct preference optimization)는 서베이 §4.4이고 [04c](/lecture/2026f-advanced-deep-learning/04c-dpo/)에서, reward model이 틀리는 방식과 그 평가는 [04d](/lecture/2026f-advanced-deep-learning/04d-reward-hacking/)에서 다룬다. 이 노트는 reward model과 PPO를 원논문 수준으로 풀어 쓴다.
 
 ## 1. 선호 비교 데이터
 
 ### 1-1. 응답을 쓰는 대신 고르기
 
-시연을 쓰는 것과 두 응답을 비교하는 것은 사람에게 요구하는 일이 다르다. 좋은 요약문을 직접 쓰려면 글을 잘 써야 하지만, 두 요약문 중 나은 쪽을 고르는 데는 그만한 능력이 필요 없다. 게다가 비교는 정확성, 말투, 길이, 안전성 같은 여러 기준을 **하나의 수치 함수로 미리 조합하지 않아도 된다.** 주석 지침은 여전히 필요하다. InstructGPT는 무엇을 도움이 되는 응답으로 볼지 상세한 지침을 주석자에게 주었다.[^instructgpt] 다만 "정확하지만 무뚝뚝한 응답"과 "친절하지만 한 군데 틀린 응답" 중 어느 쪽이 나은지를 수식으로 적는 대신, 사람이 그 상충을 통째로 판정한다.
+시연을 쓰는 것과 두 응답을 비교하는 것은 사람에게 요구하는 일이 다르다. 좋은 요약문을 직접 쓰려면 글을 잘 써야 하지만, 두 요약문 중 나은 쪽을 고르는 데는 그만한 작문 능력이 꼭 필요하지 않다. 게다가 비교는 정확성, 말투, 길이, 안전성 같은 여러 기준을 **하나의 수치 함수로 미리 조합하지 않아도 된다.** 주석 지침은 여전히 필요하다. InstructGPT는 무엇을 도움이 되는 응답으로 볼지 상세한 지침을 주석자에게 주었다.[^instructgpt] 다만 "정확하지만 무뚝뚝한 응답"과 "친절하지만 한 군데 틀린 응답" 중 어느 쪽이 나은지를 수식으로 적는 대신, 사람이 그 상충을 통째로 판정한다.
 
-이 발상은 언어 모델보다 먼저 게임과 로봇 제어에서 나왔다. Christiano 등은 2017년에 보상 함수를 손으로 설계하는 대신 에이전트의 짧은 행동 구간 두 개를 사람에게 보여 주고 나은 쪽을 고르게 했다. 그 비교로 보상 함수를 학습하고 그 보상으로 RL을 돌리자, 전체 상호작용의 1% 미만에만 피드백을 받고도 새 행동을 학습할 수 있었다.[^christiano] 언어 모델에 처음 적용한 것은 Ziegler 등의 2019년 연구로, 문체 이어 쓰기와 요약에서 사람의 비교 5천–6만 건으로 GPT-2를 fine-tuning했다.[^ziegler] 이어서 Stiennon 등이 Reddit 요약에서 RLHF 파이프라인을 완성했고,[^stiennon] Ouyang 등의 InstructGPT가 이를 열린 지시 전체로 넓혔다.[^instructgpt]
+이 발상은 언어 모델보다 먼저 게임과 로봇 제어에서 나왔다. Christiano 등은 2017년에 보상 함수를 손으로 설계하는 대신 에이전트의 짧은 행동 구간 두 개를 사람에게 보여 주고 나은 쪽을 고르게 했다. 그 비교로 보상 함수를 학습하고 그 보상으로 RL을 돌리자, 에이전트 상호작용의 1% 미만에만 피드백을 받고도 Atari 게임과 시뮬레이션 로봇 보행 과제를 풀 수 있었다.[^christiano] 언어 모델에 적용한 초기 연구인 Ziegler 등의 2019년 논문은 문체 이어 쓰기와 요약에서 사람의 비교 5천–6만 건으로 GPT-2를 fine-tuning했다.[^ziegler] 이어서 Stiennon 등이 Reddit 요약에 SFT, reward model, PPO로 이어지는 세 단계를 적용했고,[^stiennon] Ouyang 등의 InstructGPT가 이를 열린 지시 전체로 넓혔다.[^instructgpt]
 
 ### 1-2. 데이터의 형태와 규모
 
-비교 데이터 한 건은 프롬프트 $x$와 두 응답 $y_w$(선호됨, winner), $y_l$(선호되지 않음, loser)의 쌍이다. 응답은 보통 현재 모델(SFT 모델이나 이전 라운드의 RLHF 모델)이 생성하며, 사람은 둘 중 하나를 고르거나 여러 응답의 순위를 매긴다. InstructGPT는 프롬프트마다 4–9개 응답의 순위를 받았고,[^instructgpt] Llama 2와 Llama 3는 두 응답을 보여 주고 "훨씬 낫다"부터 "거의 차이 없다"까지 선호의 강도도 함께 받았다.[^llama2][^llama] Llama 3는 여기에 주석자가 선호된 응답을 직접 고친 편집본을 더해 편집본 > 선택된 응답 > 탈락한 응답의 세 단계 순위를 만들었다.[^llama]
+비교 데이터 한 건은 프롬프트 $x$와 두 응답 $y_w$(선호됨, winner), $y_l$(선호되지 않음, loser)의 쌍이다. 응답은 보통 현재 모델(SFT 모델이나 이전 라운드의 RLHF 모델)이 생성하며, 사람은 둘 중 하나를 고르거나 여러 응답의 순위를 매긴다. InstructGPT는 프롬프트마다 4–9개 응답의 순위를 받았고,[^instructgpt] Llama 2와 Llama 3는 두 응답을 보여 주고 "훨씬 낫다"부터 "거의 차이 없다"까지 선호의 강도도 함께 받았다.[^llama2][^llama] Llama 3는 일부 표본에 주석자가 선호된 응답을 직접 고친 편집본을 더해 편집본 > 선택된 응답 > 탈락한 응답의 세 단계 순위를 만들었다.[^llama]
 
-규모는 SFT 데이터보다 훨씬 크다. InstructGPT의 reward model 학습에는 약 33K 프롬프트가 쓰였고,[^instructgpt] Llama 2는 자체 수집 약 142만 건에 공개 데이터셋을 더해 약 292만 건의 비교를 썼다(원논문 Table 6).[^llama2] 비교는 시연보다 한 건당 부담이 작지만, 이만한 양을 모으는 비용은 여전히 크다. 이 비용이 §4의 AI 피드백과 [04c](/lecture/2026f-advanced-deep-learning/04c-dpo/)의 공개 선호 데이터셋으로 이어진다.
+InstructGPT와 Llama 2는 사람이 쓴 시연보다 훨씬 많은 비교 데이터를 모았다. InstructGPT의 reward model 학습에는 약 33K 프롬프트가 쓰였고,[^instructgpt] Llama 2는 자체 수집 약 142만 건에 공개 데이터셋을 더해 약 292만 건의 비교를 썼다(원논문 Table 6).[^llama2] 비교는 시연보다 한 건당 부담이 작지만, 이만한 양을 모으는 비용은 여전히 크다. 이 비용이 §4의 AI 피드백과 [04c](/lecture/2026f-advanced-deep-learning/04c-dpo/)의 공개 선호 데이터셋으로 이어진다.
 
 ## 2. Reward model
 
@@ -36,7 +36,7 @@ $$
 
 ### 2-2. 학습
 
-Reward model은 언어 모델에 스칼라 출력 head를 붙인 것이다. Stiennon 등은 SFT 모델에서 출발해 무작위로 초기화한 선형 head를 더했고,[^stiennon] InstructGPT는 6B 모델의 출력 head(unembedding 층)를 떼고 스칼라 head를 붙였다. 최종 reward model은 여러 공개 NLP(natural language processing) 데이터셋으로 fine-tuning한 6B GPT-3에서 초기화했으며, GPT-3나 SFT 모델에서 초기화해도 결과가 비슷했다고 적었다.[^instructgpt] 프롬프트와 응답을 이어 붙인 토큰열을 넣고 **마지막 토큰 위치의 출력**을 점수로 읽는다.[^hf-ppo] 학습 목표는 관측된 선호의 log likelihood를 최대화하는 것이며, 최소화할 손실로 쓰면 다음과 같다.
+Reward model은 언어 모델에 스칼라 출력 head를 붙인 것이다. Stiennon 등은 SFT 모델에서 출발해 무작위로 초기화한 선형 head를 더했고,[^stiennon] InstructGPT는 6B 모델의 출력 head(unembedding 층)를 떼고 스칼라 head를 붙였다. 최종 reward model은 여러 공개 NLP(natural language processing) 데이터셋으로 fine-tuning한 6B GPT-3에서 초기화했으며, GPT-3나 SFT 모델에서 초기화해도 결과가 비슷했다고 적었다.[^instructgpt] 프롬프트와 응답을 이어 붙인 토큰열을 넣고 **응답이 끝나는 토큰 위치의 출력**을 점수로 읽는다.[^hf-ppo] 학습 목표는 관측된 선호의 log likelihood를 최대화하는 것이며, 최소화할 손실로 쓰면 다음과 같다.
 
 $$
 \mathcal{L}_{\mathrm{RM}}(\theta)=-\mathbb{E}_{(x,y_w,y_l)}\Big[\log\sigma\big(r_\theta(x,y_w)-r_\theta(x,y_l)\big)\Big]
@@ -62,7 +62,7 @@ $$
 R(x,y)=r_\theta(x,y)-\beta\,\log\frac{\pi_\phi^{\mathrm{RL}}(y\mid x)}{\pi^{\mathrm{SFT}}(y\mid x)},\qquad \beta>0
 $$
 
-정책은 $\mathbb{E}_{x\sim\mathcal{D},\,y\sim\pi_\phi^{\mathrm{RL}}(\cdot\mid x)}[R(x,y)]$를 최대화한다. 둘째 항의 기대값은 현재 정책과 출발점인 SFT 모델 사이의 KL(Kullback–Leibler) divergence $\mathrm{KL}(\pi_\phi^{\mathrm{RL}}\,\|\,\pi^{\mathrm{SFT}})$에 $\beta$를 곱한 것이므로, 이 항은 정책이 SFT 모델에서 멀어지는 것에 대한 벌점이다. 저자들은 이 항의 목적을 둘로 설명한다. 정책이 한 가지 출력으로 무너지지 않게 하는 entropy bonus 역할과, reward model이 학습 때 본 적 없는 응답을 정책이 만들어 내지 않게 하는 역할이다.[^stiennon] 둘째 목적이 핵심이다. Reward model은 SFT 모델 근처의 응답으로 학습했으므로, 정책이 거기서 멀어질수록 점수의 신뢰성이 떨어질 수 있다. §5-1에서 이 문제가 실제로 어떻게 나타나는지 본다.
+정책은 $\mathbb{E}_{x\sim\mathcal{D},\,y\sim\pi_\phi^{\mathrm{RL}}(\cdot\mid x)}[R(x,y)]$를 최대화한다. 둘째 항의 기대값은 현재 정책과 출발점인 SFT 모델 사이의 KL(Kullback–Leibler) divergence $\mathrm{KL}(\pi_\phi^{\mathrm{RL}}\,\|\,\pi^{\mathrm{SFT}})$에 $\beta$를 곱한 것이므로, 이 항은 정책이 SFT 모델에서 멀어지는 것에 대한 벌점이다. 저자들은 이 항의 목적을 둘로 설명한다. 정책이 한 가지 출력으로 무너지지 않게 하는 entropy bonus 역할과, reward model이 학습 때 본 적 없는 응답을 정책이 만들어 내지 않게 하는 역할이다.[^stiennon] 이 노트의 뒤 절과 이어지는 것은 둘째 목적이다. Reward model은 SFT 모델 근처의 응답으로 학습했으므로, 정책이 거기서 멀어질수록 점수의 신뢰성이 떨어질 수 있다. §5-1에서 이 문제가 실제로 어떻게 나타나는지 본다.
 
 InstructGPT는 여기에 pre-training 데이터의 log likelihood를 계수 $\gamma$로 더한 PPO-ptx(pretraining mix) 목적함수를 썼다.[^instructgpt] RLHF 뒤에 공개 NLP 벤치마크 점수가 떨어지는 현상을 저자들은 alignment tax라고 불렀고, pre-training 손실을 섞으면 그 하락을 줄이면서 사람의 선호는 유지할 수 있었다. KL 벌점이 정책을 SFT 모델 근처에 묶는 장치라면, 이 항은 그와 별도로 pre-training에서 얻은 능력의 회귀를 완화하는 장치다.
 
@@ -133,7 +133,7 @@ $$
 | Reward model | 응답의 점수 | 6B | 고정 |
 | Value model | 상태 가치 추정, reward model에서 초기화 | 6B | 갱신 |
 
-InstructGPT는 175B 정책에도 6B reward model을 썼는데, 175B reward model은 학습 자체가 더 불안정해 value model의 초기화로 덜 적합했고, 175B reward model과 value model을 돌리는 계산 비용도 컸기 때문이다.[^instructgpt] Stiennon 등은 value model을 정책과 완전히 분리된 Transformer로 두고 reward model의 파라미터로 초기화했으며, 정책과 공유하면 초기 value 학습이 정책을 망가뜨린다고 보고했다.[^stiennon] 메모리는 갱신되는 모델(정책, value model)에만 gradient와 optimizer 상태가 필요하고 고정된 모델에는 가중치와 추론 시 activation만 필요하므로, [2주차 Training engineering 노트](/lecture/2026f-advanced-deep-learning/02e-training-engineering/)의 항목별 계산을 모델마다 따로 적용해야 한다. 정책과 value model을 따로 학습하고 reference model과 reward model도 유지하는 구성에서는 그만큼의 모델 상태가 더 필요하며, GPU peak memory는 배치·공유·offload 구성에 따라 달라진다. 어느 구성이든 응답 생성이 학습 루프 안에 들어간다. 그 비용은 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)에서 따로 다룬다.
+InstructGPT는 175B 정책에도 6B reward model을 썼는데, 175B reward model은 학습 자체가 더 불안정해 value model의 초기화로 덜 적합했고, 175B reward model과 value model을 돌리는 계산 비용도 컸기 때문이다.[^instructgpt] Stiennon 등은 value model을 정책과 완전히 분리된 Transformer로 두고 reward model의 파라미터로 초기화했으며, 정책과 공유하면 초기 value 학습이 정책을 망가뜨린다고 보고했다.[^stiennon] 메모리는 갱신되는 모델(정책, value model)에만 gradient와 optimizer 상태가 필요하고 고정된 모델에는 가중치와 추론 시 activation만 필요하므로, [2주차 Training engineering 노트](/lecture/2026f-advanced-deep-learning/02e-training-engineering/)의 항목별 계산을 모델마다 따로 적용해야 한다. 정책과 value model을 따로 학습하고 reference model과 reward model도 유지하는 구성에서는 그만큼의 모델 상태가 더 필요하며, GPU(graphics processing unit)의 peak memory는 배치·공유·offload 구성에 따라 달라진다. 어느 구성이든 응답 생성이 학습 루프 안에 들어간다. 그 비용은 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)에서 따로 다룬다.
 
 <Details summary="한 스텝의 흐름">
 
@@ -143,23 +143,23 @@ InstructGPT는 175B 정책에도 6B reward model을 썼는데, 175B reward model
 4. 같은 배치로 몇 epoch 동안 PPO 목적함수로 정책을, 제곱 오차로 value model을 갱신한다.
 5. 갱신된 정책을 $\pi_{\mathrm{old}}$로 삼아 1로 돌아간다.
 
-1–2가 생성, 3–4가 학습이다. 두 단계가 같은 GPU(graphics processing unit)를 번갈아 쓰는 구조가 RL 시스템의 출발점이다.
+1–2가 생성, 3–4가 학습이다. 가장 단순한 구현에서는 두 단계가 같은 GPU를 번갈아 쓴다.
 
 </Details>
 
 ### 3-5. Reward model을 쓰는 두 갈래
 
-Reward model이 있으면 정책을 개선하는 길이 둘로 갈린다. 하나는 지금까지 본 대로 보상으로 정책을 **직접 갱신**하는 PPO다. 다른 하나는 프롬프트마다 $K$개 응답을 생성해 reward model 점수가 가장 높은 것을 고르고, 그 응답으로 SFT하는 **rejection sampling**이다. 후자는 policy gradient 갱신 없이 04a의 학습 방법을 그대로 쓰므로 구현이 단순하고 안정적이지만, 탈락한 응답을 직접 억제하는 손실이 없다. Llama 2는 두 갈래를 차례로 썼다. RLHF 모델을 V1부터 V5까지 다섯 번 갱신했는데, V4까지는 rejection sampling만 쓰고 V5에서 그 checkpoint 위에 PPO를 더했다.[^llama2] [04a](/lecture/2026f-advanced-deep-learning/04a-sft/)에서 본 Llama 3의 recipe도 rejection sampling으로 SFT 데이터를 만든다.
+Reward model이 있으면 정책을 개선하는 길이 둘로 갈린다. 하나는 지금까지 본 대로 보상으로 정책을 **직접 갱신**하는 PPO다. 다른 하나는 프롬프트마다 $K$개 응답을 생성해 reward model 점수가 가장 높은 것을 고르고, 그 응답으로 SFT하는 **rejection sampling**이다. 후자는 policy gradient 갱신 없이 04a의 학습 방법을 그대로 쓰므로 구현이 비교적 단순하지만, 탈락한 응답을 직접 억제하는 손실이 없다. Llama 2는 두 갈래를 차례로 썼다. RLHF 모델을 V1부터 V5까지 다섯 번 갱신했는데, V4까지는 rejection sampling만 쓰고 V5에서 그 checkpoint 위에 PPO를 더했다.[^llama2] [04a](/lecture/2026f-advanced-deep-learning/04a-sft/)에서 본 Llama 3의 recipe도 rejection sampling으로 SFT 데이터를 만든다.
 
 ### 3-6. 결과
 
-Stiennon 등의 요약 실험에서, 사람 평가자가 모델의 요약을 사람이 쓴 참조 요약보다 선호한 비율은 1.3B RLHF 모델이 61%, 그보다 10배 큰 약 13B SFT 모델이 43%였다(원논문 Figure 1).[^stiennon] InstructGPT에서는 175B RLHF 모델의 출력이 175B GPT-3보다 85±3%, few-shot 프롬프트를 준 GPT-3보다 71±4%의 비율로 선호되었다.[^instructgpt] Llama 2는 자체 helpfulness·safety reward model로 잰 평가에서 V3부터 두 축 모두 ChatGPT 대비 승률이 50%를 넘었다고 보고했는데, 저자들도 이 평가가 자기 모델에 유리하게 치우칠 수 있다고 적었다(원논문 Figure 11).[^llama2] 사람 평가는 별도로 수행해 보고했다.
+Stiennon 등의 요약 실험에서, 사람 평가자가 모델의 요약을 사람이 쓴 참조 요약보다 선호한 비율은 1.3B RLHF 모델이 61%, 그보다 10배 큰 약 13B SFT 모델이 43%였다(원논문 Figure 1).[^stiennon] InstructGPT에서는 175B RLHF 모델의 출력이 175B GPT-3보다 85±3%, few-shot 프롬프트를 준 GPT-3보다 71±4%의 비율로 선호되었다.[^instructgpt] Llama 2는 자체 helpfulness·safety reward model로 잰 평가에서 RLHF-V3 이후 두 축 모두 ChatGPT 대비 승률이 50%를 넘었다고 보고했는데, 저자들도 이 평가가 자기 모델에 유리하게 치우칠 수 있다고 적었다(원논문 Figure 11).[^llama2] 사람 평가는 별도로 수행해 보고했다.
 
 ## 4. 사람 대신 AI의 피드백
 
-비교 데이터의 비용은 남는다. Bai 등은 2022년에 사람의 피드백을 매주 새로 받아 reward model과 정책을 갱신하는 online RLHF를 보고했는데,[^hh] 이런 규모의 주석은 대부분의 연구 조직이 감당하기 어렵다. 그래서 갈라져 나온 분기가 사람의 자리를 모델로 대신하는 것이다.
+비교 데이터의 비용은 남는다. Bai 등은 2022년에 사람의 피드백을 매주 새로 받아 reward model과 정책을 갱신하는 online RLHF를 보고했는데,[^hh] 이런 규모의 주석은 많은 연구 조직에 큰 부담이다. 그래서 갈라져 나온 분기가 사람의 자리를 모델로 대신하는 것이다.
 
-Anthropic의 Constitutional AI는 두 단계로 사람의 개입을 줄인다. 먼저 모델이 자기 응답을 헌법(constitution)이라 부르는 원칙 목록에 비추어 비판하고 고쳐 쓰게 한 뒤 그 수정본으로 SFT한다. 다음으로 두 응답 중 원칙에 더 맞는 쪽을 모델이 고르게 해 그 비교로 preference model을 학습하고, 이를 보상으로 RL을 돌린다. 이 둘째 단계를 저자들은 RLAIF라고 이름 붙였다. 다만 AI 피드백은 무해성(harmlessness)에 쓰였고 유용성(helpfulness) 비교는 여전히 사람이 했다.[^cai] Lee 등은 요약과 대화에서 같은 크기의 사람 피드백과 AI 피드백을 직접 비교해 두 방식의 결과가 비슷하다고 보고했고, reward model을 거치지 않고 LLM이 매긴 점수를 바로 보상으로 쓰는 direct-RLAIF도 제안했다.[^rlaif] 공개 데이터셋으로는 UltraFeedback이 있다. 25만 개 대화에 대해 GPT-4가 여러 측면의 점수를 매긴 100만 건 이상의 피드백으로, [04a](/lecture/2026f-advanced-deep-learning/04a-sft/)에서 본 Tülu 3의 선호 데이터에도 들어간다(원논문 Table 15).[^ultrafeedback][^tulu3]
+Anthropic의 Constitutional AI는 두 단계로 사람의 개입을 줄인다. 먼저 모델이 자기 응답을 헌법(constitution)이라 부르는 원칙 목록에 비추어 비판하고 고쳐 쓰게 한 뒤 그 수정본으로 SFT한다. 다음으로 두 응답 중 원칙에 더 맞는 쪽을 모델이 고르게 해 그 비교로 preference model을 학습하고, 이를 보상으로 RL을 돌린다. 이 둘째 단계를 저자들은 RLAIF라고 이름 붙였다. 다만 AI 피드백은 무해성(harmlessness)에 쓰였고 유용성(helpfulness) 비교는 여전히 사람이 했다.[^cai] Lee 등은 요약, 유용성 대화, 무해성 대화에서 사람 피드백과 AI 피드백을 직접 비교해 앞의 둘에서는 두 방식의 결과가 비슷하고 무해성 대화에서는 AI 피드백 쪽이 더 낫다고 보고했고, reward model을 거치지 않고 LLM이 매긴 점수를 바로 보상으로 쓰는 direct-RLAIF도 제안했다.[^rlaif] 공개 데이터셋으로는 UltraFeedback이 있다. 25만 개 대화에 대해 GPT-4가 여러 측면의 점수를 매긴 100만 건 이상의 피드백이다.[^ultrafeedback] [04a](/lecture/2026f-advanced-deep-learning/04a-sft/)에서 본 Tülu 3는 UltraFeedback의 프롬프트 41,635개를 정제해 선호 데이터에 넣었지만, 응답과 선호 판정은 UltraFeedback의 방식을 본뜬 자체 파이프라인으로 새로 만들었다(원논문 §5.2.1, Table 15).[^tulu3]
 
 AI 피드백은 비용 문제를 풀지만 새 문제를 만든다. 판정하는 모델의 편향이 그대로 보상이 된다. 긴 응답을 좋아하는 판정자로 학습하면 정책은 길어진다. 이 문제는 사람의 피드백에도 있었고, [04d](/lecture/2026f-advanced-deep-learning/04d-reward-hacking/)에서 판정자의 편향을 따로 다룬다.
 
@@ -171,7 +171,7 @@ Reward model은 사람 선호의 근사이며 학습 분포 밖에서는 신뢰�
 
 ### 5-2. 비용과 불안정
 
-§3-4에서 본 것처럼 PPO는 모델 넷을 관리하고 학습 루프 안에서 응답을 생성한다. 하이퍼파라미터도 많다. KL 계수, clipping 폭, value 학습률, 배치당 갱신 횟수가 서로 얽혀 있고, 구현 세부에 따라 결과가 달라진다.[^hf-ppo] Llama 3 팀은 PPO 같은 on-policy RL 알고리즘이 덜 안정적이고 규모를 키우기 어려웠다고 밝히며, 계산이 적게 들고 특히 지시 따르기 벤치마크에서 더 좋았던 DPO를 택했다.[^llama] Reward model과 RL 루프를 없애고 선호쌍에서 바로 정책을 갱신하는 그 방법이 [04c](/lecture/2026f-advanced-deep-learning/04c-dpo/)다.
+§3-4에서 본 것처럼 PPO는 모델 넷을 관리하고 학습 루프 안에서 응답을 생성한다. 하이퍼파라미터도 많다. KL 계수, clipping 폭, value 학습률, 배치당 갱신 횟수가 서로 얽혀 있고, 구현 세부에 따라 결과가 달라진다.[^hf-ppo] Llama 3 팀은 더 복잡한 RL 알고리즘이 덜 안정적이고 규모를 키우기 어려운 경향이 있다며 단순한 post-training 절차를 택했다. PPO 같은 on-policy 알고리즘도 시험했지만, 큰 모델에서 계산이 적게 들고 특히 지시 따르기 벤치마크에서 더 좋았던 DPO를 썼다.[^llama] Reward model과 RL 루프를 없애고 선호쌍에서 바로 정책을 갱신하는 그 방법이 [04c](/lecture/2026f-advanced-deep-learning/04c-dpo/)다.
 
 ### 5-3. 선호와 정확성
 
@@ -192,8 +192,8 @@ Reward model과 PPO의 세부를 더 읽으려면 Lambert의 RLHF 교재가 각 
 [^ppo]: Schulman, J., Wolski, F., Dhariwal, P., Radford, A., & Klimov, O. (2017). *Proximal Policy Optimization Algorithms*. [arXiv:1707.06347](https://arxiv.org/abs/1707.06347).
 [^hh]: Bai, Y., et al. (2022). *Training a Helpful and Harmless Assistant with Reinforcement Learning from Human Feedback*. [arXiv:2204.05862](https://arxiv.org/abs/2204.05862).
 [^cai]: Bai, Y., et al. (2022). *Constitutional AI: Harmlessness from AI Feedback*. [arXiv:2212.08073](https://arxiv.org/abs/2212.08073).
-[^rlaif]: Lee, H., et al. (2024). *RLAIF vs. RLHF: Scaling Reinforcement Learning from Human Feedback with AI Feedback*. ICML 2024. [arXiv:2309.00267](https://arxiv.org/abs/2309.00267).
-[^ultrafeedback]: Cui, G., et al. (2024). *UltraFeedback: Boosting Language Models with Scaled AI Feedback*. ICML 2024. [arXiv:2310.01377](https://arxiv.org/abs/2310.01377).
-[^gao]: Gao, L., Schulman, J., & Hilton, J. (2023). *Scaling Laws for Reward Model Overoptimization*. ICML 2023. [arXiv:2210.10760](https://arxiv.org/abs/2210.10760).
+[^rlaif]: Lee, H., et al. (2024). *RLAIF vs. RLHF: Scaling Reinforcement Learning from Human Feedback with AI Feedback*. ICML 2024, PMLR 235, 26874–26901. [arXiv:2309.00267](https://arxiv.org/abs/2309.00267).
+[^ultrafeedback]: Cui, G., et al. (2024). *UltraFeedback: Boosting Language Models with Scaled AI Feedback*. ICML 2024, PMLR 235, 9722–9744. [arXiv:2310.01377](https://arxiv.org/abs/2310.01377).
+[^gao]: Gao, L., Schulman, J., & Hilton, J. (2023). *Scaling Laws for Reward Model Overoptimization*. ICML 2023, PMLR 202, 10835–10866. [arXiv:2210.10760](https://arxiv.org/abs/2210.10760).
 [^tulu3]: Lambert, N., et al. (2024). *Tülu 3: Pushing Frontiers in Open Language Model Post-Training*. [arXiv:2411.15124v5](https://arxiv.org/abs/2411.15124v5).
 [^rlhfbook]: Lambert, N. (2025). *Reinforcement Learning from Human Feedback*. [arXiv:2504.12501](https://arxiv.org/abs/2504.12501). [웹판](https://rlhfbook.com/).
