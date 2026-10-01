@@ -78,7 +78,7 @@ Dao 등의 Flash-Decoding은 나눌 방향을 하나 더 만들었다. **Key·va
 
 Flash-Decoding은 CodeLlama-34B에서 아주 긴 시퀀스의 decode를 최대 8배 빠르게 했고, A100의 미시 벤치마크에서는 attention 자체가 FlashAttention보다 최대 50배 빨랐다. 시퀀스 길이 32K까지는 attention 시간이 거의 일정했다.[^flashdecoding] 긴 KV cache를 읽는 일이 이제 SM 전체로 퍼졌기 때문이다.
 
-조각을 나누는 데도 대가가 있다. 부분 결과를 HBM에 썼다가 reduce kernel이 다시 읽어야 하고, kernel이 하나 늘어난다. Batch × head만으로 이미 SM이 꽉 찬다면 쪼갤 이유가 없다. vLLM의 초기 PagedAttention kernel이 이 선택을 그대로 보여 준다. 시퀀스를 512토큰 단위로 나누어 계산하고 reduce kernel로 합치는 V2 kernel과 나누지 않는 V1 kernel을 두고, 최대 길이가 8,192토큰 이하일 때, 시퀀스가 한 조각(512토큰) 안에 들어가거나 `num_seqs × num_heads`가 512를 넘어 thread block이 이미 충분하면 V1을 골랐다.[^vllm-pa]
+조각을 나누는 데도 대가가 있다. 부분 결과를 HBM에 썼다가 reduce kernel이 다시 읽어야 하고, kernel이 하나 늘어난다. Batch × head만으로 이미 SM이 꽉 찬다면 쪼갤 이유가 없다. vLLM의 초기 PagedAttention kernel이 이 선택을 그대로 보여 준다. 시퀀스를 512토큰 단위로 나누어 계산하고 reduce kernel로 합치는 V2와 나누지 않는 V1이 있었는데, 최대 길이가 8,192토큰 이하이면서 시퀀스가 512토큰 조각 하나에 들어가거나 `num_seqs × num_heads`가 512를 넘어 thread block이 이미 충분할 때는 V1을 골랐다.[^vllm-pa]
 
 ### 2-3. 흩어진 KV cache와 FlashInfer
 
@@ -100,7 +100,7 @@ Decode의 선형층은 batch가 작으면 행렬과 벡터의 곱에 가깝다. 
 
 [07a §1-3](/lecture/2026f-advanced-deep-learning/07a-quantization/#1-3-두-가지-쓰임)의 weight-only 양자화는 kernel 안에서 가중치를 되돌려야 한다. Frantar 등의 Marlin은 4-bit 가중치와 FP16 activation의 행렬곱을 위한 kernel이다.[^marlin] 4-bit 가중치를 HBM에서 읽어 shared memory를 거쳐 레지스터로 가져오는 동안 앞선 데이터의 계산을 겹치고, 레지스터 안에서 FP16으로 되돌려 Tensor Core에 넣는다.
 
-원논문은 이 kernel이 언제까지 이득을 내는지 roofline으로 설명한다. 토큰 하나는 가중치 하나마다 2 FLOP을 쓰는데, 4-bit 가중치 하나는 0.5 byte다. 원논문은 A10 GPU로 계산해 batch가 약 50보다 작은 동안 가중치 읽기가 시간을 지배한다고 보였다. 같은 계산을 H100에 대입하면 batch $b$에서 intensity는 약 $2b/0.5=4b$이고, ridge point 295를 넘기 전, 곧 $b$가 약 70보다 작은 동안은 가중치를 읽는 시간이 행렬곱을 지배한다. 그동안은 읽는 bytes가 4분의 1로 줄어든 만큼 빨라지고, 그 이상에서는 계산은 FP16 그대로이므로 이득이 사라진다. 실제로 Marlin은 batch 16–32까지 이상적인 값에 가까운 약 3.87배를 냈고, batch 128에서는 1.5배 정도로 줄었다(원논문 §1, §5.1).[^marlin] vLLM에 넣었을 때 전체 속도 향상은 최대 2.8배였다. 07a §6에서 weight-only 양자화의 이득이 batch가 커질수록 준다고 한 것이 kernel 수준에서 이렇게 나타난다.
+원논문은 이 kernel이 언제까지 이득을 내는지 roofline으로 설명한다. 토큰 하나는 가중치 하나마다 2 FLOP을 쓰는데, 4-bit 가중치 하나는 0.5 byte이므로, A10 GPU에서는 batch가 약 50보다 작은 동안 가중치 읽기가 시간을 지배한다. 같은 계산을 H100에 대입하면 batch $b$에서 intensity는 약 $2b/0.5=4b$이고, ridge point 295를 넘기 전, 곧 $b$가 약 70보다 작은 동안은 가중치를 읽는 시간이 행렬곱을 지배한다. 그동안은 읽는 bytes가 4분의 1로 줄어든 만큼 빨라지고, 그 이상에서는 계산은 FP16 그대로이므로 이득이 사라진다. 실제로 Marlin은 batch 16–32까지 이상적인 값에 가까운 약 3.87배를 냈고, batch 128에서는 1.5배 정도로 줄었다(원논문 §1, §5.1).[^marlin] vLLM에 넣었을 때 전체 속도 향상은 최대 2.8배였다. 07a §6에서 weight-only 양자화의 이득이 batch가 커질수록 준다고 한 것이 kernel 수준에서 이렇게 나타난다.
 
 ### 3-3. MoE의 grouped GEMM
 
@@ -112,7 +112,7 @@ MoE 층에서는 batch의 토큰들이 서로 다른 expert로 흩어지고, exp
 
 Kernel 자체가 빨라도 그 사이가 빈다면 GPU는 논다. CPU는 kernel을 하나씩 GPU에 제출하는데, 제출마다 마이크로초 단위의 비용이 든다. NVIDIA의 측정에서 V100에서 2.9 μs짜리 kernel을 하나씩 동기화하며 실행하면 kernel당 9.6 μs가 걸렸다.[^cudagraph-nv] Decode 한 스텝은 층마다 정규화, 투영, attention, 활성화 같은 kernel 여러 개를 수십 층에 걸쳐 실행하므로 kernel이 수백 개다. vLLM 팀도 H100에서 Llama 8B의 GPU 실행 시간이 스텝당 약 5 ms에 불과해, CPU 쪽의 비용이 무시할 수 없게 된다고 밝혔다.[^vllm-v1]
 
-**CUDA graph**는 이 비용을 줄인다. 한 스텝에서 실행할 kernel들의 순서와 인자를 한 번 기록(capture)해 두고, 이후에는 기록한 그래프 전체를 한 번에 재생(replay)한다. NVIDIA의 같은 측정에서 동기화 없이 이어 제출하면 kernel당 3.8 μs, CUDA graph로 재생하면 3.4 μs였다. 대신 재생은 같은 kernel을 같은 인자, 같은 메모리 주소로 실행하므로 입력의 모양이 고정되어야 한다.[^cudagraph-pt] Batch 크기가 스텝마다 바뀌는 서빙에서는 이것이 문제다. vLLM은 batch 크기 1, 2, 4, 8, 16, 24, …처럼 여러 크기의 그래프를 미리 기록해 두고, 실제 batch를 그보다 큰 가장 가까운 크기로 채워(padding) 재생한다. Attention은 요청마다 길이가 달라 그래프에 담기 어려우므로, 기본 설정에서는 decode만 있는 batch는 전체를 그래프 하나로, 나머지는 attention 사이의 구간만 그래프로 기록한다.[^vllm-cg]
+**CUDA graph**는 이 비용을 줄인다. 한 스텝에서 실행할 kernel들의 순서와 인자를 한 번 기록(capture)해 두고, 이후에는 기록한 그래프 전체를 한 번에 재생(replay)한다. NVIDIA의 같은 측정에서 동기화 없이 이어 제출하면 kernel당 3.8 μs, CUDA graph로 재생하면 3.4 μs였다. 이 단순한 예에서는 차이가 작지만, CPU가 kernel을 준비하는 일이 무거운 실제 모델에서는 차이가 커서, PyTorch 팀은 MLPerf의 Mask R-CNN에서 backbone 구간이 31 ms에서 6 ms로 줄었다고 보고했다.[^cudagraph-pt] 대신 재생은 같은 kernel을 같은 인자, 같은 메모리 주소로 실행하므로 입력의 모양이 고정되어야 한다.[^cudagraph-pt] Batch 크기가 스텝마다 바뀌는 서빙에서는 이것이 문제다. vLLM은 batch 크기 1, 2, 4, 8, 16, 24, …처럼 여러 크기의 그래프를 미리 기록해 두고, 실제 batch를 그보다 큰 가장 가까운 크기로 채워(padding) 재생한다. Attention은 요청마다 길이가 달라 그래프에 담기 어려우므로, 기본 설정에서는 decode만 있는 batch는 전체를 그래프 하나로, 나머지는 attention 사이의 구간만 그래프로 기록한다.[^vllm-cg]
 
 <Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.30.0/docs/assets/design/cuda_graphs/current_design.png" alt="vLLM 문서의 CUDA graph 설계 그림. 위쪽에서 모델은 torch.compile로 attention 사이의 submodule들로 쪼개지고(piecewise compilation), submodule마다 CUDA graph wrapper가 붙는다. 실행 시 요청 batch의 종류와 크기에 따라 세 가지 방식 가운데 하나가 고른다. PIECEWISE는 submodule 구간은 CUDA graph로, attention은 그래프 없이(eager) 번갈아 실행한다. FULL은 모델 전체를 CUDA graph 하나로 실행한다. NONE은 그래프 없이 모두 eager로 실행한다." caption="vLLM의 CUDA graph 실행 방식. Attention 사이의 구간만 그래프로 재생하는 PIECEWISE, 모델 전체를 재생하는 FULL, 그래프를 쓰지 않는 NONE 가운데 batch에 맞는 것을 고른다." source="vLLM Project, CUDA Graphs 설계 문서 그림(docs/assets/design/cuda_graphs/current_design.png, v0.30.0). Apache License 2.0. 원본 그대로 사용." />
 
