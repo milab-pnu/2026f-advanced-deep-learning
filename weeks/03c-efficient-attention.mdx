@@ -9,7 +9,7 @@ order: 2
 큰 줄기는 **O(n²) 문제 → 두 갈래 → 혼합 설계에서 합류**다. 한 갈래는 각 query가 참조하는 위치를 줄이고(sliding window, sparse attention), 다른 갈래는 위치 쌍을 아예 만들지 않도록 계산 순서를 바꾼다(linear attention, gating과 delta rule, state space model). 두 갈래는 앞뒤 관계가 아니라 같은 문제에 대한 서로 다른 답이고, 각자 남긴 약점을 서로 보완하는 hybrid 구조에서 다시 만난다. 전체 지형은 Tay 등의 efficient Transformer 서베이[^tay]에서 §3의 분류(fixed pattern, learnable pattern, kernel 등)를 먼저 읽으면 잡힌다. 다만 이 서베이는 2022년 판이 마지막이라 MLA, Gated DeltaNet, DeepSeek Sparse Attention처럼 이후에 나온 설계는 들어 있지 않다. 그 부분은 각 절에서 원논문으로 보충한다.
 
 <figure>
-<svg viewBox="0 0 560 476" role="img" aria-label="이 노트의 계보도. 맨 위 dense self-attention은 모든 위치 쌍 n제곱 개를 계산한다. 여기서 두 갈래로 나뉜다. 왼쪽 갈래는 참조 범위 제한으로, sliding window와 fixed pattern(Mistral 7B, Longformer)이 정해진 칸 밖을 보지 못하는 문제를 학습된 sparse 선택(DeepSeek-V3.2 DSA)이 풀고, 남는 문제는 선택에서 빠진 정보다. 오른쪽 갈래는 연산 재구성으로, linear attention이 지우기 없는 누적의 간섭 문제를 gating과 delta rule(DeltaNet, Gated DeltaNet)로 푸는 줄기와, SSM이 입력과 무관한 갱신(LTI) 문제를 selective SSM(Mamba, Mamba-2)으로 푸는 줄기가 있다. 4-1절의 gated 누적은 Mamba-2의 state space duality로 두 줄기를 연결한다. 남는 문제는 압축 상태의 검색 한계다. 두 갈래는 아래의 hybrid 구조로 합류한다. hybrid에는 local과 global attention, linear와 attention, SSM과 attention의 세 종류가 있고 각각 Gemma 3, Qwen3-Next와 Qwen3.5, Jamba가 예다. 맨 아래에는 KV cache를 줄이는 head 공유와 latent 압축이 동기가 다른 별개 계보라는 설명이 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 560 476" role="img" aria-label="이 노트의 계보도. 맨 위 dense self-attention은 모든 위치 쌍 n제곱 개를 계산한다. 여기서 두 갈래로 나뉜다. 왼쪽 갈래는 참조 범위 제한으로, sliding window와 fixed pattern(Mistral 7B, Longformer)이 정해진 칸 밖을 보지 못하는 문제를 학습된 sparse 선택(DeepSeek-V3.2 DSA)이 풀고, 남는 문제는 선택에서 빠진 정보다. 오른쪽 갈래는 연산 재구성으로, linear attention이 지우기 없는 누적의 간섭 문제를 gating과 delta rule(DeltaNet, Gated DeltaNet, KDA)로 푸는 줄기와, SSM이 입력과 무관한 갱신(LTI) 문제를 selective SSM(Mamba, Mamba-2)으로 푸는 줄기가 있다. 4-1절의 gated 누적은 Mamba-2의 state space duality로 두 줄기를 연결한다. 남는 문제는 압축 상태의 검색 한계다. 두 갈래는 아래의 hybrid 구조로 합류한다. hybrid에는 local과 global attention, linear와 attention, SSM과 attention의 세 종류가 있고 각각 Gemma 3, Qwen3-Next·Qwen3.5·Kimi Linear, Jamba·Nemotron이 예다. 맨 아래에는 KV cache를 줄이는 head 공유와 latent 압축이 동기가 다른 별개 계보라는 설명이 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
 <text x="280" y="22" font-size="17" text-anchor="middle" fill="#0f172a" font-weight="600">긴 시퀀스의 attention 비용 · 두 갈래와 합류</text>
 <rect x="140" y="38" width="280" height="48" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="280" y="59" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Dense self-attention</text>
@@ -41,7 +41,7 @@ order: 2
 <text x="112" y="286" font-size="11" text-anchor="middle" fill="#64748b">DeepSeek-V3.2 DSA (§2)</text>
 <rect x="212" y="246" width="148" height="50" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="286" y="267" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">Gating · delta rule</text>
-<text x="286" y="286" font-size="11" text-anchor="middle" fill="#64748b">Gated DeltaNet (§4)</text>
+<text x="286" y="286" font-size="11" text-anchor="middle" fill="#64748b">Gated DeltaNet·KDA (§4)</text>
 <rect x="384" y="246" width="152" height="50" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="460" y="267" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">Selective SSM</text>
 <text x="460" y="286" font-size="11" text-anchor="middle" fill="#64748b">Mamba · Mamba-2 (§5)</text>
@@ -54,7 +54,7 @@ order: 2
 <rect x="60" y="366" width="440" height="72" rx="8" fill="#e2e8f0" stroke="#94a3b8"/>
 <text x="280" y="388" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Hybrid 구조 (§6)</text>
 <text x="280" y="409" font-size="12" text-anchor="middle" fill="#0f172a">local+global attention · linear+attention · SSM+attention</text>
-<text x="280" y="427" font-size="11" text-anchor="middle" fill="#64748b">Gemma 3 · Qwen3-Next, Qwen3.5 · Jamba</text>
+<text x="280" y="427" font-size="11" text-anchor="middle" fill="#64748b">Gemma 3 · Qwen3-Next, Qwen3.5, Kimi Linear · Jamba, Nemotron</text>
 <text x="280" y="464" font-size="11" text-anchor="middle" fill="#64748b">KV cache를 줄이는 head 공유·latent 압축(MQA·GQA·MLA)은 동기가 다른 별개 계보 (03b)</text>
 </svg>
 <figcaption>이 노트의 계보도. 각 문헌을 바탕으로 직접 구성했다. 같은 갈래 안의 화살표는 앞 방식의 문제(화살표 위 회색 글씨)를 푼 발전이고, 맨 아래 합류는 두 갈래가 남긴 약점을 softmax attention 층으로 보완하는 설계다.</figcaption>
@@ -284,6 +284,14 @@ $$
 
 $\alpha_t=1$이면 DeltaNet이다. 지우기 항 $(I-\beta_tk_tk_t^\top)$을 $I$로 바꾸고 $\beta_tv_t$를 새 value로 보면 §4-1의 gated 누적이 된다. 논문은 모든 모델을 1.3B 파라미터, 100B 토큰의 같은 조건으로 학습해 비교했고, 이 조합이 언어 모델링(표 3)과 실제 문맥 검색(표 4)·긴 문맥 이해(표 5)의 평균 점수에서 Mamba-2와 DeltaNet을 앞섰다고 보고한다(arXiv v3). 개별 과제에서는 앞서지 못한 경우도 있다. 또한 Gated DeltaNet 층에 sliding window attention을 섞은 hybrid(H1)와 Mamba-2까지 함께 쌓은 hybrid(H2)도 실험했다.[^gdn]
 
+Gated DeltaNet의 $\alpha_t$는 스칼라라서 한 head의 상태 전체가 같은 비율로 잊힌다. Kimi Linear의 KDA(Kimi Delta Attention)는 이 스칼라를 key 차원마다 값이 다른 대각행렬로 바꾸었다.[^kimilinear]
+
+$$
+S_t=S_{t-1}\,\mathrm{Diag}(\alpha_t)\left(I-\beta_tk_tk_t^\top\right)+\beta_tv_tk_t^\top,\qquad \alpha_t\in[0,1]^{d_k}
+$$
+
+$\alpha_t$의 성분이 모두 같으면 Gated DeltaNet으로 돌아가고, 성분이 다르면 상태의 key 차원마다 기억이 다른 속도로 사라진다. 예를 들어 $d_k=2$에서 $\alpha_t=(0.9,\,0.5)$이면 지우기 항을 적용하기 전에 첫째 key 방향의 기억은 0.9배, 둘째 방향의 기억은 0.5배가 된다. Gated DeltaNet이라면 두 방향에 같은 값을 곱해야 한다. 논문은 이 세밀한 감쇠가 크기가 정해진 상태를 더 정밀하게 관리하게 해 준다고 설명한다. 위 식은 논문 식 (1)을 이 노트의 표기(상태가 $d_v\times d_k$ 행렬)로 옮긴 것이다.
+
 <Details summary="보충: 해설 자료">
 
 DeltaNet의 제1저자 Songlin Yang이 쓴 [DeltaNet Explained](https://sustcsonglin.github.io/blog/2024/deltanet-1/) 연재는 병렬 학습 알고리즘까지 단계별로 풀어 쓴 해설이다. 아래 영상은 linear attention에서 DeltaNet 계열까지를 약 1시간 30분 동안 대화로 설명한다.
@@ -385,6 +393,8 @@ Mamba나 Mamba-2 층만 쌓은 순수 SSM 언어 모델은 attention 없이 시�
 
 둘째는 **linear attention 계열 층과 softmax attention 층의 조합**이다. Qwen3-Next의 공식 발표 블로그는 이 선택을 "linear attention은 빠르지만 recall이 약하고, standard attention은 비싸고 추론이 느리다"는 관찰로 설명한다.[^qwen3next] Qwen3-Next-80B-A3B는 48층을 `12 × (3 × (Gated DeltaNet → MoE) → 1 × (Gated Attention → MoE))`로 쌓아(MoE는 mixture of experts), Gated DeltaNet과 gated attention을 3:1로 섞었다.[^qwen3next-card] 블로그는 3:1 혼합이 한 종류로만 쌓은 구성보다 좋았고, Gated DeltaNet이 sliding window attention이나 Mamba-2보다 in-context learning 능력이 강했다고 보고한다.[^qwen3next] 다만 블로그는 이 비교의 실험 표를 공개하지 않았으므로 개발사의 보고로 읽는다.
 
+Kimi Linear도 같은 3:1 배치를 쓰되, linear 층은 §4-3의 KDA로, attention 층은 MLA로 채웠다. 논문은 순수 linear attention의 주된 약점을 긴 문맥 검색으로 보고 MLA 층을 소수 섞었다. 한 층 안에서 head를 나누어 섞지 않고 층 단위로 번갈아 둔 것은 구현이 단순하고 학습이 안정적이어서이고(§4), 비율은 여러 값을 비교한 실험에서 3:1이 품질과 처리량의 균형이 가장 좋았다(§5.2, 표 1). MLA 층에는 위치 인코딩을 넣지 않고(NoPE(no positional encoding), [03a §6-1](/lecture/2026f-advanced-deep-learning/03a-positional-encoding/#6-1-위치-신호를-생략하는-층)) 위치 정보는 KDA 층에 맡겼다. 48B 파라미터(활성 3B) 모델에서 긴 시퀀스를 생성할 때 KV cache를 최대 75% 줄였고, 1M 토큰 문맥의 decoding은 층 수와 head 수가 같고 모든 층이 MLA인 모델보다 약 6배 빨랐다(§5.6, 그림 7, batch 1).[^kimilinear] 공개 config에서 27층 중 KDA가 20층, MLA가 7층이다(마지막 27번째 층도 MLA).[^kimilinear-config]
+
 앞 절의 연구 흐름에서도 같은 조합이 먼저 나타났다. DeltaNet 논문의 두 hybrid(§4-2)와 Gated DeltaNet 논문의 H1, H2(§4-3)가 linear 계열 층에 attention 층을 섞은 예다.
 
 ### 6-3. SSM과 attention
@@ -393,19 +403,26 @@ Mamba나 Mamba-2 층만 쌓은 순수 SSM 언어 모델은 attention 없이 시�
 
 Jamba 논문은 attention이 왜 필요한지도 실험으로 보여 준다(§6.2, 표 6과 그림 8). 저자들은 1.3B 규모의 순수 attention, 순수 Mamba, hybrid 모델을 비교했다. IMDB 감성 분류처럼 답의 형식이 정해진 과제(Positive 또는 Negative)에서 순수 Mamba 모델은 "Very Good", "3/10"처럼 다른 형식으로 답하는 경우가 많았고, attention을 섞은 hybrid는 순수 attention 모델처럼 형식을 따랐다. 저자들은 in-context learning과 관련된 induction head가 attention 층에서 나타나는 예를 보이고, 순수 Mamba의 어려움을 attention 부재와 연결하는 가설을 제시한다.[^jamba] §5-4의 Mamba-2 실험과 같은 방향의 관찰이다.
 
+Mamba-2를 쓴 hybrid의 대표 사례는 NVIDIA의 Nemotron 계열이다. Nemotron-H는 Transformer의 self-attention 층 대부분을 Mamba-2 층으로 바꾸었고, 논문은 그 이유를 생성 토큰마다 계산량과 메모리가 일정한 층으로 추론 비용을 줄이기 위해서라고 밝힌다. 전체 층의 약 8%만 attention으로 두어 고르게 흩어 놓고(8B 모델은 52층 중 4층), 나머지는 Mamba-2와 FFN에 반씩 나눈다. 첫 층은 Mamba-2, 마지막 층은 FFN이며, attention 층 뒤에는 항상 FFN이 온다(§2.1, 표 1).[^nemotronh]
+
+후속인 Nemotron 3 Nano 30B-A3B는 FFN 자리를 MoE로 바꾸었다. 52층 중 attention(GQA, KV head 2개)이 6층, Mamba-2와 MoE가 각각 23층이고, 위치 인코딩은 쓰지 않는다(§2.1).[^nemotron3nano][^nemotron3nano-config] [Training engineering §6-2](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#6-2-병목-진단)의 kernel 최적화 사례가 바로 이 모델의 Mamba-2 층을 다룬다.
+
+층 수를 셀 때는 주의가 필요하다. Nemotron은 Mamba-2, attention, FFN·MoE를 각각 한 층으로 세고, Jamba는 sequence mixer와 그 뒤의 MLP·MoE를 묶어 한 층으로 센다. 그래서 두 모델의 공식 층 수를 그대로 비교할 수 없다. Sequence mixer만 세면 Nemotron 3 Nano는 29개 중 6개가 attention이다.
+
 <Callout type="example">
-층 수와 공식 설정으로 **길이에 따라 자라는 저장량이 어디에 남는지** 비교해 보자. 모든 층이 전체 attention인 같은 깊이의 모델을 1로 두고, 층마다 head 구성이 같다고 가정한 교육용 계산이다. 문맥 길이는 128K(131,072)로 둔다.
+층 수와 공식 설정으로 **길이에 따라 자라는 저장량이 어디에 남는지** 비교해 보자. Sequence mixer 수가 같고 모든 mixer가 전체 attention인 모델을 1로 두고, 층마다 head 구성이 같다고 가정한 교육용 계산이다. 고정 크기 상태와 local window의 저장량은 길이에 따라 자라지 않으므로 마지막 열에서는 무시하거나 작은 항으로만 남긴다. 문맥 길이는 128K(131,072)로 둔다.
 
 | 모델 | 길이에 비례해 자라는 층 | 나머지 층의 저장량 | 상대 KV 저장량 |
 |---|---|---|---|
 | Gemma 3 (local:global = 5:1) | global 층 1/6 | local 층은 최근 1024개 | $\tfrac16+\tfrac56\cdot\tfrac{1024}{131072}\approx0.17$ |
 | Jamba (attention:Mamba = 1:7) | attention 층 4/32 | Mamba 층은 고정 크기 상태 | $\tfrac{4}{32}=0.125$ (보고된 8배 감소와 일치) |
+| Nemotron 3 Nano (attention:Mamba-2 = 6:23) | sequence mixer 29개 중 attention 6개 | Mamba-2 층은 고정 크기 상태 | $\tfrac{6}{29}\approx0.21$ |
 | Qwen3.5-397B-A17B (3:1) | full attention 층 15/60 | Gated DeltaNet 층은 고정 크기 상태 | $\tfrac{15}{60}=0.25$ |
 
 Qwen3.5의 config로 고정 크기 상태를 직접 세어 보자. Gated DeltaNet 층 하나의 recurrent 상태 행렬은 value head 64개 × $128\times128$ = 약 105만 원소다(짧은 convolution의 상태는 제외했다). 같은 모델의 full attention 층은 KV head 2개 × head 차원 256 × (K, V) = 토큰당 1,024 원소를 저장하므로, 1,024 토큰에서 두 원소 수가 같아지고, 그보다 길어지면 attention 층 하나의 캐시가 recurrent 상태보다 커진다. 128K 토큰이면 attention 층 하나가 약 1.34억 원소를 저장한다.
 </Callout>
 
-세 종류는 섞는 부품이 다르고 개발사가 밝힌 동기도 같지 않다. Gemma 3 보고서와 Jamba 논문은 KV cache 비용을 설계 동기로 내세운다. Qwen3-Next 발표는 linear attention의 약한 recall을 들고, Jamba 논문은 attention 층이 필요한 이유를 in-context learning으로 설명한다. 그래도 구조만 보면 세 모델은 비슷한 판단을 공유한다고 읽을 수 있다. 대부분의 층에서는 가까운 문맥이나 압축된 요약으로 충분하고, **정확한 검색이 필요한 몇 층만 전체 문맥을 직접 보면 된다**는 판단이다. 어떤 비율과 배치가 최선인지는 모델 규모와 작업에 따라 다르게 보고되며, 위의 모델들도 서로 다른 선택을 했다.
+세 종류는 섞는 부품이 다르고 개발사가 밝힌 동기도 같지 않다. Gemma 3 보고서와 Jamba 논문은 KV cache 비용을, Nemotron-H 논문은 생성 단계의 추론 비용을 설계 동기로 내세운다. Qwen3-Next 발표와 Kimi Linear 논문은 linear attention의 약한 recall과 긴 문맥 검색을 들고, Jamba 논문은 attention 층이 필요한 이유를 in-context learning으로 설명한다. 그래도 구조만 보면 이 모델들은 비슷한 판단을 공유한다고 읽을 수 있다. 대부분의 층에서는 가까운 문맥이나 압축된 요약으로 충분하고, **정확한 검색이 필요한 몇 층만 전체 문맥을 직접 보면 된다**는 판단이다. 어떤 비율과 배치가 최선인지는 모델 규모와 작업에 따라 다르게 보고되며, 위의 모델들도 서로 다른 선택을 했다.
 
 ## 7. 최근 모델의 선택
 
@@ -418,7 +435,10 @@ Qwen3.5의 config로 고정 크기 상태를 직접 세어 보자. Gated DeltaNe
 | Gemma 3 | local SWA(window 1024) + global attention | local 5 : global 1, 첫 층은 local | 기술 보고서[^gemma3] |
 | Qwen3-Next-80B-A3B | Gated DeltaNet + gated attention | 48층 = 12 × (Gated DeltaNet 3층 + gated attention 1층) | 모델 카드[^qwen3next-card] |
 | Qwen3.5-397B-A17B | Gated DeltaNet + gated attention | 60층 = 15 × (Gated DeltaNet 3층 + gated attention 1층) | 모델 카드·config[^qwen35] |
+| Kimi Linear 48B-A3B | KDA + MLA(NoPE) | 27층 = KDA 20층 + MLA 7층(KDA 3층마다 MLA 1층, 마지막 층도 MLA) | 원논문·config[^kimilinear][^kimilinear-config] |
 | Jamba | Mamba + attention | 32층 = 4 블록 × (attention 1층 + Mamba 7층) | 원논문[^jamba] |
+| Nemotron-H-8B | Mamba-2 + attention | 52층 = Mamba-2 24층 + attention 4층 + FFN 24층 | 원논문[^nemotronh] |
+| Nemotron 3 Nano 30B-A3B | Mamba-2 + GQA attention | 52층 = Mamba-2 23층 + attention 6층 + MoE 23층 | 기술 보고서·config[^nemotron3nano][^nemotron3nano-config] |
 
 Qwen3.5의 config에서는 `layer_types`가 `linear_attention` 세 번과 `full_attention` 한 번을 반복하고, `full_attention_interval`이 4로 적혀 있다. 모델 카드는 `linear_attention` 층이 Gated DeltaNet임을 밝힌다.[^qwen35]
 
@@ -441,5 +461,10 @@ Qwen3.5 한 모델 안에서도 "gate"는 두 가지 뜻으로 쓰인다. Gated 
 [^gemma3]: Gemma Team. (2025). *Gemma 3 Technical Report*. [arXiv:2503.19786](https://arxiv.org/abs/2503.19786).
 [^qwen3next]: Qwen Team. (2025). *Qwen3-Next: Towards Ultimate Training & Inference Efficiency*. [Qwen 블로그](https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd), [Alibaba Cloud Community 재게재](https://www.alibabacloud.com/blog/602580).
 [^qwen3next-card]: Qwen Team. (2025). *Qwen3-Next-80B-A3B-Instruct*. Hugging Face. [모델 카드](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct).
+[^kimilinear]: Kimi Team. (2025). *Kimi Linear: An Expressive, Efficient Attention Architecture*. [arXiv:2510.26692](https://arxiv.org/abs/2510.26692).
+[^kimilinear-config]: Moonshot AI. (2025). *Kimi-Linear-48B-A3B-Instruct*. Hugging Face. [config.json](https://huggingface.co/moonshotai/Kimi-Linear-48B-A3B-Instruct/blob/main/config.json).
+[^nemotronh]: NVIDIA. (2025). *Nemotron-H: A Family of Accurate and Efficient Hybrid Mamba-Transformer Models*. [arXiv:2504.03624](https://arxiv.org/abs/2504.03624).
+[^nemotron3nano]: NVIDIA. (2025). *Nemotron 3 Nano: Open, Efficient Mixture-of-Experts Hybrid Mamba-Transformer Model for Agentic Reasoning*. [arXiv:2512.20848](https://arxiv.org/abs/2512.20848).
+[^nemotron3nano-config]: NVIDIA. (2025). *NVIDIA-Nemotron-3-Nano-30B-A3B-BF16*. Hugging Face. [config.json](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16/blob/main/config.json).
 [^qwen35]: Qwen Team. (2026). *Qwen3.5-397B-A17B*. Hugging Face. [모델 카드](https://huggingface.co/Qwen/Qwen3.5-397B-A17B), [config.json](https://huggingface.co/Qwen/Qwen3.5-397B-A17B/blob/main/config.json).
 [^jamba]: Lieber, O., et al. (2024). *Jamba: A Hybrid Transformer-Mamba Language Model*. [arXiv:2403.19887](https://arxiv.org/abs/2403.19887).
