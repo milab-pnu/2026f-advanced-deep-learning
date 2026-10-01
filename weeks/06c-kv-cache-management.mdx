@@ -14,12 +14,12 @@ order: 2
 
 ### 1-1. 최대 길이만큼 미리 잡기
 
-KV cache는 생성이 진행되면서 토큰 하나에 한 칸씩 자란다. 문제는 요청이 들어올 때 그 요청이 몇 토큰을 생성할지 모른다는 점이다. Attention kernel은 한 요청의 key·value가 메모리에 연속으로 놓여 있다고 가정하는 경우가 많았기 때문에, 이전 서빙 시스템들은 요청마다 **최대 길이만큼의 연속 공간**을 미리 잡았다. Kwon 등은 이런 방식에서 생기는 낭비를 세 가지로 나누었다.[^vllm]
+KV cache는 생성이 진행되면서 토큰 하나에 한 칸씩 자란다. 문제는 요청이 들어올 때 그 요청이 몇 토큰을 생성할지 모른다는 점이다. 대부분의 딥러닝 프레임워크는 텐서를 연속된 메모리에 두도록 요구하므로, 이전 서빙 시스템들은 요청 하나의 KV cache를 연속된 텐서로 저장했고, 그러려면 요청마다 **최대 길이만큼의 연속 공간**을 미리 잡아야 했다. Kwon 등은 이런 방식에서 생기는 낭비를 세 가지로 나누었다.[^vllm]
 
 <Figure src="https://arxiv.org/html/2309.06180v1/baseline-memory-management.svg" alt="vLLM 논문의 Figure 3. 한 줄로 이어진 KV cache 공간에 요청 A와 요청 B가 나란히 놓여 있다. 요청 A는 프롬프트 'Four score and seven years ago our' 7칸, 지금까지 생성한 'fathers brought' 2칸, 앞으로 생성할 'forth'와 종료 토큰 2칸(reserved), 끝까지 쓰이지 않을 2,038칸(internal fragmentation)을 차지한다. 두 요청 사이의 빈칸은 external fragmentation이다. 요청 B도 프롬프트 'You only live' 3칸과 생성 중인 'once' 뒤로 남은 칸을 미리 잡고 있다." caption="최대 길이만큼 연속 공간을 미리 잡을 때의 세 가지 낭비. Reserved는 나중에 쓰이지만 지금은 다른 요청이 쓸 수 없는 칸, internal fragmentation은 끝까지 쓰이지 않는 칸, external fragmentation은 요청 사이에 남은 칸이다." source="Kwon et al. (2023), Efficient Memory Management for Large Language Model Serving with PagedAttention, Figure 3. CC BY 4.0. 원본 그대로 사용." hero />
 
 - **Reserved**: 앞으로 생성할 토큰을 위해 잡아 둔 칸이다. 결국 쓰이지만, 쓰이기 전까지는 다른 요청이 쓸 수 없다.
-- **Internal fragmentation**: 최대 길이를 넉넉히 잡은 탓에 끝까지 쓰이지 않는 칸이다. 그림의 요청 A는 최대 2,048칸을 잡았지만 12칸만 쓰고 끝나 2,038칸이 남는다.
+- **Internal fragmentation**: 최대 길이를 넉넉히 잡은 탓에 끝까지 쓰이지 않는 칸이다. 그림의 요청 A는 최대 2,048칸을 잡았지만 그 가운데 2,038칸은 끝까지 쓰이지 않는다.
 - **External fragmentation**: 요청마다 크기가 다른 덩어리를 잡았다 놓기를 반복하면서 덩어리 사이에 생기는 빈틈이다. 합하면 넉넉해도 새 요청이 들어갈 만큼 이어진 공간이 없을 수 있다.
 
 <Callout type="example">
@@ -28,7 +28,7 @@ Llama 3 8B로 최대 8,192토큰을 허용하는 서비스에서, 입력 100토�
 
 ### 1-2. 측정된 낭비
 
-Kwon 등은 이 낭비를 실제 서빙 실험에서 쟀다. Orca 방식으로 최대 길이만큼 미리 잡으면 KV cache 공간의 20.4%만 실제 토큰 상태를 담았다. 할당 크기를 2의 거듭제곱으로 맞추면 26.8%, 출력 길이를 미리 안다고 가정한 이상적인 경우(Oracle)에도 38.2%였다(원논문 Figure 2).[^vllm] Oracle에서도 internal fragmentation이 사라질 뿐 reserved와 external fragmentation이 남기 때문이다. 06b의 표에서 KV cache 공간이 batch 크기의 상한이었으니, 이 낭비는 곧 처리량의 손실이다.
+Kwon 등은 이 낭비를 실제 서빙 실험에서 쟀다. Orca를 재현한 시스템에서 최대 길이만큼 미리 잡으면 KV cache 공간의 20.4%만 실제 토큰 상태를 담았다. 할당 크기를 2의 거듭제곱으로 맞추면 26.8%, 출력 길이를 미리 안다고 가정한 이상적인 경우(Oracle)에도 38.2%였다(원논문 Figure 2).[^vllm] Oracle에서도 internal fragmentation이 사라질 뿐 reserved와 external fragmentation이 남기 때문이다. 06b §4-2에서 KV cache 공간이 batch 크기의 상한이었으니, 이 낭비는 곧 처리량의 손실이다.
 
 ## 2. PagedAttention
 
@@ -41,7 +41,7 @@ Kwon 등은 운영체제가 프로세스의 메모리를 관리하는 방식, �
 요청마다 logical 블록이 순서대로 이어지고, block table은 logical 블록마다 그 내용을 담은 physical 블록 번호와 채워진 칸 수를 기록한다. 새 토큰이 생기면 마지막 블록의 빈칸에 쓰고, 블록이 다 차면 그때 빈 physical 블록 하나를 새로 받는다. 요청이 끝나면 블록을 모두 돌려준다. 이렇게 하면 미리 잡는 공간이 없어 reserved가 사라지고, 모든 블록의 크기가 같아 external fragmentation도 사라진다. 남는 낭비는 요청마다 마지막 블록의 빈칸뿐이라, 원논문의 표현대로 낭비가 요청당 블록 하나 안으로 제한된다(원논문 §4.3).[^vllm]
 
 <Callout type="example">
-vLLM의 기본 블록 크기는 16토큰이다(원논문 §7.2).[^vllm] Llama 3 8B에서 블록 하나는 $16\times128\ \text{KiB}=2\ \text{MiB}$다. §1-1의 요청이 300토큰까지 자라면 블록 19개(304칸)를 쓰고, 마지막 블록의 빈칸 4개, 0.5 MiB만 낭비한다. 연속 할당의 1 GiB 대신 38 MiB다. 블록이 너무 작으면 블록 table을 읽고 블록을 오가는 비용이 늘고, 너무 크면 마지막 블록의 빈칸이 커진다. 원논문은 ShareGPT 작업에서 16–128토큰 블록이 가장 좋았다고 보고했다.
+vLLM의 기본 블록 크기는 16토큰이다(원논문 §7.2).[^vllm] Llama 3 8B에서 블록 하나는 $16\times128\ \text{KiB}=2\ \text{MiB}$다. §1-1의 요청이 300토큰까지 자라면 블록 19개(304칸)를 쓰고, 마지막 블록의 빈칸 4개, 0.5 MiB만 낭비한다. 연속 할당의 1 GiB 대신 38 MiB다. 블록이 너무 작으면 kernel이 KV cache를 읽고 처리할 때 GPU의 병렬성을 충분히 쓰지 못하고, 너무 크면 마지막 블록의 빈칸이 커진다. 원논문은 ShareGPT 작업에서 16–128토큰 블록이 가장 좋았다고 보고했다.
 </Callout>
 
 이 방식에는 대가가 있다. 한 요청의 key·value가 메모리에 흩어져 있으므로, attention kernel이 block table을 보며 블록을 찾아 읽어야 한다. 원논문은 이 때문에 attention kernel 자체의 지연이 연속 메모리를 쓰는 FasterTransformer보다 20–26% 길었다고 밝혔다(원논문 §7.1).[^vllm] 그래도 batch를 훨씬 크게 키울 수 있어 전체 처리량은 크게 오른다. 흩어진 블록을 효율적으로 읽는 kernel은 7주차 kernel 노트에서 다룬다.
@@ -91,7 +91,7 @@ SGLang의 RadixAttention은 cache를 **radix tree**로 관리한다.[^sglang] �
 SGLang 논문은 여러 작업에서 cache 적중률이 50–99%였고, 처리량이 최대 6.4배 높아졌다고 보고했다. Chatbot Arena에 배치했을 때 Vicuna-33B의 적중률은 74.1%였고 첫 토큰 지연은 평균 1.7배 줄었다(원논문 §6).[^sglang] [06a §3-4](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#3-4-서버-내부-지표)의 prefix cache 적중률이 바로 이 값이다. 적중률이 높은 작업일수록 TTFT와 처리량이 함께 좋아진다.
 
 <Callout type="note">
-두 설계는 같은 문제를 다른 단위로 푼다. vLLM은 PagedAttention의 블록을 그대로 cache 단위로 써서 블록 경계까지만 재사용하고, hash 조회로 빠르게 찾는다. SGLang은 토큰 단위의 나무로 일치하는 토큰까지 모두 재사용하고, 나무 구조로 공유 관계를 드러내 eviction과 scheduling에 쓴다. 지금은 두 엔진 모두 상대의 장점을 상당 부분 받아들였으므로, 엔진을 고를 때는 설계 이름보다 작업에서 실제 적중률을 재 보는 편이 낫다.
+두 설계는 같은 문제를 다른 단위로 푼다. vLLM은 PagedAttention의 블록을 그대로 cache 단위로 써서 블록 경계까지만 재사용하고, hash 조회로 빠르게 찾는다. SGLang은 토큰 단위의 나무로 일치하는 토큰까지 모두 재사용하고, 나무 구조로 공유 관계를 드러내 eviction과 scheduling에 쓴다. 어느 쪽이 유리한지는 요청들이 얼마나 긴 prefix를 어떤 단위로 공유하는지에 달려 있으므로, 자기 작업에서 실제 적중률을 재 보는 편이 낫다.
 </Callout>
 
 ## 4. 길이에 비례하는 크기 줄이기
@@ -110,7 +110,7 @@ Key를 channel 단위로 묶으려면 여러 토큰이 모여야 하므로, KIVI
 
 ### 4-2. Eviction
 
-토큰을 덜 저장하는 방법도 있다. 생성 중에 모든 과거 토큰이 똑같이 중요하지는 않다는 관찰에서 출발한다. Zhang 등의 H2O는 OPT 모델의 attention 행렬이 거의 모든 층에서 95% 넘게 희소하고, 누적 attention 점수가 power law를 따라 소수의 토큰에 몰린다는 것을 관찰했다.[^h2o] 그런 토큰을 heavy hitter라 부르고, 최근 토큰과 heavy hitter만 KV cache에 남기고 나머지를 지운다. 20%의 heavy hitter만 남기고도 처리량이 기존 inference 시스템보다 최대 29배 높아졌다.
+토큰을 덜 저장하는 방법도 있다. 생성 중에 모든 과거 토큰이 똑같이 중요하지는 않다는 관찰에서 출발한다. Zhang 등의 H2O는 OPT 모델의 attention 행렬이 거의 모든 층에서 95% 넘게 희소하고, 누적 attention 점수가 power law를 따라 소수의 토큰에 몰린다는 것을 관찰했다.[^h2o] 그런 토큰을 heavy hitter라 부르고, 최근 토큰과 heavy hitter만 KV cache에 남기고 나머지를 지운다. Heavy hitter를 20%만 남기고도 OPT-6.7B와 OPT-30B에서 DeepSpeed Zero-Inference, Hugging Face Accelerate, FlexGen보다 처리량이 각각 최대 29배, 29배, 3배 높았다.
 
 Li 등의 SnapKV는 지울 토큰을 정하는 시점을 prefill로 옮겼다.[^snapkv] 프롬프트의 마지막 부분(observation window)이 앞부분의 어느 위치에 attention하는지를 보면, 생성하는 동안 각 head가 주목할 위치를 미리 알 수 있다는 관찰이다. Head마다 그 위치들만 골라 KV cache를 압축하고, 고른 위치 주변을 pooling으로 함께 남겨 전화번호에서 국가 번호만 남는 식으로 정보가 끊기는 것을 막는다. 16K토큰 입력에서 생성 속도를 3.6배, 메모리 효율을 8.2배 높였고, A100 한 대에서 380K토큰 문맥을 처리했다.
 
@@ -122,7 +122,7 @@ Eviction은 손실이 있는 압축이다. 지운 토큰의 key·value는 나중
 
 마지막 갈래는 KV cache를 지우지 않고 GPU 밖으로 옮기는 것이다. GPU 메모리(HBM) 바깥에는 CPU 메모리(DRAM), SSD, 네트워크로 연결된 다른 서버의 메모리가 있다. 가까울수록 빠르고 작으며, 멀수록 느리고 크다. 서베이는 이런 계층 사이에서 KV cache를 배치하고 옮기는 방법을 §4.1에서 정리한다.[^survey]
 
-이 방식이 특히 잘 맞는 곳이 §3의 prefix caching이다. GPU 메모리에서 밀려난 prefix를 지우는 대신 CPU 메모리에 두었다가, 같은 prefix의 요청이 오면 다시 가져온다. Liu 등의 LMCache는 vLLM·SGLang 같은 엔진이 만든 KV cache를 GPU 밖으로 꺼내 저장하고, 여러 요청과 여러 엔진 인스턴스가 공유하게 하는 계층이다.[^lmcache] Qin 등의 Mooncake는 GPU cluster의 CPU 메모리, DRAM, SSD를 묶어 하나의 분산 KV cache pool로 쓰고, 블록마다 자기 내용과 prefix로 hash를 만들어 중복을 없앤다. Moonshot AI의 Kimi 서비스가 이 구조로 운영된다.[^mooncake]
+이 방식이 특히 잘 맞는 곳이 §3의 prefix caching이다. GPU 메모리에서 밀려난 prefix를 지우는 대신 CPU 메모리에 두었다가, 같은 prefix의 요청이 오면 다시 가져온다. Liu 등의 LMCache는 vLLM·SGLang 같은 엔진이 만든 KV cache를 GPU 밖으로 꺼내 저장하고, 여러 요청과 여러 엔진 인스턴스가 공유하게 하는 계층이다.[^lmcache] Qin 등의 Mooncake는 GPU cluster의 CPU, DRAM, SSD, RDMA 자원을 묶어 하나의 분산 KV cache pool로 쓰고, 블록마다 자기 내용과 prefix로 hash를 만들어 중복을 없앤다. Moonshot AI의 Kimi 서비스가 이 구조로 운영된다.[^mooncake]
 
 <Callout type="example">
 §3-1의 2,000토큰 prefix를 CPU 메모리에서 가져온다고 하자. KV cache는 262 MB다. H100 사양표의 PCIe Gen5 대역폭 128 GB/s를 모두 쓴다면 약 2 ms, 그 절반만 쓴다고 해도 약 4 ms다.[^h100] 같은 부분을 다시 prefill하는 데는 peak로도 약 33 ms가 든다. 가져오는 쪽이 훨씬 싸다. 반대로 prefix가 짧거나 SSD나 네트워크처럼 더 느린 곳에 있다면 차이가 줄어, 재계산이 나을 수도 있다.
