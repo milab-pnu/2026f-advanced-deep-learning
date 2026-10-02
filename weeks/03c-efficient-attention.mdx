@@ -64,7 +64,7 @@ order: 2
 
 ### 1-1. 위치 쌍의 수
 
-Transformer 노트에서 본 scaled dot-product attention을 한 head에 대해 다시 쓰면 다음과 같다. $Q,K\in\mathbb{R}^{n\times d_k}$, $V\in\mathbb{R}^{n\times d_v}$이다.
+01a Transformer 노트 §2-2에서 본 scaled dot-product attention을 한 head에 대해 다시 쓰면 다음과 같다. $Q,K\in\mathbb{R}^{n\times d_k}$, $V\in\mathbb{R}^{n\times d_v}$이다.
 
 $$
 \operatorname{Attn}(Q,K,V)=\operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}+M\right)V
@@ -75,7 +75,7 @@ $M$은 causal mask다. 문제는 가운데의 $QK^\top$가 $n\times n$ 행렬이
 반면 Q·K·V·출력 투영과 FFN(feed-forward network)은 토큰마다 독립적으로 적용되므로 비용이 $n$에 비례한다. 길이가 짧을 때는 이 선형 항이 크고, 길이가 길어지면 제곱 항이 역전한다.
 
 <Callout type="example">
-Llama 3 8B($d=4096$, K·V 각각의 차원 1024, FFN 중간 차원 14,336)[^llama3]의 한 층에서 forward FLOPs를 어림해 보자. 행렬 곱 하나의 FLOPs를 (입력 차원 × 출력 차원 × 2)로 세고, causal mask로 절반을 건너뛰는 최적화는 넣지 않았다.
+02a §2-2의 Llama 3 8B($d=4096$, K·V 각각의 차원 1024, FFN 중간 차원 14,336)[^llama3]의 한 층에서 forward FLOPs를 어림해 보자. 행렬 곱 하나의 FLOPs를 (입력 차원 × 출력 차원 × 2)로 세고, causal mask로 절반을 건너뛰는 최적화는 넣지 않았다.
 
 - 투영: Q와 출력 투영 $2\cdot(4096\cdot4096)$, K와 V 투영 $2\cdot(4096\cdot1024)$, 합해 파라미터 약 41.9M → 토큰당 약 83.9M FLOPs
 - SwiGLU FFN: 파라미터 $3\cdot4096\cdot14336\approx176.2$M → 토큰당 약 352.3M FLOPs
@@ -383,7 +383,7 @@ Mamba나 Mamba-2 층만 쌓은 순수 SSM 언어 모델은 attention 없이 시�
 
 첫째는 **softmax attention 안에서의 조합**이다. 대부분의 층은 sliding window(local)로 두고, 몇 층만 전체(global) attention을 계산한다. Gemma 3는 local 층 5개마다 global 층 1개를 두고(첫 층은 local), local window를 1024 토큰으로 짧게 잡았다.[^gemma3] 보고서가 밝힌 동기는 긴 문맥에서 커지는 KV cache다. Global 층만 긴 문맥을 직접 보고, local 층은 가까운 문맥을 싸게 처리한다.
 
-보고서의 ablation(그림 3·4)에서 local:global 비율을 1:1에서 7:1까지 바꿔도 perplexity 변화는 작았고, window도 크게 줄일 수 있었다. 2B 모델, 32K 문맥 기준으로 global만 쓰는 구성의 memory overhead는 60%, local 층을 섞고 window를 1024로 줄인 구성에서는 15% 미만으로 보고한다(그림 5).[^gemma3] 다만 보고서는 이 비율의 분모를 명시하지 않고, 본문·캡션과 그림 범례의 비율 표기도 서로 어긋난다. 아래 보충처럼 계산해 보면 보고값에 가깝지만 정확히 재현되지는 않는다. Local 층과 global 층은 RoPE(rotary position embedding) base도 다르게 쓰는데(10K와 1M), 이는 Positional encoding and long context §6-3에서 다룬다.
+보고서의 ablation(그림 3·4)에서 local:global 비율을 1:1에서 7:1까지 바꿔도 perplexity 변화는 작았고, window도 크게 줄일 수 있었다. 2B 모델, 32K 문맥 기준으로 global만 쓰는 구성의 memory overhead는 60%, local 층을 섞고 window를 1024로 줄인 구성에서는 15% 미만으로 보고한다(그림 5).[^gemma3] 다만 보고서는 이 비율의 분모를 명시하지 않고, 본문·캡션과 그림 범례의 비율 표기도 서로 어긋난다. 아래 보충처럼 계산해 보면 보고값에 가깝지만 정확히 재현되지는 않는다. Local 층과 global 층은 RoPE(rotary position embedding) base도 다르게 쓰는데(10K와 1M), 이는 Positional encoding §6-3에서 다룬다.
 
 <Details summary="보충: 그림 5의 15%를 재현해 보기">
 
