@@ -4,7 +4,7 @@ week: 3
 order: 0
 ---
 
-Self-attention은 토큰 사이의 관계를 계산하지만, 그 자체로는 토큰의 순서를 알지 못한다. 그렇다면 위치 정보를 어디에, 어떤 형태로 넣어야 할까? 그리고 그렇게 넣은 위치 정보는 학습 때보다 긴 입력에서도 통할까? 이 노트는 두 질문을 한 줄기로 따라간다. 입력에 위치 벡터를 더하는 **절대 위치 인코딩**에서 출발해, attention score에 상대 거리를 반영하는 **상대 위치 인코딩**, query와 key를 회전시키는 **RoPE**(rotary position embedding), 그리고 RoPE를 학습 길이 밖으로 늘리는 **long context 확장**(position interpolation → NTK(neural tangent kernel)-aware·YaRN(Yet another RoPE extensioN method) → LongRoPE)으로 이어진다. 마지막으로 이 계보와 별개인 설계 축으로, 위치 신호를 어느 층과 어느 차원에 둘지를 다룬다.
+Self-attention은 토큰 사이의 관계를 계산하지만, 그 자체로는 토큰의 순서를 알지 못한다. 그렇다면 위치 정보를 어디에, 어떤 형태로 넣어야 할까? 그리고 그렇게 넣은 위치 정보는 학습 때보다 긴 입력에서도 통할까? 이 노트는 두 질문을 한 줄기로 따라간다. 입력에 위치 벡터를 더하는 **절대 위치 인코딩**에서 출발해, attention score에 상대 거리를 반영하는 **상대 위치 인코딩**, query와 key를 회전시키는 **RoPE**(rotary position embedding), 그리고 RoPE를 학습 길이 밖으로 늘리는 **long context 확장**(position interpolation → YaRN(Yet another RoPE extensioN method) → LongRoPE)으로 이어진다. 마지막으로 이 계보와 별개인 설계 축으로, 위치 신호를 어느 층과 어느 차원에 둘지를 다룬다.
 
 전체 지도는 Zhao 등이 위치 인코딩의 관점에서 길이 외삽(length extrapolation)을 정리한 서베이[^survey]로 잡는다. 서베이의 §3(외삽을 염두에 둔 위치 인코딩)이 이 노트의 §2–4에, §4.1(position interpolation)이 §5-3·5-4에 대응한다. 서베이는 LongRoPE를 이름만 언급하고 이 노트 §6의 층별·차원별 배치는 다루지 않으므로 이 둘은 원논문과 공식 구현으로 보충했다.
 
@@ -341,35 +341,11 @@ Chen 등의 실험에서는 LLaMA 7B–65B를 최대 32,768까지 늘리는 데 
 
 **남은 문제: 고주파 쌍의 해상도도 함께 떨어진다.** PI는 모든 쌍을 똑같이 $s$배 느리게 만든다. 가장 빠른 $i=0$ 쌍에서 인접 토큰의 각도 차이는 원래 1 rad인데, $s=2$에서는 0.5 rad, $s=8$에서는 0.125 rad로 줄어든다. 저주파 쌍은 원래 이웃 위치를 구분하는 역할이 아니어서 느려져도 영향이 작지만, 가까운 거리를 구분하던 고주파 쌍은 인접 위치의 각도 차이가 그만큼 줄어 해상도를 잃는다. Peng 등은 PI 기반 미세조정이 대체로 $s=8$ 정도를 넘기면 출력 품질이 떨어졌다고 정리했다.[^yarn]
 
-### 5-4. NTK-aware scaling과 YaRN
+### 5-4. YaRN
 
-PI의 문제는 모든 쌍을 똑같이 늘린다는 데 있다. 그래서 다음 발전은 **주파수 대역마다 다르게 늘리는** 방향으로 간다. 고주파 쌍은 거의 그대로 두어 가까운 거리의 해상도를 지키고, 저주파 쌍은 PI처럼 늘려 새 각도가 생기지 않게 한다.
+PI의 문제는 모든 쌍을 똑같이 늘린다는 데 있다. 그래서 다음 발전은 **주파수 대역마다 다르게 늘리는** 방향으로 간다. 고주파 쌍은 거의 그대로 두어 가까운 거리의 해상도를 지키고, 저주파 쌍은 PI처럼 늘려 새 각도가 생기지 않게 한다. Peng 등의 YaRN은 이 생각을 대역별 보간 규칙으로 구현하고, 여기에 attention temperature를 더했다.[^yarn]
 
-<Figure src="https://arxiv.org/html/2309.00071v3/charts/method_summary.png" alt="RoPE에서 Position Interpolation과 NTK-aware Interpolation 두 갈래로 나뉜다. Position Interpolation에 차원별 ramp 함수를 적용하고, NTK-aware에서 차원마다 다르게 스케일한다는 통찰을 가져와 NTK-by-parts Interpolation으로 합쳐진다. 여기에 attention의 temperature scaling을 더한 것이 YaRN이다." caption="YaRN에 이르는 흐름. PI와 NTK-aware가 NTK-by-parts에서 합류하고, attention temperature를 더해 YaRN이 된다." source="Peng et al. (2024), YaRN, Figure 1 · arXiv · CC BY 4.0 · 수정 없음" />
-
-**NTK-aware scaling.** 2023년 6월 bloc97이 Reddit에 공개한 방법으로, 위치 대신 RoPE base를 바꾼다.[^ntk]
-
-$$
-b' = b\cdot s^{\,d/(d-2)}
-$$
-
-지수 $d/(d-2)$는 마지막 쌍($i=d/2-1$)이 정확히 $s$배 느려지도록 고른 값이다. 첫 쌍($i=0$)은 $\theta_0=b^0=1$이라 base와 무관하게 그대로다. 그 사이의 쌍은 로그 스케일에서 고르게 중간값을 갖는다.
-
-<Callout type="example">
-
-**NTK-aware로 바뀌는 각주파수.** $b=10{,}000$, $d=128$, $s=4$이면 $b'=10{,}000\times4^{128/126}\approx40{,}890$이다.
-
-| 쌍 번호 $i$ | 0 | 16 | 32 | 48 | 63 |
-|---|---|---|---|---|---|
-| 느려지는 배율 $\theta_i/\theta'_i$ | 1.00 | 1.42 | 2.02 | 2.88 | 4.00 |
-
-PI는 모든 열이 4.00이다. NTK-aware는 고주파 쪽을 거의 건드리지 않고, 저주파 쪽으로 갈수록 PI에 가까워진다.
-
-</Callout>
-
-bloc97은 미세조정 없이 쓸 때 PI보다 훨씬 나은 perplexity를 보고했다.[^ntk] 한편 Peng 등의 분석에 따르면, 중간 대역의 일부 쌍은 학습 범위 밖의 각도로 약간 외삽된다. 그래서 미세조정을 하면 목표 길이에서는 오히려 PI보다 나빴다. LLaMA 7B를 $s=16$으로 400 step 미세조정한 비교(원논문 표 5)에서 NTK-aware는 8K 이하 평가 길이에서는 PI보다 perplexity가 낮았지만, 32K에서는 8.49로 PI의 3.57보다 크게 나빴다. 또 명목상의 $s$가 실제 확장 배율과 맞지 않아 최적의 base를 실험으로 찾아야 했다.[^yarn]<Sidenote>Base를 키운다는 점에서 §4-2의 ABF와 같은 계열이다. ABF는 base를 키운 채 긴 시퀀스로 학습하는 방식이고, NTK-aware는 이미 학습한 모델의 base를 추론 시점에 바꾸는 데서 출발했다. Code Llama는 긴 문맥 미세조정에서 base를 10,000에서 1,000,000으로 키웠다.[^codellama]</Sidenote>
-
-**NTK-by-parts.** bloc97은 이어서 쌍마다 학습 길이 안에서 몇 바퀴를 도는지를 기준으로 대역을 나누었다.[^ntkparts] $i$번째 쌍의 회전 수를 $r_i=L/\lambda_i$라 하고, 두 경계 $\alpha<\beta$를 둔다.
+**대역별 보간.** 쌍마다 학습 길이 안에서 몇 바퀴를 도는지를 기준으로 대역을 나눈다. 이 규칙은 bloc97이 먼저 공개했고, YaRN이 이를 가져왔다.[^ntkparts] $i$번째 쌍의 회전 수를 $r_i=L/\lambda_i$라 하고, 두 경계 $\alpha<\beta$를 둔다.
 
 $$
 h(\theta_i)=\big(1-\gamma(r_i)\big)\frac{\theta_i}{s}+\gamma(r_i)\,\theta_i,\qquad
@@ -378,7 +354,7 @@ $$
 
 학습 중 $\beta$바퀴 넘게 돈 쌍은 모든 각도를 이미 충분히 보았으므로 그대로 둔다. $\alpha$바퀴도 돌지 못한 쌍은 PI처럼 $s$로 나누어 새 각도가 생기지 않게 한다. 그 사이는 선형으로 섞는다. Peng 등은 Llama 계열에서 $\alpha=1$, $\beta=32$가 잘 맞았다고 보고했다.[^yarn] 예를 들어 Llama 2($b=10{,}000$, $d=128$, $L=4{,}096$)에서 이 경계를 쓰면 64개 쌍 중 21개는 그대로, 18개는 PI와 같이 $s$로 나누고, 나머지 25개는 중간에 놓인다.<Sidenote>위 식은 논문의 정의다. 저자들의 공개 구현[^yarn-code]과 Hugging Face Transformers[^hf-rope]는 $r=\beta$, $r=\alpha$가 되는 쌍 번호를 경계로 먼저 구한 뒤 그 사이에서 **쌍 번호** $i$에 선형인 ramp를 쓴다. $r_i$가 $i$에 대해 지수적으로 변하므로 둘은 중간 쌍에서 값이 다르다. 위 Llama 2 설정의 $i=32$($r\approx6.5$)에서 원래 각주파수의 비중이 논문식으로는 약 0.18, 구현으로는 약 0.54다. 그대로 두는 쌍과 $s$로 나누는 쌍의 개수는 같다.</Sidenote>
 
-**YaRN.** 문맥을 늘린 모델에서는 attention 분포가 평평해지는 경향이 관찰되고, Peng 등은 이를 보정하는 attention temperature $t$를 NTK-by-parts에 더한 방법을 YaRN이라 불렀다.[^yarn]
+**Attention temperature.** 문맥을 늘린 모델에서는 attention 분포가 평평해지는 경향이 관찰된다. YaRN은 이를 attention temperature $t$로 보정한다.[^yarn]
 
 $$
 \operatorname{softmax}\!\left(\frac{q_m^\top k_n}{t\sqrt{d}}\right),\qquad \sqrt{1/t}=0.1\ln s+1
@@ -386,9 +362,9 @@ $$
 
 $s=16$이면 $\sqrt{1/t}\approx1.277$이고, query와 key에 각각 이 값을 곱하면 logit은 $1/t\approx1.63$배가 되어 분포가 날카로워진다. 1.277을 RoPE의 sin·cos 계수에 미리 곱해 두면 query와 key가 회전과 함께 배율을 받으므로 attention 코드를 고칠 필요가 없다(RoPE가 head 차원 전체에 걸릴 때 성립하는 방법이다). RoPE가 head 차원의 일부에만 걸리는 모델에서는 이 방법을 그대로 쓸 수 없다. DeepSeek-V3가 그런 예로, 보고서는 문맥을 128K로 늘릴 때 MLA의 decoupled RoPE key(§6-2)에 YaRN을 적용했다고 쓴다.[^deepseek3] 공식 추론 구현을 보면 조정된 주파수는 RoPE를 받는 query·key 성분에만 걸리고, temperature 배율은 RoPE를 받지 않는 성분까지 포함한 attention score 전체에 곱해진다.[^deepseek3-code] 온도식은 LLaMA 7B–65B에서 perplexity가 가장 낮은 값을 $s$별로 찾아 적합한 경험식이다.
 
-YaRN은 Llama 2 7B·13B를 64K용 배율로 400 step, 이어서 128K용 배율로 200 step 미세조정해 128K 문맥으로 늘렸다. 논문은 이를 원래 사전학습 데이터의 약 0.1% 미만이라고 표현한다. 두 단계 모두 64K 길이의 시퀀스로 학습했으므로, step 수·batch·시퀀스 길이로 다시 계산하면 600 × 64 × 64K ≈ 2.5B 토큰이고, Llama 2의 사전학습 2T 토큰에 대해 약 0.13%다. 자릿수는 맞지만 엄밀히 0.1% 미만은 아니다. 방법 간 비교는 LLaMA 7B를 32K로 늘리는 같은 400 step 예산에서 했고, YaRN이 PI·NTK-aware보다 낮은 perplexity를 보였다.
+YaRN은 Llama 2 7B·13B를 64K용 배율로 400 step, 이어서 128K용 배율로 200 step 미세조정해 128K 문맥으로 늘렸다. 논문은 이를 원래 사전학습 데이터의 약 0.1% 미만이라고 표현한다. 두 단계 모두 64K 길이의 시퀀스로 학습했으므로, step 수·batch·시퀀스 길이로 다시 계산하면 600 × 64 × 64K ≈ 2.5B 토큰이고, Llama 2의 사전학습 2T 토큰에 대해 약 0.13%다. 자릿수는 맞지만 엄밀히 0.1% 미만은 아니다. 방법 간 비교는 LLaMA 7B를 32K로 늘리는 같은 400 step 예산에서 했고, YaRN이 PI보다 낮은 perplexity를 보였다.
 
-Llama 3.1의 RoPE 조정도 같은 아이디어의 한 예다. Meta의 공식 구현은 주석에 grid search로 얻었다고 적힌 값을 쓴다. 원래 학습 길이 8,192에 대해 파장이 2,048보다 짧은 쌍(8,192 안에서 네 바퀴 넘게 도는 쌍)은 그대로 두고, 8,192보다 긴 쌍은 파장을 8배로 늘리며, 그 사이는 부드럽게 잇는다.[^llama-code] $r=8192/\lambda$로 바꿔 쓰면 NTK-by-parts에서 $\alpha=1$, $\beta=4$, $s=8$로 둔 것과 같은 형태이고, 공식 구현에 attention temperature는 없다. §5-2 그림의 점선이 그 결과다.
+Llama 3.1의 RoPE 조정도 같은 아이디어의 한 예다. Meta의 공식 구현은 주석에 grid search로 얻었다고 적힌 값을 쓴다. 원래 학습 길이 8,192에 대해 파장이 2,048보다 짧은 쌍(8,192 안에서 네 바퀴 넘게 도는 쌍)은 그대로 두고, 8,192보다 긴 쌍은 파장을 8배로 늘리며, 그 사이는 부드럽게 잇는다.[^llama-code] $r=8192/\lambda$로 바꿔 쓰면 위의 대역별 보간에서 $\alpha=1$, $\beta=4$, $s=8$로 둔 것과 같은 형태이고, 공식 구현에 attention temperature는 없다. §5-2 그림의 점선이 그 결과다.
 
 확장 방법이 checkpoint에 고정되지 않고 사용자가 켜는 설정으로 남기도 한다. Qwen3-8B의 모델 카드는 기본 문맥을 32,768로 소개하고, config에 YaRN `rope_scaling`(배율 4)을 추가하면 131,072토큰까지 쓸 수 있으며 그 길이까지 검증했다고 안내한다. 동시에 주요 오픈소스 프레임워크가 입력 길이와 무관하게 같은 배율을 쓰는 정적(static) YaRN을 구현하므로 짧은 입력의 성능이 떨어질 수 있다고 경고하고, 32,768을 넘는 입력을 다룰 때만 켜고 배율도 실제로 필요한 길이에 맞추라고 권한다.[^qwen3-card] 같은 checkpoint라도 이 설정 하나로 다룰 수 있는 길이와 짧은 입력의 품질이 함께 달라진다. Config에 적힌 숫자만으로 모델의 문맥 길이를 판단하기 어려운 또 하나의 이유다(§5-1).
 
@@ -398,10 +374,10 @@ Llama 3.1의 RoPE 조정도 같은 아이디어의 한 예다. Meta의 공식 �
 
 Ding 등의 LongRoPE는 대역 규칙을 사람이 정하는 대신 **쌍별 배율을 탐색**한다.[^longrope] 탐색하는 비균일성은 두 축이다.
 
-- **차원 축:** 쌍 $i$마다 rescale 배율 $s_i$를 따로 둔다(원논문 표기는 $\lambda_i$지만 §4-2의 파장과 겹쳐 여기서는 $s_i$로 쓴다). 탐색 공간을 줄이기 위해 $s_i\le s_{i+1}$, 즉 고주파 쌍일수록 덜 늘린다는 단조 제약을 건다. NTK 계열의 직관을 제약으로 남긴 것이다.
+- **차원 축:** 쌍 $i$마다 rescale 배율 $s_i$를 따로 둔다(원논문 표기는 $\lambda_i$지만 §4-2의 파장과 겹쳐 여기서는 $s_i$로 쓴다). 탐색 공간을 줄이기 위해 $s_i\le s_{i+1}$, 즉 고주파 쌍일수록 덜 늘린다는 단조 제약을 건다. §5-4의 대역별 보간과 같은 직관을 제약으로 남긴 것이다.
 - **위치 축:** 처음 $\hat n$개 위치는 보간하지 않고 원래 RoPE를 쓴다. 문서 앞쪽 토큰은 attention을 많이 받으므로 위치 정보를 덜 훼손해야 한다는 가설이다. 이 현상은 03e §4의 attention sink와 연결된다.
 
-위치 $n$에서 쌍 $i$의 회전각은 $n<\hat n$이면 $n\theta_i$, 그 외에는 $n\theta_i/s_i$가 된다. $s_i$와 $\hat n$은 목표 길이의 perplexity를 기준으로 진화 탐색(evolutionary search)으로 찾는다. 초기 후보에는 PI·NTK·YaRN의 배율을 넣어, 기존 규칙에서 출발해 개선하도록 했다. 원논문의 사전 분석에서는 PI와 Dynamic-NTK(입력 길이에 맞춰 NTK-aware 배율을 바꾸는 변형)에 앞쪽 토큰을 보간하지 않는 규칙만 더해도 perplexity가 좋아졌고, 가장 좋은 $\hat n$은 목표 길이에 따라 달랐다.
+위치 $n$에서 쌍 $i$의 회전각은 $n<\hat n$이면 $n\theta_i$, 그 외에는 $n\theta_i/s_i$가 된다. $s_i$와 $\hat n$은 목표 길이의 perplexity를 기준으로 진화 탐색(evolutionary search)으로 찾는다. 초기 후보에는 PI·YaRN 등 기존 방법의 배율을 넣어, 기존 규칙에서 출발해 개선하도록 했다. 원논문의 사전 분석에서는 PI 같은 기존 방법에 앞쪽 토큰을 보간하지 않는 규칙만 더해도 perplexity가 좋아졌고, 가장 좋은 $\hat n$은 목표 길이에 따라 달랐다.
 
 <Callout type="example">
 
@@ -466,8 +442,6 @@ Gemma 3는 1,024토큰 sliding window를 쓰는 지역 attention 층 다섯 개�
 [^gemma3]: Gemma Team. (2025). *Gemma 3 Technical Report*. [arXiv:2503.19786](https://arxiv.org/abs/2503.19786).
 [^pi]: Chen, S., Wong, S., Chen, L., & Tian, Y. (2023). *Extending Context Window of Large Language Models via Positional Interpolation*. [arXiv:2306.15595](https://arxiv.org/abs/2306.15595).
 [^yarn]: Peng, B., Quesnelle, J., Fan, H., & Shippole, E. (2024). *YaRN: Efficient Context Window Extension of Large Language Models*. ICLR 2024. [arXiv:2309.00071](https://arxiv.org/abs/2309.00071).
-[^codellama]: Rozière, B., et al. (2024). *Code Llama: Open Foundation Models for Code*. [arXiv:2308.12950](https://arxiv.org/abs/2308.12950).
-[^ntk]: bloc97. (2023). *NTK-Aware Scaled RoPE allows LLaMA models to have extended (8k+) context size without any fine-tuning and minimal perplexity degradation*. [Reddit r/LocalLLaMA](https://www.reddit.com/r/LocalLLaMA/comments/14lz7j5/ntkaware_scaled_rope_allows_llama_models_to_have/).
 [^ntkparts]: bloc97. (2023). *Add NTK-Aware interpolation "by parts" correction*. [GitHub jquesnelle/scaled-rope PR #1](https://github.com/jquesnelle/scaled-rope/pull/1).
 [^yarn-code]: Quesnelle, J. (2023). *yarn: scaled_rope/LlamaYaRNScaledRotaryEmbedding.py*. [GitHub jquesnelle/yarn](https://github.com/jquesnelle/yarn/blob/master/scaled_rope/LlamaYaRNScaledRotaryEmbedding.py).
 [^hf-convert]: Hugging Face. (2024). *Transformers v4.46.0: convert_llama_weights_to_hf.py*. [GitHub](https://github.com/huggingface/transformers/blob/v4.46.0/src/transformers/models/llama/convert_llama_weights_to_hf.py).
