@@ -4,15 +4,15 @@ week: 7
 order: 0
 ---
 
-6주차는 inference의 비용을 bytes와 FLOPs로 계산하고, 그 비용을 시스템 쪽에서 줄이는 방법을 보았다. 7주차는 모델과 계산 쪽으로 넘어간다. 첫 주제는 숫자 하나를 저장하는 bytes를 줄이는 <strong>양자화(quantization)</strong>다. [06b §6](/lecture/2026f-advanced-deep-learning/06b-roofline/#6-roofline-위의-최적화-기법)의 표에서 보았듯 가중치를 적은 bits로 저장하면 memory-bound인 decode 스텝의 하한이 바로 내려간다. Llama 3 8B의 가중치를 BF16 16 GB에서 INT4 약 4 GB로 줄이면, H100에서 batch 1 스텝의 하한이 4.9 ms에서 약 1.3 ms가 된다. 연산 자체를 낮은 정밀도로 하면 06b의 roofline에서 연산의 지붕도 높아진다.
+6주차는 inference의 비용을 bytes와 FLOPs로 계산하고, 그 비용을 시스템 쪽에서 줄이는 방법을 보았다. 7주차는 모델과 계산 쪽으로 넘어간다. 첫 주제는 숫자 하나를 저장하는 bytes를 줄이는 <strong>양자화(quantization)</strong>다. 06b §6의 표에서 보았듯 가중치를 적은 bits로 저장하면 memory-bound인 decode 스텝의 하한이 바로 내려간다. Llama 3 8B의 가중치를 BF16 16 GB에서 INT4 약 4 GB로 줄이면, H100에서 batch 1 스텝의 하한이 4.9 ms에서 약 1.3 ms가 된다. 연산 자체를 낮은 정밀도로 하면 06b의 roofline에서 연산의 지붕도 높아진다.
 
-문제는 정밀도를 낮추면 오차가 생긴다는 점이다. LLM(large language model)에서는 그 오차가 특히 다루기 어려운 모양으로 나타나고, 이 노트가 따라가는 계보도 그 모양을 다루는 방법의 흐름이다. 전체 지도는 Gong 등의 저비트 LLM 서베이[^survey]로 잡는다. §2가 숫자 형식과 양자화 단위(granularity)를, §3.2가 가중치만 양자화하는 경우와 가중치와 activation을 함께 양자화하는 경우의 실행 방식을, §5가 양자화 알고리즘을 다룬다. 이 노트의 §1은 서베이 §2와 §3.2에, §2–3은 §5.2의 PTQ(post-training quantization) 알고리즘에, §4는 §2.1의 형식에, §5는 §5.1의 QAT(quantization-aware training)에 대응한다. KV cache의 양자화는 [06c §4-1](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/#4-1-양자화)에서 보았다.
+문제는 정밀도를 낮추면 오차가 생긴다는 점이다. LLM(large language model)에서는 그 오차가 특히 다루기 어려운 모양으로 나타나고, 이 노트가 따라가는 계보도 그 모양을 다루는 방법의 흐름이다. 전체 지도는 Gong 등의 저비트 LLM 서베이[^survey]로 잡는다. §2가 숫자 형식과 양자화 단위(granularity)를, §3.2가 가중치만 양자화하는 경우와 가중치와 activation을 함께 양자화하는 경우의 실행 방식을, §5가 양자화 알고리즘을 다룬다. 이 노트의 §1은 서베이 §2와 §3.2에, §2–3은 §5.2의 PTQ(post-training quantization) 알고리즘에, §4는 §2.1의 형식에, §5는 §5.1의 QAT(quantization-aware training)에 대응한다. KV cache의 양자화는 06c §4-1에서 보았다.
 
 ## 1. 양자화의 기본
 
 ### 1-1. 균일 양자화
 
-[2주차 Training engineering §2-1](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#2-1-부동소수점과-정밀도)에서 FP32와 BF16 같은 부동소수점 형식을 보았다. 양자화는 실숫값을 더 적은 bits의 정수 격자에 대응시킨다. 가장 기본적인 균일 양자화는 간격(scale) $s$와 영점(zero-point) $z$로 실숫값 $x$를 $b$-bit 정수로 바꾸고, 계산에 쓸 때 다시 실숫값으로 되돌린다.[^nagel]
+2주차 Training engineering §2-1에서 FP32와 BF16 같은 부동소수점 형식을 보았다. 양자화는 실숫값을 더 적은 bits의 정수 격자에 대응시킨다. 가장 기본적인 균일 양자화는 간격(scale) $s$와 영점(zero-point) $z$로 실숫값 $x$를 $b$-bit 정수로 바꾸고, 계산에 쓸 때 다시 실숫값으로 되돌린다.[^nagel]
 
 $$
 x_{\text{int}}=\operatorname{clamp}\!\left(\left\lfloor \frac{x}{s}\right\rceil+z;\ 0,\ 2^b-1\right),
@@ -33,7 +33,7 @@ $\lfloor\cdot\rceil$는 가장 가까운 정수로의 반올림이다. 반올림
 예시가 보여 주듯 scale을 몇 개의 값이 함께 쓰느냐가 오차를 크게 좌우한다. 행렬 전체가 scale 하나를 쓰는 per-tensor, 출력 channel마다 쓰는 per-channel, activation의 토큰마다 쓰는 per-token, 연속된 몇 개의 원소마다 쓰는 per-group이 있다.[^survey] 범위를 작게 나눌수록 큰 값의 영향이 그 묶음 안에 갇히지만, scale을 저장할 공간이 늘어난다. LLM의 4-bit 가중치 양자화에서는 원소 128개마다 scale을 두는 group 크기 128이 흔한 기본값이다. GPTQ 논문은 이때 scale 저장에 원소당 약 0.15 bits가 더 든다고 계산했다.[^gptq]
 
 <Callout type="example">
-Llama 3 8B의 가중치를 group 128의 INT4로 저장하고 group마다 16-bit scale 하나만 둔다면 원소당 $4+16/128=4.125$ bits로, 위의 약 0.15 bits와 비슷한 부가 비용이다. 파라미터 8.03B개에 곱하면 약 4.1 GB로, BF16의 16.1 GB에서 약 4분의 1이 된다. [06a §4-3](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#4-3-동시에-처리할-수-있는-요청-수)의 H100 한 대라면 KV cache에 쓸 공간이 약 12 GB 늘어난다.
+Llama 3 8B의 가중치를 group 128의 INT4로 저장하고 group마다 16-bit scale 하나만 둔다면 원소당 $4+16/128=4.125$ bits로, 위의 약 0.15 bits와 비슷한 부가 비용이다. 파라미터 8.03B개에 곱하면 약 4.1 GB로, BF16의 16.1 GB에서 약 4분의 1이 된다. 06a §4-3의 H100 한 대라면 KV cache에 쓸 공간이 약 12 GB 늘어난다.
 </Callout>
 
 ### 1-3. 두 가지 쓰임
@@ -118,7 +118,7 @@ FP8의 다른 장점은 하드웨어 지원이다. H100의 FP8 Tensor Core는 de
 
 지금까지 본 방법은 모두 다 학습한 모델에 보정 데이터만 조금 써서 양자화하는 PTQ다. Bits를 더 낮추면 PTQ만으로는 품질을 지키기 어렵고, 그때는 학습 중에 양자화의 효과를 반영하는 **QAT**를 쓴다. Forward에서 가중치를 양자화한 값으로 계산하고, backward에서는 미분할 수 없는 반올림을 그대로 통과시키는 식으로 gradient를 근사해 모델이 양자화 오차에 맞춰 적응하게 한다.[^nagel]
 
-LLM에서는 사전학습 데이터 전체로 다시 학습하기 어려우므로, 원래 모델을 teacher로 삼는 distillation과 함께 쓰는 경우가 많다. Liu 등의 LLM-QAT는 원래 모델이 직접 생성한 텍스트로 양자화 모델을 distillation해, 학습 데이터 없이 가중치·activation·KV cache를 4-bit까지 양자화했다.[^llmqat] Google은 Gemma 3를 약 5,000스텝 동안 원래 정밀도 모델의 확률을 목표로 QAT해, 4-bit로 양자화할 때의 perplexity 하락을 54% 줄였다고 밝혔다. 27B 모델이 BF16의 54 GB에서 INT4의 14.1 GB로 줄었다.[^gemma3qat] Distillation 자체는 [5주차 Distillation](/lecture/2026f-advanced-deep-learning/05f-distillation/)에서 보았다.
+LLM에서는 사전학습 데이터 전체로 다시 학습하기 어려우므로, 원래 모델을 teacher로 삼는 distillation과 함께 쓰는 경우가 많다. Liu 등의 LLM-QAT는 원래 모델이 직접 생성한 텍스트로 양자화 모델을 distillation해, 학습 데이터 없이 가중치·activation·KV cache를 4-bit까지 양자화했다.[^llmqat] Google은 Gemma 3를 약 5,000스텝 동안 원래 정밀도 모델의 확률을 목표로 QAT해, 4-bit로 양자화할 때의 perplexity 하락을 54% 줄였다고 밝혔다. 27B 모델이 BF16의 54 GB에서 INT4의 14.1 GB로 줄었다.[^gemma3qat] Distillation 자체는 5주차 Distillation에서 보았다.
 
 ## 6. 방법의 선택
 
@@ -131,7 +131,7 @@ LLM에서는 사전학습 데이터 전체로 다시 학습하기 어려우므�
 | 긴 문맥, 많은 동시 요청 | KV cache 읽기와 용량 | KV cache 양자화(06c §4-1) |
 | FP4를 지원하는 최신 GPU | 연산과 읽기 모두 | MXFP4, NVFP4 |
 
-Weight-only 양자화의 이득은 batch가 커질수록 줄어든다. 4-bit 가중치를 FP16으로 되돌리는 계산은 batch가 작을 때는 놀던 연산 장치가 맡지만, batch가 커져 연산 장치가 바빠지면 그 자체가 비용이 된다. Frantar 등의 Marlin kernel은 batch 16–32까지는 4배에 가까운 이득을 유지하고 그보다 크면 이득이 점차 줄어든다고 보고했고,[^marlin] Lin 등의 QServe는 기존 4-bit 방법이 작은 batch에서만 빨라지고 큰 batch의 서빙에서는 이득이 없다고 지적하며 가중치 4-bit, activation 8-bit, KV cache 4-bit을 함께 쓰는 설계를 제안했다.[^qserve] 이런 kernel의 설계는 [07d §3-2](/lecture/2026f-advanced-deep-learning/07d-kernel-optimization/#3-2-양자화-가중치의-kernel)에서 다룬다.
+Weight-only 양자화의 이득은 batch가 커질수록 줄어든다. 4-bit 가중치를 FP16으로 되돌리는 계산은 batch가 작을 때는 놀던 연산 장치가 맡지만, batch가 커져 연산 장치가 바빠지면 그 자체가 비용이 된다. Frantar 등의 Marlin kernel은 batch 16–32까지는 4배에 가까운 이득을 유지하고 그보다 크면 이득이 점차 줄어든다고 보고했고,[^marlin] Lin 등의 QServe는 기존 4-bit 방법이 작은 batch에서만 빨라지고 큰 batch의 서빙에서는 이득이 없다고 지적하며 가중치 4-bit, activation 8-bit, KV cache 4-bit을 함께 쓰는 설계를 제안했다.[^qserve] 이런 kernel의 설계는 07d §3-2에서 다룬다.
 
 품질도 같은 기준으로 확인해야 한다. Perplexity 같은 평균 지표가 거의 같아도, 긴 추론이나 특정 언어처럼 원래 모델이 간신히 해내던 작업에서는 차이가 커질 수 있다. 양자화 모델을 평가할 때는 그 모델이 실제로 쓰일 작업으로, 원래 정밀도 모델과 같은 조건에서 비교한다.
 
@@ -141,7 +141,7 @@ Weight-only 양자화의 이득은 batch가 커질수록 줄어든다. 4-bit 가
 
 LLM의 어려움은 6.7B 무렵부터 특정 channel에 나타나는 activation outlier였다. LLM.int8()은 outlier 차원을 따로 FP16으로 계산해 정확도를 지켰지만 느렸고, SmoothQuant는 channel별 scale로 그 어려움을 가중치로 옮겨 모든 행렬곱을 INT8로 했다. Weight-only 쪽에서는 GPTQ가 층 출력의 오차를 기준으로 남은 가중치를 보정하고, AWQ가 activation으로 고른 중요한 가중치를 scale로 보호해 4-bit 이하에서도 품질을 지켰다.
 
-하드웨어는 FP8과, 블록마다 scale을 두는 MXFP4·NVFP4 같은 형식으로 저정밀 연산을 직접 지원하며 연산의 지붕을 높이고 있다. PTQ로 부족한 bits에서는 QAT를 distillation과 함께 쓴다. 어느 방법이든 효과는 배포의 병목과 batch 크기에 따라 다르므로, roofline으로 병목을 먼저 확인하고 실제 작업으로 품질을 잰다. 다음 노트 [07b](/lecture/2026f-advanced-deep-learning/07b-model-compression/)는 bits가 아니라 파라미터 수 자체를 줄이는 pruning, low-rank, distillation을 다룬다.
+하드웨어는 FP8과, 블록마다 scale을 두는 MXFP4·NVFP4 같은 형식으로 저정밀 연산을 직접 지원하며 연산의 지붕을 높이고 있다. PTQ로 부족한 bits에서는 QAT를 distillation과 함께 쓴다. 어느 방법이든 효과는 배포의 병목과 batch 크기에 따라 다르므로, roofline으로 병목을 먼저 확인하고 실제 작업으로 품질을 잰다. 다음 노트 07b는 bits가 아니라 파라미터 수 자체를 줄이는 pruning, low-rank, distillation을 다룬다.
 
 [^survey]: Gong, R., Ding, Y., Wang, Z., et al. (2025). A Survey of Low-bit Large Language Models: Basics, Systems, and Algorithms. *Neural Networks*, 192, 107856. [arXiv:2409.16694v3](https://arxiv.org/abs/2409.16694v3).
 

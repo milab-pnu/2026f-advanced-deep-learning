@@ -8,7 +8,7 @@ LLM(large language model)이 토큰을 하나씩 생성할 때마다 과거 위�
 
 계보는 다음과 같다. Multi-head attention(MHA)은 query head마다 K/V head를 따로 두어 캐시가 head 수에 비례한다. Multi-query attention(MQA)은 모든 query head가 K/V head 하나를 공유해 캐시를 크게 줄였지만 품질 저하와 학습 불안정이 보고되었다. Grouped-query attention(GQA)은 그 중간을 택했지만, 캐시는 여전히 K/V head 수와 head 차원에 비례한다. Multi-head latent attention(MLA)은 head를 공유하는 대신 토큰마다 작은 latent 벡터 하나를 저장하고 head별 K/V를 그로부터 복원한다.
 
-KV cache 관리 기법을 정리한 Li 등의 서베이[^kvsurvey]는 §II-B에서 KV cache의 동작과 복잡도를, §V-A1에서 head를 묶는 MQA·GQA를, §V-B1에서 attention 구조를 바꾼 MLA를 다룬다(절 번호는 arXiv v3 HTML판 기준이며, 같은 판의 PDF에서는 2.2, 5.1.1, 5.2.1이다). 이 노트는 그 세 범위를 원논문 수준으로 풀어 쓴다. 같은 서베이가 다루는 다른 절감 중 sliding window처럼 참조 위치 자체를 줄이는 방법은 [Efficient attention 노트](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/)의 별도 계보이고, 정밀도를 낮추는 양자화와 서빙 시스템은 6주차에서 다룬다.
+KV cache 관리 기법을 정리한 Li 등의 서베이[^kvsurvey]는 §II-B에서 KV cache의 동작과 복잡도를, §V-A1에서 head를 묶는 MQA·GQA를, §V-B1에서 attention 구조를 바꾼 MLA를 다룬다(절 번호는 arXiv v3 HTML판 기준이며, 같은 판의 PDF에서는 2.2, 5.1.1, 5.2.1이다). 이 노트는 그 세 범위를 원논문 수준으로 풀어 쓴다. 같은 서베이가 다루는 다른 절감 중 sliding window처럼 참조 위치 자체를 줄이는 방법은 Efficient attention 노트의 별도 계보이고, 정밀도를 낮추는 양자화와 서빙 시스템은 6주차에서 다룬다.
 
 최근 모델이 이 가운데 어떤 방식을 어떤 head 구성으로 쓰는지는 Sebastian Raschka의 [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/)에서 모델별로 확인할 수 있다.[^gallery]
 
@@ -16,7 +16,7 @@ KV cache 관리 기법을 정리한 Li 등의 서베이[^kvsurvey]는 §II-B에�
 
 ### 1-1. Decode 단계에서 재사용되는 key와 value
 
-[2주차 Decoder-only LLM 노트](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/#3-3-생성-루프-autoregressive-generation)에서 본 것처럼, 생성은 마지막 위치의 출력으로 다음 토큰을 고르고 그 토큰을 입력 뒤에 붙이는 반복이다. 프롬프트 전체를 한 번에 처리하는 첫 단계를 **prefill**, 이후 토큰을 하나씩 만드는 단계를 **decode**라고 부른다. 두 단계의 비용 차이와 서빙 방식은 6주차에서 다루고, 여기서는 decode 한 스텝에서 무엇이 재사용되는지만 본다. 층 하나, head $i$ 하나만 보면 위치 $t$의 attention 출력은 다음과 같다.
+2주차 Decoder-only LLM 노트에서 본 것처럼, 생성은 마지막 위치의 출력으로 다음 토큰을 고르고 그 토큰을 입력 뒤에 붙이는 반복이다. 프롬프트 전체를 한 번에 처리하는 첫 단계를 **prefill**, 이후 토큰을 하나씩 만드는 단계를 **decode**라고 부른다. 두 단계의 비용 차이와 서빙 방식은 6주차에서 다루고, 여기서는 decode 한 스텝에서 무엇이 재사용되는지만 본다. 층 하나, head $i$ 하나만 보면 위치 $t$의 attention 출력은 다음과 같다.
 
 $$
 q_{t,i}=x_tW^Q_i,\qquad k_{j,i}=x_jW^K_i,\qquad v_{j,i}=x_jW^V_i
@@ -28,7 +28,7 @@ $$
 
 $x_j$는 그 층에 들어오는 위치 $j$의 벡터이고 $d_h$는 head 차원이다. Causal mask 때문에 $x_j$는 위치 $j$까지의 토큰에만 의존한다. 그래서 새 토큰이 뒤에 붙어도 과거 위치의 $x_j$, 따라서 $k_{j,i}$와 $v_{j,i}$는 바뀌지 않는다. 한 번 계산한 과거 K/V를 층마다 보관해 두면 다시 계산할 필요가 없다.
 
-Query는 사정이 다르다. 다음 토큰을 고르는 데 필요한 것은 새 위치 $t$의 출력 $o_{t,i}$뿐이고, 그 계산에는 $q_{t,i}$ 하나만 쓰인다. 과거 위치의 출력은 이미 계산했고, 그 위치가 다음 층에 주는 영향도 다음 층의 캐시된 K/V로 전달된다. 따라서 decode 한 스텝에서는 **새 토큰의 Q·K·V만 계산하고, 새 K/V를 캐시 뒤에 붙인 뒤, 새 Q로 캐시 전체를 읽는다.**[^kvsurvey] Llama 3 공식 구현도 RoPE(rotary position embedding)를 적용한 key를 캐시 텐서 `cache_k`에 쓰고, 지금까지의 구간 전체를 읽어 attention을 계산한다.[^llama-impl] [Positional encoding 노트 §4-1](/lecture/2026f-advanced-deep-learning/03a-positional-encoding/#4-1-회전과-내적)에서 보았듯 회전 각도는 그 key의 위치만으로 정해지므로, 회전된 key를 그대로 저장해도 된다. 이 성질은 §5에서 다시 문제가 된다.
+Query는 사정이 다르다. 다음 토큰을 고르는 데 필요한 것은 새 위치 $t$의 출력 $o_{t,i}$뿐이고, 그 계산에는 $q_{t,i}$ 하나만 쓰인다. 과거 위치의 출력은 이미 계산했고, 그 위치가 다음 층에 주는 영향도 다음 층의 캐시된 K/V로 전달된다. 따라서 decode 한 스텝에서는 **새 토큰의 Q·K·V만 계산하고, 새 K/V를 캐시 뒤에 붙인 뒤, 새 Q로 캐시 전체를 읽는다.**[^kvsurvey] Llama 3 공식 구현도 RoPE(rotary position embedding)를 적용한 key를 캐시 텐서 `cache_k`에 쓰고, 지금까지의 구간 전체를 읽어 attention을 계산한다.[^llama-impl] Positional encoding 노트 §4-1에서 보았듯 회전 각도는 그 key의 위치만으로 정해지므로, 회전된 key를 그대로 저장해도 된다. 이 성질은 §5에서 다시 문제가 된다.
 
 ### 1-2. 캐시 텐서의 모양과 원소 수
 
@@ -71,7 +71,7 @@ Llama 3 8B의 값($L=32$, query head 32개, K/V head 8개, $d_h=128$)으로 계�
 
 둘째는 **대역폭**(memory bandwidth)이다. Decode 한 스텝에서 층마다 캐시 전체를 메모리에서 읽어야 하는데, 읽은 양에 비해 하는 계산이 적다. MHA 가정의 Llama 3 8B 형태에서 문맥 길이가 $t$일 때 층 하나를 보자. 읽는 K/V는 $2\cdot32\cdot128\cdot t=8192t$개 원소이고, 점수 계산($QK^\top$)과 가중합($aV$)의 곱셈-덧셈도 합해서 약 $8192t$번이다. 원소 하나를 읽을 때마다 곱셈-덧셈을 한 번 정도 하는 셈이어서, 계산 장치보다 메모리에서 읽어 오는 속도가 스텝 시간을 좌우하기 쉽다.
 
-Shazeer는 이 관찰을 decode 전체에 대한 점근 분석으로 정리했다.[^mqa] 메모리 접근량과 연산량의 비율에는 두 항이 남는다. 하나는 가중치를 읽는 비용으로, batch를 키우면 여러 시퀀스가 같은 가중치를 나눠 쓰므로 줄어든다. 다른 하나는 매 스텝 K/V를 다시 읽는 비용인데, 시퀀스마다 캐시가 따로 있어 batch를 키워도 줄지 않는다. 이 둘째 항을 줄이는 방법으로 Shazeer는 시퀀스 길이를 제한하거나 참조 위치를 줄이는 방식([Efficient attention 노트](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/)의 계보)과 별개로, **모든 head가 K/V 하나를 나눠 쓰는**, 즉 K/V에서 head 축을 없애는 방식을 제안했다.
+Shazeer는 이 관찰을 decode 전체에 대한 점근 분석으로 정리했다.[^mqa] 메모리 접근량과 연산량의 비율에는 두 항이 남는다. 하나는 가중치를 읽는 비용으로, batch를 키우면 여러 시퀀스가 같은 가중치를 나눠 쓰므로 줄어든다. 다른 하나는 매 스텝 K/V를 다시 읽는 비용인데, 시퀀스마다 캐시가 따로 있어 batch를 키워도 줄지 않는다. 이 둘째 항을 줄이는 방법으로 Shazeer는 시퀀스 길이를 제한하거나 참조 위치를 줄이는 방식(Efficient attention 노트의 계보)과 별개로, **모든 head가 K/V 하나를 나눠 쓰는**, 즉 K/V에서 head 축을 없애는 방식을 제안했다.
 
 <Details summary="심화: Shazeer의 점근 분석과 그 가정">
 

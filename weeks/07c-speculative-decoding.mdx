@@ -4,7 +4,7 @@ week: 7
 order: 2
 ---
 
-6주차에서 decode 한 스텝의 비용을 계산했다. [06b §3-1](/lecture/2026f-advanced-deep-learning/06b-roofline/#3-1-선형층)에서 보았듯 선형층의 arithmetic intensity는 함께 처리하는 토큰 수와 거의 같아서, 요청 하나를 decode하는 스텝은 가중치 16 GB를 읽어 토큰 하나에만 쓴다. Llama 3 8B를 H100에서 돌리면 그 스텝의 하한은 약 4.9 ms이고, 계산 자체는 0.02 ms면 끝난다. 남는 연산 능력은 batching으로 채울 수도 있지만, 요청이 하나뿐인 상황에서도 채울 방법이 있다. 같은 요청의 **다음 토큰 여러 개를 한 번의 forward로 처리**하는 것이다. 문제는 그 토큰들이 아직 정해지지 않았다는 점이다. Speculative decoding은 값싼 방법으로 다음 토큰들을 먼저 추측하고, 큰 모델이 그 추측을 한 번에 검증하게 해서 이 문제를 푼다.
+6주차에서 decode 한 스텝의 비용을 계산했다. 06b §3-1에서 보았듯 선형층의 arithmetic intensity는 함께 처리하는 토큰 수와 거의 같아서, 요청 하나를 decode하는 스텝은 가중치 16 GB를 읽어 토큰 하나에만 쓴다. Llama 3 8B를 H100에서 돌리면 그 스텝의 하한은 약 4.9 ms이고, 계산 자체는 0.02 ms면 끝난다. 남는 연산 능력은 batching으로 채울 수도 있지만, 요청이 하나뿐인 상황에서도 채울 방법이 있다. 같은 요청의 **다음 토큰 여러 개를 한 번의 forward로 처리**하는 것이다. 문제는 그 토큰들이 아직 정해지지 않았다는 점이다. Speculative decoding은 값싼 방법으로 다음 토큰들을 먼저 추측하고, 큰 모델이 그 추측을 한 번에 검증하게 해서 이 문제를 푼다.
 
 전체 지도는 Xia 등의 speculative decoding 서베이[^survey]로 잡는다. §4가 draft-then-verify의 정식화를, §5가 추측을 만드는 drafting 방법(별도 모델을 쓰는 independent drafting과 모델 스스로 추측하는 self-drafting)을, §6이 검증 방법(greedy, speculative sampling, token tree)을 다룬다. §8의 Spec-Bench는 같은 조건에서 여러 방법을 비교하고, §9는 batch가 커질 때의 문제를 남은 과제로 꼽는다. 이 노트의 §1은 서베이 §4·§6에, §2는 §5에 대응하고, §3의 multi-token prediction과 §4의 serving 조건은 서베이 이후의 흐름을 원논문으로 보충한다.
 
@@ -115,7 +115,7 @@ EAGLE 계열의 draft와 DeepSeek-V3의 MTP 모듈은 모양이 비슷하다. �
 
 ### 4-1. 이득이 줄어드는 조건
 
-§1-4의 개선 배수는 target이 $\gamma+1$개 위치를 위치 하나와 같은 시간에 계산한다는 가정에 기댔다. 이 가정은 decode가 memory-bound일 때만 맞다. [06b §4](/lecture/2026f-advanced-deep-learning/06b-roofline/#4-batching과-그-한계)에서 batch를 키우면 선형층의 intensity가 오른다고 했는데, speculative decoding은 요청마다 위치를 $\gamma+1$개로 늘리므로 한 스텝의 토큰 수가 $b(\gamma+1)$개가 된다. Batch가 크면 이 값이 ridge point를 넘어 스텝이 compute-bound가 되고, 그때부터는 수락되지 않을 추측을 검증하는 계산이 실제 시간을 잡아먹는다.
+§1-4의 개선 배수는 target이 $\gamma+1$개 위치를 위치 하나와 같은 시간에 계산한다는 가정에 기댔다. 이 가정은 decode가 memory-bound일 때만 맞다. 06b §4에서 batch를 키우면 선형층의 intensity가 오른다고 했는데, speculative decoding은 요청마다 위치를 $\gamma+1$개로 늘리므로 한 스텝의 토큰 수가 $b(\gamma+1)$개가 된다. Batch가 크면 이 값이 ridge point를 넘어 스텝이 compute-bound가 되고, 그때부터는 수락되지 않을 추측을 검증하는 계산이 실제 시간을 잡아먹는다.
 
 <Callout type="example">
 06b의 하한 모형으로 Llama 3 8B를 H100에서 돌린다고 하자. $\gamma=4$로 요청마다 위치 5개를 검증하고, draft의 비용은 무시한다.
@@ -137,7 +137,7 @@ EAGLE 계열의 draft와 DeepSeek-V3의 MTP 모듈은 모양이 비슷하다. �
 
 그래서 serving에서는 부하에 맞춰 speculative decoding의 사용 여부와 추측 길이를 조절하는 방법이 나왔다. Liu 등의 TurboSpec은 speculative decoding을 단순히 덧붙이면 serving 성능이 오히려 나빠질 수 있다고 지적하고, 시스템의 goodput을 보며 추측 길이를 실행 중에 바꾸는 제어 방식을 제안했다.[^turbospec] vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-bound 상황에서 ITL(inter-token latency)을 줄이는 기능으로 설명한다.[^vllm-spec]
 
-측정할 때는 [06a §3-1](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#3-1-요청-하나의-지연)의 ITL과 TPOT 차이를 기억한다. 한 번의 forward에서 토큰 여러 개가 함께 나오면 ITL은 도착 간격만 기록하고 TPOT는 그 시간을 토큰 수로 나누므로, speculative decoding의 효과는 TPOT로 보아야 일관되게 비교할 수 있다. 출력이 바뀌지 않는다는 보장도 수학적으로는 정확하지만, vLLM 문서는 그 보장이 하드웨어 수치 정밀도의 범위 안에서라고 밝힌다.[^vllm-spec] Batch 구성이 바뀌면 부동소수점 계산 순서가 달라져 sampling 결과가 미세하게 달라질 수 있다.
+측정할 때는 06a §3-1의 ITL과 TPOT 차이를 기억한다. 한 번의 forward에서 토큰 여러 개가 함께 나오면 ITL은 도착 간격만 기록하고 TPOT는 그 시간을 토큰 수로 나누므로, speculative decoding의 효과는 TPOT로 보아야 일관되게 비교할 수 있다. 출력이 바뀌지 않는다는 보장도 수학적으로는 정확하지만, vLLM 문서는 그 보장이 하드웨어 수치 정밀도의 범위 안에서라고 밝힌다.[^vllm-spec] Batch 구성이 바뀌면 부동소수점 계산 순서가 달라져 sampling 결과가 미세하게 달라질 수 있다.
 
 ## 5. 정리
 

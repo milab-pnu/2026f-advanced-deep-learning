@@ -17,7 +17,7 @@ import playbookLicense from "./assets/ultrascale-playbook-LICENSE.txt?url";
 
 모델 크기와 학습 토큰 수를 정해 계산량을 추산했어도, 실제 학습 완료 시간은 아직 정해지지 않는다. GPU(graphics processing unit)의 메모리에 무엇을 저장하고, 장치 사이에 무엇을 전달하는지가 실행 가능성과 속도를 결정한다. 분산 LLM(large language model) 학습 서베이[^survey]를 바탕으로, 8개 노드에 GPU가 8개씩 있는 환경에서 출발해, 같은 64개 GPU에 데이터와 모델을 어떻게 배치할지 살펴본다.
 
-왜 GPU 여러 개가 필요한지부터 숫자로 확인하자. [Scaling 노트](/lecture/2026f-advanced-deep-learning/02d-scaling/)의 근사식처럼 학습 계산량을 $C\approx6ND$로 잡으면, 파라미터 $N=8\times10^9$개인 모델을 $D=15\times10^{12}$개 토큰으로 학습할 때 $C\approx7.2\times10^{23}$ FLOPs(floating-point operations)다. Scaling 노트의 $N$은 embedding을 뺀 파라미터 수지만, 이 노트는 규모를 가늠하려는 계산이므로 계산량과 메모리 모두 전체 8B로 단순화한다. H100 SXM GPU 한 장의 BF16 최대 연산 속도는 사양표에 sparsity 기준 $1{,}979\times10^{12}$ FLOP/s로 적혀 있고, sparsity를 쓰지 않는 dense 연산은 그 절반인 약 $989\times10^{12}$ FLOP/s다.[^h100] 하지만 실제 학습은 통신·메모리 대기 때문에 그 일부만 쓴다. 최대 속도의 40%를 쓴다고 가정하면 다음과 같다.
+왜 GPU 여러 개가 필요한지부터 숫자로 확인하자. Scaling 노트의 근사식처럼 학습 계산량을 $C\approx6ND$로 잡으면, 파라미터 $N=8\times10^9$개인 모델을 $D=15\times10^{12}$개 토큰으로 학습할 때 $C\approx7.2\times10^{23}$ FLOPs(floating-point operations)다. Scaling 노트의 $N$은 embedding을 뺀 파라미터 수지만, 이 노트는 규모를 가늠하려는 계산이므로 계산량과 메모리 모두 전체 8B로 단순화한다. H100 SXM GPU 한 장의 BF16 최대 연산 속도는 사양표에 sparsity 기준 $1{,}979\times10^{12}$ FLOP/s로 적혀 있고, sparsity를 쓰지 않는 dense 연산은 그 절반인 약 $989\times10^{12}$ FLOP/s다.[^h100] 하지만 실제 학습은 통신·메모리 대기 때문에 그 일부만 쓴다. 최대 속도의 40%를 쓴다고 가정하면 다음과 같다.
 
 $$
 \frac{7.2\times10^{23}}{0.4\times989\times10^{12}}\approx1.8\times10^{9}\ \text{초}\approx51\text{만 GPU-hours}
@@ -648,7 +648,7 @@ GPU에 모델이 들어가더라도, 계산하는 입력의 상당 부분이 빈
 
 함께 담는다고 두 문서가 한 문맥이 되어야 하는 것은 아니다. 독립 문서를 유지하려면 A는 A 안에서만, B는 B 안에서만 이전 위치를 참조하게 한다. 예를 들어 B0는 앞에 저장된 A0–A2를 보지 못하고, B2는 B0·B1·B2만 본다. 실제 구현은 시퀀스 경계 정보를 attention 연산에 전달한다. 입력을 단순히 이어 붙이는 것만으로 이 조건이 충족되지는 않는다.
 
-정답도 [Pre-training의 문서별 입력·정답 예제](/lecture/2026f-advanced-deep-learning/02c-pre-training/#3-4-학습-시퀀스와-문서-경계)처럼 각 문서에 맞춘 값을 유지한다. 입력 배열을 채운 정도가 두 배가 되었다고 학습 속도가 반드시 두 배가 되는 것은 아니다. Attention 구현, 배열 구성 비용, batch 설정에 따라 실제 이득이 달라진다. 같은 학습 목표와 유효 토큰 수를 기준으로 처리량을 비교해야 한다.
+정답도 Pre-training의 문서별 입력·정답 예제처럼 각 문서에 맞춘 값을 유지한다. 입력 배열을 채운 정도가 두 배가 되었다고 학습 속도가 반드시 두 배가 되는 것은 아니다. Attention 구현, 배열 구성 비용, batch 설정에 따라 실제 이득이 달라진다. 같은 학습 목표와 유효 토큰 수를 기준으로 처리량을 비교해야 한다.
 
 이 예제는 padding이 많이 생기는 조건을 가정했다. Batch 안의 최대 길이까지만 채우거나 비슷한 길이를 묶는 방법도 padding을 줄일 수 있다. 이미 문서들을 이어서 고정 길이를 채우는 pre-training은 같은 낭비가 작을 수 있다. Megatron Bridge의 packed-sequence 기능은 주로 길이가 다양한 fine-tuning 예제를 위한 것으로 설명된다. 따라서 이름만 보고 모든 pre-training에 켜야 하는 옵션으로 받아들이지 않는다.[^packing]
 
@@ -677,7 +677,7 @@ $$
 \text{MFU}=\frac{\text{처리한 tokens/s}\times6N}{G\times\text{GPU당 최대 FLOP/s}}
 $$
 
-분자의 토큰 수는 모델이 forward·backward로 실제 처리한 입력 위치의 수다. 앞의 유효 tokens/s와 달리 loss에서 제외한 위치도 계산은 거치므로 여기에 포함한다. 모든 위치가 loss에 기여하는 사전학습이라면 두 값이 같다. $6N$은 토큰 하나를 학습하는 데 드는 forward와 backward의 계산량이다([Scaling 노트](/lecture/2026f-advanced-deep-learning/02d-scaling/)의 $6ND$에서 $D=1$). Attention의 $n^2$ 계산을 더하는 더 정확한 식도 있지만, 여기서는 근사식을 쓴다. §2-3의 재계산처럼 모델에 필요한 계산이 아닌 추가 계산은 MFU에 넣지 않는다. 재계산을 켜면 GPU가 바쁘게 일해도 MFU는 낮아질 수 있다.
+분자의 토큰 수는 모델이 forward·backward로 실제 처리한 입력 위치의 수다. 앞의 유효 tokens/s와 달리 loss에서 제외한 위치도 계산은 거치므로 여기에 포함한다. 모든 위치가 loss에 기여하는 사전학습이라면 두 값이 같다. $6N$은 토큰 하나를 학습하는 데 드는 forward와 backward의 계산량이다(Scaling 노트의 $6ND$에서 $D=1$). Attention의 $n^2$ 계산을 더하는 더 정확한 식도 있지만, 여기서는 근사식을 쓴다. §2-3의 재계산처럼 모델에 필요한 계산이 아닌 추가 계산은 MFU에 넣지 않는다. 재계산을 켜면 GPU가 바쁘게 일해도 MFU는 낮아질 수 있다.
 
 예를 들어 64개 H100에서 8B 모델이 초당 50만 토큰을 처리한다면 분자는 $5\times10^5\times6\times8\times10^9=2.4\times10^{16}$ FLOP/s이고, 분모는 $64\times989\times10^{12}\approx6.33\times10^{16}$ FLOP/s이므로 MFU는 약 38%다. Llama 3 논문은 405B 학습의 구성별 MFU를 38–43%로 보고했으므로(§5-1),[^llama3] 도입에서 가정한 40%는 대규모로 조정된 학습이 보고한 수준이다. MFU가 이보다 크게 낮다면 §6-2의 방법으로 어디서 시간이 새는지 찾는다.
 

@@ -8,22 +8,22 @@ Self-attention은 토큰 사이의 관계를 계산하지만, 그 자체로는 �
 
 전체 지도는 Zhao 등이 위치 인코딩의 관점에서 길이 외삽(length extrapolation)을 정리한 서베이[^survey]로 잡는다. 서베이의 §3(외삽을 염두에 둔 위치 인코딩)이 이 노트의 §2–4에, §4.1(position interpolation)이 §5-3·5-4에 대응한다. 서베이는 LongRoPE를 이름만 언급하고 이 노트 §6의 층별·차원별 배치는 다루지 않으므로 이 둘은 원논문과 공식 구현으로 보충했다.
 
-이번 주 노트 여섯 개는 02a에서 본 [Llama 3 8B 블록](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/#2-2-llama-3-8b-구조)의 부품을 하나씩 바꿔 보는 구성이다. 각 노트는 부품 하나의 발전 계보를 다룬다. 아래 표는 각 노트가 다루는 기법을 본문 순서로 늘어놓은 색인이고, 기법 사이의 계보(앞 방식의 어떤 문제를 풀었는지)는 각 노트 본문에서 밝힌다.
+이번 주 노트 여섯 개는 02a에서 본 Llama 3 8B 블록의 부품을 하나씩 바꿔 보는 구성이다. 각 노트는 부품 하나의 발전 계보를 다룬다. 아래 표는 각 노트가 다루는 기법을 본문 순서로 늘어놓은 색인이고, 기법 사이의 계보(앞 방식의 어떤 문제를 풀었는지)는 각 노트 본문에서 밝힌다.
 
 | 노트 | 다루는 블록 부품 | 다루는 기법(본문 순서) |
 |---|---|---|
 | 03a (이 노트) | Query·key의 위치 신호 | 절대 위치, 상대 위치, RoPE, long context 확장 |
-| [03b](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/) | Attention head 구성과 KV(key-value) cache | MHA(multi-head attention), MQA(multi-query attention), GQA(grouped-query attention), MLA(multi-head latent attention) |
-| [03c](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/) | Attention 층 자체(sequence mixer) | O(n²) 문제의 두 갈래인 sparse·sliding window와 linear·gating·SSM(state space model), 둘이 합류하는 hybrid |
-| [03d](/lecture/2026f-advanced-deep-learning/03d-ffn-activation/) | FFN(feed-forward network) 활성화 함수 | ReLU(rectified linear unit), GELU(Gaussian error linear unit)·SiLU(sigmoid linear unit), GLU(gated linear unit)와 SwiGLU, 같은 파라미터 예산의 FFN 폭 |
-| [03e](/lecture/2026f-advanced-deep-learning/03e-normalization/) | Normalization과 attention 출력 | LayerNorm과 RMSNorm, Post-LN과 Pre-LN, QK-Norm과 logit soft-capping, attention sink |
-| [03f](/lecture/2026f-advanced-deep-learning/03f-mixture-of-experts/) | FFN의 조건부 계산 | Dense FFN, sparse MoE(mixture of experts), load balancing, fine-grained·shared expert, MoD(mixture-of-depths)·MoR(mixture-of-recursions) |
+| 03b | Attention head 구성과 KV(key-value) cache | MHA(multi-head attention), MQA(multi-query attention), GQA(grouped-query attention), MLA(multi-head latent attention) |
+| 03c | Attention 층 자체(sequence mixer) | O(n²) 문제의 두 갈래인 sparse·sliding window와 linear·gating·SSM(state space model), 둘이 합류하는 hybrid |
+| 03d | FFN(feed-forward network) 활성화 함수 | ReLU(rectified linear unit), GELU(Gaussian error linear unit)·SiLU(sigmoid linear unit), GLU(gated linear unit)와 SwiGLU, 같은 파라미터 예산의 FFN 폭 |
+| 03e | Normalization과 attention 출력 | LayerNorm과 RMSNorm, Post-LN과 Pre-LN, QK-Norm과 logit soft-capping, attention sink |
+| 03f | FFN의 조건부 계산 | Dense FFN, sparse MoE(mixture of experts), load balancing, fine-grained·shared expert, MoD(mixture-of-depths)·MoR(mixture-of-recursions) |
 
 이 부품들이 실제 모델에서 어떻게 조합되는지는 Sebastian Raschka의 [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/)에서 볼 수 있다.[^gallery] 모델마다 블록 구성도와 config·기술 보고서 링크를 모아 두었고, 두 모델의 구조를 나란히 비교하는 기능도 있다. 이 노트에서 다루는 RoPE base나 NoPE 층 같은 설정이 모델마다 어떻게 다른지 확인할 때 유용하다.
 
 ## 1. 위치 정보의 필요성
 
-[01a §3-1](/lecture/2026f-advanced-deep-learning/01a-transformer/#3-1-위치-정보)에서 보았듯이, 위치 정보와 mask가 모두 없는 self-attention은 순열 등변(permutation equivariant)이다. 토큰 세 개로 된 입력 `[dog, bites, man]`을 같은 토큰의 재배열인 `[man, bites, dog]`로 바꾸어 보자. `dog`의 출력 벡터는 첫 번째 자리에 있을 때와 세 번째 자리에 있을 때 똑같고, 세 토큰의 출력은 입력과 같은 방식으로 자리만 바뀐다. $q_i^\top k_j$가 두 토큰의 내용만으로 정해지고, 각 토큰이 참조하는 토큰의 집합도 같기 때문이다. 이 상태에서는 누가 물고 누가 물렸는지 구분할 방법이 없다.
+01a §3-1에서 보았듯이, 위치 정보와 mask가 모두 없는 self-attention은 순열 등변(permutation equivariant)이다. 토큰 세 개로 된 입력 `[dog, bites, man]`을 같은 토큰의 재배열인 `[man, bites, dog]`로 바꾸어 보자. `dog`의 출력 벡터는 첫 번째 자리에 있을 때와 세 번째 자리에 있을 때 똑같고, 세 토큰의 출력은 입력과 같은 방식으로 자리만 바뀐다. $q_i^\top k_j$가 두 토큰의 내용만으로 정해지고, 각 토큰이 참조하는 토큰의 집합도 같기 때문이다. 이 상태에서는 누가 물고 누가 물렸는지 구분할 방법이 없다.
 
 Decoder-only 모델은 causal mask를 쓰므로 사정이 조금 다르다. 위치 $i$는 $i$개의 토큰만 볼 수 있으니, mask 자체가 앞뒤의 비대칭을 준다. 예를 들어 첫 토큰(BOS, beginning of sequence)의 value만 1이고 나머지 value가 0이라고 하자. 모든 앞 토큰에 균등하게 attention하면 위치 1의 출력은 1, 위치 2는 1/2, 위치 4는 1/4이 된다. 출력값에서 위치를 거꾸로 읽어 낼 수 있는 셈이다. Kazemnejad 등은 이런 원리로 위치 인코딩이 없는(NoPE, no positional encoding) decoder의 첫 층이 절대 위치를 복원할 수 있고, 이후 층에서 상대 위치도 표현할 수 있음을 보였다.[^nope]
 
@@ -122,7 +122,7 @@ $$
 \big\langle f_q(x_m, m),\; f_k(x_n, n)\big\rangle = g(x_m, x_n, m-n)
 $$
 
-왼쪽에서는 각 토큰이 자기 위치 $m$ 또는 $n$만 알면 된다. 오른쪽은 결과가 두 위치의 차이에만 의존하라는 요구다. 이 조건을 만족하면 위치 정보는 곱셈 형태로 들어가고, score 식에 거리 항을 따로 둘 필요가 없다. RoFormer는 이 성질 덕분에 score 행렬을 명시적으로 만들지 않는 linear attention([03c §3](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/#3-linear-attention))에도 상대 위치를 넣을 수 있다는 점을 장점으로 내세웠다.
+왼쪽에서는 각 토큰이 자기 위치 $m$ 또는 $n$만 알면 된다. 오른쪽은 결과가 두 위치의 차이에만 의존하라는 요구다. 이 조건을 만족하면 위치 정보는 곱셈 형태로 들어가고, score 식에 거리 항을 따로 둘 필요가 없다. RoFormer는 이 성질 덕분에 score 행렬을 명시적으로 만들지 않는 linear attention(03c §3)에도 상대 위치를 넣을 수 있다는 점을 장점으로 내세웠다.
 
 ## 4. Rotary position embedding (RoPE)
 
@@ -236,7 +236,7 @@ RoFormer는 $\theta_i=10000^{-2i/d}$일 때 score의 상한이 거리가 멀어�
 
 ## 5. Long context 확장
 
-RoPE도 학습 길이를 넘어서면 오래 버티지 못한다. Press 등의 실험에서 RoPE 모델은 sinusoidal보다 나았지만, 학습 길이보다 100–200토큰 긴 입력까지만 perplexity가 개선되었다(그림 1).[^alibi] 긴 문맥 모델을 얻는 가장 직접적인 방법은 긴 시퀀스로 추가 학습하는 것이다([02c §1](/lecture/2026f-advanced-deep-learning/02c-pre-training/#1-llm-학습-과정)의 긴 문맥 학습 단계). 이 절의 방법들은 그 추가 학습을 짧게 끝낼 수 있도록 RoPE 자체를 고친다.
+RoPE도 학습 길이를 넘어서면 오래 버티지 못한다. Press 등의 실험에서 RoPE 모델은 sinusoidal보다 나았지만, 학습 길이보다 100–200토큰 긴 입력까지만 perplexity가 개선되었다(그림 1).[^alibi] 긴 문맥 모델을 얻는 가장 직접적인 방법은 긴 시퀀스로 추가 학습하는 것이다(02c §1의 긴 문맥 학습 단계). 이 절의 방법들은 그 추가 학습을 짧게 끝낼 수 있도록 RoPE 자체를 고친다.
 
 ### 5-1. 학습 길이·설정 길이·유효 길이
 
@@ -399,7 +399,7 @@ Llama 3.1의 RoPE 조정도 같은 아이디어의 한 예다. Meta의 공식 �
 Ding 등의 LongRoPE는 대역 규칙을 사람이 정하는 대신 **쌍별 배율을 탐색**한다.[^longrope] 탐색하는 비균일성은 두 축이다.
 
 - **차원 축:** 쌍 $i$마다 rescale 배율 $s_i$를 따로 둔다(원논문 표기는 $\lambda_i$지만 §4-2의 파장과 겹쳐 여기서는 $s_i$로 쓴다). 탐색 공간을 줄이기 위해 $s_i\le s_{i+1}$, 즉 고주파 쌍일수록 덜 늘린다는 단조 제약을 건다. NTK 계열의 직관을 제약으로 남긴 것이다.
-- **위치 축:** 처음 $\hat n$개 위치는 보간하지 않고 원래 RoPE를 쓴다. 문서 앞쪽 토큰은 attention을 많이 받으므로 위치 정보를 덜 훼손해야 한다는 가설이다. 이 현상은 [03e §4](/lecture/2026f-advanced-deep-learning/03e-normalization/#4-attention-sink)의 attention sink와 연결된다.
+- **위치 축:** 처음 $\hat n$개 위치는 보간하지 않고 원래 RoPE를 쓴다. 문서 앞쪽 토큰은 attention을 많이 받으므로 위치 정보를 덜 훼손해야 한다는 가설이다. 이 현상은 03e §4의 attention sink와 연결된다.
 
 위치 $n$에서 쌍 $i$의 회전각은 $n<\hat n$이면 $n\theta_i$, 그 외에는 $n\theta_i/s_i$가 된다. $s_i$와 $\hat n$은 목표 길이의 perplexity를 기준으로 진화 탐색(evolutionary search)으로 찾는다. 초기 후보에는 PI·NTK·YaRN의 배율을 넣어, 기존 규칙에서 출발해 개선하도록 했다. 원논문의 사전 분석에서는 PI와 Dynamic-NTK(입력 길이에 맞춰 NTK-aware 배율을 바꾸는 변형)에 앞쪽 토큰을 보간하지 않는 규칙만 더해도 perplexity가 좋아졌고, 가장 좋은 $\hat n$은 목표 길이에 따라 달랐다.
 
@@ -445,7 +445,7 @@ $$
 
 ### 6-2. Head 차원 일부에만 적용하는 RoPE
 
-Partial RoPE는 head 차원 중 일부 쌍에만 회전을 적용하고, 나머지 성분은 위치와 무관하게 내용만으로 내적한다. GPT-NeoX-20B는 GPT-J를 따라 차원의 25%에만 RoPE를 적용했고, 초기 실험에서 이것이 성능과 계산 효율의 균형이 가장 좋았다고 밝혔다.[^neox] 이때 각주파수의 분모에 들어가는 차원도 달라진다. 회전을 받는 차원을 $d_{\mathrm{rot}}$이라 하면, Hugging Face Transformers 구현은 §4-1의 식에서 $d$ 대신 $d_{\mathrm{rot}}$을 써서 $\theta_i=b^{-2i/d_{\mathrm{rot}}}$($i=0,\ldots,d_{\mathrm{rot}}/2-1$)로 계산한다.[^hf-rope] 전체 head 차원으로 만든 주파수 목록에서 일부를 고르는 것이 아니라, 가장 빠른 주파수부터 가장 느린 주파수까지의 거의 같은 범위를 더 적은 쌍으로 다시 나누는 셈이다. 예를 들어 GLM-4.5는 head 차원 128 중 64차원($d_{\mathrm{rot}}=64$, 32개 쌍)에만 RoPE를 적용한다.[^glm45] 거리와 무관하게 내용만 비교하는 성분을 남겨 두는 효과로 해석할 수도 있다. 다만 이 해석을 직접 검증한 결과는 모델마다 달라 일반화하기 어렵다. [03b §5-4](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/#5-4-decoupled-rope-key)의 MLA는 다른 이유(KV 압축과 RoPE의 충돌)로 RoPE를 받는 작은 key 성분을 따로 두는데, 결과적으로 head 차원의 일부에만 RoPE가 걸린다는 점은 같다.
+Partial RoPE는 head 차원 중 일부 쌍에만 회전을 적용하고, 나머지 성분은 위치와 무관하게 내용만으로 내적한다. GPT-NeoX-20B는 GPT-J를 따라 차원의 25%에만 RoPE를 적용했고, 초기 실험에서 이것이 성능과 계산 효율의 균형이 가장 좋았다고 밝혔다.[^neox] 이때 각주파수의 분모에 들어가는 차원도 달라진다. 회전을 받는 차원을 $d_{\mathrm{rot}}$이라 하면, Hugging Face Transformers 구현은 §4-1의 식에서 $d$ 대신 $d_{\mathrm{rot}}$을 써서 $\theta_i=b^{-2i/d_{\mathrm{rot}}}$($i=0,\ldots,d_{\mathrm{rot}}/2-1$)로 계산한다.[^hf-rope] 전체 head 차원으로 만든 주파수 목록에서 일부를 고르는 것이 아니라, 가장 빠른 주파수부터 가장 느린 주파수까지의 거의 같은 범위를 더 적은 쌍으로 다시 나누는 셈이다. 예를 들어 GLM-4.5는 head 차원 128 중 64차원($d_{\mathrm{rot}}=64$, 32개 쌍)에만 RoPE를 적용한다.[^glm45] 거리와 무관하게 내용만 비교하는 성분을 남겨 두는 효과로 해석할 수도 있다. 다만 이 해석을 직접 검증한 결과는 모델마다 달라 일반화하기 어렵다. 03b §5-4의 MLA는 다른 이유(KV 압축과 RoPE의 충돌)로 RoPE를 받는 작은 key 성분을 따로 두는데, 결과적으로 head 차원의 일부에만 RoPE가 걸린다는 점은 같다.
 
 ### 6-3. 층별 RoPE base
 

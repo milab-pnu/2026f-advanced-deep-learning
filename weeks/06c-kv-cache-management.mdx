@@ -4,9 +4,9 @@ week: 6
 order: 2
 ---
 
-앞의 두 노트는 같은 결론에 닿았다. [06a §4-3](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#4-3-동시에-처리할-수-있는-요청-수)에서 H100 한 대에 Llama 3 8B를 올리면 KV cache에 약 53.5 GB가 남아 8,192토큰 요청이 49개까지 들어간다고 계산했고, [06b §4-2](/lecture/2026f-advanced-deep-learning/06b-roofline/#4-2-kv-cache-용량의-벽)에서 batch를 키워 처리량을 올리는 일이 이 공간에서 먼저 막힌다는 것을 보았다. 그런데 이 계산은 공간을 한 칸도 낭비하지 않는다고 가정했다. 실제 서빙 시스템은 이 공간을 얼마나 알뜰하게 쓰고 있을까? 그리고 여러 요청이 같은 문장을 따로따로 계산해 저장하고 있지는 않을까?
+앞의 두 노트는 같은 결론에 닿았다. 06a §4-3에서 H100 한 대에 Llama 3 8B를 올리면 KV cache에 약 53.5 GB가 남아 8,192토큰 요청이 49개까지 들어간다고 계산했고, 06b §4-2에서 batch를 키워 처리량을 올리는 일이 이 공간에서 먼저 막힌다는 것을 보았다. 그런데 이 계산은 공간을 한 칸도 낭비하지 않는다고 가정했다. 실제 서빙 시스템은 이 공간을 얼마나 알뜰하게 쓰고 있을까? 그리고 여러 요청이 같은 문장을 따로따로 계산해 저장하고 있지는 않을까?
 
-이 노트는 KV cache를 서빙 중에 관리하는 방법을 다룬다. 전체 지도는 Jiang 등의 서베이[^survey]로 잡는다. 이 서베이는 모델 가중치나 구조를 바꾸지 않고 서빙 단계에서 KV cache를 다루는 방법만 범위로 삼아, 실행 순서(temporal), 저장 위치(spatial), 표현과 보존(structural)의 세 축으로 나눈다. 이 노트의 §1–2(공간 할당)와 §3(prefix 재사용)은 서베이 §5.2.1에, §4의 양자화는 §5.1.1, eviction은 §5.2.2, offloading은 §4.1에 대응한다. 같은 서베이도 범위에서 뺀 구조 변경, 곧 GQA·MLA처럼 KV head나 표현 자체를 줄이는 방법은 [3주차 Attention heads and KV cache](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/)에서, sliding window처럼 참조 위치를 줄이는 방법은 [3주차 Efficient attention](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/)에서 다뤘다.
+이 노트는 KV cache를 서빙 중에 관리하는 방법을 다룬다. 전체 지도는 Jiang 등의 서베이[^survey]로 잡는다. 이 서베이는 모델 가중치나 구조를 바꾸지 않고 서빙 단계에서 KV cache를 다루는 방법만 범위로 삼아, 실행 순서(temporal), 저장 위치(spatial), 표현과 보존(structural)의 세 축으로 나눈다. 이 노트의 §1–2(공간 할당)와 §3(prefix 재사용)은 서베이 §5.2.1에, §4의 양자화는 §5.1.1, eviction은 §5.2.2, offloading은 §4.1에 대응한다. 같은 서베이도 범위에서 뺀 구조 변경, 곧 GQA·MLA처럼 KV head나 표현 자체를 줄이는 방법은 3주차 Attention heads and KV cache에서, sliding window처럼 참조 위치를 줄이는 방법은 3주차 Efficient attention에서 다뤘다.
 
 세 가지 문제를 차례로 본다. 공간을 미리 잡아 두는 방식의 낭비(§1–2), 같은 prefix를 요청마다 다시 계산하고 저장하는 중복(§3), 그리고 낭비와 중복을 없애도 남는 길이에 비례하는 크기(§4)다. 문제마다 동기가 달라 해법도 각각의 계보를 따른다.
 
@@ -56,13 +56,13 @@ vLLM의 기본 블록 크기는 16토큰이다(§7.2).[^vllm] Llama 3 8B에서 �
 
 이 설계를 구현한 것이 vLLM이다. 원논문은 같은 지연 수준에서 FasterTransformer와 Orca보다 처리량이 2–4배 높았다고 보고했다.[^vllm] §1-2에서 20.4–38.2%였던 KV cache 공간의 실제 사용률은 96.3%로 올랐다(원논문 Figure 2).
 
-공간을 쓰는 만큼만 주면 새로운 문제가 생긴다. 생성 도중 빈 블록이 바닥날 수 있다는 것이다. 그때는 실행 중인 요청 일부를 멈추고(preemption) 그 블록을 회수해야 한다. 원논문은 두 방법을 비교했다. 멈춘 요청의 블록을 CPU 메모리로 옮겨 두었다가 다시 가져오는 swapping과, 블록을 버리고 나중에 다시 prefill해 KV cache를 재계산하는 recomputation이다(§4.5). 재계산은 이미 생성한 토큰까지 프롬프트처럼 한 번에 처리하므로 원래의 decode보다 훨씬 빠르다. 현재 vLLM은 recomputation을 기본으로 쓴다.[^vllm-opt] 어떤 요청을 멈추고 어떤 요청을 먼저 실행할지는 [06d](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/#3-대기열과-선점)의 scheduling 문제다.
+공간을 쓰는 만큼만 주면 새로운 문제가 생긴다. 생성 도중 빈 블록이 바닥날 수 있다는 것이다. 그때는 실행 중인 요청 일부를 멈추고(preemption) 그 블록을 회수해야 한다. 원논문은 두 방법을 비교했다. 멈춘 요청의 블록을 CPU 메모리로 옮겨 두었다가 다시 가져오는 swapping과, 블록을 버리고 나중에 다시 prefill해 KV cache를 재계산하는 recomputation이다(§4.5). 재계산은 이미 생성한 토큰까지 프롬프트처럼 한 번에 처리하므로 원래의 decode보다 훨씬 빠르다. 현재 vLLM은 recomputation을 기본으로 쓴다.[^vllm-opt] 어떤 요청을 멈추고 어떤 요청을 먼저 실행할지는 06d의 scheduling 문제다.
 
 ## 3. Prefix 재사용
 
 ### 3-1. 반복되는 prefix
 
-§2의 공유는 한 요청 안에서 갈라진 시퀀스끼리의 이야기였다. 실제 서비스에서는 **서로 다른 요청**도 같은 시작 부분을 자주 가진다. 모든 요청 앞에 붙는 시스템 프롬프트, 같은 few-shot 예시, 대화가 이어질 때마다 다시 보내는 이전 대화, [06a §1-2](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#1-2-늘어나는-생성-길이)의 agent가 도구 결과를 받을 때마다 다시 넣는 문맥이 그렇다. Causal attention에서 어떤 위치의 key·value는 그 위치까지의 토큰에만 달려 있으므로, 시작 토큰열이 같으면 그 부분의 KV cache도 같다.
+§2의 공유는 한 요청 안에서 갈라진 시퀀스끼리의 이야기였다. 실제 서비스에서는 **서로 다른 요청**도 같은 시작 부분을 자주 가진다. 모든 요청 앞에 붙는 시스템 프롬프트, 같은 few-shot 예시, 대화가 이어질 때마다 다시 보내는 이전 대화, 06a §1-2의 agent가 도구 결과를 받을 때마다 다시 넣는 문맥이 그렇다. Causal attention에서 어떤 위치의 key·value는 그 위치까지의 토큰에만 달려 있으므로, 시작 토큰열이 같으면 그 부분의 KV cache도 같다.
 
 <Callout type="example">
 2,000토큰짜리 시스템 프롬프트를 모든 요청 앞에 붙이는 서비스를 생각하자. Llama 3 8B에서 이 부분의 prefill은 약 33 TFLOP이라 H100의 peak로도 약 33 ms, peak의 절반을 낸다면 약 67 ms다. KV cache로는 $2000\times128\ \text{KiB}\approx262$ MB다. 이 부분을 한 번만 계산해 두고 재사용하면, 요청마다 TTFT에서 수십 ms를 덜고 동시 요청마다 262 MB씩 중복 저장하던 공간을 하나로 줄인다.
@@ -88,7 +88,7 @@ SGLang의 RadixAttention은 cache를 **radix tree**로 관리한다.[^sglang] �
 
 재사용을 늘리려면 요청의 처리 순서도 바꿔야 한다. 같은 prefix를 가진 요청들이 멀리 떨어져 처리되면 그 사이에 cache가 지워질 수 있다. SGLang은 대기 중인 요청을 cache와 일치하는 prefix가 긴 순서로 정렬해 먼저 처리하는 cache-aware scheduling을 제안했고, 이 순서가 나무를 깊이 우선으로 훑는 것과 같아 오프라인에서는 최적임을 보였다(Theorem 3.1). 다만 일치하는 prefix가 짧은 요청은 계속 밀려 굶을 수 있다.[^sglang] 현재 SGLang은 이 정책을 선택 사항으로 두고 기본값은 도착 순서(FCFS, first come first served)다.[^sglang-args]
 
-SGLang 논문은 여러 작업에서 cache 적중률이 50–99%였고, 처리량이 최대 6.4배 높아졌다고 보고했다. Chatbot Arena에 배치했을 때 Vicuna-33B의 적중률은 74.1%였고 첫 토큰 지연은 평균 1.7배 줄었다(원논문 §6).[^sglang] [06a §3-4](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#3-4-서버-내부-지표)의 prefix cache 적중률이 바로 이 값이다. 적중률이 높은 작업일수록 TTFT와 처리량이 함께 좋아진다.
+SGLang 논문은 여러 작업에서 cache 적중률이 50–99%였고, 처리량이 최대 6.4배 높아졌다고 보고했다. Chatbot Arena에 배치했을 때 Vicuna-33B의 적중률은 74.1%였고 첫 토큰 지연은 평균 1.7배 줄었다(원논문 §6).[^sglang] 06a §3-4의 prefix cache 적중률이 바로 이 값이다. 적중률이 높은 작업일수록 TTFT와 처리량이 함께 좋아진다.
 
 <Callout type="note">
 두 설계는 같은 문제를 다른 단위로 푼다. vLLM은 PagedAttention의 블록을 그대로 cache 단위로 써서 블록 경계까지만 재사용하고, hash 조회로 빠르게 찾는다. SGLang은 토큰 단위의 나무로 일치하는 토큰까지 모두 재사용하고, 나무 구조로 공유 관계를 드러내 eviction과 scheduling에 쓴다. 어느 쪽이 유리한지는 요청들이 얼마나 긴 prefix를 어떤 단위로 공유하는지에 달려 있으므로, 자기 작업에서 실제 적중률을 재 보는 편이 낫다.
@@ -100,7 +100,7 @@ SGLang 논문은 여러 작업에서 cache 적중률이 50–99%였고, 처리�
 
 ### 4-1. 양자화
 
-가장 직접적인 방법은 [06a §4-2](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#4-2-kv-cache) 식의 원소당 bytes $p$를 줄이는 것이다. vLLM은 KV cache를 FP8로 저장하는 옵션을 제공한다. 텐서 전체 또는 attention head마다 scale을 두고, 보정 데이터로 scale을 정하는 것을 권장한다.[^vllm-fp8] Llama 3 8B라면 토큰당 128 KiB가 64 KiB로 줄어, 06a의 53.5 GB에 약 816,000토큰이 들어간다. 같은 메모리로 두 배의 batch를 받을 수 있고, 긴 문맥에서는 스텝마다 읽는 bytes도 거의 절반이 된다.
+가장 직접적인 방법은 06a §4-2 식의 원소당 bytes $p$를 줄이는 것이다. vLLM은 KV cache를 FP8로 저장하는 옵션을 제공한다. 텐서 전체 또는 attention head마다 scale을 두고, 보정 데이터로 scale을 정하는 것을 권장한다.[^vllm-fp8] Llama 3 8B라면 토큰당 128 KiB가 64 KiB로 줄어, 06a의 53.5 GB에 약 816,000토큰이 들어간다. 같은 메모리로 두 배의 batch를 받을 수 있고, 긴 문맥에서는 스텝마다 읽는 bytes도 거의 절반이 된다.
 
 더 낮은 비트로 가면 어떤 축으로 묶어 scale을 둘지가 중요해진다. Liu 등의 KIVI는 key와 value의 분포가 다르다는 데서 출발했다.[^kivi] Key에는 값이 유독 큰 channel이 몇 개 고정되어 나타나므로, 같은 channel끼리 묶어(per-channel) scale을 두어야 그 큰 값이 다른 channel의 정밀도를 망치지 않는다. Value에는 그런 패턴이 없고, attention 출력은 토큰별 value의 가중합이므로 토큰끼리 묶는(per-token) 편이 오차가 작다.
 
@@ -115,7 +115,7 @@ Key를 channel 단위로 묶으려면 여러 토큰이 모여야 하므로, KIVI
 Li 등의 SnapKV는 지울 토큰을 정하는 시점을 prefill로 옮겼다.[^snapkv] 프롬프트의 마지막 부분(observation window)이 앞부분의 어느 위치에 attention하는지를 보면, 생성하는 동안 각 head가 주목할 위치를 미리 알 수 있다는 관찰이다. Head마다 그 위치들만 골라 KV cache를 압축하고, 고른 위치 주변을 pooling으로 함께 남겨 전화번호에서 국가 번호만 남는 식으로 정보가 끊기는 것을 막는다. 16K토큰 입력에서 생성 속도를 3.6배, 메모리 효율을 8.2배 높였고, A100 한 대에서 380K토큰 문맥을 처리했다.
 
 <Callout type="warning">
-Eviction은 손실이 있는 압축이다. 지운 토큰의 key·value는 나중에 그 토큰이 다시 중요해져도 되살릴 수 없다. [3주차 Normalization and attention sink §4-3](/lecture/2026f-advanced-deep-learning/03e-normalization/#4-3-대응)의 StreamingLLM도 같은 성격이어서, 생성이 무너지지 않게 할 뿐 밀려난 중간 토큰의 정보를 볼 수 있게 하지는 않는다. 긴 문서에서 특정 문장을 찾아야 하는 작업처럼 어떤 토큰이 나중에 필요할지 미리 알기 어려운 경우에는 품질을 꼭 확인한다. §2–3의 paging과 prefix caching은 결과를 바꾸지 않는다는 점에서 성격이 다르다.
+Eviction은 손실이 있는 압축이다. 지운 토큰의 key·value는 나중에 그 토큰이 다시 중요해져도 되살릴 수 없다. 3주차 Normalization and attention sink §4-3의 StreamingLLM도 같은 성격이어서, 생성이 무너지지 않게 할 뿐 밀려난 중간 토큰의 정보를 볼 수 있게 하지는 않는다. 긴 문서에서 특정 문장을 찾아야 하는 작업처럼 어떤 토큰이 나중에 필요할지 미리 알기 어려운 경우에는 품질을 꼭 확인한다. §2–3의 paging과 prefix caching은 결과를 바꾸지 않는다는 점에서 성격이 다르다.
 </Callout>
 
 ### 4-3. Offloading과 계층 저장
@@ -140,7 +140,7 @@ KV cache 공간은 06a·06b에서 batch 크기와 처리량의 상한이었다. 
 
 앞의 두 문제의 해법은 계산 결과를 바꾸지 않고 공간과 계산의 낭비만 없앤다. 셋째 문제의 양자화와 eviction은 근사이므로 품질을 확인해야 하고, offloading은 결과를 바꾸지 않는 대신 전송 시간을 치른다. 모델 구조를 바꿔 KV cache 자체를 작게 만드는 GQA·MLA는 이 모든 방법과 함께 쓸 수 있다.
 
-공간을 쓰는 만큼만 주고 prefix를 재사용하면, 이제 여러 요청을 어떤 순서로 묶어 실행할지가 성능을 좌우한다. 어떤 요청을 먼저 prefill하고, 공간이 모자랄 때 누구를 멈추고, prefill과 decode를 한 batch에 섞을지가 [06d](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/)의 주제다.
+공간을 쓰는 만큼만 주고 prefix를 재사용하면, 이제 여러 요청을 어떤 순서로 묶어 실행할지가 성능을 좌우한다. 어떤 요청을 먼저 prefill하고, 공간이 모자랄 때 누구를 멈추고, prefill과 decode를 한 batch에 섞을지가 06d의 주제다.
 
 [^survey]: Jiang, J., Yang, P., Zhang, R., & Liu, F. (2026). Towards Efficient Large Language Model Serving: A Survey on System-Aware KV Cache Optimization. *Findings of ACL 2026*, 38450–38476. [arXiv:2607.08057](https://arxiv.org/abs/2607.08057).
 

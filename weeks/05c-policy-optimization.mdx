@@ -4,9 +4,9 @@ week: 5
 order: 2
 ---
 
-[05a](/lecture/2026f-advanced-deep-learning/05a-rlvr/)의 학습 절차에서 "보상으로 정책을 갱신한다"는 한 줄이 이 노트의 전부다. [04b §3](/lecture/2026f-advanced-deep-learning/04b-rlhf/#3-정책-최적화)에서 본 PPO(proximal policy optimization)는 value model로 advantage를 추정했다. 검증 가능한 보상으로 긴 추론을 학습할 때는 사정이 다르다. 응답이 수천 토큰이고 보상은 끝에 한 번뿐이며, 같은 문제의 응답을 여러 개 뽑는 것이 자연스럽다. 이 노트는 그 조건에서 PPO의 부품을 하나씩 떼어 내고 바꾼 계보를 따라간다. Value model을 그룹 평균으로 대신한 GRPO(group relative policy optimization)에서 출발해, GRPO의 목적함수가 만드는 세 가지 문제(길이·난이도 편향, 탐색의 붕괴, 토큰 단위 비율의 잡음)를 각각 푼 Dr. GRPO, DAPO, GSPO로 갈라지고, 그 옆에 처음부터 value model 없이 가는 RLOO·REINFORCE++의 갈래가 있다.
+05a의 학습 절차에서 "보상으로 정책을 갱신한다"는 한 줄이 이 노트의 전부다. 04b §3에서 본 PPO(proximal policy optimization)는 value model로 advantage를 추정했다. 검증 가능한 보상으로 긴 추론을 학습할 때는 사정이 다르다. 응답이 수천 토큰이고 보상은 끝에 한 번뿐이며, 같은 문제의 응답을 여러 개 뽑는 것이 자연스럽다. 이 노트는 그 조건에서 PPO의 부품을 하나씩 떼어 내고 바꾼 계보를 따라간다. Value model을 그룹 평균으로 대신한 GRPO(group relative policy optimization)에서 출발해, GRPO의 목적함수가 만드는 세 가지 문제(길이·난이도 편향, 탐색의 붕괴, 토큰 단위 비율의 잡음)를 각각 푼 Dr. GRPO, DAPO, GSPO로 갈라지고, 그 옆에 처음부터 value model 없이 가는 RLOO·REINFORCE++의 갈래가 있다.
 
-전체 지도는 [05a](/lecture/2026f-advanced-deep-learning/05a-rlvr/)와 같은 Zhang 등의 서베이[^survey]로 잡되, 이 노트에는 §3.2(정책 최적화: critic 기반, critic 없는 알고리즘, off-policy 최적화, 정규화 항)와 §3.3(표집 전략)이 대응한다. 학습 시스템이 만드는 off-policy 문제는 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)에서 따로 다루며, 이 노트는 정책 갱신식 자체에 집중한다.
+전체 지도는 05a와 같은 Zhang 등의 서베이[^survey]로 잡되, 이 노트에는 §3.2(정책 최적화: critic 기반, critic 없는 알고리즘, off-policy 최적화, 정규화 항)와 §3.3(표집 전략)이 대응한다. 학습 시스템이 만드는 off-policy 문제는 05d에서 따로 다루며, 이 노트는 정책 갱신식 자체에 집중한다.
 
 ## 1. PPO에서 GRPO로
 
@@ -35,18 +35,18 @@ $\rho_{i,t}=\pi_\theta(o_{i,t}\mid q,o_{i,<t})/\pi_{\theta_{\mathrm{old}}}(o_{i,
 <Callout type="example">
 **응답 네 개의 GRPO advantage.** 한 문제에 대한 응답 네 개의 보상이 $[1,0,1,0]$이라고 하자. 평균은 0.5, 표준편차는 0.5이므로 advantage는 $[+1,-1,+1,-1]$이다. 정답 응답의 모든 토큰은 확률이 오르는 방향의 신호를, 오답 응답의 모든 토큰은 내리는 방향의 신호를 받는다.
 
-보상이 $[1,1,1,1]$이면 평균 1, 표준편차 0이라 advantage가 모두 0이고(분모의 안정화 상수 덕에 0/0이 되지는 않는다), $[0,0,0,0]$도 마찬가지다. 이때 policy 항의 신호는 없지만 KL 항의 gradient는 남는다. [05a §3-3](/lecture/2026f-advanced-deep-learning/05a-rlvr/#3-3-데이터의-규모)에서 "너무 쉽거나 어려운 문제는 학습 신호가 없다"고 한 이유가 이 식이다.
+보상이 $[1,1,1,1]$이면 평균 1, 표준편차 0이라 advantage가 모두 0이고(분모의 안정화 상수 덕에 0/0이 되지는 않는다), $[0,0,0,0]$도 마찬가지다. 이때 policy 항의 신호는 없지만 KL 항의 gradient는 남는다. 05a §3-3에서 "너무 쉽거나 어려운 문제는 학습 신호가 없다"고 한 이유가 이 식이다.
 
 보상이 $[1,0,0,0]$이면 평균 0.25, 표준편차 0.433이므로 advantage는 $[+1.73,-0.58,-0.58,-0.58]$이다. 하나만 맞힌 어려운 문제에서 그 정답 응답은 큰 양의 신호를 받는다.
 </Callout>
 
 ## 2. GRPO의 세 가지 문제와 분기
 
-GRPO는 R1-Zero의 알고리즘이었고([05a §3-1](/lecture/2026f-advanced-deep-learning/05a-rlvr/#3-1-sft-없는-r1-zero)), 이 절의 Dr. GRPO·DAPO·GSPO도 여기서 출발했다. 그런데 위 식의 두 정규화 항과 clipping, 그리고 토큰 단위 확률비가 각각 문제를 일으킨다는 분석이 2025년에 잇달아 나왔다. 아래 세 분기는 주된 동기에 따른 분류이며 완전히 배타적이지는 않다(예를 들어 DAPO의 token-level loss는 Dr. GRPO와 같은 길이 문제를 다룬다). 다만 한 방법이 앞 방법의 문제를 고친 순서로 이어지지는 않으므로 한 줄로 잇지 않는다. §2-4에서는 GRPO 바깥에서 출발해 그룹 정규화 자체를 문제 삼은 REINFORCE 갈래를 함께 본다.
+GRPO는 R1-Zero의 알고리즘이었고(05a §3-1), 이 절의 Dr. GRPO·DAPO·GSPO도 여기서 출발했다. 그런데 위 식의 두 정규화 항과 clipping, 그리고 토큰 단위 확률비가 각각 문제를 일으킨다는 분석이 2025년에 잇달아 나왔다. 아래 세 분기는 주된 동기에 따른 분류이며 완전히 배타적이지는 않다(예를 들어 DAPO의 token-level loss는 Dr. GRPO와 같은 길이 문제를 다룬다). 다만 한 방법이 앞 방법의 문제를 고친 순서로 이어지지는 않으므로 한 줄로 잇지 않는다. §2-4에서는 GRPO 바깥에서 출발해 그룹 정규화 자체를 문제 삼은 REINFORCE 갈래를 함께 본다.
 
 ### 2-1. 길이·난이도 편향과 Dr. GRPO
 
-Liu 등은 GRPO 목적함수의 두 정규화 항이 표준 policy gradient에 없는 편향을 만든다고 분석했다.[^drgrpo] 첫째는 응답 길이로 나누는 $\frac{1}{\lvert o_i\rvert}$이다. 이 항 때문에 응답의 토큰 하나가 받는 gradient가 응답이 길수록 작아진다. 정답 응답은 짧을수록 토큰당 보상이 커서 짧은 정답이 유리하고, 오답 응답은 길수록 토큰당 벌점이 작아서 긴 오답이 덜 불리하다. 학습이 진행되면 오답이 점점 길어지며, [05b §1-2](/lecture/2026f-advanced-deep-learning/05b-long-cot/#1-2-rl-학습-중-나타나는-변화)에서 예고한 "길이 증가에는 목적함수의 몫이 있다"가 이것이다. 둘째는 그룹 표준편차로 나누는 것이다. 정답률이 0이나 1에 가까운 문제는 보상의 표준편차가 작아 advantage가 크게 부풀려지고, 정답률이 중간인 문제는 상대적으로 작은 가중치를 받는다. 문제 난이도에 따른 가중이 의도치 않게 들어가는 것이다.
+Liu 등은 GRPO 목적함수의 두 정규화 항이 표준 policy gradient에 없는 편향을 만든다고 분석했다.[^drgrpo] 첫째는 응답 길이로 나누는 $\frac{1}{\lvert o_i\rvert}$이다. 이 항 때문에 응답의 토큰 하나가 받는 gradient가 응답이 길수록 작아진다. 정답 응답은 짧을수록 토큰당 보상이 커서 짧은 정답이 유리하고, 오답 응답은 길수록 토큰당 벌점이 작아서 긴 오답이 덜 불리하다. 학습이 진행되면 오답이 점점 길어지며, 05b §1-2에서 예고한 "길이 증가에는 목적함수의 몫이 있다"가 이것이다. 둘째는 그룹 표준편차로 나누는 것이다. 정답률이 0이나 1에 가까운 문제는 보상의 표준편차가 작아 advantage가 크게 부풀려지고, 정답률이 중간인 문제는 상대적으로 작은 가중치를 받는다. 문제 난이도에 따른 가중이 의도치 않게 들어가는 것이다.
 
 Dr. GRPO(GRPO done right)는 두 항을 모두 지운다. 응답의 토큰 손실을 길이로 나누지 않고 고정 상수로 나누어 더하며, advantage는 평균만 빼고 표준편차로 나누지 않는다. 그러면 목적함수가 PPO의 원래 형태로 돌아간다. 같은 설정에서 Dr. GRPO는 정답률을 유지하면서 오답의 길이 증가를 억제했고, Qwen2.5-Math-7B를 Dr. GRPO로 학습한 최소 recipe의 모델(Oat-Zero-7B)은 AIME 2024에서 43.3%를 냈다(원논문 v2 Table 4).[^drgrpo] 같은 논문이 base model이 이미 자기 점검 표현을 낸다고 보고한 것은 05b에서 보았다.
 
@@ -128,17 +128,17 @@ REINFORCE++에는 두 변형이 있다. 기본형은 프롬프트당 응답이 �
 | RLOO[^rloo] | PPO의 부품이 불필요 | REINFORCE에 leave-one-out baseline, clipping 없음 | 응답 단위 KL을 보상에 포함 |
 | REINFORCE++[^rpp] | 그룹 정규화의 편향·불안정·프롬프트 과적합 | PPO clipping 유지, advantage를 배치 전체로 정규화(기본형) 또는 그룹 평균을 뺀 뒤 배치 정규화(baseline형), value model 없음 | 기본형은 토큰별 KL을 보상에 포함, baseline형은 별도 KL 손실($k_2$) |
 
-실제 recipe는 이 중 여러 개를 섞는다. Olmo 3의 RL은 GRPO를 바탕으로 DAPO의 clip-higher·token-level loss, Dr. GRPO의 표준편차 정규화 제거, KL 항 제거에 더해, 보상이 모두 같은 프롬프트를 걸러 배치를 채우는 active sampling과 [05d §4-2](/lecture/2026f-advanced-deep-learning/05d-rl-systems/#4-2-확률비-보정과-정밀도-변경)에서 볼 truncated importance sampling을 함께 채택했다.[^olmo3] 서베이 §3.2는 이 알고리즘들을 critic 유무와 off-policy 보정 방식으로 분류하고, §3.2.5에서 KL 정규화의 역할을 논쟁적인 주제로 정리하며 추론 RL에서는 그 필요성을 다시 따져야 한다고 본다.[^survey]
+실제 recipe는 이 중 여러 개를 섞는다. Olmo 3의 RL은 GRPO를 바탕으로 DAPO의 clip-higher·token-level loss, Dr. GRPO의 표준편차 정규화 제거, KL 항 제거에 더해, 보상이 모두 같은 프롬프트를 걸러 배치를 채우는 active sampling과 05d §4-2에서 볼 truncated importance sampling을 함께 채택했다.[^olmo3] 서베이 §3.2는 이 알고리즘들을 critic 유무와 off-policy 보정 방식으로 분류하고, §3.2.5에서 KL 정규화의 역할을 논쟁적인 주제로 정리하며 추론 RL에서는 그 필요성을 다시 따져야 한다고 본다.[^survey]
 
 ## 3. 남는 문제
 
 ### 3-1. 무작위 보상과 clipping 편향
 
-[05a §4-3](/lecture/2026f-advanced-deep-learning/05a-rlvr/#4-3-무작위-보상이라는-반례)의 무작위 보상 결과는 이 노트의 clipping으로 돌아온다. Shao 등은 무작위 보상으로도 Qwen2.5-Math의 점수가 오른 원인으로 GRPO의 clipping 편향을 가설로 제시하고 실험으로 뒷받침했다. 무작위 보상의 advantage는 기대값이 0이지만, clipping이 갱신을 비대칭으로 만들어 확률이 이미 높은 행동(이 모델의 경우 코드 형식의 추론)을 더 강화하는 쪽으로 작용한다는 것이다(원논문 부록 B.1).[^spurious] 알고리즘의 구성 요소 하나가 base model의 사전 행동을 증폭할 수 있으므로, 새 알고리즘의 개선폭을 읽을 때는 05b §4의 논쟁과 같은 주의가 필요하다.
+05a §4-3의 무작위 보상 결과는 이 노트의 clipping으로 돌아온다. Shao 등은 무작위 보상으로도 Qwen2.5-Math의 점수가 오른 원인으로 GRPO의 clipping 편향을 가설로 제시하고 실험으로 뒷받침했다. 무작위 보상의 advantage는 기대값이 0이지만, clipping이 갱신을 비대칭으로 만들어 확률이 이미 높은 행동(이 모델의 경우 코드 형식의 추론)을 더 강화하는 쪽으로 작용한다는 것이다(원논문 부록 B.1).[^spurious] 알고리즘의 구성 요소 하나가 base model의 사전 행동을 증폭할 수 있으므로, 새 알고리즘의 개선폭을 읽을 때는 05b §4의 논쟁과 같은 주의가 필요하다.
 
 ### 3-2. 옛 정책과 현재 정책의 거리
 
-이 노트의 PPO 계열 목적함수(GRPO·DAPO·CISPO·GSPO·REINFORCE++)는 같은 배치로 여러 번 갱신하기 위해 응답을 생성한 $\pi_{\theta_{\mathrm{old}}}$와 갱신 중인 $\pi_\theta$의 확률비를 쓴다(원래의 RLOO는 on-policy REINFORCE 추정량이라 확률비가 필수가 아니다). [04c §3-1](/lecture/2026f-advanced-deep-learning/04c-dpo/#3-1-on-policy와-off-policy)의 구분으로 두 정책의 표집 분포가 같으면 on-policy이고, 배치를 여러 번 갱신하거나 생성과 학습을 분리해 정책이나 실제 표집 분포가 어긋나면 off-policy가 된다. 확률비는 그 차이를 보정하는 장치이지만, 차이가 커지면 PPO식 clipped surrogate에서는 clipping으로 유효한 gradient가 제거될 수 있고, CISPO처럼 가중치만 자르는 방식에서는 잘린 가중치 때문에 보정 편향이 생길 수 있다. 실제 시스템에서 이 차이가 어디서 생기는지, 즉 응답을 만드는 inference engine과 학습 커널의 수치 차이, 그리고 비동기 학습의 정책 지연이 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)의 주제다.
+이 노트의 PPO 계열 목적함수(GRPO·DAPO·CISPO·GSPO·REINFORCE++)는 같은 배치로 여러 번 갱신하기 위해 응답을 생성한 $\pi_{\theta_{\mathrm{old}}}$와 갱신 중인 $\pi_\theta$의 확률비를 쓴다(원래의 RLOO는 on-policy REINFORCE 추정량이라 확률비가 필수가 아니다). 04c §3-1의 구분으로 두 정책의 표집 분포가 같으면 on-policy이고, 배치를 여러 번 갱신하거나 생성과 학습을 분리해 정책이나 실제 표집 분포가 어긋나면 off-policy가 된다. 확률비는 그 차이를 보정하는 장치이지만, 차이가 커지면 PPO식 clipped surrogate에서는 clipping으로 유효한 gradient가 제거될 수 있고, CISPO처럼 가중치만 자르는 방식에서는 잘린 가중치 때문에 보정 편향이 생길 수 있다. 실제 시스템에서 이 차이가 어디서 생기는지, 즉 응답을 만드는 inference engine과 학습 커널의 수치 차이, 그리고 비동기 학습의 정책 지연이 05d의 주제다.
 
 [^survey]: Zhang, K., et al. (2025). *A Survey of Reinforcement Learning for Large Reasoning Models*. [arXiv:2509.08827v3](https://arxiv.org/abs/2509.08827v3).
 [^rloo]: Ahmadian, A., et al. (2024). *Back to Basics: Revisiting REINFORCE-Style Optimization for Learning from Human Feedback in LLMs*. ACL 2024, pp. 12248–12267. [arXiv:2402.14740](https://arxiv.org/abs/2402.14740).

@@ -4,13 +4,13 @@ week: 7
 order: 3
 ---
 
-[06b §5-2](/lecture/2026f-advanced-deep-learning/06b-roofline/#5-2-mbu)의 예시에서 Llama 3 8B를 H100 한 대에서 batch 1로 돌릴 때 TPOT가 8.0 ms라면, 하한 4.9 ms의 약 1.6배이고 MBU는 61%라고 했다. 남은 39%는 주로 계산이나 데이터의 양이 아니라 **그 계산을 GPU에서 실행하는 방식**에서 생긴다. 06b의 roofline이 점의 위치를 정한다면, kernel 최적화는 같은 위치의 점을 지붕에 얼마나 가깝게 올리느냐의 문제다.
+06b §5-2의 예시에서 Llama 3 8B를 H100 한 대에서 batch 1로 돌릴 때 TPOT가 8.0 ms라면, 하한 4.9 ms의 약 1.6배이고 MBU는 61%라고 했다. 남은 39%는 주로 계산이나 데이터의 양이 아니라 **그 계산을 GPU에서 실행하는 방식**에서 생긴다. 06b의 roofline이 점의 위치를 정한다면, kernel 최적화는 같은 위치의 점을 지붕에 얼마나 가깝게 올리느냐의 문제다.
 
 전체 지도는 Pan과 Li의 inference 시스템 서베이[^survey]로 잡는다. §3.1이 kernel을 다루며, 그 가운데 §3.1.1은 attention kernel의 계보를 작업을 GPU 연산 단위에 나누어 주는 방식으로 정리한다. FlashAttention은 작업 조각을 SM에 돌아가며 배정하고(round-robin), Flash-Decoding은 KV cache를 정해진 수로 쪼개 배정하며(fixed-split), FlashInfer 등은 길이가 다른 작업을 이어 붙여 고르게 흘려 보낸다(streaming)는 것이다. 이 노트는 그 계보를 따라 decode의 attention kernel(§2), 선형층과 MoE의 kernel(§3), 그리고 kernel 바깥에서 새는 시간(§4)을 차례로 본다.
 
 ## 1. GPU에서 kernel이 실행되는 방식
 
-[2주차 Training engineering §2-4](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#2-4-attention-메모리와-flashattention)에서 kernel을 GPU가 많은 데이터를 병렬로 처리하도록 실행하는 프로그램으로, kernel fusion을 이어지는 연산을 한 kernel에 묶어 중간값의 HBM 왕복을 줄이는 방법으로 보았다. 여기에 한 가지를 더한다. GPU는 수많은 연산 장치를 SM(streaming multiprocessor)이라는 단위로 묶어 두고, kernel은 일을 thread block 단위로 쪼개 SM들에 나누어 준다. H100 SXM에는 SM이 132개 있고, SM마다 최대 228 KB의 shared memory(02e의 SRAM)가 있다.[^hopper]
+2주차 Training engineering §2-4에서 kernel을 GPU가 많은 데이터를 병렬로 처리하도록 실행하는 프로그램으로, kernel fusion을 이어지는 연산을 한 kernel에 묶어 중간값의 HBM 왕복을 줄이는 방법으로 보았다. 여기에 한 가지를 더한다. GPU는 수많은 연산 장치를 SM(streaming multiprocessor)이라는 단위로 묶어 두고, kernel은 일을 thread block 단위로 쪼개 SM들에 나누어 준다. H100 SXM에는 SM이 132개 있고, SM마다 최대 228 KB의 shared memory(02e의 SRAM)가 있다.[^hopper]
 
 이 구조에서 kernel이 하드웨어를 다 쓰려면 두 가지가 필요하다. 첫째, **thread block이 SM 수보다 충분히 많아야** 한다. 일이 thread block 40개로만 나뉘면 SM 132개 가운데 92개가 논다. 둘째, 각 thread block이 HBM에서 데이터를 읽는 동안에도 연산 장치가 놀지 않도록 읽기와 계산을 겹쳐야 한다. Decode는 두 조건을 모두 어렵게 만든다. 처리할 토큰이 적어 일이 잘게 나뉘지 않고, 한 스텝이 수 ms로 짧아 작은 비효율도 크게 드러난다.
 
@@ -82,7 +82,7 @@ Flash-Decoding은 CodeLlama-34B에서 아주 긴 시퀀스의 decode를 최대 8
 
 ### 2-3. 흩어진 KV cache와 FlashInfer
 
-[06c §2](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/#2-pagedattention)의 PagedAttention은 요청 하나의 KV cache를 GPU 메모리 곳곳의 블록에 흩어 둔다. Attention kernel은 block table을 따라 그 블록들을 찾아 읽어야 하고, 06c §2-1에서 보았듯 vLLM 원논문의 kernel은 이 때문에 연속 메모리를 쓰는 kernel보다 20–26% 느렸다. 게다가 실제 서빙의 batch에는 prefill 조각과 decode가 섞이고, 요청마다 길이가 다르며, 06c의 prefix caching으로 여러 요청이 일부 블록을 공유한다.
+06c §2의 PagedAttention은 요청 하나의 KV cache를 GPU 메모리 곳곳의 블록에 흩어 둔다. Attention kernel은 block table을 따라 그 블록들을 찾아 읽어야 하고, 06c §2-1에서 보았듯 vLLM 원논문의 kernel은 이 때문에 연속 메모리를 쓰는 kernel보다 20–26% 느렸다. 게다가 실제 서빙의 batch에는 prefill 조각과 decode가 섞이고, 요청마다 길이가 다르며, 06c의 prefix caching으로 여러 요청이 일부 블록을 공유한다.
 
 Ye 등의 FlashInfer는 이런 경우를 하나의 틀로 다룬다.[^flashinfer] 먼저 page table을 **block-sparse 행렬**로 본다. 행은 query, 열은 KV cache의 블록이고, 어떤 query가 어떤 블록을 읽는지가 0이 아닌 칸이다. PagedAttention의 흩어진 블록, 여러 요청이 공유하는 prefix, 요청마다 다른 길이가 모두 이 형식 하나로 표현된다. Kernel은 흩어진 블록을 GPU 메모리에서 shared memory의 연속된 공간으로 모은 뒤, 거기서 dense한 Tensor Core 연산을 한다. 공유 prefix는 큰 블록으로 따로 저장해 여러 query가 shared memory의 같은 데이터를 재사용하게 한다.
 
@@ -94,17 +94,17 @@ SGLang에 붙여 비교한 실험에서 FlashInfer는 Triton으로 작성한 att
 
 ### 3-1. 작은 batch의 행렬곱
 
-Decode의 선형층은 batch가 작으면 행렬과 벡터의 곱에 가깝다. [06b §3-1](/lecture/2026f-advanced-deep-learning/06b-roofline/#3-1-선형층)에서 이런 연산의 intensity가 토큰 수와 거의 같다고 했다. 이때 kernel의 목표는 연산이 아니라 **가중치를 대역폭의 한계 속도로 흘려 읽는 것**이다. 큰 행렬곱에 맞춰 조율한 kernel을 그대로 쓰면, 한쪽 차원이 아주 작은 이 납작한 행렬곱에서는 대역폭을 다 쓰지 못한다. Hong 등의 FlashDecoding++는 decode의 행렬곱이 batch 1에서는 행렬-벡터 곱이 되는 납작한 모양이라는 점에 맞춰 kernel을 따로 최적화했다.[^fdpp]
+Decode의 선형층은 batch가 작으면 행렬과 벡터의 곱에 가깝다. 06b §3-1에서 이런 연산의 intensity가 토큰 수와 거의 같다고 했다. 이때 kernel의 목표는 연산이 아니라 **가중치를 대역폭의 한계 속도로 흘려 읽는 것**이다. 큰 행렬곱에 맞춰 조율한 kernel을 그대로 쓰면, 한쪽 차원이 아주 작은 이 납작한 행렬곱에서는 대역폭을 다 쓰지 못한다. Hong 등의 FlashDecoding++는 decode의 행렬곱이 batch 1에서는 행렬-벡터 곱이 되는 납작한 모양이라는 점에 맞춰 kernel을 따로 최적화했다.[^fdpp]
 
 ### 3-2. 양자화 가중치의 kernel
 
-[07a §1-3](/lecture/2026f-advanced-deep-learning/07a-quantization/#1-3-두-가지-쓰임)의 weight-only 양자화는 kernel 안에서 가중치를 되돌려야 한다. Frantar 등의 Marlin은 4-bit 가중치와 FP16 activation의 행렬곱을 위한 kernel이다.[^marlin] 4-bit 가중치를 HBM에서 읽어 shared memory를 거쳐 레지스터로 가져오는 동안 앞선 데이터의 계산을 겹치고, 레지스터 안에서 FP16으로 되돌려 Tensor Core에 넣는다.
+07a §1-3의 weight-only 양자화는 kernel 안에서 가중치를 되돌려야 한다. Frantar 등의 Marlin은 4-bit 가중치와 FP16 activation의 행렬곱을 위한 kernel이다.[^marlin] 4-bit 가중치를 HBM에서 읽어 shared memory를 거쳐 레지스터로 가져오는 동안 앞선 데이터의 계산을 겹치고, 레지스터 안에서 FP16으로 되돌려 Tensor Core에 넣는다.
 
 원논문은 이 kernel이 언제까지 이득을 내는지 roofline으로 설명한다. 토큰 하나는 가중치 하나마다 2 FLOP을 쓰는데, 4-bit 가중치 하나는 0.5 byte이므로, A10 GPU에서는 batch가 약 50보다 작은 동안 가중치 읽기가 시간을 지배한다. 같은 계산을 H100에 대입하면 batch $b$에서 intensity는 약 $2b/0.5=4b$이고, ridge point 295를 넘기 전, 곧 $b$가 약 70보다 작은 동안은 가중치를 읽는 시간이 행렬곱을 지배한다. 그동안은 읽는 bytes가 4분의 1로 줄어든 만큼 빨라지고, 그 이상에서는 계산은 FP16 그대로이므로 이득이 사라진다. 실제로 Marlin은 batch 16–32까지 이상적인 값에 가까운 약 3.87배를 냈고, batch 128에서는 1.5배 정도로 줄었다(원논문 §1, §5.1).[^marlin] vLLM에 넣었을 때 전체 속도 향상은 최대 2.8배였다. 07a §6에서 weight-only 양자화의 이득이 batch가 커질수록 준다고 한 것이 kernel 수준에서 이렇게 나타난다.
 
 ### 3-3. MoE의 grouped GEMM
 
-MoE 층에서는 batch의 토큰들이 서로 다른 expert로 흩어지고, expert마다 받는 토큰 수가 다르다. 모든 expert에 같은 수의 토큰을 맞춰 하나의 batched 행렬곱으로 계산하는 단순한 구현은, 넘치는 토큰을 버리거나 모자란 자리를 0으로 채워야 했다. Gale 등의 MegaBlocks는 이 계산을 크기가 다른 블록들로 이루어진 block-diagonal 행렬의 곱, 곧 block-sparse 행렬곱으로 바꿔 토큰을 버리지 않고 계산했다.[^megablocks] Inference 엔진도 같은 생각을 쓴다. vLLM의 fused MoE kernel은 토큰을 expert 순서로 정렬한 뒤, 블록마다 어떤 expert의 가중치를 쓸지를 표시해 모든 expert의 행렬곱을 kernel 하나로 처리한다.[^vllm-fusedmoe] [06d §4-2](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/#4-2-moe-서빙과-expert-parallelism)의 expert parallelism에서 토큰을 GPU 사이로 보내고 받는 all-to-all도 전용 kernel이 맡는다. DeepSeek가 공개한 DeepEP가 그 예다.[^deepep]
+MoE 층에서는 batch의 토큰들이 서로 다른 expert로 흩어지고, expert마다 받는 토큰 수가 다르다. 모든 expert에 같은 수의 토큰을 맞춰 하나의 batched 행렬곱으로 계산하는 단순한 구현은, 넘치는 토큰을 버리거나 모자란 자리를 0으로 채워야 했다. Gale 등의 MegaBlocks는 이 계산을 크기가 다른 블록들로 이루어진 block-diagonal 행렬의 곱, 곧 block-sparse 행렬곱으로 바꿔 토큰을 버리지 않고 계산했다.[^megablocks] Inference 엔진도 같은 생각을 쓴다. vLLM의 fused MoE kernel은 토큰을 expert 순서로 정렬한 뒤, 블록마다 어떤 expert의 가중치를 쓸지를 표시해 모든 expert의 행렬곱을 kernel 하나로 처리한다.[^vllm-fusedmoe] 06d §4-2의 expert parallelism에서 토큰을 GPU 사이로 보내고 받는 all-to-all도 전용 kernel이 맡는다. DeepSeek가 공개한 DeepEP가 그 예다.[^deepep]
 
 ## 4. Kernel 바깥의 시간
 
@@ -128,7 +128,7 @@ Kernel 최적화는 roofline이 정한 상한에 실제 성능을 가깝게 하�
 
 Attention에서는 query가 하나라 FlashAttention의 query 방향 병렬화가 통하지 않는다. Flash-Decoding은 key·value 시퀀스를 조각으로 나누어 동시에 계산하고 log-sum-exp로 합쳐 긴 문맥의 decode를 SM 전체로 퍼뜨렸고, FlashInfer는 page table을 block-sparse 행렬로 보아 흩어진 블록, 공유 prefix, 다양한 길이를 하나의 형식과 균형 잡힌 계획으로 처리했다. 선형층에서는 작은 batch의 납작한 행렬곱을 대역폭 한계로 읽는 kernel과, 4-bit 가중치를 레지스터에서 되돌리는 Marlin 같은 kernel이 쓰이며, 그 이득은 roofline대로 batch가 커지면 줄어든다. MoE는 크기가 다른 expert별 행렬곱을 kernel 하나로 묶는다.
 
-Kernel 사이의 시간도 줄여야 한다. CUDA graph는 kernel 제출 비용을 한 번의 재생으로 줄이고, 서빙 엔진은 여러 batch 크기의 그래프를 미리 기록해 둔다. `torch.compile`과 Triton은 fusion을 자동화하고, 성능이 중요한 attention 같은 kernel은 직접 작성한 kernel이 맡는다. 다음 노트 [07e](/lecture/2026f-advanced-deep-learning/07e-inference-engines/)는 이 kernel들과 6·7주차의 기법이 vLLM과 SGLang 안에서 어떻게 하나의 엔진으로 묶이는지 본다.
+Kernel 사이의 시간도 줄여야 한다. CUDA graph는 kernel 제출 비용을 한 번의 재생으로 줄이고, 서빙 엔진은 여러 batch 크기의 그래프를 미리 기록해 둔다. `torch.compile`과 Triton은 fusion을 자동화하고, 성능이 중요한 attention 같은 kernel은 직접 작성한 kernel이 맡는다. 다음 노트 07e는 이 kernel들과 6·7주차의 기법이 vLLM과 SGLang 안에서 어떻게 하나의 엔진으로 묶이는지 본다.
 
 [^survey]: Pan, J., & Li, G. (2025). A Survey of LLM Inference Systems. [arXiv:2506.21901](https://arxiv.org/abs/2506.21901).
 

@@ -12,9 +12,9 @@ MoE 부분의 전체 지도는 Cai 등의 서베이[^moe-survey]가 좋다. arXi
 
 ## 1. Dense FFN의 확장 한계
 
-[FFN activations §1](/lecture/2026f-advanced-deep-learning/03d-ffn-activation/#1-ffn의-역할)에서 계산했듯이, 기준 모델 Llama 3 8B에서는 SwiGLU(Swish-gated linear unit) FFN이 전체 8.03B 파라미터의 약 70%를 차지한다.
+FFN activations §1에서 계산했듯이, 기준 모델 Llama 3 8B에서는 SwiGLU(Swish-gated linear unit) FFN이 전체 8.03B 파라미터의 약 70%를 차지한다.
 
-Dense 구조에서는 이 FFN 가중치를 **모든 토큰이 전부** 사용한다. FFN 폭을 두 배로 키우면 저장할 파라미터도 두 배, 토큰마다 곱해야 하는 행렬도 두 배가 된다. [Scaling §1-1](/lecture/2026f-advanced-deep-learning/02d-scaling/#1-1-모델데이터계산량)에서 본 근사 $C\approx6ND$도 같은 가정을 깔고 있다. 파라미터 $N$을 늘리면 토큰당 계산 $6N$이 같이 늘어난다.
+Dense 구조에서는 이 FFN 가중치를 **모든 토큰이 전부** 사용한다. FFN 폭을 두 배로 키우면 저장할 파라미터도 두 배, 토큰마다 곱해야 하는 행렬도 두 배가 된다. Scaling §1-1에서 본 근사 $C\approx6ND$도 같은 가정을 깔고 있다. 파라미터 $N$을 늘리면 토큰당 계산 $6N$이 같이 늘어난다.
 
 그런데 파라미터 수와 토큰당 계산을 꼭 함께 늘려야 할까? Shazeer 등(2017)은 입력마다 네트워크의 일부만 활성화하는 conditional computation으로 이 둘을 분리하자고 제안했다. 논문의 표현을 빌리면 "계산을 비례해서 늘리지 않고 모델 용량을 크게 늘리는" 방법이다.[^shazeer] 이들은 LSTM(long short-term memory) 층 사이에 expert 수천 개로 이루어진 MoE layer를 넣어 최대 137B 파라미터 규모까지 학습했다. 이 구조를 Transformer의 FFN 자리에 옮긴 것이 GShard[^gshard]와 Switch Transformer[^switch]이고, 이 노트에서 예로 드는 Mixtral, DeepSeek-V3, Qwen3, gpt-oss도 이 형태를 따른다. DeepSeek-V3, Qwen3, gpt-oss를 비롯한 최근 LLM의 전체 구성은 Sebastian Raschka의 [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/)에서 나란히 비교할 수 있다.[^gallery] 모델마다 블록 구성도와 함께 전체·활성 파라미터 같은 설정을 정리해 두었다.
 
@@ -115,7 +115,7 @@ Mixtral 8x7B로 앞의 두 값을 계산해 보자. 층마다 attention은 약 4
 
 expert를 100개 넘게 두고 그중 몇 개만 고르는 최근 모델에서는 두 숫자의 차이가 훨씬 크다. 보고된 활성 파라미터를 전체로 나누면 Mixtral은 13B/47B로 약 28%지만, DeepSeek-V3는 37B/671B로 약 5.5%이고[^dsv3] gpt-oss-120b는 5.1B/116.8B로 약 4.4%다.[^gptoss] 비율은 이 노트에서 계산한 값이며, 앞에서 본 대로 모델마다 활성 파라미터의 집계 관례가 조금씩 다르다. 그래서 MoE 모델을 비교할 때는 전체 파라미터 하나만 보지 말고 활성 파라미터와 expert 구성을 함께 보아야 한다.
 
-**통신.** Expert가 많으면 여러 GPU(graphics processing unit)에 나누어 둔다. 이것이 [Training engineering §4-4](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#4-4-ep)에서 본 EP(expert parallelism)다. 각 GPU는 자기 토큰을 선택된 expert가 있는 GPU로 보내고(dispatch), 결과를 다시 받아 원래 순서로 합친다(combine). 두 단계 모두 all-to-all 통신이다. DeepSeek-V3는 노드를 넘는 EP 때문에 계산과 통신의 비율이 약 1:1이 되었다고 보고했고, 토큰 하나가 가는 노드를 최대 4개로 제한하는 routing 규칙을 두었다.[^dsv3] 추론에서 batch가 작으면 토큰 몇 개를 위해 여러 expert의 가중치를 메모리에서 읽어야 하므로 효율이 떨어질 수 있다. 추론 쪽 비용 분석은 6주차에서 다룬다.
+**통신.** Expert가 많으면 여러 GPU(graphics processing unit)에 나누어 둔다. 이것이 Training engineering §4-4에서 본 EP(expert parallelism)다. 각 GPU는 자기 토큰을 선택된 expert가 있는 GPU로 보내고(dispatch), 결과를 다시 받아 원래 순서로 합친다(combine). 두 단계 모두 all-to-all 통신이다. DeepSeek-V3는 노드를 넘는 EP 때문에 계산과 통신의 비율이 약 1:1이 되었다고 보고했고, 토큰 하나가 가는 노드를 최대 4개로 제한하는 routing 규칙을 두었다.[^dsv3] 추론에서 batch가 작으면 토큰 몇 개를 위해 여러 expert의 가중치를 메모리에서 읽어야 하므로 효율이 떨어질 수 있다. 추론 쪽 비용 분석은 6주차에서 다룬다.
 
 <Video src="https://www.youtube.com/watch?v=RcJ1YXHLv5o" caption="Stanford CS25 V4, Albert Jiang, Demystifying Mixtral of Experts (2024). Mixtral의 router와 expert 구성, routing 분석을 설명한다." />
 
@@ -321,7 +321,7 @@ Expert-choice routing은 인과성(causality)을 지키지 않는다. 한 토큰
 
 ### 5-3. Mixture-of-Recursions
 
-Bae 등(2025)의 **Mixture-of-Recursions**(MoR)은 두 갈래를 합친다. 가중치는 recursive Transformer처럼 공유하고, 토큰마다 공유 블록을 몇 번 반복할지는 MoD처럼 router가 정한다.[^mor] [Decoder-only LLM overview §2-2](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/#2-2-llama-3-8b-구조)의 곁주에서 "블록 가중치 공유와 토큰별 반복 횟수 선택을 결합한 변형"이라고 소개한 모델이다. Universal Transformer도 위치별로 반복을 멈추는 halting 장치를 두었지만,[^ut] MoR 논문은 기존의 동적 반복 방식들이 별도 학습 절차나 배포 효율의 제약 때문에 실제로는 고정 횟수 반복으로 돌아가는 경우가 많았다고 설명한다.[^mor]
+Bae 등(2025)의 **Mixture-of-Recursions**(MoR)은 두 갈래를 합친다. 가중치는 recursive Transformer처럼 공유하고, 토큰마다 공유 블록을 몇 번 반복할지는 MoD처럼 router가 정한다.[^mor] Decoder-only LLM overview §2-2의 곁주에서 "블록 가중치 공유와 토큰별 반복 횟수 선택을 결합한 변형"이라고 소개한 모델이다. Universal Transformer도 위치별로 반복을 멈추는 halting 장치를 두었지만,[^ut] MoR 논문은 기존의 동적 반복 방식들이 별도 학습 절차나 배포 효율의 제약 때문에 실제로는 고정 횟수 반복으로 돌아가는 경우가 많았다고 설명한다.[^mor]
 
 **Routing.** 방식은 두 가지다. **Expert-choice**에서는 반복 단계마다 router가 계속 진행할 상위 $k$개 토큰을 고르고, 이번 단계에서 선택된 토큰만 다음 단계의 후보가 된다. 단계 $r$마다 남길 토큰 수 $k_r$을 미리 정해 두므로 balancing은 필요 없다. 논문 설정에서 $k_r$은 전체 토큰의 $1,\,2/3,\,1/3$로 단계가 깊어질수록 줄어든다. 다만 상위 $k_r$개를 고르려면 시퀀스 전체를 봐야 하므로 §5-1에서 본 non-causal 문제가 그대로 따라온다. MoR도 추론용 보조 router나 보조 손실로 이를 우회하며, 논문의 비교에서는 보조 손실 쪽이 나았다. **Token-choice**에서는 첫 단계에서 토큰마다 반복 횟수를 한 번에 정한다. 미래 토큰을 보지 않아 인과성 문제는 없지만, 반복 횟수별 토큰 수가 고르지 않을 수 있어 §3의 balancing loss나 bias 방식이 필요하다. 논문은 balancing loss 쪽이 더 안정적이었다고 보고한다.[^mor]
 

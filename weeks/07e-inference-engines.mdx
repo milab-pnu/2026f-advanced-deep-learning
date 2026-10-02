@@ -4,7 +4,7 @@ week: 7
 order: 4
 ---
 
-6·7주차에 본 기법은 따로따로 쓰이는 일이 드물다. 요청 하나가 서버에 들어오면 [06d](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/)의 scheduler가 batch에 넣고, [06c](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/)의 KV cache 관리자가 블록을 내주고 prefix cache를 찾고, [07d](/lecture/2026f-advanced-deep-learning/07d-kernel-optimization/)의 kernel이 [07a](/lecture/2026f-advanced-deep-learning/07a-quantization/)의 양자화된 가중치로 계산하고, 경우에 따라 [07c](/lecture/2026f-advanced-deep-learning/07c-speculative-decoding/)의 draft가 다음 토큰을 추측한다. 이 모두를 한 프로그램 안에서 맞물려 돌리는 것이 **inference engine**이다. 이 노트는 대표적인 공개 엔진인 vLLM과 SGLang이 앞의 기법들을 어떻게 묶는지 보고, 엔진의 성능을 재는 절차로 6·7주차를 마무리한다.
+6·7주차에 본 기법은 따로따로 쓰이는 일이 드물다. 요청 하나가 서버에 들어오면 06d의 scheduler가 batch에 넣고, 06c의 KV cache 관리자가 블록을 내주고 prefix cache를 찾고, 07d의 kernel이 07a의 양자화된 가중치로 계산하고, 경우에 따라 07c의 draft가 다음 토큰을 추측한다. 이 모두를 한 프로그램 안에서 맞물려 돌리는 것이 **inference engine**이다. 이 노트는 대표적인 공개 엔진인 vLLM과 SGLang이 앞의 기법들을 어떻게 묶는지 보고, 엔진의 성능을 재는 절차로 6·7주차를 마무리한다.
 
 전체 지도는 Park 등의 inference engine 서베이[^survey]로 잡는다. 이 서베이는 공개 엔진 25개를 하나씩 살펴보고(서베이 §4), 엔진들이 쓰는 최적화를 batching, 병렬화, 압축, caching, attention 등으로 분류한다(서베이 §5). 절 번호는 arXiv v2 기준이다. 이 노트의 §2–3은 서베이 §4 가운데 vLLM과 SGLang 절에, 그 밖의 엔진을 다루는 §4는 §4의 나머지 절에 대응하고, §5의 측정 절차는 엔진의 공식 문서를 따른다.
 
@@ -18,13 +18,13 @@ order: 4
 4. **Model runner**가 batch의 입력 텐서를 준비하고, attention·선형층 kernel과 CUDA graph로 모델을 한 번 실행한다(07d).
 5. **Sampler**가 마지막 위치의 logits로 다음 토큰을 고르고, speculative decoding이라면 추측을 검증한다(07c).
 
-[06b §4-1](/lecture/2026f-advanced-deep-learning/06b-roofline/#4-1-batch-크기에-따른-decode-스텝)에서 Llama 3 8B의 decode 한 스텝의 하한이 H100에서 약 5 ms라고 계산했다. 이 짧은 시간 안에 1–3의 작업과 입력 텐서 준비 같은 CPU 쪽 작업까지 끝내야 GPU가 놀지 않는다. 최근 엔진 설계의 상당 부분이 이 CPU 쪽 시간을 GPU 실행 뒤에 숨기는 데 쓰이는 이유다.
+06b §4-1에서 Llama 3 8B의 decode 한 스텝의 하한이 H100에서 약 5 ms라고 계산했다. 이 짧은 시간 안에 1–3의 작업과 입력 텐서 준비 같은 CPU 쪽 작업까지 끝내야 GPU가 놀지 않는다. 최근 엔진 설계의 상당 부분이 이 CPU 쪽 시간을 GPU 실행 뒤에 숨기는 데 쓰이는 이유다.
 
 ## 2. vLLM
 
 ### 2-1. V1 구조
 
-vLLM은 [06c §2](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/#2-pagedattention)의 PagedAttention 논문과 함께 공개된 엔진이다. 2025년의 V1 구조 개편은 기능보다 **CPU 비용**을 겨냥했다.[^vllm-v1] vLLM 팀은 개편의 동기로 H100에서 Llama 8B의 GPU 실행 시간이 스텝당 약 5 ms까지 짧아진 점을 들었다.
+vLLM은 06c §2의 PagedAttention 논문과 함께 공개된 엔진이다. 2025년의 V1 구조 개편은 기능보다 **CPU 비용**을 겨냥했다.[^vllm-v1] vLLM 팀은 개편의 동기로 H100에서 Llama 8B의 GPU 실행 시간이 스텝당 약 5 ms까지 짧아진 점을 들었다.
 
 <Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.30.0/docs/assets/design/arch_overview/v1_process_architecture_tp4.png" alt="vLLM V1의 프로세스 구조(GPU 4대, TP=4). 왼쪽의 API Server가 HTTP 요청을 받아 입력 처리, 토큰화, 스트리밍을 맡고, ZMQ로 가운데의 Engine Core와 양방향으로 통신한다. Engine Core는 scheduler와 KV cache 관리자를 맡는다. Engine Core에서 오른쪽의 GPU Worker 0–3 네 개로 화살표가 나가며, 각 worker는 GPU 하나에서 모델 실행(forward)을 맡는다. 아래에 프로세스가 모두 6개(API Server 1, Engine Core 1, GPU Worker 4)라고 적혀 있다." caption="vLLM V1의 프로세스 구조. 토큰화와 스트리밍(API Server), scheduling과 KV cache 관리(Engine Core), 모델 실행(GPU Worker)이 서로 다른 프로세스에서 돈다." source="vLLM Project, Architecture Overview 문서 그림(docs/assets/design/arch_overview/v1_process_architecture_tp4.png, v0.30.0). Apache License 2.0. 원본 그대로 사용." />
 
@@ -59,7 +59,7 @@ vLLM의 설정 손잡이는 앞 노트의 개념과 거의 일대일로 대응�
 
 ### 3-1. 설계
 
-SGLang은 LLM을 여러 번 부르는 프로그램, 곧 생성·분기·도구 호출이 섞인 구조화된 생성을 빠르게 실행하려는 목표에서 출발했다.[^sglang] 그래서 생성 과정을 짜는 작은 프론트엔드 언어와, 그것을 실행하는 런타임을 함께 설계했다. 런타임의 핵심은 [06c §3-3](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/#3-3-radixattention)의 RadixAttention이다. 같은 프로그램 안에서 여러 호출이 공통 prefix를 공유하는 일이 잦기 때문이다.
+SGLang은 LLM을 여러 번 부르는 프로그램, 곧 생성·분기·도구 호출이 섞인 구조화된 생성을 빠르게 실행하려는 목표에서 출발했다.[^sglang] 그래서 생성 과정을 짜는 작은 프론트엔드 언어와, 그것을 실행하는 런타임을 함께 설계했다. 런타임의 핵심은 06c §3-3의 RadixAttention이다. 같은 프로그램 안에서 여러 호출이 공통 prefix를 공유하는 일이 잦기 때문이다.
 
 정해진 형식으로 출력을 내게 하는 constrained decoding도 런타임이 맡는다. 출력이 JSON 스키마를 따라야 한다면, 생성 도중 스키마가 허용하는 토큰만 고르도록 매 스텝 마스크를 씌운다. SGLang은 스키마를 유한 상태 기계(FSM)로 바꾼 뒤, 다음에 올 수 있는 문자열이 하나뿐인 구간을 한 단계로 압축했다.[^sglang] 예를 들어 `{"name": "` 같은 고정된 부분은 토큰을 하나씩 decode하지 않고 한 번에 붙이고, 사람 이름처럼 모델이 정해야 하는 부분에서만 decode한다. 06a의 decode 스텝 수가 그만큼 줄어든다.
 
@@ -79,13 +79,13 @@ vLLM과 SGLang 말고도 목적이 다른 엔진이 여럿 있다.[^survey] NVID
 
 ### 5-1. 측정 조건
 
-엔진이나 설정을 비교할 때는 결과에 영향을 주는 조건을 모두 고정한다. 모델과 그 버전, GPU의 종류와 수, 가중치와 KV cache의 정밀도, 입력과 출력 길이의 분포, sampling 설정이 같아야 한다. 출력 길이를 고정하려면 종료 토큰을 무시하고 정해진 길이까지 생성하게 한다.[^nvidia-bench] 첫 측정은 warmup으로 버리고, prefix caching이 있는 엔진에서는 cache가 비어 있는 상태와 채워진 상태를 구분한다. vLLM과 SGLang 모두 측정 사이에 prefix cache를 비우는 방법을 제공한다.[^sglang-bench] 같은 데이터라도 [06a §3-1](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#3-1-요청-하나의-지연)에서 보았듯 도구마다 지표의 정의가 조금씩 다르므로, 지표 이름보다 정의를 확인한다. NVIDIA의 측정 안내는 ITL을 TPOT와 같은 값으로 정의하지만, vLLM은 둘을 따로 보고한다.[^nvidia-bench][^vllm-bench]
+엔진이나 설정을 비교할 때는 결과에 영향을 주는 조건을 모두 고정한다. 모델과 그 버전, GPU의 종류와 수, 가중치와 KV cache의 정밀도, 입력과 출력 길이의 분포, sampling 설정이 같아야 한다. 출력 길이를 고정하려면 종료 토큰을 무시하고 정해진 길이까지 생성하게 한다.[^nvidia-bench] 첫 측정은 warmup으로 버리고, prefix caching이 있는 엔진에서는 cache가 비어 있는 상태와 채워진 상태를 구분한다. vLLM과 SGLang 모두 측정 사이에 prefix cache를 비우는 방법을 제공한다.[^sglang-bench] 같은 데이터라도 06a §3-1에서 보았듯 도구마다 지표의 정의가 조금씩 다르므로, 지표 이름보다 정의를 확인한다. NVIDIA의 측정 안내는 ITL을 TPOT와 같은 값으로 정의하지만, vLLM은 둘을 따로 보고한다.[^nvidia-bench][^vllm-bench]
 
 ### 5-2. 부하를 걸고 곡선 그리기
 
 서빙 성능은 숫자 하나가 아니라 **부하에 따른 곡선**이다. 요청을 적게 보내면 지연은 짧고 처리량은 낮으며, 많이 보낼수록 처리량은 오르다가 batch가 상한에 닿으면 포화하고 지연만 계속 늘어난다. 부하를 거는 방법은 두 가지다. 초당 요청 수를 정해 Poisson 과정으로 보내는 request rate 방식과, 동시에 처리 중인 요청 수를 고정하는 concurrency 방식이다. vLLM의 `vllm bench serve`는 둘 다 지원하고, `--burstiness`로 요청이 몰려 오는 정도도 바꿀 수 있다.[^vllm-bench] NVIDIA의 안내는 요청률을 고정하면 처리하지 못한 요청이 끝없이 쌓일 수 있다며 concurrency 방식을 권하고, 1부터 엔진의 최대 batch를 조금 넘는 값까지 바꿔 가며 재라고 한다.[^nvidia-bench]
 
-[06a §3-3](/lecture/2026f-advanced-deep-learning/06a-llm-inference/#3-3-slo와-goodput)의 goodput도 직접 잴 수 있다. `vllm bench serve`의 `--goodput` 옵션에 TTFT와 TPOT의 목표치를 밀리초로 주면, 목표를 지킨 요청만 센 처리량을 함께 보고한다.[^vllm-bench]
+06a §3-3의 goodput도 직접 잴 수 있다. `vllm bench serve`의 `--goodput` 옵션에 TTFT와 TPOT의 목표치를 밀리초로 주면, 목표를 지킨 요청만 센 처리량을 함께 보고한다.[^vllm-bench]
 
 <Callout type="example">
 기말 프로젝트에서 Llama 3.1 8B를 H100 한 대로 서빙한다고 하자. BF16과 FP8 가중치 가운데 무엇이 나은지 알고 싶다면, 같은 엔진 버전과 설정으로 서버를 두 번 띄우고 각각 다음처럼 잰다.

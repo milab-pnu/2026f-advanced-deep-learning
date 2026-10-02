@@ -13,22 +13,22 @@ order: 0
 | 주차 | 노트 | 줄이려는 비용 |
 |---|---|---|
 | 6주차 | LLM inference (이 노트) | 비용의 구조, 지표, 메모리 예산 |
-| | [Roofline analysis](/lecture/2026f-advanced-deep-learning/06b-roofline/) | 연산과 메모리 대역폭 중 어느 쪽이 병목인가 |
-| | [KV cache management](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/) | KV cache 공간의 낭비와 중복 계산 |
-| | [Batching and scheduling](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/) | 여러 요청을 함께 처리할 때의 대기와 간섭 |
+| | Roofline analysis | 연산과 메모리 대역폭 중 어느 쪽이 병목인가 |
+| | KV cache management | KV cache 공간의 낭비와 중복 계산 |
+| | Batching and scheduling | 여러 요청을 함께 처리할 때의 대기와 간섭 |
 | 7주차 | Quantization | 가중치·KV cache 원소당 bytes |
 | | Pruning, low-rank, distillation | 파라미터 수 자체 |
 | | Speculative decoding and multi-token prediction | 순차 decode 스텝 수 |
 | | Kernel optimization | 같은 계산을 GPU에서 실행하는 시간 |
 | | Inference engines | 위 기법을 묶은 vLLM·SGLang의 구성과 측정 |
 
-이미 앞 주차에서 다룬 기법은 다시 풀지 않는다. KV cache의 구조와 MQA·GQA·MLA는 [3주차 Attention heads and KV cache](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/)에서, FlashAttention의 블록 계산은 [2주차 Training engineering §2-4](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#2-4-attention-메모리와-flashattention)에서, MoE(mixture of experts)의 routing은 [3주차 Mixture of Experts](/lecture/2026f-advanced-deep-learning/03f-mixture-of-experts/)에서 보았다. 6·7주차는 그 결과를 비용의 관점에서 다시 읽는다. 기준 모델은 2주차부터 써 온 **Llama 3 8B**($L=32$, query head 32개, KV(key-value) head 8개, $d_{\text{head}}=128$, $d=4096$)다.[^llama3]
+이미 앞 주차에서 다룬 기법은 다시 풀지 않는다. KV cache의 구조와 MQA·GQA·MLA는 3주차 Attention heads and KV cache에서, FlashAttention의 블록 계산은 2주차 Training engineering §2-4에서, MoE(mixture of experts)의 routing은 3주차 Mixture of Experts에서 보았다. 6·7주차는 그 결과를 비용의 관점에서 다시 읽는다. 기준 모델은 2주차부터 써 온 **Llama 3 8B**($L=32$, query head 32개, KV(key-value) head 8개, $d_{\text{head}}=128$, $d=4096$)다.[^llama3]
 
 ## 1. Inference 비용이 커지는 이유
 
 ### 1-1. 학습 계산과 inference 계산
 
-[2주차 Scaling 노트 §2-2](/lecture/2026f-advanced-deep-learning/02d-scaling/#2-2-chinchilla)의 Chinchilla는 **학습 계산 예산**이 정해졌을 때 loss를 가장 낮추는 모델 크기와 토큰 수를 찾았다. 이 기준에는 학습이 끝난 뒤 그 모델을 얼마나 쓸지가 들어 있지 않다. Sardana 등은 이 기준에 inference 비용을 더했다.[^sardana] 파라미터 $N$개인 모델을 $D_{\text{tr}}$ 토큰으로 학습하는 데 약 $6ND_{\text{tr}}$ FLOPs, 학습 뒤 모두 $D_{\text{inf}}$ 토큰을 처리하는 데 약 $2ND_{\text{inf}}$ FLOPs가 든다고 보고, 둘의 합을 최소화하는 배분을 다시 구한 것이다. 토큰 하나의 forward가 파라미터마다 곱셈 하나와 덧셈 하나, 약 2 FLOP을 쓰고, 학습은 backward까지 더해 그 세 배가 든다는 근사다.
+2주차 Scaling 노트 §2-2의 Chinchilla는 **학습 계산 예산**이 정해졌을 때 loss를 가장 낮추는 모델 크기와 토큰 수를 찾았다. 이 기준에는 학습이 끝난 뒤 그 모델을 얼마나 쓸지가 들어 있지 않다. Sardana 등은 이 기준에 inference 비용을 더했다.[^sardana] 파라미터 $N$개인 모델을 $D_{\text{tr}}$ 토큰으로 학습하는 데 약 $6ND_{\text{tr}}$ FLOPs, 학습 뒤 모두 $D_{\text{inf}}$ 토큰을 처리하는 데 약 $2ND_{\text{inf}}$ FLOPs가 든다고 보고, 둘의 합을 최소화하는 배분을 다시 구한 것이다. 토큰 하나의 forward가 파라미터마다 곱셈 하나와 덧셈 하나, 약 2 FLOP을 쓰고, 학습은 backward까지 더해 그 세 배가 든다는 근사다.
 
 <Callout type="example">
 두 식이 같아지는 지점은 $6ND_{\text{tr}}=2ND_{\text{inf}}$, 곧 $D_{\text{inf}}=3D_{\text{tr}}$이다. $N$이 약분되므로 모델 크기와 상관없이, **학습 토큰 수의 세 배를 처리하면 inference 계산이 학습 계산을 넘어선다.** 약 15T 토큰으로 학습한 Llama 3 8B라면 약 45T 토큰이다.[^llama3] 하루 10억 토큰을 처리하는 서비스는 45,000일이 걸리지만, 하루 1,000억 토큰을 처리하는 서비스는 450일, 1조 토큰이면 45일이다. 이 근사는 attention 계산을 빼고 FLOPs로만 비교한 것이다. §1-3에서 보듯 decode는 같은 FLOPs에 학습보다 긴 GPU 시간을 쓰므로, GPU 시간으로 따지면 역전이 더 일찍 온다.
@@ -38,11 +38,11 @@ Sardana 등은 이 비용을 넣으면, 약 10억 건 이상의 요청을 예상
 
 ### 1-2. 늘어나는 생성 길이
 
-Inference가 다루는 토큰의 양도 늘고 있다. [5주차 Long CoT 노트 §3](/lecture/2026f-advanced-deep-learning/05b-long-cot/#3-추론-시-계산)에서 본 추론 모델은 답을 내기 전에 수천에서 수만 토큰의 사고 과정을 생성하고, 정확도를 높이려고 같은 문제에 여러 응답을 뽑기도 한다. [5주차 Agentic RL](/lecture/2026f-advanced-deep-learning/05e-agentic-rl/#1-1-형식의-차이)의 agent는 도구 결과를 받을 때마다 지금까지의 대화 전체를 문맥으로 다시 넣고 다음 행동을 생성한다. 학습도 inference에 기댄다. [5주차 RL systems 노트 §1-1](/lecture/2026f-advanced-deep-learning/05d-rl-systems/#1-1-한-스텝의-구조)에서 보았듯 RL 학습 시간의 가장 큰 몫이 응답 생성이다. 같은 모델이라도 한 요청이 만드는 토큰이 많아지면 §1-1의 $D_{\text{inf}}$가 그만큼 빨리 쌓인다.
+Inference가 다루는 토큰의 양도 늘고 있다. 5주차 Long CoT 노트 §3에서 본 추론 모델은 답을 내기 전에 수천에서 수만 토큰의 사고 과정을 생성하고, 정확도를 높이려고 같은 문제에 여러 응답을 뽑기도 한다. 5주차 Agentic RL의 agent는 도구 결과를 받을 때마다 지금까지의 대화 전체를 문맥으로 다시 넣고 다음 행동을 생성한다. 학습도 inference에 기댄다. 5주차 RL systems 노트 §1-1에서 보았듯 RL 학습 시간의 가장 큰 몫이 응답 생성이다. 같은 모델이라도 한 요청이 만드는 토큰이 많아지면 §1-1의 $D_{\text{inf}}$가 그만큼 빨리 쌓인다.
 
 ### 1-3. 순차 생성의 비효율
 
-토큰 수만이 문제는 아니다. 학습은 길이 $n$인 시퀀스의 모든 위치를 한 번의 forward로 처리하고, 각 위치의 loss를 병렬로 구한다(teacher forcing). 생성은 정답 문장이 없으니 그럴 수 없다. [2주차 Decoder-only LLM §3-3](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/#3-3-생성-루프-autoregressive-generation)의 생성 루프처럼, 다음 토큰은 앞 토큰을 고른 뒤에야 입력할 수 있다.
+토큰 수만이 문제는 아니다. 학습은 길이 $n$인 시퀀스의 모든 위치를 한 번의 forward로 처리하고, 각 위치의 loss를 병렬로 구한다(teacher forcing). 생성은 정답 문장이 없으니 그럴 수 없다. 2주차 Decoder-only LLM §3-3의 생성 루프처럼, 다음 토큰은 앞 토큰을 고른 뒤에야 입력할 수 있다.
 
 $$
 x_{n+1}\sim p_\theta(\cdot\mid x_{1:n}),\qquad
@@ -55,7 +55,7 @@ $$
 
 ### 2-1. 두 단계의 역할
 
-[3주차 Attention heads and KV cache §1-1](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/#1-1-decode-단계에서-재사용되는-key와-value)에서 보았듯 causal attention에서는 과거 위치의 key와 value가 새 토큰이 붙어도 바뀌지 않는다. 그래서 한 번 계산한 key·value를 저장해 두는 KV cache를 쓰고, 생성 요청은 성격이 다른 두 단계로 나뉜다.[^survey]
+3주차 Attention heads and KV cache §1-1에서 보았듯 causal attention에서는 과거 위치의 key와 value가 새 토큰이 붙어도 바뀌지 않는다. 그래서 한 번 계산한 key·value를 저장해 두는 KV cache를 쓰고, 생성 요청은 성격이 다른 두 단계로 나뉜다.[^survey]
 
 **Prefill.** 프롬프트의 토큰 $n$개를 한 번의 forward로 처리한다. 모든 층에서 $n$개 위치의 key·value를 계산해 KV cache에 쓰고, 마지막 위치의 출력으로 첫 출력 토큰을 고른다. $n$개 위치가 함께 계산되므로 학습의 forward와 비슷하게 큰 행렬곱이 된다.
 
@@ -69,7 +69,7 @@ $$
 
 모델의 가중치는 forward 한 번마다 GPU 메모리에서 연산 장치로 읽어 와야 한다. Prefill은 그렇게 읽은 가중치를 $n$개 위치에 함께 쓰므로, 읽는 시간보다 계산하는 시간이 길어진다. 이런 단계를 계산이 병목이라는 뜻에서 **compute-bound**라 부른다. Decode는 같은 가중치를 읽어 위치 하나에만 쓰므로 계산은 금방 끝나고 대부분의 시간을 읽기에 쓴다. 이런 단계는 **memory-bound**다.
 
-같은 모델, 같은 요청 안에서도 병목이 단계마다 다르다는 점이 inference 최적화의 출발점이다. Prefill을 빠르게 하려면 계산을 줄이거나 여러 GPU에 나누어야 하고, decode를 빠르게 하려면 읽는 바이트를 줄이거나 한 번 읽은 가중치를 여러 토큰에 나누어 써야 한다. 이 차이를 하드웨어 수치로 계산하는 일은 다음 노트 [06b](/lecture/2026f-advanced-deep-learning/06b-roofline/)의 roofline 분석이 맡는다. 여기서는 두 단계가 사용자에게 각각 무엇으로 보이는지부터 정한다.
+같은 모델, 같은 요청 안에서도 병목이 단계마다 다르다는 점이 inference 최적화의 출발점이다. Prefill을 빠르게 하려면 계산을 줄이거나 여러 GPU에 나누어야 하고, decode를 빠르게 하려면 읽는 바이트를 줄이거나 한 번 읽은 가중치를 여러 토큰에 나누어 써야 한다. 이 차이를 하드웨어 수치로 계산하는 일은 다음 노트 06b의 roofline 분석이 맡는다. 여기서는 두 단계가 사용자에게 각각 무엇으로 보이는지부터 정한다.
 
 ## 3. 성능 지표
 
@@ -150,7 +150,7 @@ TPOT와 ITL은 토큰이 하나씩 도착하면 거의 같지만, 한 번에 여
 | Prefix cache 적중 | `vllm:prefix_cache_queries`, `vllm:prefix_cache_hits` | 둘의 비가 적중률. 높을수록 이미 계산한 prefill을 재사용한다 |
 | 실행·대기 요청 수 | `vllm:num_requests_running`, `vllm:num_requests_waiting` | 대기 요청이 늘면 TTFT가 늘어난다 |
 
-예를 들어 TTFT의 꼬리가 길어졌는데 KV cache 사용률이 1 근처이고 대기 요청이 쌓여 있다면, 계산이 느린 것이 아니라 KV cache 공간이 모자라 새 요청이 들어가지 못하는 상황일 가능성이 크다. KV cache 공간과 prefix cache는 [06c](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/)에서, 대기열과 실행 순서는 [06d §3](/lecture/2026f-advanced-deep-learning/06d-batching-scheduling/#3-대기열과-선점)에서 다룬다. GPU가 하드웨어 성능의 몇 %를 쓰고 있는지를 재는 MFU(model FLOPs utilization)와 MBU(model bandwidth utilization)는 roofline이 필요하므로 다음 노트에서 정의한다.
+예를 들어 TTFT의 꼬리가 길어졌는데 KV cache 사용률이 1 근처이고 대기 요청이 쌓여 있다면, 계산이 느린 것이 아니라 KV cache 공간이 모자라 새 요청이 들어가지 못하는 상황일 가능성이 크다. KV cache 공간과 prefix cache는 06c에서, 대기열과 실행 순서는 06d §3에서 다룬다. GPU가 하드웨어 성능의 몇 %를 쓰고 있는지를 재는 MFU(model FLOPs utilization)와 MBU(model bandwidth utilization)는 roofline이 필요하므로 다음 노트에서 정의한다.
 
 ## 4. 메모리 예산
 
@@ -158,13 +158,13 @@ TPOT와 ITL은 토큰이 하나씩 도착하면 거의 같지만, 한 번에 여
 
 ### 4-1. 가중치
 
-가중치 메모리는 파라미터 수에 원소당 bytes를 곱한 값이다. [2주차 Training engineering §2-1](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#2-1-부동소수점과-정밀도)에서 보았듯 BF16은 원소당 2 bytes다. Llama 3 8B의 파라미터 약 8.03B개를 BF16으로 두면 약 16.1 GB다. 학습과 달리 gradient와 optimizer state가 없으므로 이 16.1 GB가 모델 상태의 전부다.
+가중치 메모리는 파라미터 수에 원소당 bytes를 곱한 값이다. 2주차 Training engineering §2-1에서 보았듯 BF16은 원소당 2 bytes다. Llama 3 8B의 파라미터 약 8.03B개를 BF16으로 두면 약 16.1 GB다. 학습과 달리 gradient와 optimizer state가 없으므로 이 16.1 GB가 모델 상태의 전부다.
 
 이 값은 요청 수나 문맥 길이와 상관없이 고정이다. 줄이는 방법은 원소당 bytes를 줄이는 것(7주차 양자화, INT4면 약 4 GB에 scale 등의 부가 정보가 더해진다)과 파라미터 수를 줄이는 것(7주차 압축) 두 가지다.
 
 ### 4-2. KV cache
 
-KV cache는 층마다, KV head마다, 지금까지의 모든 위치에 대해 key와 value 벡터를 하나씩 저장한다. [3주차 §1-2](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/#1-2-캐시-텐서의-모양과-원소-수)에서 센 원소 수에 원소당 bytes $p$를 곱하면 토큰 하나의 크기가 나온다.
+KV cache는 층마다, KV head마다, 지금까지의 모든 위치에 대해 key와 value 벡터를 하나씩 저장한다. 03b §1-2에서 센 원소 수에 원소당 bytes $p$를 곱하면 토큰 하나의 크기가 나온다.
 
 $$
 \frac{\text{KV cache}}{\text{토큰}}
@@ -181,7 +181,7 @@ KiB(kibibyte)는 $2^{10}$ bytes, GiB는 $2^{30}$ bytes다. 요청 하나의 KV c
 | 131,072토큰 요청 1개 | 16 GiB | 16.1 GB |
 | 8,192토큰 요청 32개 | 32 GiB | 16.1 GB |
 
-Llama 3가 지원하는 최대 문맥인 128K(131,072)토큰을 채운 요청 하나만으로도 KV cache가 가중치만큼 커지고,[^llama3] 요청을 많이 묶으면 가중치를 쉽게 넘어선다. Llama 3 8B가 query head 32개를 모두 쓰는 MHA(multi-head attention)였다면 토큰당 512 KiB로 이 표의 네 배가 되었을 것이다. KV head를 8개로 줄인 GQA(grouped-query attention)가 KV cache를 4분의 1로 줄인 셈이다([3주차 §4-1](/lecture/2026f-advanced-deep-learning/03b-kv-cache-attention/#4-1-query-head의-그룹화)).
+Llama 3가 지원하는 최대 문맥인 128K(131,072)토큰을 채운 요청 하나만으로도 KV cache가 가중치만큼 커지고,[^llama3] 요청을 많이 묶으면 가중치를 쉽게 넘어선다. Llama 3 8B가 query head 32개를 모두 쓰는 MHA(multi-head attention)였다면 토큰당 512 KiB로 이 표의 네 배가 되었을 것이다. KV head를 8개로 줄인 GQA(grouped-query attention)가 KV cache를 4분의 1로 줄인 셈이다(03b §4-1).
 
 ### 4-3. 동시에 처리할 수 있는 요청 수
 
@@ -197,7 +197,7 @@ $$
 이다. 요청마다 8,192토큰까지 자란다면 동시에 49개, 131,072토큰까지 자란다면 3개만 들어간다.
 </Callout>
 
-이 계산에서 두 가지를 읽을 수 있다. 첫째, 이 설정에서 GPU 한 대가 동시에 처리하는 요청 수는 연산 능력보다 **KV cache가 들어갈 공간**에 먼저 막힌다. §3-2에서 요청을 많이 묶어야 처리량이 오른다고 했으니, 처리량을 끌어올릴 수 있는 한계도 이 공간에 묶인다. 둘째, 요청의 길이는 생성이 끝나기 전에는 알 수 없다. 요청마다 최대 길이만큼 공간을 미리 잡아 두면 실제로 짧게 끝나는 요청의 몫이 낭비되고, 너무 적게 잡으면 생성 도중 공간이 모자란다. 같은 시작 문장을 가진 요청들이 그 부분의 KV cache를 따로따로 저장하는 낭비도 있다. 이 공간을 어떻게 나누고 재사용할지가 [06c](/lecture/2026f-advanced-deep-learning/06c-kv-cache-management/)의 주제다.
+이 계산에서 두 가지를 읽을 수 있다. 첫째, 이 설정에서 GPU 한 대가 동시에 처리하는 요청 수는 연산 능력보다 **KV cache가 들어갈 공간**에 먼저 막힌다. §3-2에서 요청을 많이 묶어야 처리량이 오른다고 했으니, 처리량을 끌어올릴 수 있는 한계도 이 공간에 묶인다. 둘째, 요청의 길이는 생성이 끝나기 전에는 알 수 없다. 요청마다 최대 길이만큼 공간을 미리 잡아 두면 실제로 짧게 끝나는 요청의 몫이 낭비되고, 너무 적게 잡으면 생성 도중 공간이 모자란다. 같은 시작 문장을 가진 요청들이 그 부분의 KV cache를 따로따로 저장하는 낭비도 있다. 이 공간을 어떻게 나누고 재사용할지가 06c의 주제다.
 
 ## 5. 정리
 

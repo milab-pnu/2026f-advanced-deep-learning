@@ -4,7 +4,7 @@ week: 5
 order: 0
 ---
 
-4주차에서 본 RLHF와 DPO의 학습 신호는 사람 또는 모델의 선호 판정에서 왔다. [04b](/lecture/2026f-advanced-deep-learning/04b-rlhf/)의 reward model은 그 판정을 근사했고, [04d](/lecture/2026f-advanced-deep-learning/04d-reward-hacking/)에서 그 근사가 어떻게 틀리는지 보았다. 수학 문제와 코드처럼 정답이 있는 과제에서는 다른 길이 있다. 응답을 사람이나 모델이 평가하는 대신 **프로그램으로 검증**하고, 그 결과를 보상으로 쓰는 것이다. 이 방법이 <strong>RLVR(reinforcement learning with verifiable rewards)</strong>이고, 2025년 초 DeepSeek-R1-Zero가 추론 시연의 SFT(supervised fine-tuning) 없이 이 보상만으로 base model에서 긴 추론을 이끌어 내면서 추론 모델 post-training의 중심이 되었다. 이 노트는 보상의 출처를 바꾼 이 계보를 따라간다. 5주차의 나머지 노트는 이 노트에서 갈라진다. RL이 만든 긴 사고 사슬의 행동과 비용은 [05b](/lecture/2026f-advanced-deep-learning/05b-long-cot/), 정책 최적화 알고리즘은 [05c](/lecture/2026f-advanced-deep-learning/05c-policy-optimization/), 학습 시스템은 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)에서 다룬다. 응답 하나 대신 도구를 쓰며 여러 턴을 주고받는 궤적에 보상을 주는 확장은 [05e](/lecture/2026f-advanced-deep-learning/05e-agentic-rl/), RL로 얻은 능력을 작은 모델로 옮기는 방법은 [05f](/lecture/2026f-advanced-deep-learning/05f-distillation/)에서 본다.
+4주차에서 본 RLHF와 DPO의 학습 신호는 사람 또는 모델의 선호 판정에서 왔다. 04b의 reward model은 그 판정을 근사했고, 04d에서 그 근사가 어떻게 틀리는지 보았다. 수학 문제와 코드처럼 정답이 있는 과제에서는 다른 길이 있다. 응답을 사람이나 모델이 평가하는 대신 **프로그램으로 검증**하고, 그 결과를 보상으로 쓰는 것이다. 이 방법이 <strong>RLVR(reinforcement learning with verifiable rewards)</strong>이고, 2025년 초 DeepSeek-R1-Zero가 추론 시연의 SFT(supervised fine-tuning) 없이 이 보상만으로 base model에서 긴 추론을 이끌어 내면서 추론 모델 post-training의 중심이 되었다. 이 노트는 보상의 출처를 바꾼 이 계보를 따라간다. 5주차의 나머지 노트는 이 노트에서 갈라진다. RL이 만든 긴 사고 사슬의 행동과 비용은 05b, 정책 최적화 알고리즘은 05c, 학습 시스템은 05d에서 다룬다. 응답 하나 대신 도구를 쓰며 여러 턴을 주고받는 궤적에 보상을 주는 확장은 05e, RL로 얻은 능력을 작은 모델로 옮기는 방법은 05f에서 본다.
 
 전체 지도는 Zhang 등이 2025년에 정리한 추론 모델을 위한 강화학습 서베이[^survey]로 잡는다. §3.1이 보상 설계(검증 가능한 보상, 생성형 보상, 밀집 보상, 비지도 보상, 보상 조형)를, §4.5가 outcome 보상과 process 보상의 문제를 다루며 이 노트의 §2–5에 대응한다. 같은 서베이의 §4.1(RL의 역할)은 05b, §3.2(정책 최적화)는 05c, §5.3(RL 인프라)은 05d, §5.2(동적 환경)와 §6.2(agentic 과제)는 05e의 지도다.
 
@@ -37,11 +37,11 @@ $$
 보상의 출처만 바뀌었을 뿐 정책을 갱신하는 틀은 04b §3과 같다. 생성과 갱신을 번갈아 하는 기본 절차의 한 반복은 다음과 같다.
 
 1. 문제와 정답 정보를 준비한다. 문제는 정책에 주고, 정답 정보는 검증기만 본다.
-2. 현재 정책이 문제마다 응답을 여러 개 생성한다. 프롬프트 집합은 고정이어도 응답은 매 반복 새로 만들므로 [04c §3-1](/lecture/2026f-advanced-deep-learning/04c-dpo/#3-1-on-policy와-off-policy)의 구분으로 online이고, 갱신 중인 정책과 같은 분포에서 뽑은 응답으로 갱신하는 한 on-policy다. 효율을 위해 한 배치로 여러 번 갱신하거나 생성과 학습을 비동기로 돌리면 응답을 만든 정책이 갱신 대상보다 뒤처지고(Qwen3는 reasoning RL에 off-policy 학습을 썼다고 밝힌다[^qwen3]), 그 차이를 보정해야 한다.
+2. 현재 정책이 문제마다 응답을 여러 개 생성한다. 프롬프트 집합은 고정이어도 응답은 매 반복 새로 만들므로 04c §3-1의 구분으로 online이고, 갱신 중인 정책과 같은 분포에서 뽑은 응답으로 갱신하는 한 on-policy다. 효율을 위해 한 배치로 여러 번 갱신하거나 생성과 학습을 비동기로 돌리면 응답을 만든 정책이 갱신 대상보다 뒤처지고(Qwen3는 reasoning RL에 off-policy 학습을 썼다고 밝힌다[^qwen3]), 그 차이를 보정해야 한다.
 3. 검증기가 응답마다 보상을 매긴다.
 4. 보상(과 KL 벌점)으로 policy gradient를 계산해 정책을 갱신하고 1로 돌아간다.
 
-Reward model이 없으므로 04b §3-4의 네 모델 중 reward model이 프로그램으로 바뀌고, GRPO를 쓰면 value model도 없어진다. 그 갱신식과 04b의 PPO와의 차이, 정책 사이의 거리를 보정하는 방법은 [05c](/lecture/2026f-advanced-deep-learning/05c-policy-optimization/)에서, 2단계의 생성 비용과 비동기 설계는 [05d](/lecture/2026f-advanced-deep-learning/05d-rl-systems/)에서 다룬다.
+Reward model이 없으므로 04b §3-4의 네 모델 중 reward model이 프로그램으로 바뀌고, GRPO를 쓰면 value model도 없어진다. 그 갱신식과 04b의 PPO와의 차이, 정책 사이의 거리를 보정하는 방법은 05c에서, 2단계의 생성 비용과 비동기 설계는 05d에서 다룬다.
 
 ### 2-3. 검증기의 종류
 
@@ -80,9 +80,9 @@ Reward model이 없으므로 04b §3-4의 네 모델 중 reward model이 프로�
 
 DeepSeek-R1-Zero는 DeepSeek-V3-Base에서 출발해 추론 시연의 SFT 없이 §2-1의 규칙 보상과 GRPO로 학습한 모델이다. 프롬프트 템플릿은 사고 과정을 `<think>` 태그에, 답을 `<answer>` 태그에 쓰라는 구조 지시뿐이었고 형식 보상이 그 구조를 강화했으며, 어떻게 추론하라는 예시는 주지 않았다.[^r1] 학습이 진행되면서 AIME 2024의 pass@1이 15.6%에서 77.9%로 올랐고, 응답 16개의 다수결(self-consistency)로는 86.7%였다(원논문 v2 Figure 1(a)).[^r1] 같은 기간 응답의 길이가 계속 늘었고(Figure 1(b)), 모델은 앞의 풀이를 되돌아보고 다른 접근을 시도하는 행동을 스스로 보이기 시작했다. 저자들은 이를 "aha moment"라고 불렀다. 추론 시연을 데이터로 가르치지 않았는데, 구조 지시와 규칙 보상만으로 이런 행동이 늘어난 것이다.
 
-다만 base model이 관련 행동을 전혀 몰랐다는 뜻은 아니다. 저자들 스스로 DeepSeek-V3-Base의 pre-training 데이터에 수학·코드 내용이 많고 웹에 섞인 OpenAI 모델의 답변도 들어 있어 추론 과정을 상당히 접했을 것이며, RL은 그렇게 생성할 수 있게 된 후보 중 좋은 것을 골라 강화한다고 설명한다(arXiv v2 부록 A.1).[^r1] [04a §1-2](/lecture/2026f-advanced-deep-learning/04a-sft/#1-2-네-recipe-비교)에서 본 것처럼 출발점의 차이는 결과에 들어 있다.<Sidenote>arXiv v1(2025년 1월)의 같은 곡선은 71.0%까지였다. Nature 게재판(2025년 9월)과 arXiv v2(2026년 1월 개정)의 77.9%는 v1과 다른 값이므로 두 값을 한 곡선으로 합치지 않고, 인용할 때 판본을 적는다.</Sidenote>
+다만 base model이 관련 행동을 전혀 몰랐다는 뜻은 아니다. 저자들 스스로 DeepSeek-V3-Base의 pre-training 데이터에 수학·코드 내용이 많고 웹에 섞인 OpenAI 모델의 답변도 들어 있어 추론 과정을 상당히 접했을 것이며, RL은 그렇게 생성할 수 있게 된 후보 중 좋은 것을 골라 강화한다고 설명한다(arXiv v2 부록 A.1).[^r1] 04a §1-2에서 본 것처럼 출발점의 차이는 결과에 들어 있다.<Sidenote>arXiv v1(2025년 1월)의 같은 곡선은 71.0%까지였다. Nature 게재판(2025년 9월)과 arXiv v2(2026년 1월 개정)의 77.9%는 v1과 다른 값이므로 두 값을 한 곡선으로 합치지 않고, 인용할 때 판본을 적는다.</Sidenote>
 
-그래도 R1-Zero의 결과가 주목받은 이유는 분명하다. [04a §5-3](/lecture/2026f-advanced-deep-learning/04a-sft/#5-3-사고-과정을-담은-sft의-자리)에서 SFT는 긴 사고 과정의 형식을 가르치는 cold start 역할이라고 했는데, R1-Zero는 그 SFT 없이도 base model이 구조 지시와 검증 가능한 보상만으로 긴 추론에 도달함을 보였다. 무엇이 어떻게 달라졌는지, 즉 길이의 증가와 반성·검증 행동이 정말 능력의 증가인지는 [05b](/lecture/2026f-advanced-deep-learning/05b-long-cot/)에서 따로 다룬다.
+그래도 R1-Zero의 결과가 주목받은 이유는 분명하다. 04a §5-3에서 SFT는 긴 사고 과정의 형식을 가르치는 cold start 역할이라고 했는데, R1-Zero는 그 SFT 없이도 base model이 구조 지시와 검증 가능한 보상만으로 긴 추론에 도달함을 보였다. 무엇이 어떻게 달라졌는지, 즉 길이의 증가와 반성·검증 행동이 정말 능력의 증가인지는 05b에서 따로 다룬다.
 
 ### 3-2. R1-Zero의 문제와 R1의 네 단계
 
@@ -95,11 +95,11 @@ R1-Zero의 출력은 읽기 어려웠다. 사고 과정에 영어와 중국어�
 | 3. Rejection sampling과 SFT | 2단계 모델의 응답을 생성해 걸러 추론 데이터 약 60만 건을 확보하고, 일반 과제 데이터 약 20만 건과 합쳐 base model을 다시 SFT | 추론 능력을 일반 과제와 합침 |
 | 4. 전 과제 RL | 추론 과제는 규칙 보상, 일반 과제는 reward model 보상으로 RL | 사람의 선호와 안전성 |
 
-1단계는 04a의 SFT, 3단계는 04b §3-5의 rejection sampling, 4단계의 reward model 보상은 04b의 RLHF다. 4주차의 요소가 검증 가능한 보상을 축으로 다시 배열된 것이다. Qwen3 flagship 모델의 네 단계(long-CoT cold start, reasoning RL, thinking mode fusion, general RL)와 Olmo 3 Think의 SFT, DPO, RLVR(일반 대화는 RLVR 단계에 함께 섞인다)도 추론 시연의 학습과 검증 보상을 결합하면서 일반 과제의 성능을 함께 유지한다는 점을 공유한다. 단계의 순서와 수는 모델마다 다르다.[^qwen3][^olmo3] [04a §1-2](/lecture/2026f-advanced-deep-learning/04a-sft/#1-2-네-recipe-비교)의 recipe 표가 여기서 완성된다.
+1단계는 04a의 SFT, 3단계는 04b §3-5의 rejection sampling, 4단계의 reward model 보상은 04b의 RLHF다. 4주차의 요소가 검증 가능한 보상을 축으로 다시 배열된 것이다. Qwen3 flagship 모델의 네 단계(long-CoT cold start, reasoning RL, thinking mode fusion, general RL)와 Olmo 3 Think의 SFT, DPO, RLVR(일반 대화는 RLVR 단계에 함께 섞인다)도 추론 시연의 학습과 검증 보상을 결합하면서 일반 과제의 성능을 함께 유지한다는 점을 공유한다. 단계의 순서와 수는 모델마다 다르다.[^qwen3][^olmo3] 04a §1-2의 recipe 표가 여기서 완성된다.
 
 ### 3-3. 데이터의 규모
 
-공개된 사례에서 RLVR의 프롬프트 수는 SFT 데이터보다 훨씬 적다. Qwen3의 reasoning RL은 학습 가능성과 난이도로 걸러 낸 3,995개의 문제·검증기 쌍으로 진행되었고, Qwen3-235B-A22B의 AIME 2024 점수는 170 스텝 동안 70.1에서 85.1로 올랐다(원논문 §4.2).[^qwen3] Tülu 3의 RLVR도 GSM8K·MATH·IFEval 세 과제의 프롬프트 약 3만 개만 썼는데, 같은 모델의 SFT 프롬프트는 약 94만 개였다.[^tulu3] 프롬프트 하나에서 응답을 여러 개 생성해 검증하므로, 프롬프트의 수뿐 아니라 **문제가 현재 모델에게 풀 수 있으면서 어려운가**도 중요하다. 정확성 보상만으로 같은 문제의 응답들 사이의 상대적 advantage를 계산하는 GRPO 계열에서는 이것이 직접 보인다. 응답 넷의 보상이 $[1,1,1,1]$이거나 $[0,0,0,0]$이면 응답 사이에 차이가 없어 advantage가 모두 0이 되고 보상에서 오는 학습 신호가 없으며(KL 항은 별도로 남는다), $[1,0,1,0]$이어야 어느 응답이 나은지가 드러난다. 계산은 [05c](/lecture/2026f-advanced-deep-learning/05c-policy-optimization/)에서 하고, Tülu 3처럼 value model을 쓰는 PPO에서는 사정이 다르다.
+공개된 사례에서 RLVR의 프롬프트 수는 SFT 데이터보다 훨씬 적다. Qwen3의 reasoning RL은 학습 가능성과 난이도로 걸러 낸 3,995개의 문제·검증기 쌍으로 진행되었고, Qwen3-235B-A22B의 AIME 2024 점수는 170 스텝 동안 70.1에서 85.1로 올랐다(원논문 §4.2).[^qwen3] Tülu 3의 RLVR도 GSM8K·MATH·IFEval 세 과제의 프롬프트 약 3만 개만 썼는데, 같은 모델의 SFT 프롬프트는 약 94만 개였다.[^tulu3] 프롬프트 하나에서 응답을 여러 개 생성해 검증하므로, 프롬프트의 수뿐 아니라 **문제가 현재 모델에게 풀 수 있으면서 어려운가**도 중요하다. 정확성 보상만으로 같은 문제의 응답들 사이의 상대적 advantage를 계산하는 GRPO 계열에서는 이것이 직접 보인다. 응답 넷의 보상이 $[1,1,1,1]$이거나 $[0,0,0,0]$이면 응답 사이에 차이가 없어 advantage가 모두 0이 되고 보상에서 오는 학습 신호가 없으며(KL 항은 별도로 남는다), $[1,0,1,0]$이어야 어느 응답이 나은지가 드러난다. 계산은 05c에서 하고, Tülu 3처럼 value model을 쓰는 PPO에서는 사정이 다르다.
 
 ## 4. RLVR의 자리
 
@@ -109,7 +109,7 @@ Tülu 3 8B에서 DPO checkpoint에 RLVR을 더하자 GSM8K가 84.3에서 87.6으
 
 ### 4-2. Base model에서 출발하는 RL-Zero
 
-R1-Zero의 경로, 즉 SFT 없이 base model에 RLVR을 적용하는 실험은 이후 "RL-Zero"라는 이름으로 이어졌다. Olmo 3 RL-Zero는 pre-training과 mid-training 데이터가 모두 공개된 base model에서 수학·코드·정밀한 지시 따르기·일반 대화의 네 영역과 그 혼합에 대해 이 실험을 했다(원논문 §6). 저자들이 밝힌 목적은 RLVR을 통제된 조건에서 연구할 수 있게 하는 것이다. 기존의 주요 RLVR 벤치마크와 알고리즘은 pre-training·mid-training 데이터를 공개하지 않는 공개 가중치 모델 위에서 실험되어, 평가 문제의 오염이나 사전학습 데이터의 영향을 통제하기 어려웠다. 그래서 Olmo 3는 RL-Zero 학습 데이터에서 pre-training·mid-training 데이터와 겹치는 것을 걸러 냈다.[^olmo3] RL 뒤의 성능이 RL의 효과인지 pre-training에 이미 있던 능력이 드러난 것인지라는 질문은 [05b](/lecture/2026f-advanced-deep-learning/05b-long-cot/)에서 "RL이 새 능력을 만드는가"라는 논쟁으로 이어진다.
+R1-Zero의 경로, 즉 SFT 없이 base model에 RLVR을 적용하는 실험은 이후 "RL-Zero"라는 이름으로 이어졌다. Olmo 3 RL-Zero는 pre-training과 mid-training 데이터가 모두 공개된 base model에서 수학·코드·정밀한 지시 따르기·일반 대화의 네 영역과 그 혼합에 대해 이 실험을 했다(원논문 §6). 저자들이 밝힌 목적은 RLVR을 통제된 조건에서 연구할 수 있게 하는 것이다. 기존의 주요 RLVR 벤치마크와 알고리즘은 pre-training·mid-training 데이터를 공개하지 않는 공개 가중치 모델 위에서 실험되어, 평가 문제의 오염이나 사전학습 데이터의 영향을 통제하기 어려웠다. 그래서 Olmo 3는 RL-Zero 학습 데이터에서 pre-training·mid-training 데이터와 겹치는 것을 걸러 냈다.[^olmo3] RL 뒤의 성능이 RL의 효과인지 pre-training에 이미 있던 능력이 드러난 것인지라는 질문은 05b에서 "RL이 새 능력을 만드는가"라는 논쟁으로 이어진다.
 
 ### 4-3. 무작위 보상이라는 반례
 

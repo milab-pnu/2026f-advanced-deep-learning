@@ -22,7 +22,7 @@ Transformer 블록을 수십 층 쌓으면 벡터의 크기(scale)가 층을 지
 
 ### 1-1. LayerNorm의 두 단계
 
-[1주차 Transformer 노트 §3-4](/lecture/2026f-advanced-deep-learning/01a-transformer/#3-4-residual과-정규화)에서 본 LayerNorm은 토큰 벡터 하나의 $d$개 성분에 대해 평균과 표준편차를 구한다.[^layernorm] Batch 축을 쓰지 않으므로 batch 크기나 시퀀스 길이와 무관하다.
+1주차 Transformer 노트 §3-4에서 본 LayerNorm은 토큰 벡터 하나의 $d$개 성분에 대해 평균과 표준편차를 구한다.[^layernorm] Batch 축을 쓰지 않으므로 batch 크기나 시퀀스 길이와 무관하다.
 
 $$
 \mu=\frac{1}{d}\sum_{i=1}^{d}x_i,\qquad
@@ -49,7 +49,7 @@ $$
 
 원논문은 RMSNorm이 번역·독해·이미지-캡션 검색 등의 과제에서 LayerNorm과 비슷한 성능을 내면서 실행 시간을 줄였다고 보고한다. 초록은 감소 폭을 7–64%로 요약하지만, 64%는 RMS를 입력 성분의 일부로만 추정하는 변형(pRMSNorm)의 값이다(Table 8). 원논문의 실행 시간 표들에서 일반 RMSNorm은 모델과 구현에 따라 LayerNorm 대비 약 7–41% 빨랐다.
 
-재중심화가 불필요하다는 주장은 원논문의 실험 범위에서 뒷받침된 가설이다. 이후 대형 모델의 선택도 이 방향과 맞는다. ViT-22B는 query·key·value(QKV) 투영의 bias를 없애고 모든 LayerNorm에서 bias와 중심화를 뺀 변경을 함께 적용해, 품질 저하 없이 가속기 활용률을 3% 높였다고 보고한다(두 변경의 효과를 따로 나누지는 않았다).[^vit22b] OLMo 2는 비모수(nonparametric) LayerNorm과 RMSNorm 사이에 차이가 없었다는 ablation을 보고했다.[^olmo2] [02a](/lecture/2026f-advanced-deep-learning/02a-decoder-only-llm/#2-2-llama-3-8b-구조)의 기준 모델 Llama 3 8B도 RMSNorm을 쓴다.
+재중심화가 불필요하다는 주장은 원논문의 실험 범위에서 뒷받침된 가설이다. 이후 대형 모델의 선택도 이 방향과 맞는다. ViT-22B는 query·key·value(QKV) 투영의 bias를 없애고 모든 LayerNorm에서 bias와 중심화를 뺀 변경을 함께 적용해, 품질 저하 없이 가속기 활용률을 3% 높였다고 보고한다(두 변경의 효과를 따로 나누지는 않았다).[^vit22b] OLMo 2는 비모수(nonparametric) LayerNorm과 RMSNorm 사이에 차이가 없었다는 ablation을 보고했다.[^olmo2] 02a의 기준 모델 Llama 3 8B도 RMSNorm을 쓴다.
 
 ### 1-3. 네 성분 벡터의 비교
 
@@ -187,7 +187,7 @@ Post-LN은 residual 경로 자체를 매번 정규화한다. Pre-LN과 Peri-LN�
 Pre-LN 자체는 이 분석보다 먼저 쓰이고 있었다. GPT-2(2019)는 LayerNorm을 각 sub-block의 입력으로 옮기고 마지막 self-attention 블록 뒤에 LayerNorm을 하나 더 두었으며,[^gpt2] Xiong 등도 Pre-LN을 앞선 여러 연구가 깊은 모델의 최적화 문제를 줄이려고 제안한 구조로 소개한다. 이 논문의 기여는 이미 쓰이던 Pre-LN의 안정성을 이론적으로 설명한 데 있다. 원논문은 초기 기울기가 잘 조절된다는 분석을 바탕으로 IWSLT14 De-En·WMT14 En-De 번역과 BERT pre-training에서 Pre-LN을 warmup 없이 학습했고, 비슷한 성능에 더 빨리 도달했다고 보고한다. 이후 Llama 등 많은 decoder-only LLM도 Pre-LN 배치를 쓰지만, 그 채택이 이 논문 하나의 결과라고 보기는 어렵다.
 
 <Callout type="warning">
-Xiong 등의 결과는 **초기화 시점의 기울기 분석과 원논문의 실험 설정**에서 warmup을 없앨 수 있음을 보인 것이다. "Pre-LN이면 warmup이 필요 없다"로 일반화하면 안 된다. 대형 Pre-LN 모델들도 흔히 warmup을 쓴다. [02c §4-1](/lecture/2026f-advanced-deep-learning/02c-pre-training/#4-1-최적화와-학습-안정화)에서 본 DeepSeek-V3는 Pre-LN 배치의 RMSNorm을 쓰면서도 처음 2K step 동안 learning rate를 0에서 $2.2\times10^{-4}$까지 선형으로 올린다.[^deepseekv3] Warmup을 쓸지는 정규화 위치 하나로 정해지지 않는다.
+Xiong 등의 결과는 **초기화 시점의 기울기 분석과 원논문의 실험 설정**에서 warmup을 없앨 수 있음을 보인 것이다. "Pre-LN이면 warmup이 필요 없다"로 일반화하면 안 된다. 대형 Pre-LN 모델들도 흔히 warmup을 쓴다. 02c §4-1에서 본 DeepSeek-V3는 Pre-LN 배치의 RMSNorm을 쓰면서도 처음 2K step 동안 learning rate를 0에서 $2.2\times10^{-4}$까지 선형으로 올린다.[^deepseekv3] Warmup을 쓸지는 정규화 위치 하나로 정해지지 않는다.
 </Callout>
 
 ### 2-3. Pre-LN의 새 문제
@@ -314,7 +314,7 @@ Peri-LN 논문은 attention sink를 직접 측정하지 않았고, G2 gate의 �
 
 대응은 이미 학습된 모델에서 sink를 **보존**하는 방법과, 학습 단계에서 sink 역할을 **전용 장치**에 맡기거나 필요 자체를 줄이는 방법으로 나뉜다.
 
-**추론 시 초기 KV 보존(StreamingLLM).** 첫 토큰을 cache에서 빼면 softmax 분모의 큰 몫이 사라져 나머지 weight가 크게 달라진다. 예를 들어 logit이 $(4, 0, 0, 0)$일 때 나머지 세 토큰의 weight는 각각 0.017이지만, 첫 토큰을 빼면 각각 0.333이 된다. StreamingLLM은 처음 몇 토큰(보통 4개)의 KV와 최근 토큰의 KV를 함께 유지해, 길이 제한 없이 안정적으로 생성한다.[^streamingllm] 이때 위치 정보는 원문 위치가 아니라 cache 안의 위치로 다시 매긴다. 원문 위치 0, 1, 2, 3과 6, 7, 8이 cache에 있으면 이를 0부터 6까지의 연속 위치로 두고 다음 토큰을 7로 놓는다. RoPE는 회전을 적용하기 전의 key를 cache에 두었다가 매 step 이 위치로 다시 회전한다. [03a §5-2](/lecture/2026f-advanced-deep-learning/03a-positional-encoding/#5-2-rope의-외삽-실패)에서 본 것처럼 학습 길이 밖의 위치가 attention에 나타나지 않게 하는 조치다. 원논문은 Llama-2, MPT, Falcon, Pythia로 400만 토큰까지 안정적으로 언어 모델링했다고 보고한다.
+**추론 시 초기 KV 보존(StreamingLLM).** 첫 토큰을 cache에서 빼면 softmax 분모의 큰 몫이 사라져 나머지 weight가 크게 달라진다. 예를 들어 logit이 $(4, 0, 0, 0)$일 때 나머지 세 토큰의 weight는 각각 0.017이지만, 첫 토큰을 빼면 각각 0.333이 된다. StreamingLLM은 처음 몇 토큰(보통 4개)의 KV와 최근 토큰의 KV를 함께 유지해, 길이 제한 없이 안정적으로 생성한다.[^streamingllm] 이때 위치 정보는 원문 위치가 아니라 cache 안의 위치로 다시 매긴다. 원문 위치 0, 1, 2, 3과 6, 7, 8이 cache에 있으면 이를 0부터 6까지의 연속 위치로 두고 다음 토큰을 7로 놓는다. RoPE는 회전을 적용하기 전의 key를 cache에 두었다가 매 step 이 위치로 다시 회전한다. 03a §5-2에서 본 것처럼 학습 길이 밖의 위치가 attention에 나타나지 않게 하는 조치다. 원논문은 Llama-2, MPT, Falcon, Pythia로 400만 토큰까지 안정적으로 언어 모델링했다고 보고한다.
 
 <Figure src="https://arxiv.org/html/2309.17453v4/scheme.png" alt="네 가지 attention 방식 비교. (a) Dense attention은 모든 T개 토큰을 cache에 두어 O(T²) 비용이고 긴 텍스트에서 perplexity가 5641이다. (b) Window attention은 최근 L개 토큰만 남겨 O(TL)이지만 첫 토큰이 밀려나면 perplexity가 5158로 무너진다. (c) Re-computation을 쓰는 sliding window는 perplexity 5.43이지만 토큰마다 cache를 다시 계산해 O(TL²)다. (d) StreamingLLM은 attention sink인 처음 몇 토큰과 최근 L개 토큰을 유지해 O(TL) 비용으로 perplexity 5.40을 얻는다." caption="StreamingLLM과 기존 방식의 비교. (d)의 노란 칸이 보존하는 초기 토큰(attention sink)이다. PPL은 원논문이 긴 텍스트에서 측정한 예시 값이다." source="Xiao et al. · Efficient Streaming Language Models with Attention Sinks, Figure 1 · CC BY 4.0 · 수정 없음" />
 
@@ -338,12 +338,12 @@ $$
 Y'=Y\otimes\sigma(XW_\theta)
 $$
 
-$\otimes$는 [03d §3-1](/lecture/2026f-advanced-deep-learning/03d-ffn-activation/#3-1-곱셈-gating)의 GLU 식에서처럼 원소별(elementwise) 곱이다. $Y$는 head별 attention 출력, $X$는 pre-normalization을 거친 블록 입력, $W_\theta$는 gate의 파라미터다. Gate가 0에 가까우면 head 출력이 줄어들므로, "가져올 정보가 없다"를 sink에 attention을 버리는 대신 gate로 표현할 수 있다. 원논문 Table 4의 baseline에서는 층 평균으로 attention의 46.7%가 첫 토큰에 갔지만, SDPA 출력에 head별 원소별 gate를 둔 모델에서는 4.8%로 줄었다. 같은 연구는 학습 안정성과 긴 문맥 외삽 성능의 개선도 보고한다.
+$\otimes$는 03d §3-1의 GLU 식에서처럼 원소별(elementwise) 곱이다. $Y$는 head별 attention 출력, $X$는 pre-normalization을 거친 블록 입력, $W_\theta$는 gate의 파라미터다. Gate가 0에 가까우면 head 출력이 줄어들므로, "가져올 정보가 없다"를 sink에 attention을 버리는 대신 gate로 표현할 수 있다. 원논문 Table 4의 baseline에서는 층 평균으로 attention의 46.7%가 첫 토큰에 갔지만, SDPA 출력에 head별 원소별 gate를 둔 모델에서는 4.8%로 줄었다. 같은 연구는 학습 안정성과 긴 문맥 외삽 성능의 개선도 보고한다.
 
 이 gate는 실제 모델에도 들어갔다. Qwen3-Next는 표준 softmax attention 층(Gated Attention 층)의 SDPA 출력에 head별 원소별 sigmoid gate를 곱한다.[^qwen3next] 공개 구현을 보면 gate를 위한 투영을 따로 두지 않는다. Query 투영의 출력 폭을 두 배로 늘려 절반은 query로, 나머지 절반은 gate로 쓰고, attention 출력에 그 절반의 sigmoid를 곱한다. 위 식의 $XW_\theta$를 query 투영에 합쳐 한 번의 행렬 곱으로 계산하는 셈이다.
 
 <Callout type="note">
-여기의 gate는 **softmax attention의 출력**에 곱하는 gate다. [03c §4-3](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/#4-3-gated-deltanet)의 Gated DeltaNet에서 gate는 linear attention의 **recurrent 상태**를 얼마나 잊을지 정한다. 둘 다 0과 1 사이의 계수를 곱하지만 적용 대상과 목적이 다르다. Qwen3-Next는 두 종류를 한 모델에서 함께 쓰며, Gated DeltaNet 층과 Gated Attention 층을 섞는 구성은 [03c §6-2](/lecture/2026f-advanced-deep-learning/03c-efficient-attention/#6-2-linear-attention과-attention)에서 다룬다.
+여기의 gate는 **softmax attention의 출력**에 곱하는 gate다. 03c §4-3의 Gated DeltaNet에서 gate는 linear attention의 **recurrent 상태**를 얼마나 잊을지 정한다. 둘 다 0과 1 사이의 계수를 곱하지만 적용 대상과 목적이 다르다. Qwen3-Next는 두 종류를 한 모델에서 함께 쓰며, Gated DeltaNet 층과 Gated Attention 층을 섞는 구성은 03c §6-2에서 다룬다.
 </Callout>
 
 Sink를 어떻게 다루든, 이미 sink에 의존하도록 학습된 모델에서 그 장치를 빼는 것은 별개 문제다. Gu 등은 학습 가능한 sink token이나 KV bias로 학습한 모델에서 그것을 제거하면 성능이 크게 떨어졌다고 보고했다.[^gu] Sink는 학습된 모델에서 계산의 일부로 쓰이는 구조라 보는 편이 안전하다.
