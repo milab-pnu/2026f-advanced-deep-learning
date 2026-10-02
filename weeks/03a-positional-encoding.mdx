@@ -28,7 +28,7 @@ $$
 
 $i$는 0부터 $d/2-1$까지 센다. 앞의 `[dog, bites, man]`에서 embedding 차원을 $d=128$로 두고, 세 토큰의 위치를 1, 2, 3이라 하자. 위치 $p$의 위치 벡터는 128개 성분을 위 식대로 채운 것이다. 차원 0과 1은 $\omega_0=1$로, 차원 2와 3은 $\omega_1\approx0.866$으로 계산하고, 이렇게 두 차원씩 $\omega$가 작아져 마지막 차원 126과 127은 $\omega_{63}\approx0.000115$로 계산한다.
 
-$$ 
+$$
 \begin{aligned}
 P_p&=\big[\,P_{p,0},\ P_{p,1},\ P_{p,2},\ P_{p,3},\ \ldots,\ P_{p,126},\ P_{p,127}\,\big]\\
 &=\big[\,\sin p,\ \cos p,\ \sin(0.866p),\ \cos(0.866p),\ \ldots,\ \sin(0.000115p),\ \cos(0.000115p)\,\big]
@@ -434,9 +434,6 @@ Gemma 3는 1,024토큰 sliding window를 쓰는 지역 attention 층 다섯 개�
 [^gallery]: Raschka, S. (2026). *LLM Architecture Gallery*. [sebastianraschka.com](https://sebastianraschka.com/llm-architecture-gallery/).
 [^nope]: Kazemnejad, A., Padhi, I., Natesan Ramamurthy, K., Das, P., & Reddy, S. (2023). *The Impact of Positional Encoding on Length Generalization in Transformers*. NeurIPS 2023. [arXiv:2305.19466](https://arxiv.org/abs/2305.19466).
 [^aiayn]: Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., & Polosukhin, I. (2017). *Attention Is All You Need*. NeurIPS 2017. [arXiv:1706.03762](https://arxiv.org/abs/1706.03762).
-[^kazemnejad-blog]: Kazemnejad, A. (2019). *Transformer Architecture: The Positional Encoding*. [kazemnejad.com](https://kazemnejad.com/blog/transformer_architecture_positional_encoding/).
-[^tigris]: Tigris. (2022). *차근차근 이해하는 Transformer(5): Positional Encoding*. 묵묵히 걸어가기. [원문](https://tigris-data-science.tistory.com/entry/%EC%B0%A8%EA%B7%BC%EC%B0%A8%EA%B7%BC-%EC%9D%B4%ED%95%B4%ED%95%98%EB%8A%94-Transformer5-Positional-Encoding).
-[^gpt2]: OpenAI. (2019). *GPT-2 config.json*. [Hugging Face](https://huggingface.co/openai-community/gpt2/blob/main/config.json).
 [^alibi]: Press, O., Smith, N. A., & Lewis, M. (2022). *Train Short, Test Long: Attention with Linear Biases Enables Input Length Extrapolation*. ICLR 2022. [arXiv:2108.12409](https://arxiv.org/abs/2108.12409).
 [^shaw]: Shaw, P., Uszkoreit, J., & Vaswani, A. (2018). *Self-Attention with Relative Position Representations*. NAACL 2018. [arXiv:1803.02155](https://arxiv.org/abs/1803.02155).
 [^t5]: Raffel, C., Shazeer, N., Roberts, A., Lee, K., Narang, S., Matena, M., Zhou, Y., Li, W., & Liu, P. J. (2020). *Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer*. JMLR, 21(140), 1–67. [arXiv:1910.10683](https://arxiv.org/abs/1910.10683).
