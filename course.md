@@ -11,7 +11,7 @@ summary: 딥러닝 연구의 최전선(LLM·생성모델·멀티모달 등)을 �
 weeks:
   - { n: 1, topic: "Introduction, Transformer, BERT vs GPT" }
   - { n: 2, topic: "Tokenizer & Pre-training", submissionUrl: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/1" }
-  - { n: 3, topic: "LLM Architecture Variants", submissionUrl: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/2" }
+  - { n: 3, topic: "LLM Architecture Variants", submissionLinks: [{ label: "연사초청 (배상민)", url: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/2" }, { label: "과제 제출", url: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/2" }] }
   - { n: 4, topic: "Post-training 1" }
   - { n: 5, topic: "Post-training 2" }
   - { n: 6, topic: "Inference Optimization 1" }
