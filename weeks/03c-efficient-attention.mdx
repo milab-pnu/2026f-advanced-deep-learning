@@ -403,13 +403,13 @@ Kimi Linear도 같은 3:1 배치를 쓰되, linear 층은 §4-3의 KDA로, atten
 
 ### 6-3. SSM과 attention
 
-셋째는 **SSM 층과 attention 층의 조합**이다. Jamba는 8층짜리 Jamba 블록 4개(총 32층)로 이루어지고, 블록마다 attention 1층과 Mamba 7층을 섞는다(attention:Mamba = 1:7).[^jamba] 두 층마다 MLP(multi-layer perceptron) 대신 MoE(expert 16개 중 top-2)를 써서 전체 52B, 활성 12B 파라미터를 가지며, MoE의 설계는 [Mixture of Experts](/lecture/2026f-advanced-deep-learning/03f-mixture-of-experts/)에서 다룬다. 논문은 이 구성이 일반 Transformer보다 KV cache를 8배 줄이면서 256K 문맥을 지원한다고 보고한다.
+셋째는 **SSM 층과 attention 층의 조합**이다. Jamba는 8층짜리 Jamba 블록 4개(총 32층)로 이루어지고, 블록마다 attention 1층과 Mamba 7층을 섞는다(attention:Mamba = 1:7).[^jamba] 두 층마다 MLP(multi-layer perceptron) 대신 MoE를 쓰며, MoE의 설계는 [Mixture of Experts](/lecture/2026f-advanced-deep-learning/03f-mixture-of-experts/)에서 다룬다. 논문은 이 구성이 일반 Transformer보다 KV cache를 8배 줄이면서 256K 문맥을 지원한다고 보고한다.
 
 Jamba 논문은 attention이 왜 필요한지도 실험으로 보여 준다(원논문 §6.2, 표 6과 그림 8). 저자들은 1.3B 규모의 순수 attention, 순수 Mamba, hybrid 모델을 비교했다. IMDB 감성 분류처럼 답의 형식이 정해진 과제(Positive 또는 Negative)에서 순수 Mamba 모델은 "Very Good", "3/10"처럼 다른 형식으로 답하는 경우가 많았고, attention을 섞은 hybrid는 순수 attention 모델처럼 형식을 따랐다. 저자들은 in-context learning과 관련된 induction head가 attention 층에서 나타나는 예를 보이고, 순수 Mamba의 어려움을 attention 부재와 연결하는 가설을 제시한다.[^jamba] §5-4의 Mamba-2 실험과 같은 방향의 관찰이다.
 
 Mamba-2를 쓴 hybrid의 대표 사례는 NVIDIA의 Nemotron 계열이다. Nemotron-H는 Transformer의 self-attention 층 대부분을 Mamba-2 층으로 바꾸었고, 논문은 그 이유를 생성 토큰마다 계산량과 메모리가 일정한 층으로 추론 비용을 줄이기 위해서라고 밝힌다. 전체 층의 약 8%만 attention으로 두어 고르게 흩어 놓고(8B 모델은 52층 중 4층), 나머지는 Mamba-2와 FFN에 반씩 나눈다. 첫 층은 Mamba-2, 마지막 층은 FFN이며, attention 층 뒤에는 항상 FFN이 온다(원논문 §2.1, 표 1).[^nemotronh]
 
-후속인 Nemotron 3 Nano 30B-A3B는 FFN 자리를 MoE로 바꾸었다. 52층 중 attention(GQA, KV head 2개)이 6층, Mamba-2와 MoE가 각각 23층이고, 위치 인코딩은 쓰지 않는다(보고서 §2.1).[^nemotron3nano][^nemotron3nano-config] [Training engineering §6-2](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#6-2-병목-진단)의 kernel 최적화 사례가 바로 이 모델의 Mamba-2 층을 다룬다.
+후속인 Nemotron 3 Nano 30B-A3B는 FFN 자리를 MoE로 바꾸었다. 52층 중 attention이 6층, Mamba-2와 MoE가 각각 23층이다(보고서 §2.1).[^nemotron3nano][^nemotron3nano-config] [Training engineering §6-2](/lecture/2026f-advanced-deep-learning/02e-training-engineering/#6-2-병목-진단)의 kernel 최적화 사례가 바로 이 모델의 Mamba-2 층을 다룬다.
 
 층 수를 셀 때는 주의가 필요하다. Nemotron은 Mamba-2, attention, FFN·MoE를 각각 한 층으로 세고, Jamba는 sequence mixer와 그 뒤의 MLP·MoE를 묶어 한 층으로 센다. 그래서 두 모델의 공식 층 수를 그대로 비교할 수 없다. Sequence mixer만 세면 Nemotron 3 Nano는 29개 중 6개가 attention이다.
 

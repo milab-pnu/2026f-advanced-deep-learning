@@ -216,7 +216,7 @@ $$
 q_m^\top k_n=\sum_{i=0}^{d/2-1}\mathrm{Re}\!\left[h_i\,e^{\mathrm{i}(m-n)\theta_i}\right],\qquad h_i=\tilde q_i\overline{\tilde k_i}
 $$
 
-본문에서 말한 사인파 가중합이 이 식이다. $h_i$의 크기와 편각이 $i$번째 사인파의 진폭과 위상을 정한다. 구현에 따라 쌍을 인접한 두 성분 $(2i, 2i+1)$으로 묶기도 하고, 앞 절반과 뒤 절반의 같은 번호 성분으로 묶기도 한다. 처음부터 한 배치로 학습한다면 어느 쪽이든 되지만, 이미 학습한 checkpoint의 배치를 바꾸려면 query·key 투영 가중치의 행도 같은 순서로 재배열해야 한다. Hugging Face의 Llama 가중치 변환 스크립트가 이 재배열을 한다.
+본문에서 말한 사인파 가중합이 이 식이다. $h_i$의 크기와 편각이 $i$번째 사인파의 진폭과 위상을 정한다. 구현에 따라 쌍을 인접한 두 성분 $(2i, 2i+1)$으로 묶기도 하고, 앞 절반과 뒤 절반의 같은 번호 성분으로 묶기도 한다. 처음부터 한 배치로 학습한다면 어느 쪽이든 되지만, 이미 학습한 checkpoint의 배치를 바꾸려면 query·key 투영 가중치의 행도 같은 순서로 재배열해야 한다. Hugging Face의 Llama 가중치 변환 스크립트가 이 재배열을 한다.[^hf-convert]
 
 </Details>
 
@@ -470,6 +470,7 @@ Gemma 3는 1,024토큰 sliding window를 쓰는 지역 attention 층 다섯 개�
 [^ntk]: bloc97. (2023). *NTK-Aware Scaled RoPE allows LLaMA models to have extended (8k+) context size without any fine-tuning and minimal perplexity degradation*. [Reddit r/LocalLLaMA](https://www.reddit.com/r/LocalLLaMA/comments/14lz7j5/ntkaware_scaled_rope_allows_llama_models_to_have/).
 [^ntkparts]: bloc97. (2023). *Add NTK-Aware interpolation "by parts" correction*. [GitHub jquesnelle/scaled-rope PR #1](https://github.com/jquesnelle/scaled-rope/pull/1).
 [^yarn-code]: Quesnelle, J. (2023). *yarn: scaled_rope/LlamaYaRNScaledRotaryEmbedding.py*. [GitHub jquesnelle/yarn](https://github.com/jquesnelle/yarn/blob/master/scaled_rope/LlamaYaRNScaledRotaryEmbedding.py).
+[^hf-convert]: Hugging Face. (2024). *Transformers v4.46.0: convert_llama_weights_to_hf.py*. [GitHub](https://github.com/huggingface/transformers/blob/v4.46.0/src/transformers/models/llama/convert_llama_weights_to_hf.py).
 [^hf-rope]: Hugging Face. (2025). *Transformers v4.57.0: modeling_rope_utils.py*. [GitHub](https://github.com/huggingface/transformers/blob/v4.57.0/src/transformers/modeling_rope_utils.py).
 [^deepseek3]: DeepSeek-AI. (2024). *DeepSeek-V3 Technical Report*. [arXiv:2412.19437](https://arxiv.org/abs/2412.19437).
 [^deepseek3-code]: DeepSeek-AI. (2024). *DeepSeek-V3: inference/model.py*. [GitHub](https://github.com/deepseek-ai/DeepSeek-V3/blob/main/inference/model.py).
