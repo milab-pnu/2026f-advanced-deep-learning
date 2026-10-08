@@ -118,6 +118,15 @@ $$
 
 Ramachandran 등은 자동 탐색으로 $x\,\sigma(\beta x)$ 꼴을 찾아 Swish라고 불렀다.[^swish] $\beta=1$이면 SiLU와 같고, $\beta\to\infty$이면 ReLU에 가까워지며, $\beta=0$이면 $x/2$가 된다. 두 번째 근사식을 보면 GELU도 $\beta\approx1.702$인 Swish에 가깝다. 세 함수는 결국 gate $g(x)$의 모양만 다르다.
 
+Gate 값과 활성화 함수의 기울기는 다르다. 곱의 미분을 적용하면 다음과 같다. 여기서 $\varphi(x)=e^{-x^2/2}/\sqrt{2\pi}$는 표준정규분포의 확률밀도함수다.
+
+$$
+\operatorname{GELU}'(x)=\Phi(x)+x\varphi(x),\qquad
+\operatorname{SiLU}'(x)=\sigma(x)+x\sigma(x)(1-\sigma(x))
+$$
+
+Gate 자체는 0과 1 사이지만, 두 번째 항 때문에 기울기는 음수이거나 1보다 클 수 있다. 정의식과 이 도함수로 계산하면 다음 값을 얻는다.
+
 | $x$ | ReLU | GELU | SiLU | ReLU′ | GELU′ | SiLU′ |
 |---|---|---|---|---|---|---|
 | −3 | 0 | −0.004 | −0.142 | 0 | −0.012 | −0.088 |
@@ -131,7 +140,7 @@ Ramachandran 등은 자동 탐색으로 $x\,\sigma(\beta x)$ 꼴을 찾아 Swish
 $x=-1$에서 GELU의 값 $-0.159$는 $-1\times\Phi(-1)=-1\times0.159$, 즉 입력의 15.9%만 통과시킨 결과다. 표에서 읽을 점은 세 가지다.
 
 1. **꺾임이 사라진다.** GELU와 SiLU의 기울기는 0에서 0.5이고 양옆으로 연속해서 변한다.
-2. **음수 영역에도 작은 출력과 기울기가 남는다.** GELU는 $x\approx-0.75$에서 최솟값 약 $-0.170$, SiLU는 $x\approx-1.28$에서 약 $-0.278$을 가지며, 그 구간에서 함수가 감소한다(비단조, non-monotonic).
+2. **음수 영역에도 작은 출력과 기울기가 남는다.** GELU는 $x\approx-0.75$에서 최솟값 약 $-0.170$, SiLU는 $x\approx-1.28$에서 약 $-0.278$을 갖는다. 각 최솟점의 왼쪽에서는 $x$가 커질수록 함수값이 감소하고, 오른쪽에서는 증가하므로 비단조(non-monotonic) 함수다.
 3. **입력이 충분히 작은 음수이면 기울기는 여전히 0에 가깝다.** GELU′$(-3)\approx-0.012$다. 정확한 0을 작은 값으로 바꾸고 꺾임을 없앤 것이지, 음수 영역의 기울기 문제가 통째로 사라지는 것은 아니다.
 
 <figure>
@@ -216,7 +225,7 @@ $$
 \frac{\partial L}{\partial v}=g\otimes\sigma(u),\qquad \frac{\partial L}{\partial u}=g\otimes v\otimes\sigma'(u)
 $$
 
-$v$ 경로에는 활성화 함수의 도함수가 곱해지지 않는다. 0과 1 사이의 gate 값만 곱해지므로, gate가 열린 단위에서는 $g$가 거의 그대로 $v$까지 전달된다. 원논문은 이를 곱셈 형태의 skip connection에 비유했다. 반면 $u$ 경로에는 $\sigma'(u)\le0.25$가 곱해진다($v$도 곱해지므로 크기가 반드시 줄어드는 것은 아니지만, 층을 쌓을수록 sigmoid 도함수가 거듭 곱해지는 경로다). 비교 대상인 LSTM식 gate $\tanh(u)\otimes\sigma(v)$에는 도함수가 곱해지지 않는 경로가 없어서, 두 경로 모두 $\tanh'$이나 $\sigma'$가 거듭 곱해진다.
+$v$ 경로에는 활성화 함수의 도함수가 곱해지지 않는다. 0과 1 사이의 gate 값만 곱해지므로, gate가 열린 단위에서는 $g$가 거의 그대로 $v$까지 전달된다. 원논문은 이를 곱셈 형태의 skip connection에 비유했다. 반면 $u$ 경로에는 $\sigma'(u)\le0.25$가 곱해진다($v$도 곱해지므로 크기가 반드시 줄어드는 것은 아니지만, 층을 쌓을수록 sigmoid 도함수가 거듭 곱해지는 경로다). 비교 대상인 LSTM식 gate $\tanh(u)\otimes\sigma(v)$에는 도함수가 곱해지지 않는 경로가 없어서, 두 경로 모두 $\tanh'$이나 $\sigma'$가 거듭 곱해진다. 이 비교는 gate를 적용하는 한 층의 계산에 한정된다. LSTM 전체에는 cell state를 더하기로 전달하는 별도의 기억 경로도 있으므로, GLU가 LSTM 전체보다 기울기를 항상 잘 보존한다는 뜻은 아니다.
 
 비교 실험에서 GLU는 WikiText-103에서 tanh, ReLU, tanh 기반 gate보다 빨리 수렴하고 더 낮은 perplexity에 도달했으며, Google Billion Word에서도 가장 좋았고 ReLU와는 약 5 perplexity 차이가 났다(원논문 Figure 3). Gate의 비선형을 뺀 bilinear 층 $xW\otimes xV$도 선형 층보다는 크게 나았지만 GLU에는 못 미쳤다(원논문 Figure 5).
 
