@@ -18,7 +18,7 @@ Ahmadian 등은 이 설정이 사실상 bandit 문제에 가깝다고 지적했�
 
 ### 1-2. GRPO의 목적함수
 
-DeepSeekMath의 GRPO는 같은 발상을 PPO의 틀 안에서 구현했다.[^deepseekmath] 이 노트는 원논문의 기호를 따라 프롬프트를 $q$, 응답을 $o$, 정책 파라미터를 $\theta$로 쓴다(04b의 $x$, $y$, $\phi$에 해당한다). 프롬프트 $q$마다 옛 정책 $\pi_{\theta_{\mathrm{old}}}$에서 응답 $G$개 $\{o_1,\dots,o_G\}$를 뽑고, 각 응답의 보상 $r_i$를 그룹 안에서 정규화해 advantage로 쓴다. 이 노트의 계산 예시에서 표준편차는 분모가 $G$인 모집단 표준편차로 계산하며(구현마다 관례가 다를 수 있다), 구현에서는 0으로 나누기를 피하는 작은 상수를 분모에 더한다.
+DeepSeekMath의 GRPO는 같은 발상을 PPO의 틀 안에서 구현했다.[^deepseekmath] 이 노트는 원논문의 기호를 따라 프롬프트를 $q$, 응답을 $o$, 정책 파라미터를 $\theta$로 쓴다(04b의 $x$, $y$에 해당한다). 프롬프트 $q$마다 옛 정책 $\pi_{\theta_{\mathrm{old}}}$에서 응답 $G$개 $\{o_1,\dots,o_G\}$를 뽑고, 각 응답의 보상 $r_i$를 그룹 안에서 정규화해 advantage로 쓴다. 이 노트의 계산 예시에서 표준편차는 분모가 $G$인 모집단 표준편차로 계산하며(구현마다 관례가 다를 수 있다), 구현에서는 0으로 나누기를 피하는 작은 상수를 분모에 더한다.
 
 $$
 \hat A_i=\frac{r_i-\operatorname{mean}(r_1,\dots,r_G)}{\operatorname{std}(r_1,\dots,r_G)}
