@@ -93,7 +93,7 @@ $M$은 causal mask다. 문제는 가운데의 $QK^\top$가 $n\times n$ 행렬이
 
 ### 1-2. 계산량과 메모리
 
-$n\times n$ 행렬은 계산량뿐 아니라 메모리 문제도 만든다. 02e §2-4의 FlashAttention은 score 행렬을 블록 단위로 계산하고 버려 **메모리와 데이터 이동**을 줄이지만, 결과가 정확한 attention과 같으므로 계산하는 위치 쌍의 수는 그대로다.[^flash] 이 노트가 다루는 방법은 위치 쌍의 수 자체를 줄이거나 없앤다.
+$n\times n$ 행렬은 계산량뿐 아니라 메모리 문제도 만든다. 02e §2-4의 FlashAttention은 score 행렬을 블록 단위로 계산하고 버려 **메모리와 데이터 이동**을 줄이지만, 결과가 정확한 attention과 같으므로 계산하는 위치 쌍의 수는 그대로다.[^flash] 이 노트가 다루는 방법은 비싼 attention이 계산하는 위치 쌍을 줄이거나, 고정 크기 상태로 계산을 바꾼다. 다만 DSA의 indexer(§2-3)나 hybrid의 전체 attention 층(§6)에는 제곱 항이 남을 수 있다.
 
 생성(decode)에서는 비용의 구조가 달라진다. 새 토큰 하나는 저장해 둔 과거 key $n$개와 점수를 계산하므로 토큰당 계산이 $O(n)$이고, KV(key-value) cache도 $n$에 비례해 자란다. 캐시 크기는 03b §1-2에서 계산하고, decode 비용 전반은 6주차에서 다룬다. 여기서는 학습과 긴 입력 처리(prefill)의 $O(n^2)$ 계산을 출발점으로 삼는다.
 
@@ -111,6 +111,8 @@ $O(n^2)$을 줄이는 방법은 크게 두 가지다.
 가장 단순한 제한은 각 위치가 **최근 $W$개 토큰만** 참조하게 하는 것이다. Mistral 7B는 $W=4096$인 sliding window attention(SWA)을 모든 층에 썼다.[^mistral] 한 층의 계산은 $O(nW)$로 줄어든다.
 
 <Figure src="https://arxiv.org/html/2310.06825v1/swa.png" alt="Mistral 7B 원논문 그림 1. 왼쪽은 다섯 토큰의 causal attention mask로 아래 삼각형이 모두 1이다. 가운데는 window 크기 3의 sliding window mask로, 각 행에서 최근 세 토큰만 1이고 더 오래된 위치는 0이다. 오른쪽은 층을 쌓을 때 한 토큰의 정보가 층마다 window 크기만큼 더 먼 위치로 전달되어 유효 문맥이 넓어지는 모습이다." caption="Vanilla causal attention과 sliding window attention(W=3)의 mask, 층을 쌓을 때 넓어지는 유효 문맥" source="Jiang, A. Q. et al. · Mistral 7B (arXiv:2310.06825) 그림 1 · CC BY 4.0 · 수정 없음" />
+
+[그림 출처](https://arxiv.org/html/2310.06825v1) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 그림 가운데의 mask에서 `on` 행은 `The`를 보지 못한다. 그래도 window 밖의 정보가 완전히 사라지지는 않는다. 오른쪽 그림처럼 한 층에서 $W$칸 떨어진 정보가 다음 층에서 다시 $W$칸 전달되므로, $L$층을 지나면 이론적으로 약 $L\times W$ 거리까지 영향이 닿는다. Mistral 7B는 32층 × 4096으로 약 131K 토큰을 이론적 범위로 제시한다.[^mistral] 다만 이는 여러 층을 거쳐 **간접적으로 전달된 정보**이고, 먼 토큰의 key를 직접 조회하는 것과는 다르다.
 
@@ -224,7 +226,7 @@ $$
 S_3=S_2+v_3k_3^\top=\begin{pmatrix}6&0\\1&3\end{pmatrix},\qquad S_3\,(1,0)^\top=(6,1)=v_1+v_3
 $$
 
-단순 누적은 옛 값을 지우지 못하므로 `x`의 현재 값 $(4,0)$ 대신 **옛 값과 새 값이 섞인** $(6,1)$을 돌려준다.
+단순 누적은 옛 값을 지우지 못하므로 `x`의 현재 값 $(4,0)$ 대신 **옛 값과 새 값이 섞인** $(6,1)$을 돌려준다. §3-1의 정규화 분모를 복원해도 이 문제는 남는다. 이 query의 분모는 $1+0+1=2$여서 출력이 $(3,0.5)$, 즉 두 value의 평균이 될 뿐 최신 값 $(4,0)$이 되지는 않는다. 분모는 출력의 크기를 조절하고, 다음 절의 delta rule은 상태에 쓰인 내용을 바꾼다.
 </Callout>
 
 ### 3-3. 고정 크기 상태의 간섭과 기억 한계
@@ -325,7 +327,7 @@ ZOH는 한 step 동안 입력 $x(t)$가 일정하다고 보고 연속 시간 식
 </Details>
 
 <Callout type="example">
-$\Delta$의 역할을 스칼라로 보자. $A=-1$이면 $\bar A=e^{-\Delta}$다.
+$\Delta$의 역할을 스칼라로 보자. $A=-1$, $B=1$이고 ZOH 이산화를 쓰면 $\bar A=e^{-\Delta}$, $\bar B=1-e^{-\Delta}$이므로 $h_t=e^{-\Delta}h_{t-1}+(1-e^{-\Delta})x_t$다.
 
 | $\Delta$ | $\bar A=e^{-\Delta}$ | 의미 |
 |---|---|---|
@@ -367,6 +369,8 @@ $$
 
 <Figure src="https://arxiv.org/html/2405.21060v1/semiseparable.png" alt="Mamba-2 원논문 그림 2. 입력 X(시퀀스 길이 T, head 차원 P)가 아래 삼각형의 시퀀스 변환 행렬 M에 곱해져 출력 Y가 된다. 오른쪽에 확대한 행렬의 각 원소는 C_i 전치, A_i부터 A_(j+1)까지의 곱, B_j의 곱으로 쓰여 있고, 점선 블록은 그 일부가 낮은 rank 구조를 가진다는 것을 보여 준다. 제목은 State Space Models are Semiseparable Matrix Transformations." caption="SSM을 시퀀스 축에 작용하는 하삼각 행렬 M으로 쓴 모습. 각 원소는 C와 B 사이에 A의 곱을 끼운 형태이고, SSD처럼 A가 스칼라이면 이 곱이 감쇠 계수의 누적곱이 되어 attention 행렬과 같은 자리에 놓고 비교할 수 있다." source="Dao, T. & Gu, A. · Transformers are SSMs (arXiv:2405.21060) 그림 2 · CC BY 4.0 · 수정 없음" />
 
+[그림 출처](https://arxiv.org/html/2405.21060v1) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
+
 이 duality는 **조건이 붙은 관계**다. 스칼라 $a_t$ 구조를 가진 SSM과 특정 mask를 가진 linear attention이 같은 계산이라는 뜻이지, 일반적인 SSM이나 softmax attention이 서로 같다는 뜻은 아니다. Softmax attention은 과거를 압축하지 않으므로 고정 크기 상태를 가진 recurrence로 쓸 수 없다.
 
 ### 5-4. 순수 SSM 모델과의 경계
@@ -378,6 +382,10 @@ Mamba나 Mamba-2 층만 쌓은 순수 SSM 언어 모델은 attention 없이 시�
 ## 6. Hybrid 구조
 
 두 갈래는 각자 약점을 남겼다. 참조 범위 제한은 **선택에서 빠진 정보**를 그 층에서 읽지 못하고, linear attention과 SSM은 **압축된 상태에서 특정 토큰을 정확히 검색하기** 어렵다. 반대로 전체 softmax attention은 둘 다 할 수 있지만 비싸다. Hybrid 구조는 대부분의 층을 싼 mixer로 두고, 일부 층에 softmax attention을 섞어 이 약점을 보완한다. 섞는 attention은 대개 전체 attention이지만, DeltaNet과 Gated DeltaNet 논문의 hybrid(§4-2, §4-3)처럼 sliding window attention을 섞어 가까운 문맥의 정확한 비교를 맡기는 설계도 있다. 무엇과 섞느냐에 따라 세 종류로 나뉜다.
+
+<Callout type="warning">
+Hybrid 전체가 시퀀스 길이에 대해 선형이 되는 것은 아니다. 전체 attention 층이 $m$개 남고 각 층의 head 구성이 같다면, 그 층들의 점수 계산과 가중합만으로 $O(mn^2d)$가 든다. 예를 들어 32개 mixer 중 4개가 전체 attention이면 이 제곱 항의 계수는 모두 attention인 모델의 1/8이지만, $n$을 두 배로 늘렸을 때 그 항은 여전히 네 배가 된다. Decode에서도 이 4개 층의 토큰당 계산과 KV cache는 $n$에 비례한다. Hybrid의 이점은 비싼 층의 수를 줄여 실제 비용을 낮추면서 검색 능력을 보완하는 데 있다.
+</Callout>
 
 ### 6-1. Local과 global attention
 
