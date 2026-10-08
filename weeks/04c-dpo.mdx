@@ -141,6 +141,8 @@ $\hat r_\theta(x,y)=\beta\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid
 
 <Figure src="https://arxiv.org/html/2305.18290v3/figures/diagrams/teaser.png" alt="두 파이프라인의 비교. 왼쪽 RLHF에서는 'write me a poem about the history of jazz' 같은 프롬프트 x에 대한 선호 데이터(y_w가 y_l보다 선호됨)로 maximum likelihood를 써서 reward model을 학습하고, reward model과 LM policy 사이를 'sample completions'와 'label rewards' 화살표가 오가는 reinforcement learning 루프로 정책을 학습한다. 오른쪽 DPO에서는 같은 선호 데이터에서 maximum likelihood 하나로 바로 final LM을 얻는다." caption="RLHF와 DPO의 파이프라인. 왼쪽은 선호 데이터로 reward model을 학습한 뒤 정책이 응답을 생성하고 보상을 받는 강화학습 루프를 돈다. 오른쪽 DPO는 같은 선호 데이터에 분류 손실 하나를 걸어 정책을 바로 학습하며, reward model과 생성 루프가 모두 빠진다." source="Rafailov et al. (2023), DPO, Figure 1. arXiv:2305.18290v3 · CC BY 4.0 · 수정 없음" />
 
+[라이선스](https://creativecommons.org/licenses/by/4.0/)
+
 ### 2-2. Gradient가 하는 일
 
 손실의 gradient를 정리하면 다음 형태가 된다.[^dpo]
@@ -173,6 +175,8 @@ Implicit reward의 차이는 $0.2$이고 $\sigma(0.2)=0.550$이므로 손실은 
 Rafailov 등은 과제별로 다른 방식으로 DPO를 PPO 기반 RLHF와 비교했다.[^dpo] 감성 제어 생성(IMDb)에서는 감성 분류기를 정답 보상으로 두고 보상과 KL 거리의 관계를 그렸는데, DPO가 같은 KL에서 PPO보다 높은 보상에 도달했다(원논문 Figure 2 왼쪽). Reddit TL;DR 요약에서는 GPT-4를 판정자로 사람이 쓴 참조 요약과 비교한 승률이 sampling temperature 0에서 DPO 61%, PPO 57%였다(원논문 Figure 2 오른쪽). Anthropic HH 대화에서는 계산 비용이 작은 방법 중 DPO만 데이터셋의 선호 응답보다 나은 응답을 냈다. 2024년의 Llama 3와 Tülu 3 같은 공개 recipe도 선호 학습 단계에 PPO 대신 DPO 계열을 썼는데, 근거는 각 팀의 자체 비교였다(Llama 3는 계산량과 지시 따르기 성능, Tülu 3는 여러 손실을 비교한 ablation과 PPO와의 비용 비교).[^llama][^tulu3] 다만 이 비교는 이후 연구들에서 다시 검토되었고, 그 결과는 다음 절에서 본다.
 
 <Figure src="https://arxiv.org/html/2305.18290v3/frontier.svg" alt="IMDb sentiment generation 실험의 산점도. 가로축은 정책과 reference model 사이의 KL divergence(0에서 20), 세로축은 감성 분류기가 준 보상(0.4에서 1.0)이다. 점 하나가 학습된 정책 하나다. DPO(노란 점)는 KL 2.5 근처에서 이미 보상 0.95를 넘고 KL 5 이후로는 거의 1.0에 머문다. PPO(분홍)와 정답 보상을 쓴 PPO-GT(주황)는 KL이 커질수록 보상이 0.5에서 0.9 정도로 올라가며 DPO보다 아래에 있고, TRL 구현의 PPO-GT(보라), Unlikelihood(청록), 선호 응답만 SFT한 Preferred-FT(연두)는 그보다 더 흩어져 있거나 낮다." caption="IMDb 감성 제어에서 KL 거리별 보상. 같은 KL 거리에서 위에 있는 점일수록 KL 제약 보상 최대화 문제를 더 잘 푼 것이다. DPO(노란 점)는 거의 모든 KL 구간에서 PPO 계열보다 높은 보상에 있다. 감성 분류기를 정답 보상으로 둘 수 있는 통제된 과제의 결과다." source="Rafailov et al. (2023), DPO, Figure 2 왼쪽 패널. arXiv:2305.18290v3 · CC BY 4.0 · 수정 없음" />
+
+[라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 ## 3. DPO와 RL의 관계
 
@@ -253,6 +257,8 @@ DPO의 손실에는 여러 가정이 들어 있다. 선호가 Bradley–Terry �
 
 <Figure src="https://arxiv.org/html/2406.02900v2/figs/dpo_scaling_law_curve_fits_final_kl.png" alt="DPO의 과최적화 곡선. 가로축은 KL divergence의 제곱근(약 1.5에서 10), 세로축은 GPT-4 판정 승률(0에서 0.5)이다. 모델 크기별로 1B는 파랑, 2.8B는 빨강, 6.9B는 초록이고, 모양이 다른 표식이 서로 다른 β 설정이며 점선은 적합한 곡선이다. 1B의 곡선은 제곱근 KL 3.5 근처에서 승률 약 0.25로 정점을 찍고 9.5에서 0까지 떨어진다. 2.8B는 3.5 근처에서 약 0.48로 정점을 찍은 뒤 7.8에서 0.2까지 떨어지고, 6.9B는 4에서 약 0.45로 시작해 6.5에서 약 0.23까지 내려간다." caption="DPO 학습을 한 epoch 마친 checkpoint들의 승률과 KL 거리. 색은 모델 크기, 표식은 β 설정이다. 1B와 2.8B에서는 β를 줄여 reference model에서 멀리 갈수록 승률이 오르다가 꺾이고, 6.9B는 실험 범위에서 내려가는 쪽만 보인다. 가로축이 √KL인 것은 04d §2-2의 Gao 등과 같다. Reddit TL;DR 요약, GPT-4 판정 기준." source="Rafailov et al. (2024), Scaling Laws for Reward Model Overoptimization in Direct Alignment Algorithms, Figure 1 왼쪽 위 패널. arXiv:2406.02900v2 · CC BY 4.0 · 수정 없음" />
 
+[라이선스](https://creativecommons.org/licenses/by/4.0/)
+
 이유의 하나는 손실이 보는 범위다. DPO 손실은 고정된 선호쌍에서만 계산되므로, 손실이 직접 제약하는 것은 데이터에 있는 쌍의 log 확률비 차이 $h_\theta$뿐이고 그 쌍 밖의 응답 품질은 보장되지 않는다.
 
 또 다른 현상은 gradient를 볼 때 예고한 **likelihood displacement**다. DPO의 직접 신호는 $y_w$의 확률을 올리는 것이지만, 실제로는 $y_w$의 log 확률이 학습 중 내려가는 일이 흔하다. 확률 질량이 $y_w$가 아니라 데이터에 없는 다른 응답으로 옮겨 가기 때문이다.
@@ -285,7 +291,7 @@ Tülu 3는 그 기준으로 on-policy 응답과 다른 모델의 off-policy 응�
 
 DPO는 reward model을 없앴지만 보상의 출처인 **선호 판정**은 그대로 남아 있다. 판정자가 긴 응답을 좋아하면 implicit reward도 길이를 보상한다. 04b의 파이썬 정렬 예처럼 판정자가 친절하고 자신 있는 말투를 좋아하면, 정책은 틀린 답도 그렇게 쓰는 쪽으로 기울 수 있다. 길이 정규화는 증상 하나에 대한 대응이다. 판정자와 reward model이 어떻게 틀리고 그것을 어떻게 재는지가 04d의 주제다. 그리고 판정 대신 **정답 검증**을 보상으로 쓰는 방향이 5주차다. 거기서는 on-policy 표집이 다시 중심이 되고, 04b의 정책 최적화 틀이 그대로 돌아온다.
 
-[^survey]: Xiao, W., et al. (2026). *A Survey of Direct Preference Optimization: Datasets, Theories, Variants, and Applications*. IEEE Transactions on Pattern Analysis and Machine Intelligence. [arXiv:2410.15595v4](https://arxiv.org/abs/2410.15595v4).
+[^survey]: Xiao, W., et al. (2026). *A Comprehensive Survey of Direct Preference Optimization: Datasets, Theories, Variants, and Applications*. IEEE Transactions on Pattern Analysis and Machine Intelligence. [arXiv:2410.15595v4](https://arxiv.org/abs/2410.15595v4).
 [^dpo]: Rafailov, R., Sharma, A., Mitchell, E., Ermon, S., Manning, C. D., & Finn, C. (2023). *Direct Preference Optimization: Your Language Model is Secretly a Reward Model*. NeurIPS 2023. [arXiv:2305.18290](https://arxiv.org/abs/2305.18290).
 [^llama]: Llama Team, AI @ Meta. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
 [^tulu3]: Lambert, N., et al. (2024). *Tülu 3: Pushing Frontiers in Open Language Model Post-Training*. [arXiv:2411.15124v5](https://arxiv.org/abs/2411.15124v5).

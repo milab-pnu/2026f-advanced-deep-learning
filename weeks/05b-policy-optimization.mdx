@@ -30,7 +30,7 @@ $$
 \mathcal{J}_{\mathrm{GRPO}}(\theta)=\mathbb{E}\Bigg[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{\lvert o_i\rvert}\sum_{t=1}^{\lvert o_i\rvert}\Big(\min\big(\rho_{i,t}\hat A_i,\ \operatorname{clip}(\rho_{i,t},1-\varepsilon,1+\varepsilon)\hat A_i\big)-\beta\,\mathbb{D}_{\mathrm{KL}}[\pi_\theta\,\|\,\pi_{\mathrm{ref}}]\Big)\Bigg]
 $$
 
-$\rho_{i,t}=\pi_\theta(o_{i,t}\mid q,o_{i,<t})/\pi_{\theta_{\mathrm{old}}}(o_{i,t}\mid q,o_{i,<t})$는 04b §3-3의 토큰 확률비다. KL 항은 04b처럼 보상에 섞지 않고 목적함수에 직접 더하며, 토큰마다 $\frac{\pi_{\mathrm{ref}}}{\pi_\theta}-\log\frac{\pi_{\mathrm{ref}}}{\pi_\theta}-1$로 추정한다. 이 추정량은 항상 0 이상이다.[^deepseekmath] Value model이 없으므로 04b §3-4의 구성에서 critic(value model)이 빠진다.
+$\rho_{i,t}=\pi_\theta(o_{i,t}\mid q,o_{i,<t})/\pi_{\theta_{\mathrm{old}}}(o_{i,t}\mid q,o_{i,<t})$는 04b §3-3의 토큰 확률비다. KL 항은 04b처럼 보상에 섞지 않고 목적함수에 직접 더하며, 토큰마다 $\frac{\pi_{\mathrm{ref}}}{\pi_\theta}-\log\frac{\pi_{\mathrm{ref}}}{\pi_\theta}-1$로 추정한다. 이 값은 표본마다 0 이상이다. 고정한 prefix에서 토큰을 현재 정책 $\pi_\theta$로 뽑아 평균하면 reverse KL과 같지만, 여기처럼 옛 정책 표본을 재사용할 때 그 평균까지 불편 추정량인 것은 아니다.[^deepseekmath] Value model이 없으므로 04b §3-4의 구성에서 critic(value model)이 빠진다.
 
 <Callout type="example">
 **응답 네 개의 GRPO advantage.** 한 문제에 대한 응답 네 개의 보상이 $[1,0,1,0]$이라고 하자. 평균은 0.5, 표준편차는 0.5이므로 advantage는 $[+1,-1,+1,-1]$이다. 정답 응답의 모든 토큰은 확률이 오르는 방향의 신호를, 오답 응답의 모든 토큰은 내리는 방향의 신호를 받는다.
@@ -119,11 +119,11 @@ Clipping의 역할을 다시 생각한 변형도 있다. PPO의 clipping은 adva
 
 세 번째 문제는 확률비를 토큰마다 계산하는 것 자체에 있다. Zheng 등은 importance sampling이 여러 표본의 평균으로 분포 차이를 보정하는 도구인데, GRPO의 토큰 확률비는 위치마다 다음 토큰 분포에서 뽑은 표본 하나에 기대므로 의도한 보정을 하지 못하고 gradient에 큰 분산의 잡음을 더하며, 긴 응답에서 그 잡음이 누적된다고 주장했다.[^gspo] 이 주장은 수학적 성질과 구분해 읽어야 한다. 표본이 하나여도 importance sampling 가중치의 기대값 항등식은 성립하고, 표본 수가 정하는 것은 추정의 분산이다. 구조적인 한계는 따로 있다. 토큰 확률비 $\rho_{i,t}$는 이미 뽑힌 prefix $o_{i,<t}$를 조건으로 다음 토큰의 분포 차이만 보정하고, 그 prefix가 옛 정책에서 나왔다는 차이는 보정하지 않는다. 응답 전체의 분포 차이를 정확히 보정하는 가중치는 모든 토큰 비율의 곱 $\pi_\theta(o_i\mid q)/\pi_{\theta_{\mathrm{old}}}(o_i\mid q)$이며, 긴 응답에서는 토큰별 비율의 변동이 이 곱에 누적되어 분산이 커질 수 있다. 특히 MoE(mixture of experts) 모델에서는 갱신 전후로 같은 토큰에 활성화되는 expert가 바뀌어 토큰 확률비가 크게 흔들리며, Qwen 팀은 GRPO를 쓰던 시절 옛 정책의 routing을 저장해 재사용하는 routing replay로 이를 억눌러야 했다.[^gspo]
 
-GSPO(group sequence policy optimization)는 한 응답의 토큰 log 확률비를 평균해 응답 하나의 비율을 만들고, clipping도 응답 단위로 건다. 토큰별로 제각각 자르는 대신 같은 응답의 모든 토큰에 같은 계수를 주는 것이다. 그룹 표준편차 정규화와 길이 평균은 남으므로 Dr. GRPO의 편향 제거를 잇는 단계가 아니라, 토큰별 비율의 변동을 겨냥한 별개의 갈래다.[^gspo]
+GSPO(group sequence policy optimization)는 한 응답의 토큰 log 확률비를 평균해 응답 하나의 비율을 만들고, clipping도 응답 단위로 건다. 토큰별로 제각각 자르는 대신 같은 응답의 모든 토큰에 같은 계수를 주는 것이다. GSPO는 그룹 표준편차 정규화를 유지하고 gradient에 길이 평균이 남으므로, Dr. GRPO의 편향 제거를 잇는 방법이 아니라 토큰별 비율의 변동이라는 별개의 문제를 겨냥한다. 실험의 clipping 여유폭은 GSPO가 $3\times10^{-4}$와 $4\times10^{-4}$, GRPO가 0.2와 0.27이었다. 저자들은 비율의 정의가 달라 여유폭의 자릿수가 다르다고 설명한다. 그 결과 잘린 토큰의 비율은 GSPO가 GRPO보다 두 자릿수 많았는데도(원논문 v2 §5.2, Figure 2), GSPO의 학습 효율이 더 높았고 MoE에서 routing replay 없이 학습할 수 있었다. 저자들은 최신 Qwen3 모델의 학습에 이 방법이 기여했다고 밝혔다.[^gspo]
 
 <Details summary="GSPO의 응답 단위 확률비와 세 토큰 clipping 예">
 
-GSPO(group sequence policy optimization)는 확률비를 응답 단위로 정의한다.
+응답 단위 확률비는 다음과 같다.
 
 $$
 s_i(\theta)=\Big(\frac{\pi_\theta(o_i\mid q)}{\pi_{\theta_{\mathrm{old}}}(o_i\mid q)}\Big)^{1/\lvert o_i\rvert}
@@ -142,7 +142,7 @@ GRPO에서는 토큰마다 자기 비율 $\rho_{i,t}$를 가중치로 받지만,
 **세 토큰 응답의 clipping.** Advantage가 양수인 응답에서 세 토큰의 비율이 갱신 중에 $\rho=(1.5,\ 1.0,\ 0.9)$가 되었다고 하자(교육용 가정). GRPO에 $\varepsilon=0.2$를 쓰면 첫 토큰만 상한 1.2를 넘어 gradient가 0이 되고, 둘째와 셋째 토큰은 각각 가중치 1.0과 0.9로 gradient가 남는다. GSPO에서는 $s=(1.5\times1.0\times0.9)^{1/3}=1.35^{1/3}\approx1.105$ 하나만 본다. 원논문 실험의 상한 $1+4\times10^{-4}$를 쓰면 이 응답은 통째로 잘려 세 토큰 모두 gradient가 0이 되고, 비율이 상한 안에 있었다면 세 토큰이 같은 계수를 받는다. GSPO는 토큰을 골라 자르지 않고 응답 단위로 살리거나 자른다.
 </Callout>
 
-GSPO는 그룹 표준편차 정규화를 유지하고 gradient에 길이 평균이 남으므로, Dr. GRPO의 편향 제거를 잇는 방법이 아니라 토큰별 비율의 변동이라는 별개의 문제를 겨냥한다. 실험의 clipping 여유폭은 GSPO가 $3\times10^{-4}$와 $4\times10^{-4}$, GRPO가 0.2와 0.27이었다. 저자들은 비율의 정의가 달라 여유폭의 자릿수가 다르다고 설명한다. 그 결과 잘린 토큰의 비율은 GSPO가 GRPO보다 두 자릿수 많았는데도(원논문 v2 §5.2, Figure 2), GSPO의 학습 효율이 더 높았고 MoE에서 routing replay 없이 학습할 수 있었다. 저자들은 최신 Qwen3 모델의 학습에 이 방법이 기여했다고 밝혔다.[^gspo]
+
 
 </Details>
 

@@ -10,6 +10,8 @@ Post-training은 대개 한 단계로 끝나지 않는다. 아래는 Allen AI가
 
 <Figure hero src="https://arxiv.org/html/2512.13961v2/olmo3_figure.svg" alt="Olmo 3의 model flow. 왼쪽은 Olmo 3 Base를 만드는 pretraining, midtraining, long context의 세 단계이고, 각 단계 아래에 web text, science PDFs, code, math, reasoning, synthetic 같은 데이터 종류가 아이콘으로 적혀 있다. 오른쪽은 post-training으로, Olmo 3 Think는 Think SFT, Think DPO, Think RLVR을 거친다. Olmo 3 Instruct는 Think SFT에서 내려오는 화살표로 시작해 Instruct SFT, Instruct DPO, Instruct RLVR을 거친다. Olmo 3 RL-Zero는 base model에서 바로 RLVR로 이어진다." caption="Olmo 3의 학습 흐름. 왼쪽이 base model 학습, 오른쪽이 post-training이다. 단계마다 데이터와 학습 방법을 따로 정하며, Instruct는 base model이 아니라 Think SFT를 마친 checkpoint에서 출발한다." source="Team Olmo (2025), Olmo 3, Figure 2. arXiv:2512.13961v2 · CC BY 4.0 · 수정 없음" />
 
+[라이선스](https://creativecommons.org/licenses/by/4.0/)
+
 이 그림은 한 모델 계열의 recipe이지 모든 모델이 거쳐야 하는 순서는 아니다. 4·5주차는 두 질문으로 방법을 비교한다. **무엇을 잘했다고 채점하는가**, 그리고 **누가 학습할 응답을 만드는가**다. 시연을 모방하는 SFT에서 출발해 선호를 학습하는 RLHF와 DPO를 비교하고, 점수와 실제 품질이 갈라지는 문제를 살핀다. 5주차에는 검증기의 정답 신호로 정책을 갱신하고, 그 결과를 긴 추론·도구 사용으로 확장하거나 다른 모델에 옮기는 방법을 본다.
 
 | 노트 | 이어지는 질문 |
@@ -78,7 +80,13 @@ Pre-training에서는 문서의 거의 모든 토큰에 $m_i=1$을 주었다. SF
 | 8 | 입니다 | . | 1 | 응답 |
 | 9 | . | EOT | 1 | 응답의 끝 |
 
-모델이 네 정답에 준 확률이 0.5, 0.8, 0.9, 0.6이었다고 하자. 토큰별 손실은 $-\log$ 값으로 0.693, 0.223, 0.105, 0.511이다. 채점하는 토큰이 4개이므로 $\mathcal{L}=(0.693+0.223+0.105+0.511)/4=0.383$이다. 위치 0–5의 예측은 계산되지만 손실에 들어가지 않는다. 마지막 EOT를 채점하는 이유는 모델이 "여기서 멈춘다"를 배워야 하기 때문이다. 이 토큰을 mask하면 응답을 끝내는 시점을 직접 학습하는 신호가 빠진다.
+모델이 네 정답에 준 확률이 0.5, 0.8, 0.9, 0.6이었다고 하자. 토큰별 손실은 $-\log$ 값으로 0.693, 0.223, 0.105, 0.511이다. 채점하는 토큰이 4개이므로
+
+$$
+\mathcal{L}=(0.693+0.223+0.105+0.511)/4=0.383
+$$
+
+이다. 위치 0–5의 예측은 계산되지만 손실에 들어가지 않는다. 마지막 EOT를 채점하는 이유는 모델이 "여기서 멈춘다"를 배워야 하기 때문이다. 이 토큰을 mask하면 응답을 끝내는 시점을 직접 학습하는 신호가 빠진다.
 </Callout>
 
 지시 토큰은 손실에서 빠질 뿐 입력에서는 빠지지 않는다. Loss mask는 attention mask처럼 토큰을 가리는 것이 아니라 그 위치의 예측을 채점하지 않을 뿐이다. 응답의 각 토큰은 앞선 지시 전체를 조건으로 예측되고, 그 gradient는 지시 토큰의 표현을 거쳐서도 흐른다. 전체 토큰열을 채점하는 선택도 가능하지만, 그러면 모델은 사용자의 질문을 생성하는 법도 함께 배운다. 이 노트와 뒤 노트에서는 응답 토큰만 채점하는 설정을 기본으로 삼는다.
@@ -109,14 +117,16 @@ Tülu 3는 Transformers 라이브러리의 기본 손실 집계가 padding과 gr
 <figure>
 <svg viewBox="0 0 560 536" role="img" aria-label="지시 데이터의 계보도. 기존 NLP 과제의 지시문(FLAN, T0, 2021)과 실제 사용자의 요청에 사람이 쓴 시연(InstructGPT, 2022)은 별도 출발점이다. 사람 시연은 응답을 사람이 써야 해 비용이 크다는 문제가 있고, 여기서 두 방향으로 갈린다. 왼쪽은 생성해서 늘리는 방향으로 모델이 만든 지시와 응답(Self-Instruct, Alpaca)이며, 비슷한 지시와 생성 모델 오류의 학습이 문제로 남는다. 오른쪽은 골라서 높이는 방향으로 소량 고품질 선별(LIMA, 2023)이며, 적은 양이 덮는 능력 범위가 불분명하다는 문제가 남는다. 두 방향은 능력별 혼합(Tülu 3, 2024와 Olmo 3, 2025)에서 결합되어 사람, 기존 과제, 합성 데이터를 섞고 ablation으로 비율을 정한다. 그 아래에 점선으로, 혼합 안에 함께 넣는 응답 구성으로서 긴 풀이 시연으로 추론 행동을 학습하는 사고 과정을 담은 응답(Qwen3, Olmo 3 Think, 2025)이 붙어 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
 <text x="280" y="22" font-size="17" text-anchor="middle" fill="#0f172a" font-weight="600">지시 데이터 · 두 방향과 결합</text>
-<rect x="140" y="38" width="280" height="48" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="280" y="59" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">기존 NLP 과제의 지시문</text>
-<text x="280" y="77" font-size="12" text-anchor="middle" fill="#64748b">FLAN · T0 (2021)</text>
-<text x="280" y="107" font-size="11" text-anchor="middle" fill="#64748b">별도 출발점: 실제 사용자의 열린 요청</text>
-<rect x="140" y="128" width="280" height="48" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="280" y="149" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">사람이 쓴 시연</text>
-<text x="280" y="167" font-size="12" text-anchor="middle" fill="#64748b">InstructGPT (2022)</text>
-<path d="M280 176 V184" stroke="#0f172a" fill="none"/>
+<rect x="16" y="38" width="228" height="48" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="130" y="59" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">기존 NLP 과제의 지시문</text>
+<text x="130" y="77" font-size="12" text-anchor="middle" fill="#64748b">FLAN · T0 (2021)</text>
+<rect x="316" y="38" width="228" height="48" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="430" y="59" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">실제 요청에 사람이 쓴 시연</text>
+<text x="430" y="77" font-size="12" text-anchor="middle" fill="#64748b">InstructGPT (2022)</text>
+<path d="M130 86 V112 H12 V396 H60" stroke="#64748b" stroke-dasharray="4 3" fill="none"/>
+<polygon points="60,396 53,392 53,400" fill="#64748b"/>
+<text x="130" y="104" font-size="11" text-anchor="middle" fill="#64748b">기존 과제를 혼합에 포함</text>
+<path d="M430 86 V176 H280 V184" stroke="#0f172a" fill="none"/>
 <text x="280" y="197" font-size="11" text-anchor="middle" fill="#64748b">문제: 응답을 사람이 써야 해 비용이 큼</text>
 <path d="M280 203 V212 M140 212 H420 M140 212 V226 M420 212 V226" stroke="#0f172a" fill="none"/>
 <polygon points="140,232 136,225 144,225" fill="#0f172a"/>
@@ -166,6 +176,8 @@ Google은 이어서 과제 수를 1,836개로 늘리고 CoT(chain of thought) �
 
 <Figure src="https://arxiv.org/html/2212.10560v2/data_generation_pipeline_v6.png" alt="Self-Instruct의 데이터 생성 과정. 왼쪽 위의 175개 시드 과제(과제마다 지시 1개와 예시 1개)가 task pool에 들어간다. 1단계에서 LM이 'Give me a quote from a famous person on this topic' 같은 새 지시를 생성하고, 2단계에서 LM이 그 지시가 분류 과제인지 판별한다. 3단계에서 분류 과제이면 Output-first로 클래스 라벨을 먼저 만든 뒤 입력을 만들고(낙태 찬반 판별 예), 아니면 Input-first로 입력을 먼저 만든 뒤 출력을 만든다(정직에 관한 명언 예). 4단계 filtering을 거친 과제는 다시 task pool로 돌아간다." caption="Self-Instruct의 한 바퀴. 시드 과제에서 뽑은 예시로 새 지시를 만들고(1단계), 분류 과제 여부에 따라 라벨과 입력 중 무엇을 먼저 만들지 정한 뒤(2–3단계), 걸러 낸 결과를 과제 풀에 되돌린다(4단계). 그림 속 과제는 모두 GPT-3가 생성한 것이다." source="Wang et al. (2023), Self-Instruct, Figure 2. arXiv:2212.10560v2 · CC BY 4.0 · 수정 없음" />
 
+[라이선스](https://creativecommons.org/licenses/by/4.0/)
+
 GPT-3로 이렇게 만든 약 52K개의 지시와 82K개의 입력·출력 예시로 GPT-3 자신을 fine-tuning하자, Super-NaturalInstructions 평가에서 정답 텍스트와의 ROUGE-L이 6.8에서 39.9로 33.1점 올랐다(원논문 Table 3). 전문가가 새로 쓴 지시 252개에 대한 사람 평가에서는, 사소한 오류가 있는 응답까지 유효로 세는 기준으로 사람 데이터로 학습한 InstructGPT-001과 5%p 차이였다(원논문 Figure 6).[^self-instruct] Stanford의 Alpaca는 이 방법을 단순화한 파이프라인을 text-davinci-003으로 실행해 52K 시연을 500달러 미만으로 만들고 LLaMA 7B를 fine-tuning했다.[^alpaca]
 
 모델이 만든 데이터에도 문제가 있다. 지시문이 서로 비슷해지고, 데이터를 만든 모델의 오류가 그대로 학습된다. Alpaca처럼 더 강한 모델(teacher)의 응답으로 다른 모델(학생)을 학습시키면 학생이 teacher의 표면적 문체만 배우는 것 아니냐는 우려도 있는데, 이 문제는 5주차 Distillation 노트에서 다시 다룬다.
@@ -199,6 +211,8 @@ GPT-3로 이렇게 만든 약 52K개의 지시와 82K개의 입력·출력 예�
 데이터를 섞는 만큼 평가 데이터가 학습에 새어 들어갈 위험도 커진다. 공개 데이터셋, 특히 실제 사용자가 API 모델을 쓴 기록에는 벤치마크 문제가 섞여 있기 쉽다. Tülu 3는 학습 프롬프트와 평가 문제가 8-gram을 공유하는 토큰이 평가 문제의 절반을 넘으면 겹친다고 판정하고, 평가 문제의 2% 넘게 겹치는 학습 데이터셋을 오염으로 보아 데이터셋 전체나 겹친 예시를 뺐다. 평가도 둘로 나누었다. 데이터 혼합과 설정을 고르는 데 쓰는 development 평가와, 그 선택에 쓰지 않고 따로 떼어 둔 unseen 평가다. Unseen 평가로는 최종 모델의 성능뿐 아니라 개발 중에 내린 선택이 development 평가에 과적합하지 않았는지도 확인했다.[^tulu3] 아래 그림의 decontaminate와 development evals, unseen evals가 이 절차다.
 
 <Figure src="https://arxiv.org/html/2411.15124v5/tulu3_figure1_v2.png" alt="Tülu 3의 개요. 왼쪽 위의 프롬프트 수집(public datasets, persona-driven synthetic instructions, decontaminate)과 왼쪽 아래의 핵심 능력 선정(knowledge, reasoning, math, coding, chat, safety)이 데이터 구성 단계를 이룬다. 오른쪽에서는 base model이 supervised finetuning(data mixing), direct preference optimization(on-policy·off-policy data), RL with verifiable rewards를 거쳐 Tülu3-SFT, Tülu3-DPO, Tülu3가 된다. 세 학습 단계 아래에 development evals가 있고, 최종 모델은 unseen evals로 평가한다." caption="Tülu 3의 post-training. 핵심 능력을 먼저 정하고, 프롬프트를 모아 평가 데이터와의 중복을 제거한 뒤 SFT, DPO, RLVR을 거친다. 각 단계의 선택은 development 평가로 하고, 그 선택이 일반화되는지는 따로 떼어 둔 unseen 평가로 확인한다." source="Lambert et al. (2024), Tülu 3, Figure 1. arXiv:2411.15124v5 · CC BY 4.0 · 수정 없음" />
+
+[라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 ### 2-6. 사고 과정을 담은 응답
 
@@ -261,6 +275,8 @@ SFT가 바꾸는 것이 지식인지 형식인지는 점수 표만으로 가리�
 둘째는 SFT 데이터에 **모델이 모르는 사실**을 넣는 통제 실험이다. Gekhman 등은 PaLM 2-S base model에 근거 문서 없이 질문만 보고 답하는 closed-book 질의응답을 SFT했다. 학습 질문은 base model에 서로 다른 few-shot 프롬프트 10개로 물어 정답이 한 번이라도 나오면 Known, greedy decoding으로도 표집으로도 한 번도 나오지 않으면 Unknown으로 나누었고, Unknown의 비율을 바꿔 가며 학습했다. 평가는 학습 질문과 겹치지 않는 시험 질문으로 했다.[^gekhman]
 
 <Figure src="https://arxiv.org/html/2405.05904v3/figs/training_accuracy_plot.png" alt="Fine-tuning epoch에 따른 정확도. 위쪽 그래프에서 Train Known 곡선은 1 epoch 무렵 60% 가까이 오르고 10 epoch에 약 82%에 이르는 반면, Train Unknown 곡선은 10 epoch에 약 15%에 머물다 50 epoch 가까이 되어서야 100%에 닿는다. 10 epoch에 'Overfitting starts'라는 수직 점선이 있다. 아래쪽 그래프의 Dev 정확도는 약 10 epoch에서 43% 부근으로 가장 높고, 이후 Unknown 예시를 학습해 갈수록 40% 아래로 내려간다." caption="Known 50%, Unknown 50%로 SFT할 때의 학습 곡선. Unknown 예시(주황)는 Known 예시(청록)보다 훨씬 늦게 학습되고, development 정확도(아래)는 Known 대부분과 Unknown 일부만 맞힌 시점에 가장 높았다가 Unknown을 맞혀 갈수록 떨어진다." source="Gekhman et al. (2024), Does Fine-Tuning LLMs on New Knowledge Encourage Hallucinations?, Figure 1. arXiv:2405.05904v3 · CC BY 4.0 · 수정 없음" />
+
+[라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 모델이 Unknown 학습 예시를 맞히기까지는 Known보다 훨씬 오래 걸렸고, 학습을 오래 해 Unknown 예시까지 맞히게 될수록 시험 질문의 정확도는 떨어졌다. 시험 질문 중 base model이 원래 모르던 것은 fine-tuning 뒤에도 거의 맞히지 못하므로(정확도 0.4–3.2%, 원논문 Table 2), 모델 사이의 정확도 차이는 주로 원래 알던 질문에서 생긴다. 저자들은 이를 이미 가진 지식에 비추어 틀린 답을 내는 hallucination의 증가로 해석하고(원논문 부록 B), 시험 정확도가 맞힌 Known 예시의 비율에 따라 오르고 맞힌 Unknown 예시의 비율에 따라 거의 선형으로 내려간다는 회귀 결과를 보고한다(원논문 §4.4, Table 1).
 

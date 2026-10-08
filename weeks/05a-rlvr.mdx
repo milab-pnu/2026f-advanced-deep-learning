@@ -47,9 +47,9 @@ $$
 
 Reward model이 없으므로 04b §3-4의 네 모델 중 reward model이 프로그램으로 바뀌고, GRPO를 쓰면 value model도 없어진다. 그 갱신식과 04b의 PPO와의 차이, 정책 사이의 거리를 보정하는 방법은 05b에서, 2단계의 생성 비용과 비동기 설계는 05d에서 다룬다.
 
-<Figure src="https://arxiv.org/html/2411.15124v5/rlvrv5.png" alt="Tülu 3의 RLVR 반복. 학습 데이터에서 나온 프롬프트 s_i를 정책이 받아 응답 a_i를 생성하고, 검증기가 정답이면 γ, 아니면 0의 스칼라 보상 r_i를 돌려준다. 정책은 그 보상으로 파라미터를 갱신한다." caption="RLVR의 기본 반복. 학습된 reward model이 주던 점수를 프로그램 검증의 결과로 바꾼다. 그림의 γ는 §2-1의 정답 보상 α이며, 아래 갱신식의 α는 학습률이다. 이 그림은 정책 갱신 알고리즘을 특정하지 않는다." source="Lambert et al. (2024), Tülu 3, Figure 18. arXiv:2411.15124v5 · CC BY 4.0 · 수정 없음" />
+<Figure src="https://arxiv.org/html/2411.15124v5/rlvrv5.png" alt="Tülu 3의 RLVR 반복. 학습 데이터에서 나온 프롬프트 s_i를 정책이 받아 응답 a_i를 생성하고, 검증기가 정답이면 γ, 아니면 0의 스칼라 보상 r_i를 돌려준다. 오른쪽 아래 갱신식은 θ를 θ + α∇J로 바꾸며, 여기서 α는 학습률이다." caption="RLVR의 기본 반복. 학습된 reward model이 주던 점수를 프로그램 검증의 결과로 바꾼다. 그림의 γ는 §2-1의 정답 보상 α이며, 그림 오른쪽 아래 갱신식의 α는 학습률이다. 이 그림은 정책 갱신 알고리즘을 특정하지 않는다." source="Lambert et al. (2024), Tülu 3, Figure 18. arXiv:2411.15124v5 · CC BY 4.0 · 수정 없음" />
 
-[그림 출처](https://arxiv.org/html/2411.15124v5#S8.F18) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
+[그림 출처](https://arxiv.org/html/2411.15124v5#S6.F18) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 ### 2-3. 검증기의 종류
 
@@ -103,7 +103,7 @@ R1-Zero의 출력은 읽기 어려웠다. 사고 과정에 영어와 중국어�
 | 3. Rejection sampling과 SFT | 2단계 모델의 응답을 생성해 걸러 추론 데이터 약 60만 건을 확보하고, 일반 과제 데이터 약 20만 건과 합쳐 base model을 다시 SFT | 추론 능력을 일반 과제와 합침 |
 | 4. 전 과제 RL | 추론 과제는 규칙 보상, 일반 과제는 reward model 보상으로 RL | 사람의 선호와 안전성 |
 
-Cold start를 평가할 때는 시연의 validation loss뿐 아니라 다음 RL이 안정적으로 출발하는지도 봐야 한다(04a §4-1). 이 recipe에서 SFT의 역할은 읽기 좋은 추론의 출발점을 만드는 것이다. 1단계는 04a의 SFT, 3단계는 04b §3-5의 rejection sampling, 4단계의 reward model 보상은 04b의 RLHF다. 4주차의 요소가 검증 가능한 보상을 축으로 다시 배열된 것이다. Qwen3 flagship 모델의 네 단계(long-CoT cold start, reasoning RL, thinking mode fusion, general RL)와 Olmo 3 Think의 SFT, DPO, RLVR(일반 대화는 RLVR 단계에 함께 섞인다)도 추론 시연의 학습과 검증 보상을 결합하면서 일반 과제의 성능을 함께 유지한다는 점을 공유한다. 단계의 순서와 수는 모델마다 다르다.[^qwen3][^olmo3] 04a §3-4의 recipe 표가 여기서 완성된다.
+Cold start를 평가할 때는 시연의 validation loss뿐 아니라 다음 RL이 안정적으로 출발하는지도 봐야 한다(04a §1-5, §3-4). 이 recipe에서 SFT의 역할은 읽기 좋은 추론의 출발점을 만드는 것이다. 1단계는 04a의 SFT, 3단계는 04b §3-5의 rejection sampling, 4단계의 reward model 보상은 04b의 RLHF다. 4주차의 요소가 검증 가능한 보상을 축으로 다시 배열된 것이다. Qwen3 flagship 모델의 네 단계(long-CoT cold start, reasoning RL, thinking mode fusion, general RL)와 Olmo 3 Think의 SFT, DPO, RLVR(일반 대화는 RLVR 단계에 함께 섞인다)도 추론 시연의 학습과 검증 보상을 결합하면서 일반 과제의 성능을 함께 유지한다는 점을 공유한다. 단계의 순서와 수는 모델마다 다르다.[^qwen3][^olmo3] 04a §3-4의 recipe 표가 여기서 완성된다.
 
 ### 3-3. 데이터의 규모
 
@@ -123,7 +123,7 @@ R1-Zero의 경로, 즉 SFT 없이 base model에 RLVR을 적용하는 실험은 �
 
 RLVR의 효과가 검증기의 정답 신호에서 온다는 가정에 대한 반례도 있다. Shao 등은 Qwen2.5-Math-7B에 정답과 무관한 무작위 보상으로 GRPO를 돌려도 MATH-500이 21.4점 올랐다고 보고했다(원논문 §2.2, Figure 2). 정확한 보상의 29.1점에 가까운 값이다. 보상이 정답을 알려 주지 않는데도 점수가 오른 것이다. 그 원인에 대한 clipping 가설과 대조 실험은 05b §3-1에서 다룬다. 같은 무작위 보상이 저자들이 실험한 Llama 3와 OLMo 2 모델에서는 대체로 통하지 않았다.[^spurious]
 
-오염이라는 해석도 있다. Olmo 3 저자들은 평가 문제가 pre-training이나 mid-training 데이터에 섞여 있으면 무작위 보상이 암기된 답을 끌어내 정답 보상만큼 효과적으로 보일 수 있다고 보고, 오염을 제거한 Olmo 3 Base에 같은 무작위 보상을 주는 대조 실험을 했다. 성능은 어떤 벤치마크에서도 오르지 않았다(원논문 §6.2, Figure 27).[^olmo3] 두 설명은 서로 배타적이지 않으며, 각각이 얼마나 기여하는지는 아직 정리되지 않았다. 어느 쪽이든 RLVR의 결과를 읽을 때 base model이 무엇을 이미 알고 있었는지를 함께 봐야 한다는 점은 같고, 05b에서 GRPO의 clipping을 볼 때 이 결과로 돌아온다.
+오염이라는 해석도 있다. Olmo 3 저자들은 평가 문제가 pre-training이나 mid-training 데이터에 섞여 있으면 무작위 보상이 암기된 답을 끌어내 정답 보상만큼 효과적으로 보일 수 있다고 보고, 오염을 제거한 Olmo 3 Base에 같은 무작위 보상을 주는 대조 실험을 했다. 성능은 어떤 벤치마크에서도 오르지 않았다(원논문 §6.2, Figure 27).[^olmo3] 두 설명은 서로 배타적이지 않으며, 각각이 얼마나 기여하는지는 아직 정리되지 않았다. 어느 쪽이든 RLVR의 결과를 읽을 때 base model이 무엇을 이미 알고 있었는지를 함께 봐야 한다는 점은 같다.
 
 ## 5. 검증기의 조건
 
@@ -147,6 +147,8 @@ Helff 등은 2026년에 더 미묘한 사례를 보고했다.[^helff] 과제는 
 
 <Figure src={helffGap.src} alt="두 개의 학습 곡선. 가로축은 학습 스텝(0에서 500), 세로축은 보상(3에서 8)이다. 왼쪽은 원래 검증기로 학습한 경우로, 빨간 선(원래 검증기의 보상)과 초록 선(이름을 바꾼 과제에서 잰 보상)이 250 스텝 근처까지 겹쳐 3에서 5 사이를 오르내리다가, 그 뒤 빨간 선은 8.2까지 오르고 초록 선은 4.5 근처에 머문다. 두 선 사이가 분홍색으로 칠해져 있다. 오른쪽은 동형 검증기로 학습한 경우로, 두 선이 끝까지 겹친 채 3에서 5.5 사이를 오르내린다." caption="같은 모델을 두 검증기로 RLVR 학습한 결과. 빨간 선은 원래 검증기(라벨 확인)의 보상, 초록 선은 이름을 바꾼 과제에서 잰 보상이고, 색칠한 영역이 둘의 차이(hacking gap)다. 왼쪽은 원래 검증기로, 오른쪽은 동형 검증기로 학습했다. 04d의 과최적화처럼 정책이 최적화한 점수만 계속 오른다." source="Helff et al. (2026), LLMs Gaming Verifiers, Figure 3에서 그래프와 부분 캡션 영역만 잘라 냄. arXiv:2604.15149v1 · CC BY 4.0" />
 
+[라이선스](https://creativecommons.org/licenses/by/4.0/)
+
 상용 모델에서도 같은 지름길이 보였다. 저자들이 RLVR로 학습했다고 본 GPT-5 계열과 Olmo 3.1 32B는 지름길을 냈고(같은 표의 Olmo 3 7B·32B는 0개), RLVR을 거치지 않았다고 본 GPT-4o 등에서는 나타나지 않았다. 다만 비공개 모델의 학습 방식은 저자들의 추정이다(Table 1 주석). 지름길은 어려운 과제와 긴 추론에서 늘었다. gpt-5-mini의 reasoning effort를 low, medium, high로 올리자 지름길이 0개, 32개, 84개로 늘었다(원논문 §4).<Sidenote>본문은 gpt-5-mini(high)가 만든 지름길의 70%가 네 난이도 구간 중 가장 어려운 구간에서 나왔다고 적는다. Table 1의 개수로 다시 계산하면 83개 중 59개로 약 71%이고, 본문의 다른 문장은 이 설정의 지름길을 84개로 적어 원자료 안에서도 조금 어긋난다.</Sidenote>
 
 이 사례는 대응의 한 바퀴를 보여 준다. 다른 각도의 검사(이름 바꾸기)로 허점을 찾고, 빠져 있던 성공 조건(규칙이어야 한다)을 검증기에 넣고, 다시 학습해 차이가 사라졌는지 확인한다. RM-Bench가 문체 조건을 평가에 넣은 것과 같은 논리다.
@@ -162,5 +164,4 @@ Helff 등은 2026년에 더 미묘한 사례를 보고했다.[^helff] 과제는 
 [^qwen3]: Qwen Team. (2025). *Qwen3 Technical Report*. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
 [^olmo3]: Team Olmo. (2025). *Olmo 3*. [arXiv:2512.13961v2](https://arxiv.org/abs/2512.13961v2).
 [^spurious]: Shao, R., et al. (2025). *Spurious Rewards: Rethinking Training Signals in RLVR*. [arXiv:2506.10947v2](https://arxiv.org/abs/2506.10947v2).
-
-[^helff]: Helff, L., et al. (2026). LLMs Gaming Verifiers: RLVR can Lead to Reward Hacking. *LLM Reasoning Workshop @ ICLR 2026*. [arXiv:2604.15149v1](https://arxiv.org/abs/2604.15149v1).
+[^helff]: Helff, L., et al. (2026). *LLMs Gaming Verifiers: RLVR can Lead to Reward Hacking*. LLM Reasoning Workshop @ ICLR 2026. [arXiv:2604.15149v1](https://arxiv.org/abs/2604.15149v1).

@@ -132,11 +132,17 @@ $$
 \nabla_\theta J(\theta)=\sum_y \nabla_\theta\pi_\theta(y\mid x)\,R(x,y)=\mathbb{E}_{y\sim\pi_\theta}\big[\nabla_\theta\log\pi_\theta(y\mid x)\,R(x,y)\big]
 $$
 
-오른쪽은 기대값이므로 정책에서 응답을 뽑아 평균하면 추정할 수 있다. 응답 하나의 항은 그 응답의 log 확률을 보상에 비례해 움직이는 방향이다. 보상이 양수면 올리고 음수면 내리며, 클수록 크게 움직인다.<Sidenote>엄밀히는 $R$의 KL 항이 $-\beta\log\pi_\theta$를 담고 있어 $R$ 자체도 $\theta$에 의존하므로, 곱의 미분에서 $\mathbb{E}[\nabla_\theta R]=-\beta\sum_y\pi_\theta\nabla_\theta\log\pi_\theta=-\beta\nabla_\theta\sum_y\pi_\theta=-\beta\nabla_\theta 1=0$이라는 항이 더 나온다. 기대값이 0이므로 위 식은 그대로 성립한다.</Sidenote> 이 추정량을 REINFORCE라고 한다.[^reinforce] 응답의 log 확률은 토큰별 log 확률의 합 $\log\pi_\theta(y\mid x)=\sum_t\log\pi_\theta(y_t\mid s_t)$이므로 gradient도 토큰마다 나뉜다. 여기서 $s_t=(x,y_{<t})$는 프롬프트와 지금까지의 토큰이다. RL의 용어로는 $s_t$가 상태, 다음 토큰 $y_t$가 행동, 응답 하나가 한 에피소드다.
+오른쪽은 기대값이므로 정책에서 응답을 뽑아 평균하면 추정할 수 있다. 응답 하나의 항은 그 응답의 log 확률을 보상에 비례해 움직이는 방향이다. 보상이 양수면 올리고 음수면 내리며, 클수록 크게 움직인다.<Sidenote>엄밀히는 $R$의 KL 항이 $-\beta\log\pi_\theta$를 담고 있어 $R$ 자체도 $\theta$에 의존하므로, 곱의 미분에서 $\mathbb{E}[\nabla_\theta R]=-\beta\nabla_\theta\sum_y\pi_\theta=0$이라는 항이 더 나온다. 기대값이 0이므로 위 식은 그대로 성립한다.</Sidenote> 이 추정량을 REINFORCE라고 한다.[^reinforce] 응답의 log 확률은 토큰별 log 확률의 합 $\log\pi_\theta(y\mid x)=\sum_t\log\pi_\theta(y_t\mid s_t)$이므로 gradient도 토큰마다 나뉜다. 여기서 $s_t=(x,y_{<t})$는 프롬프트와 지금까지의 토큰이다. RL의 용어로는 $s_t$가 상태, 다음 토큰 $y_t$가 행동, 응답 하나가 한 에피소드다.
 
 KL 항도 같은 이유로 토큰마다 나뉜다. 응답 전체의 log 확률비가 토큰별 log 확률비의 합이므로, 토큰 $t$의 보상을 $r_t=-\beta\log\frac{\pi_\theta(y_t\mid s_t)}{\pi_{\mathrm{ref}}(y_t\mid s_t)}$로 두고 마지막 토큰에만 reward model 점수 $r(x,y)$를 더하면 $\sum_t r_t=R(x,y)$가 된다. 토큰 하나의 log 확률비는 음수일 수도 있다. 어떤 토큰에 정책이 0.1, reference model이 0.2의 확률을 주었다면 log 확률비는 $\log(0.1/0.2)=-0.693$이고, $\beta=0.05$일 때 그 토큰의 보상은 $+0.035$다. 항상 0 이상인 것은 정책 분포로 평균한 KL이지 표본 하나의 값이 아니다.
 
-REINFORCE 추정량은 분산이 크다. 보상이 모두 양수라면 기대보다 못한 응답의 항도 그 응답의 확률을 올리는 쪽을 가리키고, 어느 응답이 평균보다 나았는지는 항의 크기 차이로만 드러난다. 기대값으로는 맞는 방향이어도 표본 몇 개로 추정한 갱신은 우연히 뽑힌 응답 쪽으로 크게 흔들린다. 그래서 행동에 의존하지 않는 기준값(baseline) $b(s_t)$를 보상에서 뺀다. 빼도 기대값은 그대로다. $\mathbb{E}_{a\sim\pi_\theta}\big[\nabla_\theta\log\pi_\theta(a\mid s)\big]\,b(s)=b(s)\,\nabla_\theta\sum_a\pi_\theta(a\mid s)=b(s)\,\nabla_\theta 1=0$이기 때문이다. 같은 논리로 토큰 $t$보다 앞에서 받은 보상도 $y_t$의 선택과 무관하므로 뺄 수 있다. 기준값으로 가장 자연스러운 것은 그 상태에서 앞으로 받을 보상합의 기대값인 상태 가치 $V(s_t)$이고, 정리하면 다음과 같다.
+REINFORCE 추정량은 분산이 크다. 보상이 모두 양수라면 기대보다 못한 응답의 항도 그 응답의 확률을 올리는 쪽을 가리키고, 어느 응답이 평균보다 나았는지는 항의 크기 차이로만 드러난다. 기대값으로는 맞는 방향이어도 표본 몇 개로 추정한 갱신은 우연히 뽑힌 응답 쪽으로 크게 흔들린다. 그래서 행동에 의존하지 않는 기준값(baseline) $b(s_t)$를 보상에서 뺀다. 빼도 기대값은 그대로다.
+
+$$
+\mathbb{E}_{a\sim\pi_\theta}\big[\nabla_\theta\log\pi_\theta(a\mid s)\big]\,b(s)=b(s)\,\nabla_\theta\sum_a\pi_\theta(a\mid s)=b(s)\,\nabla_\theta 1=0
+$$
+
+이기 때문이다. 같은 논리로 토큰 $t$보다 앞에서 받은 보상도 $y_t$의 선택과 무관하므로 뺄 수 있다. 기준값으로 가장 자연스러운 것은 그 상태에서 앞으로 받을 보상합의 기대값인 상태 가치 $V(s_t)$이고, 정리하면 다음과 같다.
 
 $$
 \nabla_\theta J(\theta)=\mathbb{E}_{y\sim\pi_\theta}\Big[\sum_{t=1}^{T}\nabla_\theta\log\pi_\theta(y_t\mid s_t)\,A_t\Big],\qquad A_t=Q(s_t,y_t)-V(s_t)
