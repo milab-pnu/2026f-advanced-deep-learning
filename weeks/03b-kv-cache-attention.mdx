@@ -8,7 +8,7 @@ LLM(large language model)이 토큰을 하나씩 생성할 때마다 과거 위�
 
 계보는 다음과 같다. Multi-head attention(MHA)은 query head마다 K/V head를 따로 두어 캐시가 head 수에 비례한다. Multi-query attention(MQA)은 모든 query head가 K/V head 하나를 공유해 캐시를 크게 줄였지만 품질 저하와 학습 불안정이 보고되었다. Grouped-query attention(GQA)은 그 중간을 택했지만, 캐시는 여전히 K/V head 수와 head 차원에 비례한다. Multi-head latent attention(MLA)은 head를 공유하는 대신 토큰마다 작은 latent 벡터 하나를 저장하고 head별 K/V를 그로부터 복원한다.
 
-KV cache 관리 기법을 정리한 Li 등의 서베이[^kvsurvey]는 §II-B에서 KV cache의 동작과 복잡도를, §V-A1에서 head를 묶는 MQA·GQA를, §V-B1에서 attention 구조를 바꾼 MLA를 다룬다(절 번호는 arXiv v3 HTML판 기준이며, 같은 판의 PDF에서는 2.2, 5.1.1, 5.2.1이다). 이 노트는 그 세 범위를 원논문 수준으로 풀어 쓴다. 같은 서베이가 다루는 다른 절감 중 sliding window처럼 참조 위치 자체를 줄이는 방법은 Efficient attention 노트의 별도 계보이고, 정밀도를 낮추는 양자화와 서빙 시스템은 6주차에서 다룬다.
+KV cache 관리 기법을 정리한 Li 등의 서베이[^kvsurvey]는 §II-B에서 KV cache의 동작과 복잡도를, §V-A1에서 head를 묶는 MQA·GQA를, §V-B1에서 attention 구조를 바꾼 MLA를 다룬다(절 번호는 arXiv v3 HTML판 기준이며, 같은 판의 PDF에서는 2.2, 5.1.1, 5.2.1이다). 이 노트는 그 세 범위를 원논문 수준으로 풀어 쓴다. 같은 서베이가 다루는 다른 절감 중 sliding window처럼 참조 위치 자체를 줄이는 방법은 Efficient attention 노트의 별도 계보이고, 서빙 시스템은 6주차, 정밀도를 낮추는 양자화는 7주차에서 다룬다.
 
 최근 모델이 이 가운데 어떤 방식을 어떤 head 구성으로 쓰는지는 Sebastian Raschka의 [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/)에서 모델별로 확인할 수 있다.[^gallery]
 
@@ -42,7 +42,7 @@ Query는 사정이 다르다. 다음 토큰을 고르는 데 필요한 것은 �
 
 Decode 2에서 head 하나는 $q_4$와 캐시의 key 4개를 내적해 점수 4개를 만들고, softmax 가중치로 value 4개를 합해 길이 4인 출력을 낸다. 두 head의 출력을 이어 붙인 길이 8 벡터가 출력 투영 $W^O$로 들어간다. 캐시가 없다면 이 스텝에서 위치 1–3의 K/V를 다시 만들어야 하고, 그러려면 아래층의 위치 1–3 hidden state부터 전부 다시 계산해야 한다.
 
-실제 구현의 캐시는 층마다 `[batch, 최대 길이, KV head 수, head 차원]` 모양의 K 텐서와 V 텐서다.[^llama-impl] 토큰 하나가 모든 층에 남기는 원소 수는 다음과 같다.
+Llama 3 참조 구현의 캐시는 층마다 `[batch, 최대 길이, KV head 수, head 차원]` 모양의 K 텐서와 V 텐서다.[^llama-impl] 토큰 하나가 모든 층에 남기는 원소 수는 다음과 같다.
 
 $$
 \text{토큰당 KV cache 원소 수}=2\cdot L\cdot n_{kv}\cdot d_h
@@ -120,6 +120,8 @@ GQA는 query head를 $n_{kv}$개 그룹으로 나누고 그룹마다 K/V head �
   alt="Multi-head, grouped-query, multi-query attention의 head 구조 비교. 아래 줄은 query head 8개, 위 두 줄은 key head와 value head다. Multi-head는 query마다 key와 value가 하나씩 있고, grouped-query는 query 두 개씩 묶인 네 그룹이 각각 key·value head 하나를 공유하며, multi-query는 query 8개가 key·value head 하나를 공유한다."
   caption="MHA·GQA·MQA의 head 구성. Query head 수는 같고 key·value head 수만 달라진다. 그림의 GQA는 query head 8개를 4개 그룹으로 묶은 경우다."
   source="Ainslie et al. · GQA (EMNLP 2023) Figure 2, arXiv:2305.13245v3 · CC BY 4.0 · 수정 없음" />
+
+[그림 출처](https://arxiv.org/html/2305.13245v3) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 <Callout type="example">
 **Query head 4개, K/V head 2개인 GQA.** 층 1개, $d_h=4$, 캐시된 토큰 3개라고 하자. 그룹 크기는 $4/2=2$이다. Llama 3 구현의 `repeat_kv`는 K/V head를 그룹 크기만큼 반복해 query head 수에 맞추므로, 0부터 센 query head $i$는 K/V head $\lfloor i/2\rfloor$를 쓴다.[^llama-impl]
@@ -260,7 +262,7 @@ $$
 
 첫째 항에는 회전이 없으므로 §5-2의 흡수를 그대로 쓸 수 있다. 위치 정보는 둘째 항이 전부 맡는다. RoPE key $k_j^R$는 모든 head가 공유하는 벡터 하나이고(MQA와 같은 방식), 회전을 적용한 상태로 캐시한다. Value에는 RoPE를 쓰지 않으므로 value 쪽 흡수는 영향을 받지 않는다.
 
-따라서 층·토큰당 캐시는 $d_c+d_h^R$개 원소다. DeepSeek-V2는 $d_h^R=64$로 두어 $512+64=576$개이고,[^dsv2] DeepSeek-V3도 $n_h=128$, $d_h=128$, $d_c=512$, $d_h^R=64$로 같은 값을 쓴다.[^dsv3] 앞의 작은 예에 $d_h^R=2$를 더하면 캐시는 $3+2=5$개로, MHA의 16개보다 작다.
+따라서 층·토큰당 캐시는 $d_c+d_h^R$개 원소다. DeepSeek-V2는 $d_h^R=64$로 두어 $512+64=576$개이고,[^dsv2] DeepSeek-V3도 $n_h=128$, $d_h=128$, $d_c=512$, $d_h^R=64$로 같은 값을 쓴다.[^dsv3] 앞의 작은 예에 $d_h^R=2$를 더하면 캐시는 $3+2=5$개다. 이때 복원된 key는 head마다 $4+2=6$차원, value는 4차원이므로 둘을 head별로 그대로 캐시하면 $2\cdot(6+4)=20$개가 된다. §5-1의 MHA 16개는 key와 value가 모두 4차원인 별도 비교 기준이다.
 
 <figure>
 <svg viewBox="0 0 560 400" role="img" aria-label="MLA의 추론 경로. 위 상자는 층마다 토큰 j에 대해 캐시하는 두 벡터를 보여 준다. RoPE를 적용하지 않은 512차원 latent c_j와 RoPE를 적용한 64차원 key k_j^R이며, 둘 다 모든 head가 공유하고 합은 576개 원소다. 가운데 상자는 query head i의 점수 계산이다. 비RoPE query에 W^UK_i의 전치를 곱해 512차원 q-tilde_i로 옮긴 뒤 c_j와 내적하고, RoPE query q_i^R과 k_j^R의 64차원 내적을 따로 더해 루트 192로 나눈다. 아래 상자는 출력 계산이다. Softmax 가중치로 latent c_j를 먼저 가중합한 뒤 W^UV_i를 곱해 head 출력을 만들고, W^UV_i는 출력 투영 W^O 쪽에 합칠 수 있어 head별 K와 V를 만들지 않는다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -289,7 +291,7 @@ $$
 
 ### 5-5. 캐시 크기와 품질 보고
 
-토큰당 캐시 원소 수를 한 표로 모으면 다음과 같다. 식은 DeepSeek-V2 Table 1의 비교를 따르고, 오른쪽 값은 DeepSeek-V2의 head 구성($n_h=128$, $d_h=128$)에서 층 하나 기준으로 계산했다.[^dsv2]
+토큰당 캐시 원소 수를 한 표로 모으면 다음과 같다. MHA·GQA·MQA 행은 key와 value가 모두 $d_h$차원인 표준 구성을, MLA 행은 $d_h$차원 content key에 $d_h^R$차원 RoPE key를 더한 구성을 비교한다. 따라서 이 표는 서로 다른 attention 설계의 저장 비용 비교이며, 같은 MLA를 흡수 전후로 실행한 비교는 아니다. 식은 DeepSeek-V2 Table 1의 비교를 따르고, 오른쪽 값은 DeepSeek-V2의 head 구성($n_h=128$, $d_h=128$)에서 층 하나 기준으로 계산했다.[^dsv2]
 
 | 방식 | 토큰당 원소 수 | 층·토큰당 (DeepSeek-V2 구성) |
 |---|---|---|
