@@ -12,7 +12,7 @@ MoE 부분의 전체 지도는 Cai 등의 서베이[^moe-survey]가 좋다. arXi
 
 ## 1. Dense FFN의 확장 한계
 
-FFN activations §1에서 계산했듯이, 기준 모델 Llama 3 8B에서는 SwiGLU(Swish-gated linear unit) FFN이 전체 8.03B 파라미터의 약 70%를 차지한다.
+03d §1에서 계산했듯이, 기준 모델 Llama 3 8B에서는 SwiGLU(Swish-gated linear unit) FFN이 전체 8.03B 파라미터의 약 70%를 차지한다.
 
 Dense 구조에서는 이 FFN 가중치를 **모든 토큰이 전부** 사용한다. FFN 폭을 두 배로 키우면 저장할 파라미터도 두 배, 토큰마다 곱해야 하는 행렬도 두 배가 된다. 02d §1-1에서 본 근사 $C\approx6ND$도 같은 가정을 깔고 있다. 파라미터 $N$을 늘리면 토큰당 계산 $6N$이 같이 늘어난다.
 
@@ -34,7 +34,7 @@ $$
 y=\sum_{i\in\mathcal{T}(x)} g_i(x)\,E_i(x),\qquad \mathcal{T}(x)=\text{점수 상위 }k\text{개 expert의 번호}
 $$
 
-$E_i(x)$는 $i$번째 expert의 출력, $g_i(x)$는 그 expert에 주는 gate 값이다. 선택되지 않은 expert는 계산하지 않는다. 이 선택 규칙이 top-k routing이다.
+$E$는 expert의 개수이고, $E_i(x)$는 $i$번째 expert의 출력, $g_i(x)$는 그 expert에 주는 gate 값이다. 선택되지 않은 expert는 계산하지 않는다. 이 선택 규칙이 top-k routing이다.
 
 ### 2-2. Top-k routing
 
@@ -81,7 +81,7 @@ $k=1$에는 조건이 하나 붙는다. 예제의 4단계처럼 선택된 확률
 | 방식 | 사용 예 | Expert 1 | Expert 2 | 가중합 $y$ |
 |---|---|---|---|---|
 | 전체 softmax 후 top-k, 재정규화 없음 | Switch Transformer의 gate 식(top-1을 top-2로 늘린 가상 비교) | 0.609 | 0.224 | $[0.609,\,0.448]$ |
-| 선택한 logit에만 softmax (= 전체 softmax 후 재정규화) | Mixtral, GShard, gpt-oss, Qwen3[^gptoss][^qwen3-config] | 0.731 | 0.269 | $[0.731,\,0.538]$ |
+| 선택한 logit에만 softmax (= 전체 softmax 후 재정규화) | Mixtral, GShard, gpt-oss, Qwen3[^gptoss][^qwen3-config][^qwen3-impl] | 0.731 | 0.269 | $[0.731,\,0.538]$ |
 | Sigmoid 점수 후 top-k, 선택한 점수로 정규화 (routing 배율 생략) | DeepSeek-V3 | 0.546 | 0.454 | $[0.546,\,0.907]$ |
 
 첫 행은 Switch Transformer의 gate 식을 다른 행과 같은 top-2에 적용한 것이다. Switch 자체는 top-1이므로 실제 출력은 expert 1의 출력에 0.609를 곱한 $[0.609,\,0]$이 된다. 전체 softmax 확률 $p_i(x)$를 gate로 쓰므로 선택된 gate의 합이 1보다 작다.[^switch]
@@ -117,7 +117,7 @@ Mixtral 8x7B로 앞의 두 값을 계산해 보자. 층마다 attention은 약 4
 
 expert를 100개 넘게 두고 그중 몇 개만 고르는 최근 모델에서는 두 숫자의 차이가 훨씬 크다. 보고된 활성 파라미터를 전체로 나누면 Mixtral은 13B/47B로 약 28%지만, DeepSeek-V3는 37B/671B로 약 5.5%이고[^dsv3] gpt-oss-120b는 5.1B/116.8B로 약 4.4%다.[^gptoss] 비율은 이 노트에서 계산한 값이며, 앞에서 본 대로 모델마다 활성 파라미터의 집계 관례가 조금씩 다르다. 그래서 MoE 모델을 비교할 때는 전체 파라미터 하나만 보지 말고 활성 파라미터와 expert 구성을 함께 보아야 한다.
 
-**통신.** Expert가 많으면 여러 GPU(graphics processing unit)에 나누어 둔다. 이것이 Training engineering §4-4에서 본 EP(expert parallelism)다. 각 GPU는 자기 토큰을 선택된 expert가 있는 GPU로 보내고(dispatch), 결과를 다시 받아 원래 순서로 합친다(combine). 두 단계 모두 all-to-all 통신이다. DeepSeek-V3는 노드를 넘는 EP 때문에 계산과 통신의 비율이 약 1:1이 되었다고 보고했고, 토큰 하나가 가는 노드를 최대 4개로 제한하는 routing 규칙을 두었다.[^dsv3] 추론에서 batch가 작으면 토큰 몇 개를 위해 여러 expert의 가중치를 메모리에서 읽어야 하므로 효율이 떨어질 수 있다. 추론 쪽 비용 분석은 6주차에서 다룬다.
+**통신.** Expert가 많으면 여러 GPU(graphics processing unit)에 나누어 둔다. 이것이 02e §4-4에서 본 EP(expert parallelism)다. 각 GPU는 자기 토큰을 선택된 expert가 있는 GPU로 보내고(dispatch), 결과를 다시 받아 원래 순서로 합친다(combine). 두 단계 모두 all-to-all 통신이다. DeepSeek-V3는 노드를 넘는 EP 때문에 계산과 통신의 비율이 약 1:1이 되었다고 보고했고, 토큰 하나가 가는 노드를 최대 4개로 제한하는 routing 규칙을 두었다.[^dsv3] 추론에서 batch가 작으면 토큰 몇 개를 위해 여러 expert의 가중치를 메모리에서 읽어야 하므로 효율이 떨어질 수 있다. 추론 쪽 비용 분석은 6주차에서 다룬다.
 
 <Video src="https://www.youtube.com/watch?v=RcJ1YXHLv5o" caption="Stanford CS25 V4, Albert Jiang, Demystifying Mixtral of Experts (2024). Mixtral의 router와 expert 구성, routing 분석을 설명한다." />
 
@@ -158,7 +158,7 @@ Expert 4개, top-1, 토큰 8개인 batch를 생각하자(교육용 가상 값). 
 
 다만 균등 배정이 이 식의 전역 최솟값은 아니다. Expert 2개, 토큰 4개에서 세 토큰의 확률이 $(0.51,0.49)$, 한 토큰이 $(0.01,0.99)$이면 $f=(0.75,0.25)$, $P=(0.385,0.615)$이고 $2\sum f_iP_i=0.885$로 1보다 작다. 배정은 한쪽에 몰렸지만 확률 평균이 반대쪽으로 기울어 값이 작아진 경우다.
 
-위 식은 top-1인 Switch Transformer의 것이다. Top-k 모델에서는 $f_i$를 argmax 하나가 아니라 선택된 $k$개 배정 전체로 센다. 이때 무엇으로 나누는지가 구현마다 다르다. Hugging Face Transformers의 Qwen3-MoE 구현은 배정 수를 토큰 수 $T$로 나누므로 $f_i$의 합이 $k$가 되고, 균등 배정에서 손실 값도 1이 아니라 $k$다.[^qwen3-config] DeepSeek-V3가 함께 쓰는 보조 손실(§3-3)은 배정 수를 $kT$로 나누고 expert 수를 곱해, 균등 배정에서 값이 1이 되도록 맞춘다.[^dsv3] 그래서 같은 $\alpha$라도 구현에 따라 실제 손실의 세기가 다르고, 논문의 계수를 옮겨 쓸 때는 정규화 관례를 함께 확인해야 한다.
+위 식은 top-1인 Switch Transformer의 것이다. Top-k 모델에서는 $f_i$를 argmax 하나가 아니라 선택된 $k$개 배정 전체로 센다. 이때 무엇으로 나누는지가 구현마다 다르다. Hugging Face Transformers의 Qwen3-MoE 구현은 배정 수를 토큰 수 $T$로 나누므로 $f_i$의 합이 $k$가 되고, 균등 배정에서 손실 값도 1이 아니라 $k$다.[^qwen3-impl] DeepSeek-V3가 함께 쓰는 보조 손실(§3-3)은 배정 수를 $kT$로 나누고 expert 수를 곱해, 균등 배정에서 값이 1이 되도록 맞춘다.[^dsv3] 그래서 같은 $\alpha$라도 구현에 따라 실제 손실의 세기가 다르고, 논문의 계수를 옮겨 쓸 때는 정규화 관례를 함께 확인해야 한다.
 
 계수 $\alpha$가 문제다. Switch Transformer는 $10^{-1}$부터 $10^{-5}$까지 탐색해 $\alpha=10^{-2}$가 학습 loss를 방해하지 않으면서 균형을 잡았다고 보고했다.[^switch] 그러나 보조 손실은 언어 모델링과 다른 목표이므로 계수를 키우면 router가 "다음 토큰 예측에 좋은 expert"보다 "균형에 좋은 expert"를 고르도록 밀린다. Wang 등(2024)은 큰 보조 손실이 학습에 무시할 수 없는 간섭 gradient를 만들어 성능을 떨어뜨린다고 지적했다.[^lossfree] 계수가 작으면 간섭은 줄지만 균형이 약해진다.
 
@@ -216,7 +216,7 @@ Capacity factor를 키우면 drop이 줄지만 빈 자리가 늘어, 계산·메
 
 Switch Transformer는 보조 손실을 충분한 계수로 쓰면 drop 비율이 대체로 1% 미만이었다고 보고했고, 1.0·1.25 같은 낮은 capacity factor에서 잘 동작했다.[^switch] ST-MoE는 학습 capacity factor 1.25, 평가 2.0을 썼다.[^stmoe] Drop된 토큰을 두 번째 expert로 다시 보내는 방법(No-Token-Left-Behind)도 시도되었지만, Switch Transformer 논문에서는 뚜렷한 이득이 없었다.[^switch]
 
-Token dropping은 필수 요소가 아니다. DeepSeek-V3는 balancing이 학습 내내 잘 유지되었기 때문에 학습에서 토큰을 drop하지 않았고, 추론에서도 부하를 맞추는 배치 전략으로 drop 없이 처리한다고 밝혔다.[^dsv3] 고정된 capacity 대신 expert마다 가변 길이 입력을 block-sparse 행렬 곱으로 처리하는 구현도 있다(MegaBlocks). 토큰을 drop하지 않고 capacity를 채우는 padding도 없지만, expert별 토큰 수를 블록 크기(128)의 배수로 맞추는 소량의 padding은 남는다.[^megablocks]
+Token dropping은 필수 요소가 아니다. DeepSeek-V3는 balancing이 학습 내내 잘 유지되었기 때문에 학습에서 토큰을 drop하지 않았고, 추론에서도 부하를 맞추는 배치 전략으로 drop 없이 처리한다고 밝혔다.[^dsv3] 고정된 capacity 대신 expert마다 가변 길이 입력을 block-sparse 행렬 곱으로 처리하는 dropless MoE 구현도 있다(MegaBlocks). 토큰을 drop하지 않고 capacity를 채우는 padding도 없지만, expert별 토큰 수를 블록 크기(128)의 배수로 맞추는 소량의 padding은 남는다.[^megablocks]
 
 <Details summary="심화: Router z-loss와 routing 안정성">
 
@@ -226,7 +226,7 @@ $$
 L_z=\frac{1}{B}\sum_{i=1}^{B}\Bigl(\log\sum_{j=1}^{E}e^{x_j^{(i)}}\Bigr)^2
 $$
 
-$B$는 토큰 수, $E$은 expert 수, $x^{(i)}$는 $i$번째 토큰의 router logit이다. 이 항은 log-sum-exp가 0에서 멀어지는 것을 벌한다. 모든 logit을 같은 값만큼 옮겨도 softmax 확률은 같지만 log-sum-exp는 그만큼 바뀌므로, 확률 분포만으로는 정해지지 않는 logit의 공통 크기를 조절한다. 각 logit의 절댓값을 하나씩 제한하는 식은 아니다.
+$B$는 토큰 수, $E$는 expert 수, $x^{(i)}$는 $i$번째 토큰의 router logit이다. 이 항은 log-sum-exp가 0에서 멀어지는 것을 벌한다. 모든 logit을 같은 값만큼 옮겨도 softmax 확률은 같지만 log-sum-exp는 그만큼 바뀌므로, 확률 분포만으로는 정해지지 않는 logit의 공통 크기를 조절한다. 각 logit의 절댓값을 하나씩 제한하는 식은 아니다.
 
 이렇게 크기를 조절하는 근거는 수치 정밀도다. bfloat16은 가수 비트가 7개뿐이라 큰 수일수록 반올림 오차가 크고, softmax의 지수 함수는 작은 입력 오차를 큰 출력 차이로 키운다. ST-MoE의 예에서 logit 10개가 128이고 하나가 128.5일 때, bfloat16 반올림으로 128.5가 128이 되면 가장 큰 확률이 약 0.142에서 0.091로 바뀐다. Router 확률은 expert 출력에 곱해지는 gate이므로 이런 오차가 바로 출력에 반영된다.
 
@@ -265,7 +265,7 @@ DeepSeekMoE 원논문은 2B 규모에서 두 선택을 적용한 모델이 exper
 MoE는 층의 **폭** 방향에서 토큰마다 다른 가중치를 쓴다. 하지만 토큰이 거치는 층 수는 여전히 모두 같다. 깊이 방향에서는 기존 방식의 두 가지 성질을 각각 문제로 볼 수 있다. 하나는 쉬운 토큰과 어려운 토큰이 같은 계산을 받는다는 점이고, 다른 하나는 블록마다 가중치가 따로 있어 깊이만큼 파라미터가 늘어난다는 점이다. 앞의 문제에서 Mixture-of-Depths가, 뒤의 문제에서 recursive Transformer가 나왔고, Mixture-of-Recursions가 둘을 합친다.
 
 <figure>
-<svg viewBox="0 0 560 372" role="img" aria-label="깊이 방향 conditional computation의 분기와 합류. 맨 위의 dense Transformer는 서로 다른 가중치의 블록 L개를 모든 토큰이 통과한다. 왼쪽 갈래는 모든 토큰이 같은 계산을 받는다는 문제에서 Mixture-of-Depths로 이어지고, 블록마다 router가 상위 k개 토큰만 계산하며 나머지는 residual로 통과한다. 오른쪽 갈래는 깊이만큼 가중치가 늘어난다는 문제에서 recursive Transformer로 이어지고, 공유 블록 묶음을 정해진 횟수만큼 반복한다. 두 갈래는 아래의 Mixture-of-Recursions에서 합류한다. Mixture-of-Depths 쪽 화살표에는 블록마다 가중치가 따로라는 문제, recursive Transformer 쪽 화살표에는 토큰마다 반복 횟수가 같다는 문제가 붙어 있고, Mixture-of-Recursions는 공유 블록을 반복하되 router가 토큰마다 반복 횟수를 정한다. 실험 규모는 135M에서 1.7B다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 560 372" role="img" aria-label="깊이 방향 conditional computation의 분기와 합류. 맨 위의 dense Transformer는 서로 다른 가중치의 블록 L개를 모든 토큰이 통과한다. 왼쪽 갈래는 모든 토큰이 같은 계산을 받는다는 문제에서 Mixture-of-Depths로 이어지고, 블록마다 router가 상위 k개 토큰만 계산하며 나머지는 residual로 통과한다. 오른쪽 갈래는 깊이만큼 가중치가 늘어난다는 문제에서 recursive Transformer로 이어지고, 공유 블록 묶음을 고정 횟수 반복한다. 두 갈래는 아래의 Mixture-of-Recursions에서 합류한다. Mixture-of-Depths 쪽 화살표에는 블록마다 가중치가 따로라는 문제, recursive Transformer 쪽 화살표에는 토큰마다 반복 횟수가 같다는 문제가 붙어 있고, Mixture-of-Recursions는 공유 블록을 반복하되 router가 토큰마다 반복 횟수를 정한다. 실험 규모는 135M에서 1.7B다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
 <rect x="150" y="10" width="260" height="62" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="280" y="35" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Dense Transformer</text>
 <text x="280" y="57" font-size="12" text-anchor="middle" fill="#64748b">블록 L개, 가중치 각각 · 모든 토큰이 전부 통과</text>
@@ -281,7 +281,7 @@ MoE는 층의 **폭** 방향에서 토큰마다 다른 가중치를 쓴다. 하�
 <text x="140" y="210" font-size="12" text-anchor="middle" fill="#64748b">나머지 토큰은 residual로 통과</text>
 <rect x="296" y="144" width="248" height="82" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="420" y="168" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Recursive Transformer</text>
-<text x="420" y="190" font-size="12" text-anchor="middle" fill="#0f172a">공유 블록 묶음을 정해진 횟수만큼 반복</text>
+<text x="420" y="190" font-size="12" text-anchor="middle" fill="#0f172a">공유 블록 묶음을 고정 횟수 반복</text>
 <text x="420" y="210" font-size="12" text-anchor="middle" fill="#64748b">모든 토큰이 같은 반복 횟수</text>
 <path d="M140 226 L240 282" stroke="#0f172a" fill="none"/><polygon points="244,285 235,284 239,277" fill="#0f172a"/>
 <text x="96" y="250" font-size="12" text-anchor="middle" fill="#64748b">문제: 블록마다</text>
@@ -317,7 +317,7 @@ MoD는 토큰별 선택 대신 블록이 상위 $k$개 토큰을 고르는 **exp
 
 Expert-choice routing은 인과성(causality)을 지키지 않는다. 한 토큰이 상위 $k$개에 드는지는 그 뒤에 오는 토큰들의 점수에도 달려 있으므로, 학습 중에는 미래 토큰의 정보가 앞 토큰의 계산 경로에 새어 들어가고, 뒤에 올 토큰을 모르는 자기회귀 생성에서는 같은 규칙을 그대로 쓸 수 없다(non-causal). MoD는 router 출력으로 "상위 $k$개에 들지"를 예측하도록 작은 보조 손실이나 별도의 예측기를 학습해 이를 우회했고, 생성 시 성능 저하가 작았다고 보고한다.[^mod]
 
-60M–3B 규모의 isoFLOP 실험에서 MoD는 같은 학습 계산 예산의 vanilla Transformer와 비슷하거나 더 낮은 손실을 보였다(Figure 4). 저자들은 비슷한 성능을 유지하면서 한 번의 forward pass에 드는 FLOPs를 줄일 수 있고, 학습 후 생성의 step 처리 속도가 50% 이상 빨라지는 설정도 보고했다. 이는 논문의 모델·구현에서 측정한 결과이며, routing과 실제 실행 비용을 포함한 이득이 위의 단순 연산 비율과 같다는 뜻은 아니다.[^mod]
+60M–3B 규모의 isoFLOP 실험에서 앞의 최적 설정(격층 routing, capacity 12.5%)의 MoD는 같은 학습 계산 예산의 vanilla Transformer와 비슷하거나 더 낮은 손실을 보였다(Figure 4). 저자들은 비슷한 성능을 유지하면서 한 번의 forward pass에 드는 FLOPs를 줄일 수 있고, 학습 후 생성의 step 처리 속도가 50% 이상 빨라지는 설정도 보고했다. 이는 논문의 모델·구현에서 측정한 결과이며, routing과 실제 실행 비용을 포함한 이득이 위의 단순 연산 비율과 같다는 뜻은 아니다.[^mod]
 
 ### 5-2. 가중치 공유와 recursive Transformer
 
@@ -329,15 +329,15 @@ Expert-choice routing은 인과성(causality)을 지키지 않는다. 한 토큰
 
 ### 5-3. Mixture-of-Recursions
 
-Bae 등(2025)의 **Mixture-of-Recursions**(MoR)은 두 갈래를 합친다. 가중치는 recursive Transformer처럼 공유하고, 토큰마다 공유 블록을 몇 번 반복할지는 MoD처럼 router가 정한다.[^mor] Decoder-only LLM overview §2-2의 곁주에서 "블록 가중치 공유와 토큰별 반복 횟수 선택을 결합한 변형"이라고 소개한 모델이다. Universal Transformer도 위치별로 반복을 멈추는 halting 장치를 두었지만,[^ut] MoR 논문은 기존의 동적 반복 방식들이 별도 학습 절차나 배포 효율의 제약 때문에 실제로는 고정 횟수 반복으로 돌아가는 경우가 많았다고 설명한다.[^mor]
+Bae 등(2025)의 **Mixture-of-Recursions**(MoR)은 두 갈래를 합친다. 가중치는 recursive Transformer처럼 공유하고, 토큰마다 공유 블록을 몇 번 반복할지는 MoD처럼 router가 정한다.[^mor] 02a §2-2의 곁주에서 "블록 가중치 공유와 토큰별 반복 횟수 선택을 결합한 변형"이라고 소개한 모델이다. Universal Transformer도 위치별로 반복을 멈추는 halting 장치를 두었지만,[^ut] MoR 논문은 기존의 동적 반복 방식들이 별도 학습 절차나 배포 효율의 제약 때문에 실제로는 고정 횟수 반복으로 돌아가는 경우가 많았다고 설명한다.[^mor]
 
 **Routing.** 방식은 두 가지다. **Expert-choice**에서는 반복 단계마다 router가 계속 진행할 상위 $k$개 토큰을 고르고, 이번 단계에서 선택된 토큰만 다음 단계의 후보가 된다. 단계 $r$마다 남길 토큰 수 $k_r$을 미리 정해 두므로 balancing은 필요 없다. 논문 설정에서 $k_r$은 전체 토큰의 $1,\,2/3,\,1/3$로 단계가 깊어질수록 줄어든다. 다만 상위 $k_r$개를 고르려면 시퀀스 전체를 봐야 하므로 §5-1에서 본 non-causal 문제가 그대로 따라온다. MoR도 추론용 보조 router나 보조 손실로 이를 우회하며, 논문의 비교에서는 보조 손실 쪽이 나았다. **Token-choice**에서는 첫 단계에서 토큰마다 반복 횟수를 한 번에 정한다. 미래 토큰을 보지 않아 인과성 문제는 없지만, 반복 횟수별 토큰 수가 고르지 않을 수 있어 §3의 balancing loss나 bias 방식이 필요하다. 논문은 balancing loss 쪽이 더 안정적이었다고 보고한다.[^mor]
 
 **KV cache.** 반복 단계마다 계산하는 토큰이 달라지므로 KV(key-value) cache도 설계해야 한다. **Recursion-wise caching**은 단계마다 그 단계에 남은 토큰의 key·value만 새로 만들어 저장하고, 남은 토큰끼리만 attention한다. **Recursive KV sharing**은 첫 반복에서 모든 토큰의 key·value를 계산해 두고 이후 단계가 재사용하므로, 남은 토큰의 query가 전체 문맥을 본다.[^mor] 두 방식의 세부 trade-off는 원논문 §2.2.2와 실험을 참고한다.
 
-<Figure src="https://arxiv.org/html/2507.10524v3/overview_main3.png" alt="Mixture-of-Recursions의 토큰별 계산 패턴. 위쪽 격자는 층과 시퀀스 위치별로 계산한 칸(Computed)과 건너뛴 칸(Skipped)을 구분하고, 아래에는 서로 다른 색으로 표시한 문장 예시가 있다." caption="MoR Figure 1의 오른쪽 패널. 층과 시퀀스 위치별로 계산 여부가 달라지는 격자를 보여 준다. 아래 색칠된 예문은 위치에 따른 반복 깊이 차이를 시각화한다. 공유 블록과 router를 포함한 전체 구조는 그림 출처의 Figure 1에서 볼 수 있다." source="Bae et al. · Mixture-of-Recursions (arXiv:2507.10524v3) Figure 1 오른쪽 패널 · CC BY 4.0 · 수정 없음" />
+<Figure src="https://arxiv.org/html/2507.10524v3/overview_main3.png" alt="Mixture-of-Recursions의 토큰별 계산 패턴. 위쪽 격자는 층과 시퀀스 위치별로 계산한 칸(Computed)과 건너뛴 칸(Skipped)을 구분하고, 아래에는 서로 다른 색으로 표시한 문장 예시가 있다." caption="MoR Figure 1의 오른쪽 패널. 층과 시퀀스 위치별로 계산 여부가 달라지는 격자를 보여 준다. 아래 색칠된 예문은 위치에 따른 반복 깊이 차이를 시각화한다. 공유 블록과 router를 포함한 전체 구조는 PDF 판 Figure 1에서 볼 수 있다." source="Bae et al. · Mixture-of-Recursions (arXiv:2507.10524v3) Figure 1 오른쪽 패널 · CC BY 4.0 · 수정 없음" />
 
-[그림 출처](https://arxiv.org/html/2507.10524v3) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
+[전체 그림(PDF p. 1, Figure 1)](https://arxiv.org/pdf/2507.10524v3#page=1) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 <Details summary="심화: 반복 횟수 분포에 따른 계산량 비율">
 
@@ -374,7 +374,8 @@ MoD와 MoR은 이 노트에서 본 Mixtral, DeepSeek-V3, Qwen3, gpt-oss 중 어�
 [^stmoe]: Zoph, B., Bello, I., Kumar, S., Du, N., Huang, Y., Dean, J., Shazeer, N., & Fedus, W. (2022). ST-MoE: Designing Stable and Transferable Sparse Expert Models. [arXiv:2202.08906](https://arxiv.org/abs/2202.08906).
 [^megablocks]: Gale, T., Narayanan, D., Young, C., & Zaharia, M. (2023). MegaBlocks: Efficient Sparse Training with Mixture-of-Experts. *Proceedings of Machine Learning and Systems* 5 (MLSys 2023). [arXiv:2211.15841](https://arxiv.org/abs/2211.15841).
 [^dsmoe]: Dai, D., et al. (2024). DeepSeekMoE: Towards Ultimate Expert Specialization in Mixture-of-Experts Language Models. *ACL 2024*. [arXiv:2401.06066](https://arxiv.org/abs/2401.06066).
-[^qwen3-config]: Qwen. (2025). Qwen3-235B-A22B [config.json](https://huggingface.co/Qwen/Qwen3-235B-A22B/blob/d0aa57eb283a2d2489020470fde653a310b4ec6a/config.json). *Hugging Face Transformers*, [modeling_qwen3_moe.py](https://github.com/huggingface/transformers/blob/7cd73d9df0c14b151c684b708a9f27d8d0349dfe/src/transformers/models/qwen3_moe/modeling_qwen3_moe.py).
+[^qwen3-config]: Qwen. (2025). Qwen3-235B-A22B. *Hugging Face Hub*. [config.json](https://huggingface.co/Qwen/Qwen3-235B-A22B/blob/d0aa57eb283a2d2489020470fde653a310b4ec6a/config.json).
+[^qwen3-impl]: Hugging Face. (2025). Qwen3-MoE implementation. *Transformers*. [modeling_qwen3_moe.py](https://github.com/huggingface/transformers/blob/7cd73d9df0c14b151c684b708a9f27d8d0349dfe/src/transformers/models/qwen3_moe/modeling_qwen3_moe.py).
 [^mod]: Raposo, D., Ritter, S., Richards, B., Lillicrap, T., Humphreys, P. C., & Santoro, A. (2024). Mixture-of-Depths: Dynamically allocating compute in transformer-based language models. [arXiv:2404.02258](https://arxiv.org/abs/2404.02258).
 [^ut]: Dehghani, M., Gouws, S., Vinyals, O., Uszkoreit, J., & Kaiser, Ł. (2019). Universal Transformers. *ICLR 2019*. [arXiv:1807.03819](https://arxiv.org/abs/1807.03819).
 [^albert]: Lan, Z., et al. (2020). ALBERT: A Lite BERT for Self-supervised Learning of Language Representations. *ICLR 2020*. [arXiv:1909.11942](https://arxiv.org/abs/1909.11942).
