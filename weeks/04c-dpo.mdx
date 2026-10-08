@@ -62,7 +62,7 @@ order: 2
 
 ### 1-1. KL 제약이 있는 보상 최대화
 
-04b §3-1의 목적함수를 다시 쓴다. 프롬프트 $x$마다 정책 $\pi_\theta(\cdot\mid x)$가 응답 $y$를 생성할 때, 보상의 기대값에서 reference model $\pi_{\mathrm{ref}}$(보통 SFT(supervised fine-tuning) 모델)와의 KL(Kullback–Leibler) divergence 벌점을 뺀 값을 프롬프트 분포 전체에서 최대화한다.
+RLHF의 KL penalty를 포함한 목적함수를 다시 쓴다. 프롬프트 $x$마다 정책 $\pi_\theta(\cdot\mid x)$가 응답 $y$를 생성할 때, 보상의 기대값에서 reference model $\pi_{\mathrm{ref}}$(보통 SFT(supervised fine-tuning) 모델)와의 KL(Kullback–Leibler) divergence 벌점을 뺀 값을 프롬프트 분포 전체에서 최대화한다.
 
 $$
 \max_{\pi_\theta}\ \mathbb{E}_{x\sim\mathcal{D}}\Big[\mathbb{E}_{y\sim\pi_\theta(\cdot\mid x)}\big[r(x,y)\big]-\beta\,\mathrm{KL}\big(\pi_\theta(\cdot\mid x)\,\|\,\pi_{\mathrm{ref}}(\cdot\mid x)\big)\Big],\qquad\beta>0
@@ -117,7 +117,7 @@ $$
 r(x,y)=\beta\log\frac{\pi^*(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}+\beta\log Z(x)
 $$
 
-이다. 즉 최적 정책과 reference model의 log 확률비가 보상이다. 여기서 04b §2-1에서 본 Bradley–Terry 모형의 성질이 결정적이다. 선호 확률은 두 응답의 **보상 차이**에만 의존하므로, 같은 프롬프트의 두 응답을 비교하면 $\beta\log Z(x)$가 사라진다.
+이다. 즉 보상은 최적 정책과 reference model의 log 확률비에 $\beta$를 곱하고, 프롬프트별 상수를 더한 값이다. 여기서 04b §2-1에서 본 Bradley–Terry 모형의 성질이 결정적이다. 선호 확률은 두 응답의 **보상 차이**에만 의존하므로, 같은 프롬프트의 두 응답을 비교하면 $\beta\log Z(x)$가 사라진다.
 
 $$
 P(y_w\succ y_l\mid x)=\sigma\Big(\beta\log\frac{\pi^*(y_w\mid x)}{\pi_{\mathrm{ref}}(y_w\mid x)}-\beta\log\frac{\pi^*(y_l\mid x)}{\pi_{\mathrm{ref}}(y_l\mid x)}\Big)
@@ -165,7 +165,7 @@ Implicit reward의 차이는 $0.2$이고 $\sigma(0.2)=0.550$이므로 손실은 
 
 같은 log 확률에서 $\beta=1$이면 implicit reward의 차이가 2가 되어 손실은 $-\log\sigma(2)=0.127$, sigmoid 가중치는 0.119로 줄어든다. 다만 $\beta$가 곱해진 전체 계수는 0.119로 오히려 커진다. $\beta$는 reference model에서 같은 거리를 벗어났을 때 그것을 얼마나 큰 보상 차이로 읽을지를 정하며, 갱신 폭에는 두 방향으로 작용한다.
 
-04b에서 같은 쌍에 reward model이 준 점수(1.2와 0.4)와 비교하면, 거기서는 별도 모델의 점수 차이 0.8이 확률을 정했고 여기서는 정책 자신의 log 확률비가 그 자리를 차지한다.
+Reward model을 학습할 때는 별도 모델이 낸 두 점수의 차이가 선호 확률을 정한다. DPO에서는 정책 자신의 log 확률비가 그 점수의 자리를 차지한다.
 </Callout>
 
 다만 직접적인 신호와 실제 결과는 다르다. 두 응답은 파라미터를 공유하므로, 한 스텝 뒤 $\log\pi_\theta(y_w\mid x)$가 실제로 오르는지는 두 gradient 벡터의 관계에 달려 있다. 두 응답이 비슷해 gradient가 많이 겹치면 $y_l$을 내리는 항이 $y_w$의 확률도 끌어내릴 수 있다. 이 현상은 뒤에서 likelihood displacement라는 이름으로 다시 다룬다.
@@ -275,7 +275,7 @@ Razin 등은 대상 모델의 hidden embedding으로 두 응답의 유사도를 
 
 고정된 데이터의 문제를 푸는 직접적인 방법은 데이터를 고정하지 않는 것이다. 학습 중인 모델에서 응답 두 개를 뽑고, 사람이나 LLM(large language model) 판정자에게 비교를 받아 그 쌍으로 DPO 손실을 계산한다. 이제 표집 분포도 $\theta$에 의존하지만, 응답을 뽑고 판정받는 과정은 미분하지 않고(stop-gradient) 관측된 쌍의 손실만 미분하므로 gradient는 offline DPO의 식 그대로다. Guo 등의 OAIF(online AI feedback)는 매 반복마다 현재 모델의 응답 두 개를 LLM 주석자에게 비교시켜 학습했고 offline DPO보다 나았다고 보고했다.[^oaif] 이 구성은 앞에서 정한 두 축으로 online이자 on-policy이며, 04b의 reward model과 value model 대신 판정 LLM을 쓰고 응답 생성은 다시 학습 루프 안으로 들어온다.
 
-판정을 학습된 reward model에 맡기는 online 변형도 가능하다. Calandriello 등은 online으로 돌린 IPO의 기대 gradient가, 현재 정책끼리 응답을 맞붙여 판정받는 self-play 갱신과 방향이 같고 크기만 상수배($2/\tau$) 다름을 보였다(표집에 stop-gradient를 두고, reference와 섞지 않고 현재 정책에서만 표집하는 경우).[^calandriello] 표본 하나하나의 갱신까지 같다는 뜻은 아니지만, 출발점이 다른 두 방법이 기댓값으로는 같은 방향으로 움직인다.
+판정을 학습된 reward model에 맡기는 online 변형도 가능하다. Calandriello 등은 online으로 돌린 IPO의 기대 갱신 방향이, 현재 정책끼리 응답을 맞붙여 판정받으며 reference에 대한 KL 정규화를 적용하는 self-play 갱신과 같고 크기만 상수배($2/\tau$) 다름을 보였다(표집에 stop-gradient를 두고, reference와 섞지 않고 현재 정책에서만 표집하는 경우).[^calandriello] 표본 하나하나의 갱신까지 같다는 뜻은 아니지만, 출발점이 다른 두 방법이 기댓값으로는 같은 방향으로 움직인다.
 
 실제 recipe는 완전한 online과 offline 사이에 있으며, "on-policy 데이터"라는 말도 recipe마다 기준이 다르다.
 
