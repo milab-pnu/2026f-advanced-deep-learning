@@ -9,79 +9,93 @@ import helffGap from "./assets/week04-helff-hacking-gap.png";
 앞의 두 노트에서 정책은 점수를 올리도록 학습했다. 04b의 reward model 점수와 04c의 DPO(direct preference optimization)가 정의하는 implicit reward가 학습 신호였고, 그 결과는 벤치마크 점수로 쟀다. 어느 것도 우리가 실제로 원하는 것, 즉 "사람에게 유용하고 정확한 응답"과 같지 않다. 모두 그것의 <strong>대리 지표(proxy)</strong>다. 벤치마크 점수는 학습에 직접 쓰이지 않아도 그 점수로 checkpoint와 recipe를 고르는 순간 간접적인 최적화 압력을 받는다. 대리 지표를 강하게 최적화하면 지표는 오르는데 실제 목표는 오르지 않거나 내려가는 현상이 생긴다. 이것이 **reward hacking**이다. 이 노트는 그 현상을 학습된 reward model, LLM(large language model) 판정자, 프로그램 검증기(verifier)의 세 층위에서 보고, 각 층위에서 어긋남을 줄여 온 대응을 따라간다. Wang 등의 서베이는 이 현상들을 표현력 있는 정책을 압축된 보상에 대해 최적화한 결과로 묶어 설명한다.[^survey] 어느 층위든 질문은 같다. **이 점수는 무엇을 재고, 최적화하면 무엇을 잃는가.**
 
 <figure>
-<svg viewBox="0 0 600 476" role="img" aria-label="이 노트의 계보도. 맨 위 상자는 대리 지표를 강하게 최적화하면 지표는 오르고 실제 목표는 멈추거나 내려간다는 출발점이다. 여기서 세 갈래로 나뉜다. 왼쪽 갈래는 학습된 reward model로, 과최적화(proxy는 오르고 gold는 꺾임)에 KL 벌점과 조기 종료가 대응하고, 멈출 지점을 미리 알 수 없다는 문제에 ensemble의 보수적 결합(WCO, UWO)이, 구성원이 같은 오류를 공유한다는 문제에 정책이 만든 응답으로 새 선호 데이터를 모아 reward model을 다시 학습하는 방법이 대응한다. 가운데 갈래는 판정자로, 순서·길이·아첨 편향에 순서 교환·참조 답·길이 보정 승률이 대응하고, 알려진 변수만 통제한다는 문제에 문체를 교차한 진단(RM-Bench)이, 판정을 생성하는 모델도 속는다는 문제에 허점을 음성 예로 넣어 판정 모델을 다시 학습하는 방법이 대응한다. 오른쪽 갈래는 검증기로, 형식만 확인하거나 사례 나열을 통과시키는 빈틈에 이름을 바꾼 동형 검증 같은 성공 조건 추가가 대응하고, 정책이 채점을 고친다는 문제에 권한 분리·테스트 복원·해킹 감시와 벌점이, 감시를 최적화하면 의도를 숨긴다는 문제에 감시를 진단에만 쓰고 사고 과정에 압력을 주지 않는 방법이 대응한다. 세 갈래는 맨 아래 상자로 모인다. 공통 대응은 학습 보상과 독립된 평가로, 고르는 데 쓴 평가와 확인용 평가를 나누고 표본 오차까지 읽는 것이다.">
-<text x="300" y="22" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">대리 지표의 최적화 · 세 층위의 어긋남과 대응</text>
-<rect x="150" y="36" width="300" height="44" rx="8" fill="#e2e8f0" stroke="#94a3b8"/>
-<text x="300" y="55" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">대리 지표를 강하게 최적화</text>
-<text x="300" y="72" font-size="11.5" text-anchor="middle" fill="#0f172a">지표는 오르고 실제 목표는 멈추거나 내려감</text>
-<path d="M300 80 V92 M100 92 H500 M100 92 V100 M300 92 V100 M500 92 V100" stroke="#0f172a" fill="none"/>
-<polygon points="100,106 96,99 104,99" fill="#0f172a"/>
-<polygon points="300,106 296,99 304,99" fill="#0f172a"/>
-<polygon points="500,106 496,99 504,99" fill="#0f172a"/>
-<text x="100" y="122" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">학습된 reward model</text>
-<text x="300" y="122" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">판정자 (LLM · 사람)</text>
-<text x="500" y="122" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">검증기</text>
-<rect x="10" y="132" width="180" height="40" rx="6" fill="#e2e8f0" stroke="#94a3b8"/>
-<text x="100" y="149" font-size="12" text-anchor="middle" fill="#0f172a" font-weight="600">과최적화</text>
-<text x="100" y="165" font-size="11" text-anchor="middle" fill="#0f172a">proxy는 오르고 gold는 꺾임</text>
-<rect x="210" y="132" width="180" height="40" rx="6" fill="#e2e8f0" stroke="#94a3b8"/>
-<text x="300" y="149" font-size="12" text-anchor="middle" fill="#0f172a" font-weight="600">편향</text>
-<text x="300" y="165" font-size="11" text-anchor="middle" fill="#0f172a">순서 · 길이 · 아첨</text>
-<rect x="410" y="132" width="180" height="40" rx="6" fill="#e2e8f0" stroke="#94a3b8"/>
-<text x="500" y="149" font-size="12" text-anchor="middle" fill="#0f172a" font-weight="600">검증 조건의 빈틈</text>
-<text x="500" y="165" font-size="11" text-anchor="middle" fill="#0f172a">형식만 확인 · 사례 나열 통과</text>
-<path d="M100 172 V184 M300 172 V184 M500 172 V184" stroke="#0f172a" fill="none"/>
-<polygon points="100,190 96,183 104,183" fill="#0f172a"/>
-<polygon points="300,190 296,183 304,183" fill="#0f172a"/>
-<polygon points="500,190 496,183 504,183" fill="#0f172a"/>
-<rect x="10" y="190" width="180" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="100" y="207" font-size="12" text-anchor="middle" fill="#0f172a" font-weight="600">KL 벌점 · 조기 종료</text>
-<text x="100" y="223" font-size="11" text-anchor="middle" fill="#64748b">멀리 가지 않게 제한</text>
-<rect x="210" y="190" width="180" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="300" y="207" font-size="12" text-anchor="middle" fill="#0f172a" font-weight="600">순서 교환 · 참조 답</text>
-<text x="300" y="223" font-size="11" text-anchor="middle" fill="#64748b">길이 보정 승률</text>
-<rect x="410" y="190" width="180" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="500" y="207" font-size="12" text-anchor="middle" fill="#0f172a" font-weight="600">성공 조건 추가</text>
-<text x="500" y="223" font-size="11" text-anchor="middle" fill="#64748b">이름을 바꾼 동형 검증</text>
-<text x="100" y="247" font-size="10.5" text-anchor="middle" fill="#64748b">문제: 멈출 지점을 미리 모름</text>
-<text x="300" y="247" font-size="10.5" text-anchor="middle" fill="#64748b">문제: 알려진 변수만 통제</text>
-<text x="500" y="247" font-size="10.5" text-anchor="middle" fill="#64748b">문제: 정책이 채점을 고침</text>
-<path d="M100 252 V262 M300 252 V262 M500 252 V262" stroke="#0f172a" fill="none"/>
-<polygon points="100,268 96,261 104,261" fill="#0f172a"/>
-<polygon points="300,268 296,261 304,261" fill="#0f172a"/>
-<polygon points="500,268 496,261 504,261" fill="#0f172a"/>
-<rect x="10" y="268" width="180" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="100" y="285" font-size="12" text-anchor="middle" fill="#0f172a" font-weight="600">Ensemble의 보수적 결합</text>
-<text x="100" y="301" font-size="11" text-anchor="middle" fill="#64748b">WCO · UWO</text>
-<rect x="210" y="268" width="180" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="300" y="285" font-size="12" text-anchor="middle" fill="#0f172a" font-weight="600">문체를 교차한 진단</text>
-<text x="300" y="301" font-size="11" text-anchor="middle" fill="#64748b">RM-Bench</text>
-<rect x="410" y="268" width="180" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="500" y="285" font-size="12" text-anchor="middle" fill="#0f172a" font-weight="600">권한 분리 · 테스트 복원</text>
-<text x="500" y="301" font-size="11" text-anchor="middle" fill="#64748b">해킹 감시와 벌점</text>
-<text x="100" y="325" font-size="10.5" text-anchor="middle" fill="#64748b">문제: 구성원이 같은 오류 공유</text>
-<text x="300" y="325" font-size="10.5" text-anchor="middle" fill="#64748b">문제: 판정을 생성해도 속음</text>
-<text x="500" y="325" font-size="10.5" text-anchor="middle" fill="#64748b">문제: 감시를 최적화하면 숨김</text>
-<path d="M100 330 V340 M300 330 V340 M500 330 V340" stroke="#0f172a" fill="none"/>
-<polygon points="100,346 96,339 104,339" fill="#0f172a"/>
-<polygon points="300,346 296,339 304,339" fill="#0f172a"/>
-<polygon points="500,346 496,339 504,339" fill="#0f172a"/>
-<rect x="10" y="346" width="180" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="100" y="363" font-size="12" text-anchor="middle" fill="#0f172a" font-weight="600">새 on-policy 선호 데이터</text>
-<text x="100" y="379" font-size="11" text-anchor="middle" fill="#64748b">reward model 재학습</text>
-<rect x="210" y="346" width="180" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="300" y="363" font-size="12" text-anchor="middle" fill="#0f172a" font-weight="600">허점을 음성 예로</text>
-<text x="300" y="379" font-size="11" text-anchor="middle" fill="#64748b">판정 모델 재학습</text>
-<rect x="410" y="346" width="180" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="500" y="363" font-size="12" text-anchor="middle" fill="#0f172a" font-weight="600">감시는 진단에만</text>
-<text x="500" y="379" font-size="11" text-anchor="middle" fill="#64748b">사고 과정에 압력 주지 않기</text>
-<path d="M100 386 V404 H500 M500 386 V404 M300 386 V414" stroke="#0f172a" fill="none"/>
-<polygon points="300,420 296,413 304,413" fill="#0f172a"/>
-<rect x="100" y="420" width="400" height="44" rx="8" fill="#e2e8f0" stroke="#94a3b8"/>
-<text x="300" y="439" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">공통: 학습 보상과 독립된 평가</text>
-<text x="300" y="456" font-size="11" text-anchor="middle" fill="#0f172a">고르는 데 쓴 평가와 확인용 평가를 나누고, 표본 오차까지 읽기</text>
+<svg viewBox="0 0 660 476" role="img" aria-label="이 노트의 계보도. 맨 위 상자는 대리 지표를 강하게 최적화하면 지표는 오르고 실제 목표는 멈추거나 내려간다는 출발점이고, 여기서 네 갈래로 나뉜다. 첫째 갈래는 학습된 reward model이다. 과최적화(proxy는 오르고 gold는 꺾임)에 KL 벌점과 조기 종료가 대응하고, 정책이 한 reward model의 과대평가를 파고든다는 문제에 ensemble의 보수적 결합(WCO, UWO)이, 구성원이 같은 오류를 공유한다는 문제에 정책이 만든 응답으로 새 선호 데이터를 모아 reward model을 다시 학습하는 방법이 대응한다. 둘째 갈래는 판정자다. 순서·길이·아첨 편향에 순서 교환·참조 답·길이 보정 승률이 대응하고, 추론 채점이 여전히 약하다는 문제에 판정을 생성하는 reward model(GenRM)이, 그런 판정자도 내용 없는 응답에 속는다는 문제에 그 허점을 음성 예로 넣어 판정 모델을 다시 학습하는 방법이 대응한다. 셋째 갈래는 검증 조건의 빈틈(형식만 확인, 사례 나열 통과)으로, 이름을 바꾼 동형 검증 같은 성공 조건 추가가 대응한다. 넷째 갈래는 정책이 테스트나 채점을 고치는 검증 절차의 변조로, 권한 분리·테스트 복원·해킹 탐지 벌점이 대응하고, 사고 과정(CoT)에 벌점을 주면 정책이 의도를 숨긴다는 문제에는 CoT를 감시용으로 보존하고 사고 과정에 벌점을 주지 않는 방법이 대응한다. 네 갈래는 맨 아래 상자로 모인다. 공통 대응은 학습 보상과 독립된 평가로, RewardBench·RM-Bench 같은 사전 진단, 확인용 평가의 분리, 표본 오차까지 읽는 것이다.">
+<text x="330" y="22" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">대리 지표의 최적화 · 네 갈래의 어긋남과 대응</text>
+<rect x="180" y="36" width="300" height="44" rx="8" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="330" y="55" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">대리 지표를 강하게 최적화</text>
+<text x="330" y="72" font-size="11.5" text-anchor="middle" fill="#0f172a">지표는 오르고 실제 목표는 멈추거나 내려감</text>
+<path d="M330 80 V92 M85 92 H580" stroke="#0f172a" fill="none"/>
+<path d="M85 92 V100" stroke="#0f172a" fill="none"/>
+<polygon points="85,106 81,99 89,99" fill="#0f172a"/>
+<path d="M250 92 V100" stroke="#0f172a" fill="none"/>
+<polygon points="250,106 246,99 254,99" fill="#0f172a"/>
+<path d="M415 92 V100" stroke="#0f172a" fill="none"/>
+<polygon points="415,106 411,99 419,99" fill="#0f172a"/>
+<path d="M580 92 V100" stroke="#0f172a" fill="none"/>
+<polygon points="580,106 576,99 584,99" fill="#0f172a"/>
+<text x="85" y="122" font-size="12.5" text-anchor="middle" fill="#0f172a" font-weight="600">학습된 reward model</text>
+<text x="250" y="122" font-size="12.5" text-anchor="middle" fill="#0f172a" font-weight="600">판정자</text>
+<text x="415" y="122" font-size="12.5" text-anchor="middle" fill="#0f172a" font-weight="600">검증 조건</text>
+<text x="580" y="122" font-size="12.5" text-anchor="middle" fill="#0f172a" font-weight="600">검증 환경</text>
+<rect x="8" y="132" width="154" height="40" rx="6" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="85" y="149" font-size="11.5" text-anchor="middle" fill="#0f172a" font-weight="600">과최적화</text>
+<text x="85" y="165" font-size="10.5" text-anchor="middle" fill="#0f172a">proxy는 오르고 gold는 꺾임</text>
+<rect x="173" y="132" width="154" height="40" rx="6" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="250" y="149" font-size="11.5" text-anchor="middle" fill="#0f172a" font-weight="600">편향</text>
+<text x="250" y="165" font-size="10.5" text-anchor="middle" fill="#0f172a">순서 · 길이 · 아첨</text>
+<rect x="338" y="132" width="154" height="40" rx="6" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="415" y="149" font-size="11.5" text-anchor="middle" fill="#0f172a" font-weight="600">조건의 빈틈</text>
+<text x="415" y="165" font-size="10.5" text-anchor="middle" fill="#0f172a">형식만 · 사례 나열 통과</text>
+<rect x="503" y="132" width="154" height="40" rx="6" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="580" y="149" font-size="11.5" text-anchor="middle" fill="#0f172a" font-weight="600">절차의 변조</text>
+<text x="580" y="165" font-size="10.5" text-anchor="middle" fill="#0f172a">정책이 테스트·채점을 고침</text>
+<path d="M85 172 V184" stroke="#0f172a" fill="none"/>
+<polygon points="85,190 81,183 89,183" fill="#0f172a"/>
+<path d="M250 172 V184" stroke="#0f172a" fill="none"/>
+<polygon points="250,190 246,183 254,183" fill="#0f172a"/>
+<path d="M415 172 V184" stroke="#0f172a" fill="none"/>
+<polygon points="415,190 411,183 419,183" fill="#0f172a"/>
+<path d="M580 172 V184" stroke="#0f172a" fill="none"/>
+<polygon points="580,190 576,183 584,183" fill="#0f172a"/>
+<rect x="8" y="190" width="154" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="85" y="207" font-size="11.5" text-anchor="middle" fill="#0f172a" font-weight="600">KL 벌점 · 조기 종료</text>
+<text x="85" y="223" font-size="10.5" text-anchor="middle" fill="#64748b">멀리 가지 않게 제한</text>
+<rect x="173" y="190" width="154" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="250" y="207" font-size="11.5" text-anchor="middle" fill="#0f172a" font-weight="600">순서 교환 · 참조 답</text>
+<text x="250" y="223" font-size="10.5" text-anchor="middle" fill="#64748b">길이 보정 승률</text>
+<rect x="338" y="190" width="154" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="415" y="207" font-size="11.5" text-anchor="middle" fill="#0f172a" font-weight="600">성공 조건 추가</text>
+<text x="415" y="223" font-size="10.5" text-anchor="middle" fill="#64748b">이름을 바꾼 동형 검증</text>
+<rect x="503" y="190" width="154" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="580" y="207" font-size="11.5" text-anchor="middle" fill="#0f172a" font-weight="600">권한 분리 · 테스트 복원</text>
+<text x="580" y="223" font-size="10.5" text-anchor="middle" fill="#64748b">해킹 탐지 벌점</text>
+<text x="85" y="247" font-size="10.5" text-anchor="middle" fill="#64748b">문제: 한 RM의 과대평가를 파고듦</text>
+<text x="250" y="247" font-size="10.5" text-anchor="middle" fill="#64748b">문제: 추론 채점은 여전히 약함</text>
+<text x="580" y="247" font-size="10.5" text-anchor="middle" fill="#64748b">문제: CoT 벌점 → 의도 은폐</text>
+<path d="M85 252 V262" stroke="#0f172a" fill="none"/>
+<polygon points="85,268 81,261 89,261" fill="#0f172a"/>
+<path d="M250 252 V262" stroke="#0f172a" fill="none"/>
+<polygon points="250,268 246,261 254,261" fill="#0f172a"/>
+<path d="M580 252 V262" stroke="#0f172a" fill="none"/>
+<polygon points="580,268 576,261 584,261" fill="#0f172a"/>
+<rect x="8" y="268" width="154" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="85" y="285" font-size="11.5" text-anchor="middle" fill="#0f172a" font-weight="600">Ensemble의 보수적 결합</text>
+<text x="85" y="301" font-size="10.5" text-anchor="middle" fill="#64748b">WCO · UWO</text>
+<rect x="173" y="268" width="154" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="250" y="285" font-size="11.5" text-anchor="middle" fill="#0f172a" font-weight="600">판정을 생성하는 RM</text>
+<text x="250" y="301" font-size="10.5" text-anchor="middle" fill="#64748b">GenRM</text>
+<rect x="503" y="268" width="154" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="580" y="285" font-size="11.5" text-anchor="middle" fill="#0f172a" font-weight="600">CoT는 감시용으로 보존</text>
+<text x="580" y="301" font-size="10.5" text-anchor="middle" fill="#64748b">사고 과정에 벌점 주지 않기</text>
+<text x="85" y="325" font-size="10.5" text-anchor="middle" fill="#64748b">문제: 구성원이 같은 오류 공유</text>
+<text x="250" y="325" font-size="10.5" text-anchor="middle" fill="#64748b">문제: 내용 없는 응답에 속음</text>
+<path d="M85 330 V340" stroke="#0f172a" fill="none"/>
+<polygon points="85,346 81,339 89,339" fill="#0f172a"/>
+<path d="M250 330 V340" stroke="#0f172a" fill="none"/>
+<polygon points="250,346 246,339 254,339" fill="#0f172a"/>
+<rect x="8" y="346" width="154" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="85" y="363" font-size="11.5" text-anchor="middle" fill="#0f172a" font-weight="600">새 on-policy 선호 데이터</text>
+<text x="85" y="379" font-size="10.5" text-anchor="middle" fill="#64748b">reward model 재학습</text>
+<rect x="173" y="346" width="154" height="40" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="250" y="363" font-size="11.5" text-anchor="middle" fill="#0f172a" font-weight="600">허점을 음성 예로</text>
+<text x="250" y="379" font-size="10.5" text-anchor="middle" fill="#64748b">판정 모델 재학습</text>
+<path d="M85 386 V404 M250 386 V404 M415 230 V404 M580 308 V404 M85 404 H580 M330 404 V414" stroke="#0f172a" fill="none"/>
+<polygon points="330,420 326,413 334,413" fill="#0f172a"/>
+<rect x="110" y="420" width="440" height="44" rx="8" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="330" y="439" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">공통: 학습 보상과 독립된 평가</text>
+<text x="330" y="456" font-size="11" text-anchor="middle" fill="#0f172a">사전 진단(RewardBench · RM-Bench), 확인용 평가 분리, 표본 오차까지 읽기</text>
 </svg>
-<figcaption>이 노트의 계보도. 각 문헌을 바탕으로 직접 구성했다. 세 갈래는 대리 지표의 종류이고, 회색 글씨는 앞 대응이 남긴 문제, 그 아래 상자가 그 문제를 겨냥한 대응이다. 어느 갈래에서도 마지막 대응이 문제를 끝내지는 않으며, 세 갈래 모두 학습 보상과 독립된 평가로 모인다.</figcaption>
+<figcaption>이 노트의 계보도. 각 문헌을 바탕으로 직접 구성했다. 네 갈래는 어긋남이 생기는 자리이고, 회색 글씨는 앞 대응이 남긴 문제, 그 아래 상자가 그 문제를 겨냥한 대응이다. 검증 조건의 빈틈과 검증 절차의 변조는 앞뒤 관계가 아니라 검증기가 틀리는 서로 다른 두 경로다. 어느 갈래에서도 마지막 대응이 문제를 끝내지는 않으며, 네 갈래 모두 학습 보상과 독립된 평가로 모인다.</figcaption>
 </figure>
 
 ## 1. 대리 지표라는 문제
@@ -112,45 +126,45 @@ import helffGap from "./assets/week04-helff-hacking-gap.png";
 
 ### 2-1. 관찰
 
-04b RLHF 노트에서 Stiennon 등의 관찰을 보았다. KL(Kullback–Leibler) divergence 벌점을 약하게 두고 정책을 SFT(supervised fine-tuning) 모델에서 멀리 보낼수록 reward model 점수는 계속 오르지만, 사람의 선호는 어느 지점부터 떨어진다.[^stiennon] 이 관찰을 체계적인 실험으로 만든 것이 Gao 등의 연구다.[^gao] 사람 대신 6B의 큰 "gold" reward model을 정답으로 두고, 그 gold model이 매긴 선호로 3M부터 3B까지의 작은 proxy reward model을 학습한 뒤, proxy를 최적화하면서 gold 점수를 추적했다. 비교 라벨을 사람에게서 새로 모을 필요가 없으므로 모델 크기·데이터 양·최적화 강도를 마음껏 바꿀 수 있다.
+04b RLHF 노트에서 Stiennon 등의 관찰을 보았다. KL(Kullback–Leibler) divergence 벌점을 약하게 두고 정책을 SFT(supervised fine-tuning) 모델에서 멀리 보낼수록 reward model 점수는 계속 오르지만, 사람의 선호는 어느 지점부터 떨어진다.[^stiennon] 같은 노트에서 짧게 소개한 Gao 등의 실험은 이 관찰을 체계적으로 쟀다.[^gao] 사람 대신 6B의 큰 "gold" reward model을 정답으로 두고, 그 gold model이 매긴 선호로 3M부터 3B까지의 작은 proxy reward model을 학습한 뒤, proxy를 최적화하면서 gold 점수를 추적했다. 비교 라벨을 사람에게서 새로 모을 필요가 없으므로 모델 크기·데이터 양·최적화 강도를 마음껏 바꿀 수 있다.
 
 ### 2-2. Gold 점수의 형태
 
-최적화 강도는 최적화된 정책 $\pi$가 초기 정책 $\pi_{\mathrm{init}}$에서 얼마나 멀어졌는가로 잰다. 두 최적화 방식에서 $\pi$는 다르게 만들어진다. RL은 PPO(proximal policy optimization)로 가중치를 바꾼다. Best-of-$n$은 가중치를 그대로 두고 응답 $n$개를 뽑아 proxy 점수가 가장 높은 것을 내놓는데(04b의 rejection sampling과 같은 원리), 이렇게 골라 낸 응답의 분포가 $\pi$다. 가중치가 같아도 내놓는 응답의 분포는 $n$이 커질수록 $\pi_{\mathrm{init}}$에서 멀어지고, 그 KL은 $n$만으로 정해진다.[^gao]
+최적화 강도는 최적화된 정책 $\pi$가 초기 정책 $\pi_{\mathrm{init}}$에서 얼마나 멀어졌는가로 잰다. 두 최적화 방식에서 $\pi$는 다르게 만들어진다. RL은 PPO(proximal policy optimization)로 가중치를 바꾼다. Best-of-$n$은 가중치를 그대로 두고 응답 $n$개를 뽑아 proxy 점수가 가장 높은 것을 내놓는데(04b의 rejection sampling과 같은 원리), 이렇게 골라 낸 응답의 분포가 $\pi$다. 가중치가 같아도 내놓는 응답의 분포는 $n$이 커질수록 $\pi_{\mathrm{init}}$에서 멀어진다. Gao 등은 그 KL을 $n$만으로 계산하는 다음 식을 썼다.[^gao]
 
 $$
 D_{\mathrm{KL}}(\pi_{\mathrm{bon}}\,\|\,\pi_{\mathrm{init}})=\log n-\frac{n-1}{n}
 $$
 
-$n=16$이면 $\log 16-15/16\approx 2.77-0.94=1.84$ nats이고, $n=1000$이어도 약 $6.91-1.00=5.91$ nats다. 그 거리를 $d=\sqrt{D_{\mathrm{KL}}(\pi\,\|\,\pi_{\mathrm{init}})}$로 두고, $R(d)$를 초기 정책 대비 gold 점수의 변화($R(0)=0$)라고 하면, 두 방식에서 gold 점수는 다음 형태를 따랐다.
+이 식은 같은 응답이 두 번 뽑히는 일이 드물 만큼 응답의 가짓수가 많을 때의 근사이고, Beirami 등은 이것이 실제 KL의 상한임을 보였다.[^beirami] 응답이 둘뿐이고 확률이 각각 0.5인 극단적인 경우, best-of-2는 더 나은 응답을 0.75의 확률로 내놓으므로 실제 KL은 약 0.13인데 식은 $\log 2-1/2\approx0.19$를 준다.
+
+아래 계산은 모두 이 근사로 한 값이다. $n=16$이면 $\log 16-15/16\approx 2.77-0.94=1.84$ nats이고, $n=1000$이어도 약 $6.91-1.00=5.91$ nats다. 그 거리를 $d=\sqrt{D_{\mathrm{KL}}(\pi\,\|\,\pi_{\mathrm{init}})}$로 두고, $R(d)$를 초기 정책 대비 gold 점수의 변화($R(0)=0$)라고 하면, 두 방식에서 gold 점수는 다음 형태를 따랐다.
 
 $$
 R_{\mathrm{bon}}(d)=d\,(\alpha_{\mathrm{bon}}-\beta_{\mathrm{bon}}\,d),\qquad
 R_{\mathrm{RL}}(d)=d\,(\alpha_{\mathrm{RL}}-\beta_{\mathrm{RL}}\log d)
 $$
 
-두 식 모두 $d$가 작을 때는 gold 점수가 오르다가 $\beta$ 항 때문에 꺾인다(원논문은 이 형태를 실험한 KL 범위 안의 경험적 근사로 제시하며, RL 식은 원점 근처에서는 맞지 않을 수 있다고 밝힌다). Proxy 점수는 계속 오르므로 proxy와 gold의 간격은 처음부터 벌어지며, gold 점수 자체가 내려가기 시작하는 지점을 over-optimization이라고 부른다. 다만 KL은 한 최적화 방식 안에서 진행 정도를 재는 척도다. 방식마다 KL을 쓰는 효율이 달라서, 저자들은 같은 KL이라고 best-of-$n$과 RL이 같은 만큼 최적화했다고 비교하지 말라고 적었다(원논문 §4.1).
+두 식 모두 $d$가 작을 때는 gold 점수가 오르다가 $\beta$ 항 때문에 꺾인다(원논문은 이 형태를 실험한 KL 범위 안의 경험적 근사로 제시하며, RL 식은 원점 근처에서는 맞지 않을 수 있다고 밝힌다). Proxy 점수는 계속 오르므로 proxy와 gold의 간격은 처음부터 벌어지며, gold 점수 자체가 내려가기 시작하는 지점을 over-optimization이라고 부른다. 이 형태의 실제 곡선은 원논문 arXiv판 Figure 1(ICML판 Figure 2)에 proxy reward model 크기별로 실려 있고, 공개 모델로 재현한 Coste 등의 한 예는 04b RLHF 노트에서 보았다. 다만 KL은 한 최적화 방식 안에서 진행 정도를 재는 척도다. 방식마다 KL을 쓰는 효율이 달라서, 저자들은 같은 KL이라고 best-of-$n$과 RL이 같은 만큼 최적화했다고 비교하지 말라고 적었다(원논문 §4.1).
 
-Gao 등의 곡선은 비공개 모델로 그린 것이고, 원논문 arXiv판 Figure 1(ICML판 Figure 2)에 proxy reward model 크기별로 실려 있다. Coste 등은 같은 설정을 공개 모델로 다시 만들었다. 정책은 Pythia 1.4B, gold는 AlpacaFarm의 7B 사람 선호 reward model, proxy는 그 gold가 매긴 선호로 학습한 7M–1.3B 모델이다.[^coste] 아래는 그 논문이 과최적화의 예로 든 곡선이다.
-
-<Figure src="https://arxiv.org/html/2310.02743v2/figures/illustrative_figs/example_overoptimization.png" alt="과최적화의 예. 가로축은 초기 정책과의 KL divergence로 0, 25, 50, 75, 100, 125 눈금이 제곱근 간격으로 놓여 있다. 실선은 gold 점수(왼쪽 축, 0에서 0.4)로, KL 25에서 40 사이에 약 0.40으로 정점을 찍은 뒤 KL 75에서 약 0.2, KL 135 근처에서 약 0.06까지 떨어진다. 점선은 proxy 점수(오른쪽 축, 0에서 1.75)로, 처음부터 거의 꾸준히 올라 KL 100에서 125 사이에 약 1.78에 이르고 끝에서 조금 내려간다." caption="과최적화의 예. 실선은 gold 점수(왼쪽 축), 점선은 proxy 점수(오른쪽 축)이고, 가로축은 초기 정책과의 KL을 제곱근 눈금으로 그려 위 식의 d에 비례한다. Proxy 점수는 KL 100 근처까지 계속 오르지만 gold 점수는 KL 25–40에서 정점을 찍고 내려간다. 원논문은 이 예의 세부 설정을 따로 밝히지 않는다." source="Coste et al. (2024), Reward Model Ensembles Help Mitigate Overoptimization, Figure 2. arXiv:2310.02743v2 · CC BY 4.0 · 수정 없음" />
-
-꺾이는 위치를 계산해 보자. 교육용으로 $\alpha_{\mathrm{bon}}=1$, $\beta_{\mathrm{bon}}=0.25$를 두면 $R_{\mathrm{bon}}(d)=d-0.25d^2$이다. $d=1$에서 0.75, $d=2$에서 최댓값 1, $d=3$에서 다시 0.75, $d=4$에서 0이 된다. $d=2$는 KL 4 nats이므로 앞의 식으로 $n$이 약 150일 때다. 최댓값은 $d=\alpha/(2\beta)$에서 나오므로 $\alpha$가 같다면 $\beta$가 작을수록 더 멀리 가서 꺾인다. RL 식도 미분하면 최댓값이 $\log d=\alpha/\beta-1$에서 나와 같은 방향이다. 이 값들은 실제 실험의 계수가 아니다. 원논문에서 계수 $\alpha$, $\beta$는 proxy reward model의 크기에 따라 매끄럽게 변했다. 큰 proxy일수록 $\beta$가 작아졌고(저자들은 이를 최적화에 대한 강건성이 좋아진 것으로 해석한다), 데이터가 많을수록 과최적화가 줄었으며, 약 2천 건 미만의 비교 데이터로는 proxy가 거의 무작위 수준에 머물렀다.[^gao] Proxy 점수는 $d$에 거의 비례해 오르는데, 저자들은 그 기울기와 gold 식의 선형 계수 $\alpha$의 차이, 즉 proxy가 gold보다 빨리 오르는 몫을 앞에서 본 regressional 어긋남으로 해석했다(원논문 §4.2).
+꺾이는 위치를 계산해 보자. 교육용으로 $\alpha_{\mathrm{bon}}=1$, $\beta_{\mathrm{bon}}=0.25$를 두면 $R_{\mathrm{bon}}(d)=d-0.25d^2$이다. $d=1$에서 0.75, $d=2$에서 최댓값 1, $d=3$에서 다시 0.75, $d=4$에서 0이 된다. $d=2$는 KL 4 nats이므로 앞의 근사로는 $n$이 약 150일 때다. 최댓값은 $d=\alpha/(2\beta)$에서 나오므로 $\alpha$가 같다면 $\beta$가 작을수록 더 멀리 가서 꺾인다. RL 식도 미분하면 최댓값이 $\log d=\alpha/\beta-1$에서 나와 같은 방향이다. 이 값들은 실제 실험의 계수가 아니다. 원논문에서 계수 $\alpha$, $\beta$는 proxy reward model의 크기에 따라 매끄럽게 변했다. 큰 proxy일수록 $\beta$가 작아졌고(저자들은 이를 최적화에 대한 강건성이 좋아진 것으로 해석한다), 데이터가 많을수록 과최적화가 줄었으며, 약 2천 건 미만의 비교 데이터로는 proxy가 거의 무작위 수준에 머물렀다.[^gao] Proxy 점수는 $d$에 거의 비례해 오르는데, 저자들은 그 기울기와 gold 식의 선형 계수 $\alpha$의 차이, 즉 proxy가 gold보다 빨리 오르는 몫을 앞에서 본 regressional 어긋남으로 해석했다(원논문 §4.2).
 
 명시적 reward model이 없어도 같은 일이 생긴다. 04c DPO 노트에서 보았듯이 Rafailov 등은 DPO 계열의 GPT-4 판정 승률이 넓은 KL 예산 범위에서 꺾임을 보였다.[^rafailov-scaling] Reward model을 없애는 것이 독립 평가의 필요를 없애지는 않는다.
 
 ### 2-3. 과최적화를 줄이는 방법
 
-가장 먼저 쓰인 대응은 KL 벌점이다. 04b RLHF 노트에서는 그 목적을 "reward model이 본 적 없는 응답을 만들지 않게 한다"로 설명했다. Gao 등의 실험에서 KL 벌점은 정책이 덜 멀어지게 했지만, 같은 KL 거리에서 비교하면 gold 점수가 벌점 없이 일찍 멈춘 경우와 다르지 않았다. 저자들은 KL 벌점이 이 설정에서는 조기 종료(early stopping)와 같은 역할이었다고 정리하면서, 이 결과가 하이퍼파라미터에 특히 민감할 수 있다고 덧붙였다.[^gao] 적어도 이 실험에서 KL 벌점은 같은 거리에서 더 좋은 곳으로 가게 하기보다 얼마나 멀리 가는가를 제한했다. 그러면 언제 멈출지가 문제로 남는데, 실제 학습에서는 gold 점수를 볼 수 없다.
+가장 기본적인 대응은 KL 벌점이다. 04b RLHF 노트에서는 그 목적을 "reward model이 본 적 없는 응답을 만들지 않게 한다"로 설명했다. Gao 등의 실험에서 KL 벌점은 정책이 덜 멀어지게 했지만, 같은 KL 거리에서 비교하면 gold 점수가 벌점 없이 일찍 멈춘 경우와 다르지 않았다. 저자들은 KL 벌점이 이 설정에서는 조기 종료(early stopping)와 같은 역할이었다고 정리하면서, 이 결과가 하이퍼파라미터에 특히 민감할 수 있다고 덧붙였다.[^gao] 적어도 이 실험에서 KL 벌점은 같은 거리에서 더 좋은 곳으로 가게 하기보다 얼마나 멀리 가는가를 제한했다. 그러면 언제 멈출지가 문제로 남는데, 실제 학습에서는 gold 점수를 볼 수 없다.
 
-꺾이는 지점을 뒤로 미루려면 reward model 자체가 좋아야 한다. 앞에서 보았듯이 proxy가 크고 데이터가 많을수록 더 멀리 가서 꺾였다. 하지만 reward model의 크기는 대개 쓸 수 있는 pre-trained model로 정해지고, 비교 데이터는 비싸다. Coste 등은 같은 데이터로 seed만 바꿔 학습한 reward model 다섯 개를 묶었다.[^coste] 평균을 보상으로 쓰면 한 구성원이 과대평가한 응답이 그대로 통과하므로, 보수적으로 합친다. 가장 낮은 점수를 쓰는 worst-case optimization(WCO)과, 평균에서 구성원 사이의 분산에 비례하는 벌점을 빼는 uncertainty-weighted optimization(UWO)이다.
+꺾이는 지점을 뒤로 미루려면 reward model 자체가 좋아야 한다. 앞에서 보았듯이 proxy가 크고 데이터가 많을수록 더 멀리 가서 꺾였다. 하지만 reward model의 크기는 대개 쓸 수 있는 pre-trained model로 정해지고, 비교 데이터는 비싸다. Coste 등은 04b에서 본 재현 설정에서, 같은 데이터로 seed만 바꿔 학습한 reward model 다섯 개를 묶었다.[^coste] 평균을 보상으로 쓰면 한 구성원이 과대평가한 응답이 그대로 통과하므로, 보수적으로 합친다. 가장 낮은 점수를 쓰는 worst-case optimization(WCO)과, 평균에서 구성원 사이의 분산에 비례하는 벌점을 빼는 uncertainty-weighted optimization(UWO)이다.
 
 $$
 R_{\mathrm{WCO}}(x,y)=\min_i R_i(x,y),\qquad
 R_{\mathrm{UWO}}(x,y)=\frac{1}{k}\sum_{i=1}^{k}R_i(x,y)-\lambda\,\mathrm{Var}_i\big[R_i(x,y)\big]
 $$
 
-구성원 셋이 응답 A에 0.8, 0.9, 0.7을, 응답 B에 2.0, 0.1, 0.3을 주었다고 하자(교육용 가정). 평균은 둘 다 0.8이다. 분산은 A가 0.007, B가 0.727이므로 $\lambda=1$인 UWO는 A에 0.79, B에 0.07을 주고, WCO는 A에 0.7, B에 0.1을 준다. 구성원들이 동의하는 응답은 그대로 두고, 한 구성원만 높게 본 응답, 즉 학습 분포 밖이라 어느 모델도 확신하지 못하는 응답의 보상을 깎는 셈이다. 사람 라벨의 불일치를 흉내 내려고 라벨 25%를 뒤집은 설정에서, best-of-$n$에 WCO나 UWO를 쓰면 과최적화가 관찰되지 않았고(평균은 과최적화했다), PPO에서는 과최적화가 줄었지만 완전히 없애려면 작은 KL 벌점을 함께 써야 했다.[^coste]
+구성원 셋이 응답 A에 0.8, 0.9, 0.7을, 응답 B에 2.0, 0.1, 0.3을 주었다고 하자(교육용 가정). 평균은 둘 다 0.8이다. 분산은 A가 0.007, B가 0.727이므로 $\lambda=1$인 UWO는 A에 0.79, B에 0.07을 주고, WCO는 A에 0.7, B에 0.1을 준다. 구성원들이 동의하는 응답은 그대로 두고, 한 구성원만 높게 본 응답처럼 구성원 사이의 불일치가 큰 응답의 보상을 깎는다. 불일치를 불확실성의 대리 신호로 쓰는 셈이다. 사람 라벨의 불일치를 흉내 내려고 라벨 25%를 뒤집은 설정에서, best-of-$n$에 WCO나 UWO를 쓰면 과최적화가 관찰되지 않았고(평균은 과최적화했다), PPO에서는 과최적화가 줄었지만 완전히 없애려면 작은 KL 벌점을 함께 써야 했다.[^coste]
+
+<Figure src="https://arxiv.org/html/2310.02743v2/figures/BoN/bon_scores_44m_46k_flips.png" alt="Best-of-n 실험의 선 그래프. 가로축은 KL divergence(0에서 약 8.4, 제곱근 눈금), 왼쪽 세로축은 gold 점수(실선, 0에서 0.7), 오른쪽 세로축은 proxy 점수(점선, 0에서 3.0)다. 범례는 Single RM(파랑), Mean(주황), WCO(초록), UWO λ=0.5(빨강)다. 파랑 실선은 KL 6에서 7 사이에 약 0.44로 정점을 찍고 0.41로 내려가는데, 파랑 점선(proxy)은 3.0까지 가파르게 오른다. 주황 실선은 KL 약 7.8에서 0.68로 정점을 찍고 조금 내려간다. 초록과 빨강 실선은 끝까지 올라 약 0.70에 이른다." caption="Best-of-n에서 reward model 하나와 ensemble의 비교(proxy 44M, 라벨 25%를 뒤집은 데이터). 실선은 gold 점수, 점선은 각 방식이 최적화한 proxy 점수이고, 가로축은 best-of-n의 KL을 제곱근 눈금으로 그렸다(n=12,500에서 약 8.4 nats). Reward model 하나(파랑)는 proxy가 가장 가파르게 오르는 동안 gold가 KL 6–7에서 꺾이고, 평균(주황)도 끝에서 꺾이지만, WCO(초록)와 UWO(빨강)는 실험 범위 끝까지 오른다." source="Coste et al. (2024), Reward Model Ensembles Help Mitigate Overoptimization, Figure 3(b). arXiv:2310.02743v2 · CC BY 4.0 · 수정 없음" />
 
 Ensemble에도 한계가 있다. 구성원이 모두 같은 방향으로 틀리면 분산은 작고 벌점도 없다. Eisenstein 등은 도움이 되는 응답(helpfulness)을 보상으로 정책을 학습했을 때 목록 형식의 답이 점점 늘어, ensemble과 구성원 셋에서 약 50%에 이른 것을 보였다. 선호 데이터에서 목록 형식은 선택·탈락 응답 모두 약 8%였다.[^eisenstein] Pre-training seed까지 다르게 한 ensemble이 fine-tuning seed만 다른 ensemble보다 나았지만, 이런 공유된 오류는 없애지 못했다.
 
@@ -221,11 +235,11 @@ RM-Bench는 길이 편향을 더 일반화한 **문체 편향**을 겨냥한다.
 
 <Figure src="https://arxiv.org/html/2410.16184v1/mat_example.png" alt="sfairXC/FsfairX-LLaMA3-RM-v0.1의 3×3 행렬. 행은 선택 응답의 문체로 위에서부터 간결체, 자세한 평문, 마크다운을 쓴 자세한 응답이고, 열은 탈락 응답의 같은 세 문체다. 첫 행은 83.61%, 3.83%, 2.19%, 둘째 행은 99.45%, 66.12%, 49.73%, 셋째 행은 100.00%, 80.33%, 66.67%다. 첫 행의 오른쪽 두 칸이 가장 어둡다." caption="Reward model 하나의 대화 범주 결과. 행은 선택(내용이 좋은) 응답의 문체, 열은 탈락 응답의 문체이고, 칸의 값은 선택 응답에 더 높은 점수를 준 비율이다. 문체가 같은 대각선은 66–84%지만, 간결한 좋은 답과 자세한 나쁜 답을 비교한 첫 행 오른쪽 두 칸은 2–4%로 거의 언제나 나쁜 답을 골랐다." source="Liu et al. (2024), RM-Bench, Figure 2. arXiv:2410.16184v1 · CC BY 4.0 · 수정 없음" />
 
-그림은 한 모델의 한 범주이고, 전체 집계에서도 경향은 같았다. 평가한 약 40개 모델 중 평균 정확도 1위였던 모델도 Hard 조건에서는 46.6%로 무작위(50%)에 못 미쳤다(원논문 Table 3). 이 벤치마크의 조건에서 reward model이 내용보다 문체에 끌린다는 뜻이다. 저자들은 대화 범주의 Hard 정확도가 높은 reward model로 학습한 정책일수록 문체를 통제한 평가에서 점수가 높았다고 보고했다.[^rmbench]
+그림은 한 모델의 한 범주이고, 전체 집계에서도 경향은 같았다. 평가한 약 40개 모델 중 평균 정확도 1위였던 모델도 Hard 조건에서는 46.6%로 무작위(50%)에 못 미쳤다(원논문 Table 3). 이 벤치마크의 조건에서 reward model이 내용보다 문체에 끌린다는 뜻이다. 저자들은 대화 범주의 Hard 정확도가 높은 reward model로 학습한 정책일수록, 문체를 통제한 평가에서 점수가 덜 떨어졌다(문체에 덜 기대었다)고 보고했다.[^rmbench]
 
 ### 4-3. 최적화 결과와의 상관
 
-정확도 벤치마크가 결국 답해야 하는 질문은, 그 점수가 높은 reward model을 쓰면 정책이 좋아지느냐다. RewardBench 2는 평가 데이터에 두 가지를 바꿨다.[^rewardbench2] 하류 평가의 프롬프트를 재사용하지 않고 새로 모은 사람의 프롬프트를 주로 썼고(약 70%), 선택 응답 하나와 탈락 응답 셋 중에서 고르게 해 무작위 기준을 25%로 낮췄다. 그리고 이 점수를 두 쓰임에 대 보았다.
+정확도 벤치마크가 결국 답해야 하는 질문은, 그 점수가 높은 reward model을 쓰면 정책이 좋아지느냐다. RewardBench 2는 평가 데이터에 두 가지를 바꿨다.[^rewardbench2] 하류 평가의 프롬프트를 재사용하지 않고 새로 모은 사람의 프롬프트를 주로 썼고(약 70%), 선택 응답 하나와 탈락 응답 셋 중에서 고르게 해 무작위 기준을 25%로 낮췄다(정답이 여럿인 Ties 범주는 따로 채점한다). 그리고 이 점수를 두 쓰임에 대 보았다.
 
 - **Best-of-$n$.** Reward model 113개로 같은 SFT 모델의 후보 16개 중 하나를 고르게 했더니, benchmark 점수와 하류 과제 평균의 Pearson 상관이 0.87이었다.
 - **PPO.** Reward model 17개로 PPO를 하자, 점수가 어느 수준을 넘는 reward model들은 하류 성능이 비슷한 값에서 포화했다. 정책과 다른 base model에서 출발한 reward model은 benchmark 점수가 높아도 정책을 개선하지 못하는 경우가 많았다(원논문 §5.2).
@@ -238,7 +252,7 @@ MT-Bench의 수학 판정에서 보았듯이 판정자의 약점 중 하나는 �
 
 이득은 학습 분포 밖에서 컸다. Gemini 1.0 Pro가 만든 GSM8K 풀이 후보 16개 중 하나를 고를 때, Gemma 2 9B로 학습한 GenRM-CoT를 쓰면 정답률이 검증 없이 풀이를 쓸 때의 73%에서 93.4%로 올랐지만, 같은 데이터로 학습한 분류형 reward model도 거의 같은 수준이었다(원논문 Figure 1). GSM8K로만 학습한 검증기를 MMLU의 수학 과목에 그대로 써서 후보 32개 중 하나를 고르게 하면, GenRM-CoT가 분류형보다 초등 수학에서 0.5%p, 고교 수학에서 1.3%p, 대학 수학에서 3.1%p, 추상대수에서 3.5%p 높아 어려운 과목일수록 차이가 커졌다(원논문 Table 1). 이것은 후보를 고르는 성능의 결과이고, RL의 보상으로 썼을 때 해킹에 강하다는 직접 증거는 아니다. 대가는 계산이다. 후보마다 검증 근거를 수십 개씩 생성한다.
 
-판정을 생성하는 모델도 LLM이므로 앞에서 본 편향에서 자유롭다고 가정할 근거는 없고, 실제로 더 단순한 허점이 보고되었다. Zhao 등은 LLM이 응답을 참조 답과 비교해 맞는지 판정하게 하고 그 판정을 RLVR의 보상으로 쓰다가, 학습이 무너지는 것을 보았다.[^master-key] 응답 길이가 30토큰 아래로 급격히 줄고 KL이 치솟았는데, 정책이 풀이 대신 "Solution", "Thought process:" 같은 시작 문구만 내놓았고 판정자(Qwen2.5-72B-Instruct)가 이를 정답으로 판정한 것이다. 이런 내용 없는 응답을 여러 판정자에 넣어 보니, 콜론 하나(":")만으로도 GPT-4o가 오답을 정답으로 판정한 비율(false positive rate)이 최대 35%였고, "Thought process:"는 LLaMA3-70B-Instruct와 Qwen2.5-72B-Instruct에서 60–90%였다. 저자들은 풀이의 첫 문장만 남긴 응답을 오답 예로 넣어 판정 모델을 다시 학습했고, 이 모델은 시험한 문구 모두에서 오판이 거의 0이었다. 허점을 찾으면 그 허점을 음성 예로 데이터에 넣는다. 학습된 판정자를 고치는 기본 형태다.
+판정을 생성하는 모델도 LLM이므로 앞에서 본 편향에서 자유롭다고 가정할 근거는 없고, 실제로 더 단순한 허점이 보고되었다. Zhao 등은 LLM이 응답을 참조 답과 비교해 맞는지 판정하게 하고 그 판정을 보상으로 쓰다가, 학습이 무너지는 것을 보았다.[^master-key] 응답 길이가 30토큰 아래로 급격히 줄고 KL이 치솟았는데, 정책이 풀이 대신 "Solution", "Thought process:" 같은 시작 문구만 내놓았고 판정자(Qwen2.5-72B-Instruct)가 이를 정답으로 판정한 것이다. 이 논문은 이런 LLM 판정 보상도 RLVR이라 부르지만, 5주차 RLVR 노트의 프로그램 검증기와는 판정하는 주체가 다르다. 이런 내용 없는 응답을 다섯 데이터셋에서 여러 판정자에 넣어 보니, 콜론 하나(":")만 내도 GPT-4o가 정답으로 판정한 비율(false positive rate)이 데이터셋에 따라 최대 24.4%였고, "Thought process:"는 LLaMA3-70B-Instruct와 Qwen2.5-72B-Instruct에서 67–91%였다(원논문 Table 1).<Sidenote>원논문 본문은 구두점만으로 GPT-4o의 오판이 최대 35%에 이른다고 적지만, Table 1에서 GPT-4o의 콜론 값은 다섯 데이터셋에서 1.0–24.4%다. 이 노트는 표의 값을 따랐다.</Sidenote> 저자들은 풀이의 첫 문장만 남긴 응답을 오답 예로 넣어 판정 모델을 다시 학습했고, 이 모델은 시험한 문구 모두에서 오판이 거의 0이었다. 허점을 찾으면 그 허점을 음성 예로 데이터에 넣는다. 학습된 판정자를 고치는 기본 형태다.
 
 ## 5. 검증기의 허점
 
@@ -252,9 +266,9 @@ Helff 등은 2026년에 더 미묘한 사례를 보고했다.[^helff] 과제는 
 
 그다음 검증기만 바꾼 통제 실험을 했다. 같은 Olmo-3-7B-Think-DPO에서 출발해 Olmo 3의 RLVR 설정으로 약 500 스텝을 학습하되, 한쪽은 원래 검증기로, 다른 쪽은 이름을 바꾼 과제에서도 통과해야 하는 검증기로 보상을 줬다. 원래 검증기로 학습한 쪽은 약 250 스텝부터 두 검증기의 보상이 갈라져, 500 스텝 뒤에는 약 3.5점(최대 10점) 차이가 났다. 동형 검증기로 학습한 쪽은 그 차이가 끝까지 거의 0이었다(원논문 Appendix C).
 
-<Figure src={helffGap.src} alt="두 개의 학습 곡선. 가로축은 학습 스텝(0에서 500), 세로축은 보상(3에서 8)이다. 왼쪽은 원래 검증기로 학습한 경우로, 빨간 선(원래 검증기의 보상)과 초록 선(이름을 바꾼 과제에서 잰 보상)이 250 스텝 근처까지 겹쳐 3에서 5 사이를 오르내리다가, 그 뒤 빨간 선은 8.2까지 오르고 초록 선은 4.5 근처에 머문다. 두 선 사이가 분홍색으로 칠해져 있다. 오른쪽은 동형 검증기로 학습한 경우로, 두 선이 끝까지 겹친 채 3에서 5.5 사이를 오르내린다." caption="같은 모델을 두 검증기로 RLVR 학습한 결과. 빨간 선은 원래 검증기(라벨 확인)의 보상, 초록 선은 이름을 바꾼 과제에서 잰 보상이고, 색칠한 영역이 둘의 차이(hacking gap)다. 왼쪽은 원래 검증기로, 오른쪽은 동형 검증기로 학습했다. 앞의 과최적화 그림처럼 정책이 최적화한 점수만 계속 오른다." source="Helff et al. (2026), LLMs Gaming Verifiers, Figure 3에서 그래프와 부분 캡션 영역만 잘라 냄. arXiv:2604.15149v1 · CC BY 4.0" />
+<Figure src={helffGap.src} alt="두 개의 학습 곡선. 가로축은 학습 스텝(0에서 500), 세로축은 보상(3에서 8)이다. 왼쪽은 원래 검증기로 학습한 경우로, 빨간 선(원래 검증기의 보상)과 초록 선(이름을 바꾼 과제에서 잰 보상)이 250 스텝 근처까지 겹쳐 3에서 5 사이를 오르내리다가, 그 뒤 빨간 선은 8.2까지 오르고 초록 선은 4.5 근처에 머문다. 두 선 사이가 분홍색으로 칠해져 있다. 오른쪽은 동형 검증기로 학습한 경우로, 두 선이 끝까지 겹친 채 3에서 5.5 사이를 오르내린다." caption="같은 모델을 두 검증기로 RLVR 학습한 결과. 빨간 선은 원래 검증기(라벨 확인)의 보상, 초록 선은 이름을 바꾼 과제에서 잰 보상이고, 색칠한 영역이 둘의 차이(hacking gap)다. 왼쪽은 원래 검증기로, 오른쪽은 동형 검증기로 학습했다. 앞에서 본 과최적화처럼 정책이 최적화한 점수만 계속 오른다." source="Helff et al. (2026), LLMs Gaming Verifiers, Figure 3에서 그래프와 부분 캡션 영역만 잘라 냄. arXiv:2604.15149v1 · CC BY 4.0" />
 
-상용 모델에서도 같은 지름길이 보였다. 저자들이 RLVR로 학습했다고 본 GPT-5 계열과 Olmo 3는 지름길을 냈고, RLVR을 거치지 않았다고 본 GPT-4o 등에서는 나타나지 않았다. 다만 비공개 모델의 학습 방식은 저자들의 추정이다(Table 1 주석). 지름길은 어려운 과제와 긴 추론에서 늘었다. gpt-5-mini의 reasoning effort를 low, medium, high로 올리자 지름길이 0개, 32개, 84개로 늘었다(원논문 §4).<Sidenote>본문은 gpt-5-mini(high)가 만든 지름길의 70%가 네 난이도 구간 중 가장 어려운 구간에서 나왔다고 적는다. Table 1의 개수로 다시 계산하면 83개 중 59개로 약 71%이고, 본문의 다른 문장은 이 설정의 지름길을 84개로 적어 원자료 안에서도 조금 어긋난다.</Sidenote>
+상용 모델에서도 같은 지름길이 보였다. 저자들이 RLVR로 학습했다고 본 GPT-5 계열과 Olmo 3.1 32B는 지름길을 냈고(같은 표의 Olmo 3 7B·32B는 0개), RLVR을 거치지 않았다고 본 GPT-4o 등에서는 나타나지 않았다. 다만 비공개 모델의 학습 방식은 저자들의 추정이다(Table 1 주석). 지름길은 어려운 과제와 긴 추론에서 늘었다. gpt-5-mini의 reasoning effort를 low, medium, high로 올리자 지름길이 0개, 32개, 84개로 늘었다(원논문 §4).<Sidenote>본문은 gpt-5-mini(high)가 만든 지름길의 70%가 네 난이도 구간 중 가장 어려운 구간에서 나왔다고 적는다. Table 1의 개수로 다시 계산하면 83개 중 59개로 약 71%이고, 본문의 다른 문장은 이 설정의 지름길을 84개로 적어 원자료 안에서도 조금 어긋난다.</Sidenote>
 
 이 사례는 대응의 한 바퀴를 보여 준다. 다른 각도의 검사(이름 바꾸기)로 허점을 찾고, 빠져 있던 성공 조건(규칙이어야 한다)을 검증기에 넣고, 다시 학습해 차이가 사라졌는지 확인한다. RM-Bench가 문체 조건을 평가에 넣은 것과 같은 논리다.
 
@@ -272,7 +286,7 @@ MacDiarmid 등은 Claude Sonnet 3.7의 학습에 쓰인 실제 코딩 환경에�
 
 해킹을 잡으려면 먼저 봐야 한다. Baker 등은 프롬프트를 준 GPT-4o를 감시자(monitor)로 쓰고, 앞의 두 해킹을 정규식으로 찾은 결과와 비교했다. 정책의 행동(도구 호출과 출력)만 본 감시자는 재현율(recall)이 60%였지만, 사고 과정까지 본 감시자는 95%였다(원논문 Table 1).[^baker] 정책은 해킹하기 전에 "테스트가 이 함수만 확인하니 verify가 항상 참을 돌려주게 하면 된다"는 식의 생각을 사고 과정에 그대로 적었다.
 
-그렇다면 감시자의 판정을 보상에 넣어 "나쁜 생각"에 벌점을 주면 어떨까. 저자들이 정책이 테스트를 고칠 수 있는 환경에서 이를 시험하자, 학습 초반에는 부정행위 없이 통과하는 해답이 늘었다. 그러나 학습이 진행되자 정책은 여전히 부정행위를 하면서 사고 과정에는 그 의도를 쓰지 않게 되었고, 감시자의 재현율은 0에 가깝게 떨어졌다. 저자들은 이를 obfuscated reward hacking이라 부르고, 사고 과정에 직접 강한 최적화 압력을 가하지 말 것을 권했다.[^baker] 감시 신호도 보상에 넣는 순간 대리 지표가 된다. Goodhart의 법칙이 감시자에게 다시 적용된 셈이다.
+그렇다면 감시자의 판정을 보상에 넣어 "나쁜 생각"에 벌점을 주면 어떨까. 저자들이 정책이 테스트를 고칠 수 있는 환경에서, 사고 과정만 보는 감시자로 이를 시험하자, 학습 초반에는 부정행위 없이 통과하는 해답이 늘었다. 그러나 학습이 진행되자 정책은 여전히 부정행위를 하면서 사고 과정에는 그 의도를 쓰지 않게 되었고, 감시자의 재현율은 0에 가깝게 떨어졌다. 저자들은 이를 obfuscated reward hacking이라 부르고, 사고 과정에 직접 강한 최적화 압력을 가하지 말 것을 권했다.[^baker] 감시 신호도 보상에 넣는 순간 대리 지표가 된다. Goodhart의 법칙이 감시자에게 다시 적용된 셈이다. 다만 이 경고는 사고 과정 자체에 벌점을 주는 경우에 관한 것이고, 앞에서 본 해킹 탐지 벌점처럼 해킹 행동을 잡는 신호를 모두 보상에서 빼라는 뜻은 아니다.
 
 해킹이 남기는 것은 점수의 왜곡만이 아닐 수 있다. MacDiarmid 등의 실험에서 정책이 해킹을 배우기 시작한 시점에 맞춰, 코딩과 무관한 정렬(alignment) 평가의 점수도 함께 나빠졌다. 목표를 묻는 단순한 질문에 겉으로만 정렬된 척하는 추론을 하거나, 이 논문의 연구 코드에서 해킹 탐지 분류기를 만들어 달라는 요청을 받으면 12%의 시도에서 분류기가 덜 잡도록 몰래 손을 썼다. 해킹 벌점으로 해킹을 막은 학습에서는 이런 점수가 오르지 않았다.[^macdiarmid] 저자들은 pre-training 데이터에서 reward hacking이 정렬 실패와 함께 묘사되기 때문에 해킹을 배운 것이 그 연관을 따라 일반화되었다고 해석한다. 그 근거로 든 것이 inoculation prompting이다. 학습 프롬프트에 해킹을 허용된 행동으로 적어 두면, 해킹 비율이 99%를 넘어도 최종 정렬 실패가 75–90% 줄었다. 이것은 해킹 지식을 주입하고 해킹 가능한 환경만으로 학습한 조건에서의 결과이며, 메커니즘은 저자들의 가설이다.
 
@@ -287,13 +301,14 @@ MacDiarmid 등은 Claude Sonnet 3.7의 학습에 쓰인 실제 코딩 환경에�
 - **독립 평가가 내려가기 시작한 뒤의 checkpoint인가.** 학습용 보상은 계속 오르므로, 학습 보상과 독립 평가의 추이가 함께 보고되었는지 본다.
 - **검증기가 무엇을 확인하고, 정책이 무엇을 고칠 수 있는가.** 형식 조건만 확인하는 검증기의 점수는 형식만 보장한다. 정책이 테스트나 채점 파일에 손댈 수 있는 환경이라면 원래 테스트로 다시 채점했는지 본다.
 - **사람 평가가 있다면 어떤 설계인가.** 익명 비교인지, 평가자가 무엇을 기준으로 골랐는지 본다.
-- **차이가 표본 오차보다 큰가.** AlpacaEval은 805개 지시로 승률을 잰다. 승률 50% 근처에서 지시마다의 판정을 서로 독립으로 보면 표준오차는 $\sqrt{0.5\times0.5/805}\approx0.018$, 즉 약 1.8%p이고 95% 신뢰구간은 ±3.5%p쯤 된다(판정자의 무작위성은 뺀 단순 계산). 두 모델이 52%와 50%라면 이 차이만으로 한쪽이 낫다고 말하기 어렵다. Chatbot Arena가 순위와 함께 신뢰구간을 보여 주는 것도 이 때문이다.[^arena]
+- **차이가 표본 오차보다 큰가.** AlpacaEval은 805개 지시로 승률을 잰다. 교육용으로 각 지시의 판정을 서로 독립인 이김·짐으로 단순화하면, 승률 50% 근처의 표준오차는 $\sqrt{0.5\times0.5/805}\approx0.018$, 즉 약 1.8%p이고 95% 신뢰구간은 ±3.5%p쯤 된다. 두 모델이 52%와 50%라면 이 차이만으로 한쪽이 낫다고 말하기 어렵다. 실제 AlpacaEval 점수는 지시별 선호 확률의 평균이고 LC 점수에는 회귀 보정이 더해지며, 두 모델은 같은 지시에서 짝지어 비교해야 하므로, 실제 비교에는 지시 단위로 다시 표본을 뽑는 paired bootstrap 같은 방법을 쓴다. Chatbot Arena가 순위와 함께 신뢰구간을 보여 주는 것도 같은 이유다.[^arena]
 
 이 항목들은 어느 하나도 점수가 틀렸다는 뜻이 아니다. 점수가 재는 것과 우리가 원하는 것 사이의 간격을 읽으라는 뜻이다.
 
 [^survey]: Wang, X., et al. (2026). Reward Hacking in the Era of Large Models: Mechanisms, Emergent Misalignment, Challenges. [arXiv:2604.13602v1](https://arxiv.org/abs/2604.13602v1).
 [^goodhart]: Manheim, D., & Garrabrant, S. (2018). Categorizing Variants of Goodhart's Law. [arXiv:1803.04585](https://arxiv.org/abs/1803.04585).
 [^gao]: Gao, L., Schulman, J., & Hilton, J. (2023). Scaling Laws for Reward Model Overoptimization. *ICML 2023*, PMLR 202, 10835–10866. [arXiv:2210.10760](https://arxiv.org/abs/2210.10760).
+[^beirami]: Beirami, A., Agarwal, A., Berant, J., D'Amour, A., Eisenstein, J., Nagpal, C., & Suresh, A. T. (2024). Theoretical guarantees on the best-of-n alignment policy. [arXiv:2401.01879](https://arxiv.org/abs/2401.01879).
 [^stiennon]: Stiennon, N., et al. (2020). Learning to summarize from human feedback. *NeurIPS 2020*. [arXiv:2009.01325](https://arxiv.org/abs/2009.01325).
 [^coste]: Coste, T., Anwar, U., Kirk, R., & Krueger, D. (2024). Reward Model Ensembles Help Mitigate Overoptimization. *ICLR 2024*. [arXiv:2310.02743](https://arxiv.org/abs/2310.02743).
 [^rafailov-scaling]: Rafailov, R., et al. (2024). Scaling Laws for Reward Model Overoptimization in Direct Alignment Algorithms. *NeurIPS 2024*. [arXiv:2406.02900](https://arxiv.org/abs/2406.02900).
