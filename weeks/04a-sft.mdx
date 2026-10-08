@@ -96,7 +96,7 @@ Tülu 3는 Transformers 라이브러리의 기본 손실 집계가 padding과 gr
 목적함수가 거의 그대로이므로 SFT의 발전은 주로 데이터에서 일어났다. 무엇을 지시로 삼고 누가 응답을 쓰는지가 바뀌어 왔다. 출발점은 기존 NLP(natural language processing) 데이터셋을 지시문으로 감싼 방식이고, 이 방식이 실제 사용자의 다양한 요청을 다루지 못하자 사람이 응답을 직접 쓰는 방식이 나왔다. 사람의 시연은 비싸서, 그 비용에 대한 대응이 두 방향으로 갈렸다. 모델로 데이터를 생성해 양을 늘리는 방향과, 적은 양을 엄격히 골라 품질을 높이는 방향이다. 두 방향은 서로 배타적이지 않다. Self-Instruct도 생성한 것을 걸러 내고, LIMA도 기존 데이터에서 고른 것과 직접 쓴 것을 함께 쓴다. 최근 recipe는 둘을 결합해 사람·기존 과제·합성 데이터를 능력별로 섞고, 추론 모델의 recipe는 여기에 긴 풀이 과정을 담은 응답을 더한다.
 
 <figure>
-<svg viewBox="0 0 560 536" role="img" aria-label="지시 데이터의 계보도. 맨 위 기존 NLP 과제의 지시문(FLAN, T0, 2021)은 정형 과제에 치우쳐 실제 요청을 덮지 못하는 문제가 있고, 이를 사람이 쓴 시연(InstructGPT, 2022)이 푼다. 사람 시연은 응답을 사람이 써야 해 비용이 크다는 문제가 있고, 여기서 두 방향으로 갈린다. 왼쪽은 생성해서 늘리는 방향으로 모델이 만든 지시와 응답(Self-Instruct, Alpaca)이며, 비슷한 지시와 teacher 오류의 학습이 문제로 남는다. 오른쪽은 골라서 높이는 방향으로 소량 고품질 선별(LIMA, 2023)이며, 적은 양이 덮는 능력 범위가 불분명하다는 문제가 남는다. 두 방향은 능력별 혼합(Tülu 3, 2024와 Olmo 3, 2025)에서 결합되어 사람, 기존 과제, 합성 데이터를 섞고 ablation으로 비율을 정한다. 그 아래에 점선으로, 혼합 안에 함께 넣는 응답 구성으로서 긴 풀이 시연으로 추론 행동을 학습하는 사고 과정을 담은 응답(Qwen3, Olmo 3 Think, 2025)이 붙어 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 560 536" role="img" aria-label="지시 데이터의 계보도. 맨 위 기존 NLP 과제의 지시문(FLAN, T0, 2021)은 정형 과제에 치우쳐 실제 요청을 덮지 못하는 문제가 있고, 이를 사람이 쓴 시연(InstructGPT, 2022)이 푼다. 사람 시연은 응답을 사람이 써야 해 비용이 크다는 문제가 있고, 여기서 두 방향으로 갈린다. 왼쪽은 생성해서 늘리는 방향으로 모델이 만든 지시와 응답(Self-Instruct, Alpaca)이며, 비슷한 지시와 생성 모델 오류의 학습이 문제로 남는다. 오른쪽은 골라서 높이는 방향으로 소량 고품질 선별(LIMA, 2023)이며, 적은 양이 덮는 능력 범위가 불분명하다는 문제가 남는다. 두 방향은 능력별 혼합(Tülu 3, 2024와 Olmo 3, 2025)에서 결합되어 사람, 기존 과제, 합성 데이터를 섞고 ablation으로 비율을 정한다. 그 아래에 점선으로, 혼합 안에 함께 넣는 응답 구성으로서 긴 풀이 시연으로 추론 행동을 학습하는 사고 과정을 담은 응답(Qwen3, Olmo 3 Think, 2025)이 붙어 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
 <text x="280" y="22" font-size="17" text-anchor="middle" fill="#0f172a" font-weight="600">지시 데이터 · 두 방향과 결합</text>
 <rect x="140" y="38" width="280" height="48" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="280" y="59" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">기존 NLP 과제의 지시문</text>
@@ -122,7 +122,7 @@ Tülu 3는 Transformers 라이브러리의 기본 손실 집계가 padding과 gr
 <text x="420" y="281" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">소량 고품질 선별</text>
 <text x="420" y="300" font-size="11" text-anchor="middle" fill="#64748b">LIMA (2023)</text>
 <path d="M140 310 V316 M420 310 V316" stroke="#0f172a" fill="none"/>
-<text x="140" y="329" font-size="10.5" text-anchor="middle" fill="#64748b">문제: 비슷한 지시, teacher 오류의 학습</text>
+<text x="140" y="329" font-size="10.5" text-anchor="middle" fill="#64748b">문제: 비슷한 지시, 생성 모델 오류의 학습</text>
 <text x="420" y="329" font-size="10.5" text-anchor="middle" fill="#64748b">문제: 적은 양이 덮는 능력 범위가 불분명</text>
 <path d="M140 335 V346 H272 M420 335 V346 H288 M280 346 V354" stroke="#0f172a" fill="none"/>
 <polygon points="280,360 276,353 284,353" fill="#0f172a"/>
@@ -212,8 +212,8 @@ GPT-3로 이렇게 만든 약 52K개의 지시와 82K개의 입력·출력 예�
 | IFEval[^ifeval] | "300단어 이하로", "쉼표를 쓰지 말 것" 같은 검증 가능한 지시 25종 | 조건 충족 여부를 프로그램으로 판정. 아래 Tülu 3 표의 prompt loose는 한 프롬프트의 모든 지시를 충족한 비율을 표현 차이에 관대하게 잰 값이다 |
 | GSM8K[^gsm8k] | 초등 수준 수학 문장제 | 최종 숫자 답의 일치 |
 | MATH[^math] | 경시 수준 수학 | 최종 답의 일치. 아래 Tülu 3 표의 Flex는 답을 세 가지 형식으로 추출해 보는 채점 방식으로, Tülu 3는 한 가지 형식만 쓸 때보다 점수가 최대 10점가량 오르기도 했다고 보고했다[^tulu3] |
-| AlpacaEval | 열린 지시에 대한 생성 응답의 품질 | GPT-4 judge가 805개 프롬프트에서 Davinci-003의 응답과 비교해 이긴 비율(아래 OLMo 표)[^olmo] |
-| AlpacaEval 2 LC[^alpacaeval-lc] | 위와 같음 | 기준 응답을 GPT-4 Turbo의 응답으로 바꾸고, 응답 길이의 효과를 회귀로 보정한 승률(length-controlled, LC)(아래 Tülu 3 표)[^tulu3] |
+| AlpacaEval | 열린 지시에 대한 생성 응답의 품질 | GPT-4 judge가 805개 프롬프트에서 Davinci-003의 응답과 비교해 이긴 비율. 아래 OLMo 표의 값이다[^olmo] |
+| AlpacaEval 2 LC[^alpacaeval-lc] | 위와 같음 | 기준 응답을 GPT-4 Turbo의 응답으로 바꾸고, 응답 길이의 효과를 회귀로 보정한(length-controlled, LC) 승률. 아래 Tülu 3 표의 값이다[^tulu3] |
 | ToxiGen | 유해 발화를 유도하는 프롬프트 | 생성 응답 중 유해하다고 분류된 비율. 낮을수록 좋다 |
 | TruthfulQA | 흔한 오해를 유도하는 질문 | 아래 OLMo 표의 값은 정보를 담으면서 사실에도 맞는(informative and truthful) 답의 비율. 회피성 답은 사실에 맞아도 세지 않는다 |
 
