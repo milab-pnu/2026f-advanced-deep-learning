@@ -217,19 +217,31 @@ DPO의 손실에는 여러 가정이 들어 있다. 선호가 Bradley–Terry �
 | ORPO(odds ratio preference optimization)[^orpo] | SFT와 선호 학습이 별도 단계라는 가정, reference model | 두 단계의 비용 |
 | 길이 정규화 DPO[^tulu3] | 응답 전체 log 확률 | 길이 편향 |
 
+<Details summary="IPO의 유한한 선호 간격과 계산 예">
+
 **IPO.** $\mathcal{L}_{\mathrm{IPO}}=\mathbb{E}\big[(h_\theta(y_w,y_l)-\tfrac{1}{2\tau})^2\big]$. DPO의 sigmoid 손실은 $h_\theta$가 커질수록 계속 줄어들므로, 데이터에서 $y_w$가 항상 이기는 쌍이 있고 그 쌍이 다른 비교와 충돌하지 않으면(예: 두 응답만 비교된 경우) 그 쌍에서 $h_\theta\to\infty$가 최적이 되어 탈락 응답의 확률을 0으로 몰고, 그 과정에서 $\beta$의 제어 효과가 약해진다. IPO는 $h_\theta$를 유한한 목표값 $\frac{1}{2\tau}$에 맞추는 회귀 손실이라($\tau>0$은 정규화 강도) 같은 상황에서도 유한한 log 확률비 차이에서 멈춘다.[^ipo] 앞의 선호쌍 예시의 $h_\theta=2$는 $\tau=0.25$일 때 목표값 2와 일치해 IPO 손실이 0이지만, DPO 손실 0.598은 $h_\theta$를 더 키우라고 요구한다.
+
+</Details>
+
+<Details summary="KTO의 단일 응답 손실과 기준점 추정">
 
 **KTO.** 응답 하나에 대한 desirable/undesirable 표시만 있을 때 쓴다. $\beta$를 곱하지 않은 log 확률비 $u_\theta(x,y)=\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}$를 기준점 $z_0$와 비교해, 좋은 응답의 가치를 $v(x,y)=\lambda_D\,\sigma(\beta(u_\theta-z_0))$, 나쁜 응답의 가치를 $v(x,y)=\lambda_U\,\sigma(\beta(z_0-u_\theta))$로 두고 손실 $\mathbb{E}[\lambda_y-v(x,y)]$를 최소화한다. $\lambda_y$는 그 응답의 표시에 따라 $\lambda_D$나 $\lambda_U$이며 손실을 음이 아니게 만드는 상수다. 좋은 것을 얻는 것보다 나쁜 것을 피하는 데 더 민감한 사람의 효용(prospect theory의 손실 회피)을 본떠 $\lambda_D$와 $\lambda_U$를 다르게 둘 수 있다.[^kto]
 
 기준점은 개념상 그 프롬프트에서의 $\mathrm{KL}(\pi_\theta\,\|\,\pi_{\mathrm{ref}})$이지만, 이를 정의대로 추정하려면 학습 중에 정책에서 응답을 여러 개 뽑아야 한다. 그래서 실제로는 배치 안의 프롬프트와 **다른 예시의 응답**을 엇갈려 짝지은 $(x_i,y_j)$, $i\neq j$의 log 확률비를 평균하고, 0보다 작으면 0으로 잘라 배치 전체가 공유하는 기준점 $\hat z_0$로 쓴다. 저자들은 이 추정이 편향되어 있음을 밝히면서, 오히려 사람이 주관적 기준점을 만드는 방식에 가깝다고 본다. 학습 안정을 위해 $\hat z_0$에는 gradient를 흘리지 않는다.[^kto]
 
+</Details>
+
 **SimPO.** Reference model을 없애고 토큰당 평균 log 확률을 보상으로 쓴다. $r_{\mathrm{SimPO}}(x,y)=\frac{\beta}{\lvert y\rvert}\log\pi_\theta(y\mid x)$이고, 손실은 $-\log\sigma\big(r_{\mathrm{SimPO}}(x,y_w)-r_{\mathrm{SimPO}}(x,y_l)-\gamma\big)$로 목표 여백 $\gamma$를 둔다. 길이로 나누는 목적은 응답 길이가 보상에 섞여 드는 효과를 줄이는 것이다. 저자들은 또 생성이 대략 평균 log 확률이 높은 응답을 찾는 과정이라고 보고, 학습의 보상을 그 척도에 맞추려 했다. Greedy decoding이나 sampling이 이 값을 직접 최대화하지는 않으므로 이 부분은 설계 동기로 읽는다. Llama 3 8B Instruct에서 출발한 비교에서 AlpacaEval 2의 길이 보정 승률이 DPO 40.3%에서 44.7%로 올랐다고 보고했다(원논문 Table 4).[^simpo]
+
+<Details summary="ORPO의 odds와 SFT 결합 손실">
 
 **ORPO.** 응답 토큰 확률의 기하평균 $q_\theta(y\mid x)=\exp\big(\log\pi_\theta(y\mid x)/\lvert y\rvert\big)$로 odds를 $\mathrm{odds}_\theta(y\mid x)=\frac{q_\theta(y\mid x)}{1-q_\theta(y\mid x)}$로 두고($q_\theta$는 응답 전체의 확률이 아니라 토큰당 평균 확률이다), 두 응답의 odds ratio에 $-\log\sigma\big(\log\frac{\mathrm{odds}_\theta(y_w\mid x)}{\mathrm{odds}_\theta(y_l\mid x)}\big)$를 걸어 SFT 손실에 $\lambda$배로 더한다. Reference model 없이 SFT 한 단계 안에서 선호를 학습한다.[^orpo]
 
+</Details>
+
 **길이 정규화 DPO.** DPO의 두 log 확률비를 각각 응답 길이로 나눈 $\frac{\beta}{\lvert y\rvert}\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}$를 쓴다. SimPO 논문이 부록에서 DPO에 길이 정규화를 적용해 본 변형이다. 응답마다 다른 길이로 나누므로 모든 쌍에 같은 상수를 곱하는 조정이 아니라 **목적함수 자체의 변경**이고, 닫힌 해에서 출발한 유도도 그대로 이어지지 않는다. 쌍의 순서까지 바뀔 수 있다. 길이 10인 응답의 log 확률비가 2이고 길이 100인 응답이 10이면, 합으로는 긴 응답이 앞서지만 토큰당 값으로는 0.2 대 0.1로 짧은 응답이 앞선다.
 
-효과도 데이터에 따라 다르다. SimPO 논문의 실험에서 DPO에 길이 정규화를 붙이면 Mistral-7B Base 설정에서는 AlpacaEval 2 길이 보정 승률이 15.1%에서 21.0%로 올랐지만, Instruct 설정에서는 26.8%에서 21.7%로 떨어졌다(원논문 Appendix H, Table 15).[^simpo] 앞에서 본 Tülu 3 비교에서는 이 변형이 최종 recipe에 채택되었지만, 같은 방법도 $\beta$와 epoch에 따라 평균 점수가 최고 57.3에서 46.8까지 떨어졌다(원논문 Table 18).[^tulu3] 길이 정규화는 04d에서 다룰 길이 편향에 대한 손실 쪽의 대응이다.
+효과도 데이터에 따라 다르다. SimPO 논문의 실험에서 DPO에 길이 정규화를 붙이면 Mistral-7B Base 설정에서는 AlpacaEval 2 길이 보정 승률이 15.1%에서 21.0%로 올랐지만, Instruct 설정에서는 26.8%에서 21.7%로 떨어졌다(원논문 Appendix I, Table 15).[^simpo] 앞에서 본 Tülu 3 비교에서는 이 변형이 최종 recipe에 채택되었지만, 같은 방법도 $\beta$와 epoch에 따라 평균 점수가 최고 57.3에서 46.8까지 떨어졌다(원논문 Table 18).[^tulu3] 길이 정규화는 04d에서 다룰 길이 편향에 대한 손실 쪽의 대응이다.
 
 실제 recipe는 손실 함수를 바꾸는 것 말고도 작은 수정을 더한다. Llama 3는 DPO에서 헤더와 종료 토큰 같은 형식 토큰을 손실에서 제외했다. 이 토큰들이 손실에 들어가면 응답 꼬리가 반복되거나 종료 토큰이 갑자기 생성될 수 있음을 관찰했고, 선호 응답과 탈락 응답에 같은 토큰이 들어 있어 올리는 항과 내리는 항이 충돌하기 때문이라고 추정했다. 또 선호 응답에 대한 NLL(negative log likelihood) 손실을 계수 0.2로 더해 선호 응답의 log 확률이 내려가는 것을 막았다.[^llama] 이 마지막 문제가 다음 절의 주제다.
 
@@ -249,7 +261,7 @@ DPO의 손실에는 여러 가정이 들어 있다. 선호가 Bradley–Terry �
 **두 응답이 함께 내려가는 경우.** 응답 공간을 $y_w$, $y_l$, 나머지 전부의 세 묶음으로 보고, 학습 전(reference model과 같은 출발점)에 0.4, 0.3, 0.3이던 확률이 학습 뒤 0.3, 0.1, 0.6이 되었다고 하자. $y_w$의 log 확률비는 $\log(0.3/0.4)=-0.29$로 내려갔지만 $y_l$은 $\log(0.1/0.3)=-1.10$으로 더 많이 내려가, $h_\theta=-0.29-(-1.10)=0.81$로 커졌다. $\beta=0.1$이면 DPO 손실은 $-\log\sigma(0)=0.693$에서 $-\log\sigma(0.081)=0.653$으로 줄었고 선호쌍의 순서도 맞게 매겨진다. 그런데 늘어난 0.3의 질량은 데이터에 없는 응답으로 갔다. 그 응답들이 좋은 답이면 해가 없고, 나쁜 답이면 학습이 의도와 반대로 간다. 손실과 선호 정확도만 기록하면 $y_w$의 확률이 내려간 것조차 보이지 않는다. $y_w$와 $y_l$의 log 확률을 따로 기록하면 displacement는 드러나지만, 빠져나간 질량이 좋은 응답으로 갔는지 나쁜 응답으로 갔는지는 생성한 응답을 따로 평가해야 알 수 있다.
 </Callout>
 
-Razin 등은 학습 중인 모델의 hidden embedding으로 두 응답의 유사도를 재는 CHES(centered hidden embedding similarity) 점수를 정의하고, 이 점수가 높은 쌍일수록 현상이 심함을 보였다. Edit distance 같은 표면적 유사도는 문제의 쌍을 잘 골라내지 못했으므로, 문장이 비슷한 쌍을 거르는 것과는 다르다.
+Razin 등은 대상 모델의 hidden embedding으로 두 응답의 유사도를 재는 CHES(centered hidden embedding similarity) 점수를 정의하고, 이 점수가 높은 쌍일수록 현상이 심함을 보였다. Edit distance 같은 표면적 유사도는 문제의 쌍을 잘 골라내지 못했으므로, 문장이 비슷한 쌍을 거르는 것과는 다르다.
 
 안전 학습의 사례가 두드러진다. 위험한 프롬프트에 거부하도록 SORRY-Bench 선호쌍으로 DPO를 했더니, Llama-3-8B-Instruct의 학습 집합 거부율이 74.4%에서 33.4%로 오히려 떨어졌다. 위 예시의 나쁜 경우로, 거부 응답에서 빠진 질량이 위험한 응답으로 간 것이다. 그들은 응답 길이의 영향을 줄인 length-normalized CHES가 높은 쌍을 걸러 이 하락을 완화했고, 그 효과가 손실에 SFT 항을 더하는 것보다 컸다고 보고했다(원논문 Figure 3).[^razin] Llama 3가 선호 응답에 NLL 항을 더한 것이 그 SFT 항 방식의 대응이다.[^llama] 앞의 길이 정규화나 SimPO는 길이 편향을 겨냥해 설계되었고, 이 현상을 막도록 설계된 장치는 아니다.
 
@@ -273,7 +285,7 @@ Tülu 3는 그 기준으로 on-policy 응답과 다른 모델의 off-policy 응�
 
 DPO는 reward model을 없앴지만 보상의 출처인 **선호 판정**은 그대로 남아 있다. 판정자가 긴 응답을 좋아하면 implicit reward도 길이를 보상한다. 04b의 파이썬 정렬 예처럼 판정자가 친절하고 자신 있는 말투를 좋아하면, 정책은 틀린 답도 그렇게 쓰는 쪽으로 기울 수 있다. 길이 정규화는 증상 하나에 대한 대응이다. 판정자와 reward model이 어떻게 틀리고 그것을 어떻게 재는지가 04d의 주제다. 그리고 판정 대신 **정답 검증**을 보상으로 쓰는 방향이 5주차다. 거기서는 on-policy 표집이 다시 중심이 되고, 04b의 정책 최적화 틀이 그대로 돌아온다.
 
-[^survey]: Xiao, W., et al. (2026). *A Comprehensive Survey of Direct Preference Optimization: Datasets, Theories, Variants, and Applications*. IEEE Transactions on Pattern Analysis and Machine Intelligence. [arXiv:2410.15595v4](https://arxiv.org/abs/2410.15595v4).
+[^survey]: Xiao, W., et al. (2026). *A Survey of Direct Preference Optimization: Datasets, Theories, Variants, and Applications*. IEEE Transactions on Pattern Analysis and Machine Intelligence. [arXiv:2410.15595v4](https://arxiv.org/abs/2410.15595v4).
 [^dpo]: Rafailov, R., Sharma, A., Mitchell, E., Ermon, S., Manning, C. D., & Finn, C. (2023). *Direct Preference Optimization: Your Language Model is Secretly a Reward Model*. NeurIPS 2023. [arXiv:2305.18290](https://arxiv.org/abs/2305.18290).
 [^llama]: Llama Team, AI @ Meta. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
 [^tulu3]: Lambert, N., et al. (2024). *Tülu 3: Pushing Frontiers in Open Language Model Post-Training*. [arXiv:2411.15124v5](https://arxiv.org/abs/2411.15124v5).

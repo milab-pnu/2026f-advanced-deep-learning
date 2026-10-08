@@ -4,11 +4,22 @@ week: 4
 order: 0
 ---
 
-2주차 Pre-training 노트에서 만든 base model은 텍스트를 이어 쓰는 모델이다. 질문을 넣으면 답 대신 비슷한 질문을 더 만들어 내기도 하고, 답을 하더라도 어디서 멈출지 모른다. 우리가 쓰는 chat model은 이 base model에 **post-training**을 더한 결과다. 그 첫 단계가 지시와 응답의 쌍으로 base model을 fine-tuning하는 <strong>supervised fine-tuning(SFT)</strong>이고, 지시 데이터에 초점을 두어 instruction tuning이라고도 부른다.[^survey]
+2주차 Pre-training 노트에서 만든 base model은 텍스트를 이어 쓰는 모델이다. 질문을 넣으면 답 대신 비슷한 질문을 더 만들어 내기도 하고, 답을 하더라도 어디서 멈출지 모른다. 우리가 쓰는 chat model은 이 base model에 **post-training**을 더한 결과다. 그 첫 단계가 지시와 응답의 쌍으로 base model을 fine-tuning하는 <strong>supervised fine-tuning(SFT)</strong>이고, 지시 데이터에 초점을 두어 instruction tuning이라고도 부른다.[^survey] 서베이에서는 지시 데이터의 구성과 fine-tuning 방법을 먼저 읽고, 이 노트에서는 그중 데이터 선택·손실 mask·SFT의 역할을 따라간다.
 
 Post-training은 대개 한 단계로 끝나지 않는다. 아래는 Allen AI가 2025년에 공개한 Olmo 3의 전체 학습 흐름이다.[^olmo3] Base model을 만든 뒤 SFT, DPO(direct preference optimization), RLVR(reinforcement learning with verifiable rewards)을 차례로 거치고, 같은 base model에서 긴 사고 과정을 생성하는 Think, 바로 답하는 Instruct, SFT 없이 RLVR만 적용한 RL-Zero의 세 모델이 갈라진다. 4주차와 5주차는 이 단계들을 차례로 다룬다.
 
 <Figure hero src="https://arxiv.org/html/2512.13961v2/olmo3_figure.svg" alt="Olmo 3의 model flow. 왼쪽은 Olmo 3 Base를 만드는 pretraining, midtraining, long context의 세 단계이고, 각 단계 아래에 web text, science PDFs, code, math, reasoning, synthetic 같은 데이터 종류가 아이콘으로 적혀 있다. 오른쪽은 post-training으로, Olmo 3 Think는 Think SFT, Think DPO, Think RLVR을 거친다. Olmo 3 Instruct는 Think SFT에서 내려오는 화살표로 시작해 Instruct SFT, Instruct DPO, Instruct RLVR을 거친다. Olmo 3 RL-Zero는 base model에서 바로 RLVR로 이어진다." caption="Olmo 3의 학습 흐름. 왼쪽이 base model 학습, 오른쪽이 post-training이다. 단계마다 데이터와 학습 방법을 따로 정하며, Instruct는 base model이 아니라 Think SFT를 마친 checkpoint에서 출발한다." source="Team Olmo (2025), Olmo 3, Figure 2. arXiv:2512.13961v2 · CC BY 4.0 · 수정 없음" />
+
+이 그림은 한 모델 계열의 recipe이지 모든 모델이 거쳐야 하는 순서는 아니다. 4·5주차는 두 질문으로 방법을 비교한다. **무엇을 잘했다고 채점하는가**, 그리고 **누가 학습할 응답을 만드는가**다. 시연을 모방하는 SFT에서 출발해 선호를 학습하는 RLHF와 DPO를 비교하고, 점수와 실제 품질이 갈라지는 문제를 살핀다. 5주차에는 검증기의 정답 신호로 정책을 갱신하고, 그 결과를 긴 추론·도구 사용으로 확장하거나 다른 모델에 옮기는 방법을 본다.
+
+| 노트 | 이어지는 질문 |
+|---|---|
+| 04a SFT | 어떤 시연을 주고 어느 토큰을 학습하는가? |
+| 04b RLHF · 04c DPO | 시연에 없는 선호 순서를 어떻게 학습하는가? 두 방법은 그 문제를 푸는 서로 다른 접근이다. |
+| 04d Reward hacking and evaluation | 학습 점수가 실제 품질을 대변하는지 어떻게 확인하는가? |
+| 05a RLVR · 05b Policy optimization | 정답을 검증할 수 있다면 어떤 보상을 주고 어떻게 갱신하는가? |
+| 05c Long CoT · 05d RL systems | 길어진 추론에서 무엇을 얻으며, 그 학습 비용은 어떻게 줄이는가? |
+| 05e Agentic RL · 05f Distillation | 환경과 상호작용하며 배우거나 teacher의 능력을 전달할 때 무엇이 달라지는가? |
 
 SFT의 학습 목표는 pre-training과 같은 next-token prediction(NTP)이다. 목적함수가 거의 같은데도 모델의 행동은 크게 바뀐다. 이 노트는 SFT가 base model의 무엇을 바꾸고 무엇을 바꾸지 못하는지를 따라간다.
 
@@ -93,18 +104,15 @@ Tülu 3는 Transformers 라이브러리의 기본 손실 집계가 padding과 gr
 
 ## 2. 지시 데이터의 계보
 
-목적함수가 거의 그대로이므로 SFT의 발전은 주로 데이터에서 일어났다. 무엇을 지시로 삼고 누가 응답을 쓰는지가 바뀌어 왔다. 출발점은 기존 NLP(natural language processing) 데이터셋을 지시문으로 감싼 방식이고, 이 방식이 실제 사용자의 다양한 요청을 다루지 못하자 사람이 응답을 직접 쓰는 방식이 나왔다. 사람의 시연은 비싸서, 그 비용에 대한 대응이 두 방향으로 갈렸다. 모델로 데이터를 생성해 양을 늘리는 방향과, 적은 양을 엄격히 골라 품질을 높이는 방향이다. 두 방향은 서로 배타적이지 않다. Self-Instruct도 생성한 것을 걸러 내고, LIMA도 기존 데이터에서 고른 것과 직접 쓴 것을 함께 쓴다. 최근 recipe는 둘을 결합해 사람·기존 과제·합성 데이터를 능력별로 섞고, 추론 모델의 recipe는 여기에 긴 풀이 과정을 담은 응답을 더한다.
+목적함수가 거의 그대로이므로 SFT의 발전은 주로 데이터에서 일어났다. 무엇을 지시로 삼고 누가 응답을 쓰는지가 바뀌어 왔다. 기존 NLP(natural language processing) 과제를 지시문으로 감싼 데이터와, 실제 사용자의 열린 요청에 사람이 시연을 붙인 데이터는 서로 다른 출발점이다. 전자는 다양한 정형 과제를 덮는 데, 후자는 사용자의 요청에 맞는 응답을 보여 주는 데 초점을 둔다. 사람의 시연은 비싸서, 그 비용에 대한 대응이 두 방향으로 갈렸다. 모델로 데이터를 생성해 양을 늘리는 방향과, 적은 양을 엄격히 골라 품질을 높이는 방향이다. 두 방향은 서로 배타적이지 않다. Self-Instruct도 생성한 것을 걸러 내고, LIMA도 기존 데이터에서 고른 것과 직접 쓴 것을 함께 쓴다. 최근 recipe는 둘을 결합해 사람·기존 과제·합성 데이터를 능력별로 섞고, 추론 모델의 recipe는 여기에 긴 풀이 과정을 담은 응답을 더한다.
 
 <figure>
-<svg viewBox="0 0 560 536" role="img" aria-label="지시 데이터의 계보도. 맨 위 기존 NLP 과제의 지시문(FLAN, T0, 2021)은 정형 과제에 치우쳐 실제 요청을 덮지 못하는 문제가 있고, 이를 사람이 쓴 시연(InstructGPT, 2022)이 푼다. 사람 시연은 응답을 사람이 써야 해 비용이 크다는 문제가 있고, 여기서 두 방향으로 갈린다. 왼쪽은 생성해서 늘리는 방향으로 모델이 만든 지시와 응답(Self-Instruct, Alpaca)이며, 비슷한 지시와 생성 모델 오류의 학습이 문제로 남는다. 오른쪽은 골라서 높이는 방향으로 소량 고품질 선별(LIMA, 2023)이며, 적은 양이 덮는 능력 범위가 불분명하다는 문제가 남는다. 두 방향은 능력별 혼합(Tülu 3, 2024와 Olmo 3, 2025)에서 결합되어 사람, 기존 과제, 합성 데이터를 섞고 ablation으로 비율을 정한다. 그 아래에 점선으로, 혼합 안에 함께 넣는 응답 구성으로서 긴 풀이 시연으로 추론 행동을 학습하는 사고 과정을 담은 응답(Qwen3, Olmo 3 Think, 2025)이 붙어 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 560 536" role="img" aria-label="지시 데이터의 계보도. 기존 NLP 과제의 지시문(FLAN, T0, 2021)과 실제 사용자의 요청에 사람이 쓴 시연(InstructGPT, 2022)은 별도 출발점이다. 사람 시연은 응답을 사람이 써야 해 비용이 크다는 문제가 있고, 여기서 두 방향으로 갈린다. 왼쪽은 생성해서 늘리는 방향으로 모델이 만든 지시와 응답(Self-Instruct, Alpaca)이며, 비슷한 지시와 생성 모델 오류의 학습이 문제로 남는다. 오른쪽은 골라서 높이는 방향으로 소량 고품질 선별(LIMA, 2023)이며, 적은 양이 덮는 능력 범위가 불분명하다는 문제가 남는다. 두 방향은 능력별 혼합(Tülu 3, 2024와 Olmo 3, 2025)에서 결합되어 사람, 기존 과제, 합성 데이터를 섞고 ablation으로 비율을 정한다. 그 아래에 점선으로, 혼합 안에 함께 넣는 응답 구성으로서 긴 풀이 시연으로 추론 행동을 학습하는 사고 과정을 담은 응답(Qwen3, Olmo 3 Think, 2025)이 붙어 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
 <text x="280" y="22" font-size="17" text-anchor="middle" fill="#0f172a" font-weight="600">지시 데이터 · 두 방향과 결합</text>
 <rect x="140" y="38" width="280" height="48" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="280" y="59" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">기존 NLP 과제의 지시문</text>
 <text x="280" y="77" font-size="12" text-anchor="middle" fill="#64748b">FLAN · T0 (2021)</text>
-<path d="M280 86 V94" stroke="#0f172a" fill="none"/>
-<text x="280" y="107" font-size="11" text-anchor="middle" fill="#64748b">문제: 정형 과제에 치우쳐 실제 요청을 덮지 못함</text>
-<path d="M280 113 V122" stroke="#0f172a" fill="none"/>
-<polygon points="280,128 276,121 284,121" fill="#0f172a"/>
+<text x="280" y="107" font-size="11" text-anchor="middle" fill="#64748b">별도 출발점: 실제 사용자의 열린 요청</text>
 <rect x="140" y="128" width="280" height="48" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="280" y="149" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">사람이 쓴 시연</text>
 <text x="280" y="167" font-size="12" text-anchor="middle" fill="#64748b">InstructGPT (2022)</text>
@@ -137,7 +145,7 @@ Tülu 3는 Transformers 라이브러리의 기본 손실 집계가 padding과 gr
 <text x="280" y="497" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">사고 과정을 담은 응답</text>
 <text x="280" y="515" font-size="12" text-anchor="middle" fill="#64748b">Qwen3 · Olmo 3 Think (2025)</text>
 </svg>
-<figcaption>지시 데이터의 계보. 각 문헌을 바탕으로 직접 구성했다. 회색 글씨는 앞 방식에 남은 문제다. 두 방향은 데이터의 출처(생성)와 선택 기준(선별)이라 함께 쓸 수 있고, 최근 recipe는 둘을 능력별 혼합으로 결합한다. 점선 아래 상자는 앞 방식의 문제를 푼 다음 단계가 아니라, 혼합 안에 함께 넣는 응답의 구성이다.</figcaption>
+<figcaption>지시 데이터의 문제와 대응. 각 문헌을 바탕으로 직접 구성한 교육용 지도이며, 화살표가 연구 사이의 직접적인 영향 관계를 뜻하지는 않는다. 회색 글씨는 앞 방식에 남은 문제다. 두 방향은 데이터의 출처(생성)와 선택 기준(선별)이라 함께 쓸 수 있고, 최근 recipe는 둘을 능력별 혼합으로 결합한다. 점선 아래 상자는 앞 방식의 문제를 푼 다음 단계가 아니라, 혼합 안에 함께 넣는 응답의 구성이다.</figcaption>
 </figure>
 
 ### 2-1. FLAN과 T0의 과제 지시문

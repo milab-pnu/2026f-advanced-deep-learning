@@ -4,7 +4,7 @@ week: 4
 order: 1
 ---
 
-04a Supervised fine-tuning 노트의 마지막에서 SFT(supervised fine-tuning)의 한계를 두 가지로 정리했다. 시연 데이터는 선택된 응답만 주고 응답 사이의 선호 순서를 직접 감독하지 않으며, 학습 때의 문맥과 모델이 스스로 생성할 때의 문맥이 다를 수 있다. 이 노트는 첫 번째 한계를 푸는 계보를 따라간다. 사람에게 응답을 쓰게 하는 대신 **두 응답 중 어느 쪽이 나은지 고르게** 하고, 그 선택을 배운 reward model의 점수를 모델 자신이 생성한 응답에 매겨 강화학습(reinforcement learning, RL)으로 올리는 방법, 즉 <strong>RLHF(reinforcement learning from human feedback)</strong>다.[^survey]
+04a Supervised fine-tuning 노트의 마지막에서 SFT(supervised fine-tuning)의 한계를 두 가지로 정리했다. 시연 데이터는 선택된 응답만 주고 응답 사이의 선호 순서를 직접 감독하지 않으며, 학습 때의 문맥과 모델이 스스로 생성할 때의 문맥이 다를 수 있다. 이 노트는 첫 번째 한계를 푸는 계보를 따라간다. 사람에게 응답을 쓰게 하는 대신 **두 응답 중 어느 쪽이 나은지 고르게** 하고, 그 선택을 배운 reward model의 점수를 모델 자신이 생성한 응답에 매겨 강화학습(reinforcement learning, RL)으로 올리는 방법, 즉 <strong>RLHF(reinforcement learning from human feedback)</strong>다.[^survey] 서베이의 사람 피드백 수집·reward model 학습·정책 최적화에 관한 부분이 이 노트의 읽을 범위다. 직접 계산하는 PPO 절은 그 세 단계 중 마지막을 풀어 쓴다.
 
 <figure>
 <svg viewBox="0 0 600 300" role="img" aria-label="RLHF의 계보. 왼쪽의 SFT(04a)에서 '선호 순서를 감독 못 함'이라는 문제를 단 굵은 화살표가 '선호 비교 데이터와 reward model'로 간다. 여기서 '사람 주석의 비용'이라는 문제를 단 굵은 화살표가 위의 'AI 피드백(RLAIF)'으로 간다. Reward model에서 회색 화살표 두 개가 점선 상자 'reward model 점수로 정책 개선' 안의 두 갈래, 'PPO로 정책 갱신'과 'rejection sampling'으로 이어진다. 점선 상자 전체에서 굵은 화살표가 오른쪽 위 '04d Reward hacking(점수의 과최적화)'과 오른쪽 아래 '5주차 RLVR(선호 ≠ 정답)'으로 나가고, PPO 상자에서만 굵은 화살표가 '04c DPO(PPO의 비용·불안정)'로 나간다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -242,7 +242,7 @@ $$
 
 ### 3-4. 언어 모델에 맞춘 구현
 
-앞의 토큰별 보상은 rollout 때 한 번 계산해 고정한다. 즉 KL 항의 정책 자리에는 응답을 생성한 $\pi_{\mathrm{old}}$의 log 확률이 들어가 $r_t=-\beta\big(\log\pi_{\mathrm{old}}(y_t\mid s_t)-\log\pi_{\mathrm{ref}}(y_t\mid s_t)\big)$가 되고, 같은 배치로 여러 번 갱신하는 동안 다시 계산하는 것은 $\pi_\theta$의 log 확률(확률비용)과 value model의 출력(value 손실용)뿐이다. Hugging Face의 재현 보고서는 이런 처리를 비롯해 보상 정규화, advantage whitening 같은 세부가 결과에 크게 영향을 준다고 정리한다.[^hf-ppo]
+앞의 토큰별 보상은 rollout 때 한 번 계산해 고정한다. 즉 KL 항의 정책 자리에는 응답을 생성한 $\pi_{\mathrm{old}}$의 log 확률이 들어가 $r_t=-\beta\big(\log\pi_{\mathrm{old}}(y_t\mid s_t)-\log\pi_{\mathrm{ref}}(y_t\mid s_t)\big)$가 되고, 같은 배치로 여러 번 갱신하는 동안 다시 계산하는 것은 $\pi_\theta$의 log 확률(확률비 계산용)과 value model의 출력(value 손실용)뿐이다. Hugging Face의 재현 보고서는 이런 처리를 비롯해 보상 정규화, advantage whitening 같은 세부가 결과에 크게 영향을 준다고 정리한다.[^hf-ppo]
 
 <Figure src="https://arxiv.org/html/2307.04964v2/ppo_framework.png" alt="RLHF에서 PPO 한 반복의 데이터 흐름. 왼쪽 아래 Policy LM이 사용자 질의 x에 응답 y1…yT를 생성하고, 이것이 토큰마다 상태 s_t(x와 y1…y_t−1)와 행동 a_t(y_t)로 나뉜다. 위쪽에서 SFT model의 확률과 Policy LM의 확률로 KL div를 계산하고, Reward Model이 (x, y)에 매긴 점수 r(x, y)와 더해 토큰 보상 r(s_t, a_t)를 만든다. Value Model이 V(s_t)를 내고, 가운데 GAE 상자가 advantage, TD error, return을 계산해 Experience Buffer에 넣는다. 오른쪽에서 버퍼의 데이터로 갱신 중인 Policy LM의 확률과 옛 정책의 확률의 비를 구해 PPO-clip loss를, pretraining data로 LM loss를, 아래쪽 Value Model로 MSE loss를 계산한다." caption="PPO 한 반복의 데이터 흐름. 왼쪽 절반이 rollout(생성, 토큰 보상, GAE)이고 그 결과가 Experience Buffer에 쌓이며, 오른쪽 절반이 같은 버퍼로 여러 번 도는 갱신이다. KL은 SFT model(이 노트의 π_ref)과 응답을 생성한 정책 사이에서 rollout 때 계산된다. 오른쪽 위의 LM loss가 앞에서 본 PPO-ptx 항이다. 그림은 정책 파라미터를 θ, value model 파라미터를 φ로 쓴다(이 노트에서 φ는 reward model의 파라미터). 오른쪽 위 확률비의 분자와 분모에 적힌 φ, φ_old는 원그림의 오기로, 각각 정책의 θ와 rollout 정책의 θ_old다." source="Zheng, R., et al. (2023), Secrets of RLHF in Large Language Models Part I: PPO, Figure 1 · arXiv:2307.04964v2 · CC BY 4.0 · 수정 없음" />
 
@@ -309,13 +309,7 @@ AI 피드백은 주석 비용을 줄일 수 있지만, 판정자의 편향이 �
 
 ### 5-1. Reward model의 과최적화
 
-Reward model은 사람 선호의 근사이며 학습 분포 밖에서는 신뢰성이 떨어질 수 있다. Stiennon 등은 KL 벌점 계수 $\beta$를 바꿔 가며 학습한 정책들이 SFT 모델에서 얼마나 멀어지는지와 사람의 실제 선호를 함께 쟀다. 처음에는 reward model 점수와 사람의 선호가 함께 오르지만, 최적화를 더 밀어붙이면 reward model 점수는 계속 오르는데 사람의 선호는 떨어졌다. 저자들은 reward model이 사람의 선호와 반대 방향으로 상관하게 되는 지점이 온다고 썼다(원논문 Figure 5).[^stiennon] Gao 등은 이 현상을 실제 사람 대신 큰 "gold" reward model을 정답으로 두고 체계적으로 측정해, 정책의 KL 거리에 따라 gold 점수가 오르다 꺾이는 곡선의 형태와 그 계수가 reward model 크기에 따라 어떻게 변하는지 정리했다.[^gao] 이 현상을 reward hacking 또는 over-optimization이라 부르며, 04d의 출발점이다.
-
-Coste 등은 Gao 등의 설정을 공개 모델로 다시 꾸몄다.[^coste] 정책은 Pythia 1.4B, gold reward model은 AlpacaFarm의 7B 사람 선호 reward model이고, 정책은 gold 점수로 만든 선호 라벨로 학습한 훨씬 작은 proxy reward model의 점수를 최적화한다. 아래는 이 논문이 과최적화의 모양을 보이려고 든 예시 그림이다.
-
-<Figure src="https://arxiv.org/html/2310.02743v2/figures/illustrative_figs/example_overoptimization.png" alt="가로축은 처음 정책과 현재 정책 사이의 KL divergence(0부터 약 135까지, 제곱근 눈금)다. 점선(Proxy, 오른쪽 축)은 0에서 시작해 KL이 커질수록 대체로 올라 KL 100–125 부근에서 약 1.78에 이르고, 마지막에 1.7 안팎으로 조금 내려온다. 실선(Gold, 왼쪽 축)은 0 근처에서 출발해 KL 약 25–40에서 약 0.40으로 정점을 찍은 뒤 떨어져, KL 약 130에서는 0.07 안팎이 된다." caption="과최적화의 한 예. 정책이 최적화하는 proxy reward model의 점수(점선, 오른쪽 축)는 정책이 처음 정책에서 멀어질수록 대체로 오르며 높은 값을 유지하지만, 진짜 목표 역할을 하는 gold reward model의 점수(실선, 왼쪽 축)는 KL 약 25–40에서 정점을 찍고 떨어진다. KL 벌점이 막으려는 것이 이 오른쪽 구간이다." source="Coste, T., et al. (2024), Reward Model Ensembles Help Mitigate Overoptimization, Figure 2 · arXiv:2310.02743v2 · CC BY 4.0 · 수정 없음" />
-
-[그림 출처](https://arxiv.org/html/2310.02743v2#S2.F2) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
+Reward model은 사람 선호의 근사이며 학습 분포 밖에서는 신뢰성이 떨어질 수 있다. Stiennon 등은 KL 벌점을 약하게 두고 정책을 더 최적화하면 reward model 점수는 계속 오르지만 사람의 선호는 어느 지점부터 떨어지는 현상을 보였다(원논문 Figure 5).[^stiennon] 이를 reward hacking 또는 over-optimization이라 부른다. KL 벌점은 이런 위험을 줄이지만 없애지는 않으므로, 학습 보상과 별개의 평가를 함께 봐야 한다. 그 곡선과 대응은 04d §2에서 다룬다.
 
 ### 5-2. 비용과 불안정
 
@@ -344,6 +338,4 @@ Reward model과 PPO의 세부를 더 읽으려면 Lambert의 RLHF 교재가 각 
 [^rlaif]: Lee, H., et al. (2024). *RLAIF vs. RLHF: Scaling Reinforcement Learning from Human Feedback with AI Feedback*. ICML 2024, PMLR 235, 26874–26901. [arXiv:2309.00267](https://arxiv.org/abs/2309.00267).
 [^ultrafeedback]: Cui, G., et al. (2024). *UltraFeedback: Boosting Language Models with Scaled AI Feedback*. ICML 2024, PMLR 235, 9722–9744. [arXiv:2310.01377](https://arxiv.org/abs/2310.01377).
 [^tulu3]: Lambert, N., et al. (2024). *Tülu 3: Pushing Frontiers in Open Language Model Post-Training*. [arXiv:2411.15124v5](https://arxiv.org/abs/2411.15124v5).
-[^gao]: Gao, L., Schulman, J., & Hilton, J. (2023). *Scaling Laws for Reward Model Overoptimization*. ICML 2023, PMLR 202, 10835–10866. [arXiv:2210.10760](https://arxiv.org/abs/2210.10760).
-[^coste]: Coste, T., Anwar, U., Kirk, R., & Krueger, D. (2024). *Reward Model Ensembles Help Mitigate Overoptimization*. ICLR 2024. [arXiv:2310.02743](https://arxiv.org/abs/2310.02743).
 [^rlhfbook]: Lambert, N. (2025). *Reinforcement Learning from Human Feedback*. [arXiv:2504.12501](https://arxiv.org/abs/2504.12501). [웹판](https://rlhfbook.com/).
