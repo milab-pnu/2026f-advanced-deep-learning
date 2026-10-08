@@ -238,7 +238,7 @@ $$
 
 예를 들어 $\hat A_t=1$, $\varepsilon=0.2$일 때 확률비가 1.3으로 올라가도 목적함수에는 $\min(1.3,1.2)=1.2$만 반영된다. 이 표본의 추가 이득을 막는 것이며, 확률비를 강제로 1.2로 되돌리지는 않는다.
 
-음수 advantage에서도 같은 원리를 확인할 수 있다. 다음 표는 $\varepsilon=0.2$인 가상 계산이다. 각 행의 마지막 값은 **최대화**하는 목적함수에 들어간다.
+음수 advantage에서도 같은 원리를 확인할 수 있다. 다음 표는 $\varepsilon=0.2$인 가상 계산이다. ‘두 항 중 작은 값’ 열의 수치가 **최대화**하는 목적함수에 들어간다.
 
 | $\hat A_t$ | $\rho_t$ | 원래 항 $\rho_t\hat A_t$ | 잘린 항 | 두 항 중 작은 값 | 이 표본의 신호 |
 |---|---|---|---|---|---|
@@ -332,28 +332,28 @@ PPO는 응답 생성, 보상·value 계산, 정책·value model 갱신을 묶어
 
 Reward model과 PPO의 세부를 더 읽으려면 Lambert의 RLHF 교재가 각 구성 요소를 한 권으로 정리한다.[^rlhfbook]
 
-[^survey]: Srivastava, S. S., & Aggarwal, V. (2026). *A Technical Survey of Reinforcement Learning Techniques for Large Language Models*. ACM Transactions on Intelligent Systems and Technology. [arXiv:2507.04136v2](https://arxiv.org/abs/2507.04136v2).
-[^instructgpt]: Ouyang, L., et al. (2022). *Training language models to follow instructions with human feedback*. NeurIPS 2022. [arXiv:2203.02155](https://arxiv.org/abs/2203.02155).
-[^christiano]: Christiano, P. F., Leike, J., Brown, T. B., Martic, M., Legg, S., & Amodei, D. (2017). *Deep Reinforcement Learning from Human Preferences*. NeurIPS 2017. [arXiv:1706.03741](https://arxiv.org/abs/1706.03741).
-[^ziegler]: Ziegler, D. M., Stiennon, N., Wu, J., Brown, T. B., Radford, A., Amodei, D., Christiano, P., & Irving, G. (2019). *Fine-Tuning Language Models from Human Preferences*. [arXiv:1909.08593](https://arxiv.org/abs/1909.08593).
-[^stiennon]: Stiennon, N., et al. (2020). *Learning to summarize from human feedback*. NeurIPS 2020. [arXiv:2009.01325](https://arxiv.org/abs/2009.01325).
-[^llama2]: Touvron, H., et al. (2023). *Llama 2: Open Foundation and Fine-Tuned Chat Models*. [arXiv:2307.09288](https://arxiv.org/abs/2307.09288).
-[^llama]: Llama Team, AI @ Meta. (2024). *The Llama 3 Herd of Models*. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
-[^bt]: Bradley, R. A., & Terry, M. E. (1952). *Rank Analysis of Incomplete Block Designs: I. The Method of Paired Comparisons*. *Biometrika*, 39(3/4), 324–345. [doi:10.2307/2334029](https://doi.org/10.2307/2334029).
-[^hf-ppo]: Huang, S., Liu, T., & von Werra, L. (2023). *The N Implementation Details of RLHF with PPO*. [Hugging Face 블로그](https://huggingface.co/blog/the_n_implementation_details_of_rlhf_with_ppo).
-[^reinforce]: Williams, R. J. (1992). *Simple Statistical Gradient-Following Algorithms for Connectionist Reinforcement Learning*. *Machine Learning*, 8(3–4), 229–256. [doi:10.1007/BF00992696](https://doi.org/10.1007/BF00992696).
-[^ppo]: Schulman, J., Wolski, F., Dhariwal, P., Radford, A., & Klimov, O. (2017). *Proximal Policy Optimization Algorithms*. [arXiv:1707.06347](https://arxiv.org/abs/1707.06347).
-[^ppo-secrets]: Zheng, R., et al. (2023). *Secrets of RLHF in Large Language Models Part I: PPO*. [arXiv:2307.04964v2](https://arxiv.org/abs/2307.04964v2).
-[^cai]: Bai, Y., et al. (2022). *Constitutional AI: Harmlessness from AI Feedback*. [arXiv:2212.08073](https://arxiv.org/abs/2212.08073).
-[^rlhfbook]: Lambert, N. (2025). *Reinforcement Learning from Human Feedback*. [arXiv:2504.12501](https://arxiv.org/abs/2504.12501). [웹판](https://rlhfbook.com/).
+[^survey]: Srivastava, S. S., & Aggarwal, V. (2026). A Technical Survey of Reinforcement Learning Techniques for Large Language Models. *ACM Transactions on Intelligent Systems and Technology*. [arXiv:2507.04136v2](https://arxiv.org/abs/2507.04136v2).
+[^instructgpt]: Ouyang, L., et al. (2022). Training language models to follow instructions with human feedback. *NeurIPS 2022*. [arXiv:2203.02155](https://arxiv.org/abs/2203.02155).
+[^christiano]: Christiano, P. F., Leike, J., Brown, T. B., Martic, M., Legg, S., & Amodei, D. (2017). Deep Reinforcement Learning from Human Preferences. *NeurIPS 2017*. [arXiv:1706.03741](https://arxiv.org/abs/1706.03741).
+[^ziegler]: Ziegler, D. M., Stiennon, N., Wu, J., Brown, T. B., Radford, A., Amodei, D., Christiano, P., & Irving, G. (2019). Fine-Tuning Language Models from Human Preferences. [arXiv:1909.08593](https://arxiv.org/abs/1909.08593).
+[^stiennon]: Stiennon, N., et al. (2020). Learning to summarize from human feedback. *NeurIPS 2020*. [arXiv:2009.01325](https://arxiv.org/abs/2009.01325).
+[^llama2]: Touvron, H., et al. (2023). Llama 2: Open Foundation and Fine-Tuned Chat Models. [arXiv:2307.09288](https://arxiv.org/abs/2307.09288).
+[^llama]: Llama Team, AI @ Meta. (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
+[^bt]: Bradley, R. A., & Terry, M. E. (1952). Rank Analysis of Incomplete Block Designs: I. The Method of Paired Comparisons. *Biometrika*, 39(3/4), 324–345. [doi:10.2307/2334029](https://doi.org/10.2307/2334029).
+[^hf-ppo]: Huang, S., Liu, T., & von Werra, L. (2023). The N Implementation Details of RLHF with PPO. [Hugging Face 블로그](https://huggingface.co/blog/the_n_implementation_details_of_rlhf_with_ppo).
+[^reinforce]: Williams, R. J. (1992). Simple Statistical Gradient-Following Algorithms for Connectionist Reinforcement Learning. *Machine Learning*, 8(3–4), 229–256. [doi:10.1007/BF00992696](https://doi.org/10.1007/BF00992696).
+[^ppo]: Schulman, J., Wolski, F., Dhariwal, P., Radford, A., & Klimov, O. (2017). Proximal Policy Optimization Algorithms. [arXiv:1707.06347](https://arxiv.org/abs/1707.06347).
+[^ppo-secrets]: Zheng, R., et al. (2023). Secrets of RLHF in Large Language Models Part I: PPO. [arXiv:2307.04964v2](https://arxiv.org/abs/2307.04964v2).
+[^cai]: Bai, Y., et al. (2022). Constitutional AI: Harmlessness from AI Feedback. [arXiv:2212.08073](https://arxiv.org/abs/2212.08073).
+[^rlhfbook]: Lambert, N. (2025). Reinforcement Learning from Human Feedback. [arXiv:2504.12501](https://arxiv.org/abs/2504.12501). [웹판](https://rlhfbook.com/).
 
-[^nlhf]: Munos, R., et al. (2023). *Nash Learning from Human Feedback*. [arXiv:2312.00886v2](https://arxiv.org/abs/2312.00886v2).
+[^nlhf]: Munos, R., et al. (2023). Nash Learning from Human Feedback. [arXiv:2312.00886v2](https://arxiv.org/abs/2312.00886v2).
 
-[^dapo]: Yu, Q., et al. (2025). *DAPO: An Open-Source LLM Reinforcement Learning System at Scale*. [arXiv:2503.14476v1](https://arxiv.org/abs/2503.14476v1).
-[^prorl]: Liu, M., et al. (2025). *ProRL: Prolonged Reinforcement Learning Expands Reasoning Boundaries in Large Language Models*. [arXiv:2505.24864v1](https://arxiv.org/abs/2505.24864v1).
+[^dapo]: Yu, Q., et al. (2025). DAPO: An Open-Source LLM Reinforcement Learning System at Scale. [arXiv:2503.14476v1](https://arxiv.org/abs/2503.14476v1).
+[^prorl]: Liu, M., et al. (2025). ProRL: Prolonged Reinforcement Learning Expands Reasoning Boundaries in Large Language Models. [arXiv:2505.24864v1](https://arxiv.org/abs/2505.24864v1).
 
-[^gae]: Schulman, J., Moritz, P., Levine, S., Jordan, M., & Abbeel, P. (2016). *High-Dimensional Continuous Control Using Generalized Advantage Estimation*. ICLR 2016. [arXiv:1506.02438](https://arxiv.org/abs/1506.02438).
+[^gae]: Schulman, J., Moritz, P., Levine, S., Jordan, M., & Abbeel, P. (2016). High-Dimensional Continuous Control Using Generalized Advantage Estimation. *ICLR 2016*. [arXiv:1506.02438](https://arxiv.org/abs/1506.02438).
 
-[^ultrafeedback]: Cui, G., et al. (2024). *UltraFeedback: Boosting Language Models with Scaled AI Feedback*. ICML 2024, PMLR 235, 9722–9744. [arXiv:2310.01377](https://arxiv.org/abs/2310.01377).
+[^ultrafeedback]: Cui, G., et al. (2024). UltraFeedback: Boosting Language Models with Scaled AI Feedback. *ICML 2024*, PMLR 235, 9722–9744. [arXiv:2310.01377](https://arxiv.org/abs/2310.01377).
 
-[^mtbench]: Zheng, L., et al. (2023). *Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena*. NeurIPS 2023 Datasets and Benchmarks. [arXiv:2306.05685](https://arxiv.org/abs/2306.05685).
+[^mtbench]: Zheng, L., et al. (2023). Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena. *NeurIPS 2023 Datasets and Benchmarks*. [arXiv:2306.05685](https://arxiv.org/abs/2306.05685).
