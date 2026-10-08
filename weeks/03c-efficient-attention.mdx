@@ -249,7 +249,7 @@ $\alpha_t$가 입력에 따라 정해지면, 문맥이 바뀌는 곳에서 과�
 
 ### 4-2. Key별 교체와 delta rule
 
-Schlag 등은 더하기 대신 오차를 고치는 쓰기를 제안했다.[^fwp] 먼저 현재 상태로 이 key의 value를 읽고, 원하는 value와의 차이만큼만 쓴다.
+채널별 감쇠는 상태의 좌표축마다 크기를 줄인다. 앞 예제처럼 key가 좌표축과 맞으면 특정 key를 선택적으로 지울 수 있지만, 일반적인 key 방향만 지우는 연산과는 다르다. Delta rule은 현재 key가 가리키는 방향을 따라 기억을 고친다. Schlag 등은 더하기 대신 오차를 고치는 쓰기를 제안했다.[^fwp] 먼저 현재 상태로 이 key의 value를 읽고, 원하는 value와의 차이만큼만 쓴다.
 
 $$
 \bar v_t=S_{t-1}k_t,\qquad
@@ -407,13 +407,13 @@ Hybrid 전체가 시퀀스 길이에 대해 선형이 되는 것은 아니다. �
 
 Kimi Linear도 같은 3:1 배치를 쓰되, linear 층은 §4-3의 KDA로, attention 층은 MLA로 채웠다. 논문은 순수 linear attention의 주된 약점을 긴 문맥 검색으로 보고 MLA 층을 소수 섞었다. 한 층 안에서 head를 나누어 섞지 않고 층 단위로 번갈아 둔 것은 구현이 단순하고 학습이 안정적이어서이고(원논문 §4), 비율은 여러 값을 비교한 실험에서 3:1이 품질과 처리량의 균형이 가장 좋았다(원논문 §5.2, 표 1). MLA 층에는 위치 인코딩을 넣지 않는 NoPE(no positional encoding)를 쓰고(03a §6-1), 위치 정보는 KDA 층에 맡겼다.[^kimilinear] 공개 config에서 27층 중 KDA가 20층, MLA가 7층이다(마지막 27번째 층도 MLA).[^kimilinear-config]
 
-48B 파라미터(활성 3B) 모델에서 긴 시퀀스를 생성할 때 KV cache를 최대 75% 줄였고, 1M 토큰 문맥에서 최대 약 6배의 decoding 처리량을 보고했다.[^kimilinear] 다만 이 수치의 조건은 논문 안에서도 엇갈린다. §5.6은 약 6배라고 쓰고 그림 7은 batch 1이라고 표시하지만, §6.3은 같은 문맥의 속도 향상을 2.3배로, 최대 6.3배를 메모리 절감으로 batch를 키울 때의 이론적 값으로 구분한다(그림 1b). 따라서 약 6배를 batch 1의 실측값으로 확정해서 읽어서는 안 된다.
+48B 파라미터(활성 3B) 모델에서 긴 시퀀스를 생성할 때 KV cache를 최대 75% 줄였다.[^kimilinear] Decoding 속도는 batch 조건을 나눠 읽어야 한다. §5.6의 약 6배는 그림 1(b)를 가리키며, 그 캡션은 메모리 절감으로 batch를 키운 조건에서 토큰당 출력 시간(TPOT, time per output token)을 1.84ms 대 11.48ms로 제시한다. 한편 batch 1인 그림 7(b)에 대해서는 §6.3이 1M 문맥에서 2.3배라고 쓴다. 따라서 두 배율은 서로 다른 조건의 값이다. 다만 §6.3은 그림 1(b)의 최대 6.3배를 이론적 속도 향상이라고 부르므로, 이를 고정 batch의 실측 배율로 인용해서는 안 된다.
 
 §4의 연구 흐름에서도 같은 조합이 먼저 나타났다. DeltaNet 논문의 두 hybrid(§4-2)와 Gated DeltaNet 논문의 H1, H2(§4-3)가 linear 계열 층에 attention 층을 섞은 예다.
 
 ### 6-3. SSM과 attention
 
-셋째는 **SSM 층과 attention 층의 조합**이다. Jamba는 8층짜리 Jamba 블록 4개(총 32층)로 이루어지고, 블록마다 attention 1층과 Mamba 7층을 섞는다(attention:Mamba = 1:7).[^jamba] 두 층마다 MLP(multi-layer perceptron) 대신 MoE를 쓰며, MoE의 설계는 Mixture of Experts에서 다룬다. 논문은 이 구성이 일반 Transformer보다 KV cache를 8배 줄이면서 256K 문맥을 지원한다고 보고한다.
+셋째는 **SSM 층과 attention 층의 조합**이다. Jamba는 8층짜리 Jamba 블록 4개(총 32층)로 이루어지고, 블록마다 attention 1층과 Mamba 7층을 섞는다(attention:Mamba = 1:7).[^jamba] 두 층마다 MLP(multi-layer perceptron) 대신 MoE를 쓰며, MoE의 설계는 03f에서 다룬다. 논문은 이 구성이 일반 Transformer보다 KV cache를 8배 줄이면서 256K 문맥을 지원한다고 보고한다.
 
 Jamba 논문은 attention이 왜 필요한지도 실험으로 보여 준다(원논문 §6.2, 표 6과 그림 8). 저자들은 1.3B 규모의 순수 attention, 순수 Mamba, hybrid 모델을 비교했다. IMDB 감성 분류처럼 답의 형식이 정해진 과제(Positive 또는 Negative)에서 순수 Mamba 모델은 "Very Good", "3/10"처럼 다른 형식으로 답하는 경우가 많았고, attention을 섞은 hybrid는 순수 attention 모델처럼 형식을 따랐다. 저자들은 in-context learning과 관련된 induction head가 attention 층에서 나타나는 예를 보이고, 순수 Mamba의 어려움을 attention 부재와 연결하는 가설을 제시한다.[^jamba] §5-4의 Mamba-2 실험과 같은 방향의 관찰이다.
 
@@ -464,4 +464,4 @@ Qwen3.5의 config로 고정 크기 상태를 직접 세어 보자.[^qwen35] Gate
 [^jamba]: Lieber, O., et al. (2024). *Jamba: A Hybrid Transformer-Mamba Language Model*. [arXiv:2403.19887](https://arxiv.org/abs/2403.19887).
 [^gallery]: Raschka, S. (2026). *LLM Architecture Gallery*. [sebastianraschka.com](https://sebastianraschka.com/llm-architecture-gallery/).
 
-[^gla]: Yang, S., Wang, B., Shen, Y., Panda, R., & Kim, Y. (2023). *Gated Linear Attention Transformers with Hardware-Efficient Training*. [arXiv:2312.06635](https://arxiv.org/abs/2312.06635).
+[^gla]: Yang, S., Wang, B., Shen, Y., Panda, R., & Kim, Y. (2024). *Gated Linear Attention Transformers with Hardware-Efficient Training*. ICML 2024, PMLR 235, 56501–56523. [PMLR](https://proceedings.mlr.press/v235/yang24ab.html), [arXiv:2312.06635](https://arxiv.org/abs/2312.06635).
