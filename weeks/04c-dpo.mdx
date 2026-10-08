@@ -107,7 +107,7 @@ $$
 $\beta=1$이면 분자는 $0.5e^0=0.5$, $0.3e^1=0.816$, $0.2e^2=1.478$이고 그 합이 $Z(x)=2.793$이다. 각각을 $Z(x)$로 나누면 reference model이 가장 높게 보던 A가 가장 낮아지고 C가 절반을 넘는다. $\beta=0.5$로 KL 벌점을 약하게 하면 C에 0.80이 몰리고, $\beta=2$로 강하게 하면 세 응답이 거의 비슷해진다. 이 예시에서는 $Z(x)$를 세 항의 합으로 바로 구했지만, 실제 언어 모델의 응답 공간은 가능한 모든 토큰 시퀀스라 이 합을 계산할 수 없다.
 </Callout>
 
-이 해는 $Z(x)$가 유한하다는 조건 아래 **모든 확률분포** 중에서의 최적해이며, reference model이 확률 0을 준 응답에는 최적 정책도 확률 0을 준다. 신경망으로 표현할 수 있는 정책의 집합 안에 이 분포가 정확히 들어 있다는 보장은 없으므로, 실제 학습은 신경망 정책 $\pi_\theta$로 이 해를 근사한다. 그런데 이 식을 그대로 쓸 수는 없다. 위 예시에서 본 것처럼 $Z(x)$는 가능한 모든 응답에 대한 합이고, 애초에 $r$도 모른다. RLHF가 reward model을 따로 학습한 이유가 바로 이것이다.
+이 해는 $Z(x)$가 유한하다는 조건 아래 **모든 확률분포** 중에서의 최적해이며, reference model이 확률 0을 준 응답에는 최적 정책도 확률 0을 준다. 신경망으로 표현할 수 있는 정책의 집합 안에 이 분포가 정확히 들어 있다는 보장은 없으므로, 실제 학습은 $\pi_\theta$로 이 해를 근사한다. 그런데 이 식을 그대로 쓸 수는 없다. 위 예시에서 본 것처럼 $Z(x)$는 가능한 모든 응답에 대한 합이고, 애초에 $r$도 모른다. RLHF가 reward model을 따로 학습한 이유가 바로 이것이다.
 
 ### 1-3. 정책으로 표현한 보상
 
@@ -149,21 +149,21 @@ $$
 \nabla_\theta\mathcal{L}_{\mathrm{DPO}}=-\beta\,\mathbb{E}\Big[\underbrace{\sigma\big(\hat r_\theta(x,y_l)-\hat r_\theta(x,y_w)\big)}_{\text{가중치}}\Big(\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\Big)\Big]
 $$
 
-괄호 안의 두 항이 주는 **직접적인 학습 신호**는 선호된 응답의 log 확률을 올리고 탈락한 응답의 log 확률을 내리는 방향이다. 앞의 가중치는 implicit reward가 순서를 **틀리게** 매기고 있을수록 커진다. 이미 $y_w$에 훨씬 높은 implicit reward를 주는 쌍은 거의 갱신되지 않고, 순서가 뒤집힌 쌍이 크게 갱신된다. 이 가중치가 없으면 어떻게 되는지도 원논문에 있다. 가중치 없이 $y_w$의 log 확률을 올리고 $y_l$의 log 확률을 내리기만 하는 unlikelihood 학습은 요약 과제에서 "when when when …"처럼 한 단어를 되풀이하는 응답을 냈고, 저자들은 이를 제약 없이 likelihood를 끌어내린 결과로 보았다(원논문 Appendix C.3·Table 3).[^dpo] SFT처럼 $y_w$의 확률만 올리는 것과 달리 $y_l$의 확률을 **내리는 항**이 있다는 점이 DPO를 구분 짓는다.
+괄호 안의 두 항이 주는 **직접적인 학습 신호**는 선호된 응답의 log 확률을 올리고 탈락한 응답의 log 확률을 내리는 방향이다. SFT처럼 $y_w$의 확률만 올리는 것과 달리 $y_l$의 확률을 **내리는 항**이 있다는 점이 DPO를 구분 짓는다. 앞의 가중치는 implicit reward가 순서를 **틀리게** 매기고 있을수록 커진다. 이미 $y_w$에 훨씬 높은 implicit reward를 주는 쌍은 거의 갱신되지 않고, 순서가 뒤집힌 쌍이 크게 갱신된다. 이 가중치가 없으면 어떻게 되는지도 원논문에 있다. 가중치 없이 $y_w$의 log 확률을 올리고 $y_l$의 log 확률을 내리기만 하는 unlikelihood 학습은 요약 과제에서 "when when when …"처럼 한 단어를 되풀이하는 응답을 냈고, 저자들은 이를 제약 없이 likelihood를 끌어내린 결과로 보았다(원논문 Appendix C.3·Table 3).[^dpo]
 
 <Callout type="example">
-**선호쌍 하나의 DPO 손실.** 04b의 예시와 같은 프롬프트에 두 응답이 있고, $\beta=0.1$이라고 하자. 응답 전체의 log 확률이 다음과 같다.
+**선호쌍 하나의 DPO 손실.** 04b의 파이썬 정렬 예를 다시 쓴다. 정확한 응답 A가 $y_w$, 친절하지만 틀린 응답 B가 $y_l$이고, $\beta=0.1$이라고 하자. 응답 전체의 log 확률은 다음과 같다(교육용 가상 값).
 
 | 응답 | $\log\pi_\theta(y\mid x)$ | $\log\pi_{\mathrm{ref}}(y\mid x)$ | log 확률비 | Implicit reward $\hat r_\theta$ |
 |---|---|---|---|---|
-| $y_w$ (선호) | $-20.0$ | $-21.0$ | $+1.0$ | $0.1$ |
-| $y_l$ (탈락) | $-24.0$ | $-23.0$ | $-1.0$ | $-0.1$ |
+| $y_w$ (A, 선호) | $-20.0$ | $-21.0$ | $+1.0$ | $0.1$ |
+| $y_l$ (B, 탈락) | $-24.0$ | $-23.0$ | $-1.0$ | $-0.1$ |
 
 Implicit reward의 차이는 $0.2$이고 $\sigma(0.2)=0.550$이므로 손실은 $-\log0.550=0.598$이다. 정책 자체는 이미 $y_w$에 $e^{4}\approx55$배 높은 확률을 주지만, implicit reward가 예측한 선호 확률은 0.55에 그친다. Reference model도 $y_w$를 훨씬 높게 보므로 **reference 대비** 얼마나 더 벌렸는가만 세기 때문이다. Gradient의 sigmoid 가중치는 $\sigma(-0.2)=0.450$이고 $\beta$를 곱한 전체 계수는 0.045다.
 
 같은 log 확률에서 $\beta=1$이면 implicit reward의 차이가 2가 되어 손실은 $-\log\sigma(2)=0.127$, sigmoid 가중치는 0.119로 줄어든다. 다만 $\beta$가 곱해진 전체 계수는 0.119로 오히려 커진다. $\beta$는 reference model에서 같은 거리를 벗어났을 때 그것을 얼마나 큰 보상 차이로 읽을지를 정하며, 갱신 폭에는 두 방향으로 작용한다.
 
-04b의 reward model 예시(점수 1.2와 0.4)와 비교하면, 거기서는 별도 모델의 점수 차이 0.8이 확률을 정했고 여기서는 정책 자신의 log 확률비가 그 자리를 차지한다.
+04b에서 같은 쌍에 reward model이 준 점수(1.2와 0.4)와 비교하면, 거기서는 별도 모델의 점수 차이 0.8이 확률을 정했고 여기서는 정책 자신의 log 확률비가 그 자리를 차지한다.
 </Callout>
 
 다만 직접적인 신호와 실제 결과는 다르다. 두 응답은 파라미터를 공유하므로, 한 스텝 뒤 $\log\pi_\theta(y_w\mid x)$가 실제로 오르는지는 두 gradient 벡터의 관계에 달려 있다. 두 응답이 비슷해 gradient가 많이 겹치면 $y_l$을 내리는 항이 $y_w$의 확률도 끌어내릴 수 있다. 이 현상은 뒤에서 likelihood displacement라는 이름으로 다시 다룬다.
@@ -207,7 +207,7 @@ Rafailov 등은 과제별로 다른 방식으로 DPO를 PPO 기반 RLHF와 비�
 
 ## 4. 가정을 바꾼 변형
 
-DPO의 손실에는 여러 가정이 들어 있다. 선호가 Bradley–Terry 모형을 따른다는 것, 데이터가 쌍으로 온다는 것, reference model이 필요하다는 것, 응답 전체의 log 확률을 그대로 쓴다는 것이다. 변형들은 이 가정을 하나씩 바꾼다. 아래는 한 줄로 이어지는 계보가 아니라 DPO에서 갈라지는 분기다. 표 아래에 각 손실의 핵심 식을 적는다. 기호 $h_\theta(y_w,y_l)=\log\frac{\pi_\theta(y_w\mid x)}{\pi_{\mathrm{ref}}(y_w\mid x)}-\log\frac{\pi_\theta(y_l\mid x)}{\pi_{\mathrm{ref}}(y_l\mid x)}$는 DPO 손실 안의 log 확률비 차이이며, DPO 손실은 $-\log\sigma(\beta h_\theta)$다.
+DPO의 손실에는 여러 가정이 들어 있다. 선호가 Bradley–Terry 모형을 따른다는 것, 데이터가 쌍으로 온다는 것, reference model이 필요하다는 것, 응답 전체의 log 확률을 그대로 쓴다는 것이다. 변형들은 이 가정을 하나씩 바꾼다. 아래는 한 줄로 이어지는 계보가 아니라 DPO에서 갈라지는 분기다. 기호 $h_\theta(y_w,y_l)=\log\frac{\pi_\theta(y_w\mid x)}{\pi_{\mathrm{ref}}(y_w\mid x)}-\log\frac{\pi_\theta(y_l\mid x)}{\pi_{\mathrm{ref}}(y_l\mid x)}$는 DPO 손실 안의 log 확률비 차이이며, DPO 손실은 $-\log\sigma(\beta h_\theta)$다.
 
 | 방법 | 바꾼 가정 | 어떤 문제를 겨냥했나 |
 |---|---|---|
@@ -271,7 +271,7 @@ Tülu 3는 그 기준으로 on-policy 응답과 다른 모델의 off-policy 응�
 
 ### 5-3. 남는 문제
 
-DPO는 reward model을 없앴지만 보상의 출처인 **선호 판정**은 그대로 남아 있다. 판정자가 긴 응답을 좋아하면 implicit reward도 길이를 보상한다. 판정자가 자신 있는 말투를 좋아한다면 정책은 틀린 답도 자신 있게 쓰는 쪽으로 기울 수 있다. 길이 정규화는 증상 하나에 대한 대응이다. 판정자와 reward model이 어떻게 틀리고 그것을 어떻게 재는지가 04d의 주제다. 그리고 판정 대신 **정답 검증**을 보상으로 쓰는 방향이 5주차다. 거기서는 on-policy 표집이 다시 중심이 되고, 04b의 정책 최적화 틀이 그대로 돌아온다.
+DPO는 reward model을 없앴지만 보상의 출처인 **선호 판정**은 그대로 남아 있다. 판정자가 긴 응답을 좋아하면 implicit reward도 길이를 보상한다. 04b의 파이썬 정렬 예처럼 판정자가 친절하고 자신 있는 말투를 좋아하면, 정책은 틀린 답도 그렇게 쓰는 쪽으로 기울 수 있다. 길이 정규화는 증상 하나에 대한 대응이다. 판정자와 reward model이 어떻게 틀리고 그것을 어떻게 재는지가 04d의 주제다. 그리고 판정 대신 **정답 검증**을 보상으로 쓰는 방향이 5주차다. 거기서는 on-policy 표집이 다시 중심이 되고, 04b의 정책 최적화 틀이 그대로 돌아온다.
 
 [^survey]: Xiao, W., et al. (2026). *A Comprehensive Survey of Direct Preference Optimization: Datasets, Theories, Variants, and Applications*. IEEE Transactions on Pattern Analysis and Machine Intelligence. [arXiv:2410.15595v4](https://arxiv.org/abs/2410.15595v4).
 [^dpo]: Rafailov, R., Sharma, A., Mitchell, E., Ermon, S., Manning, C. D., & Finn, C. (2023). *Direct Preference Optimization: Your Language Model is Secretly a Reward Model*. NeurIPS 2023. [arXiv:2305.18290](https://arxiv.org/abs/2305.18290).
