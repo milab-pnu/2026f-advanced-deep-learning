@@ -122,6 +122,8 @@ $$
 
 ### 4-3. SFT와 RL의 일반화
 
+SFT가 무엇을 바꾸는지부터 구분해야 한다. Lin 등은 SFT 모델이 생성한 토큰의 상당수가 같은 문맥에서 base model도 가장 높은 확률을 주던 토큰이며, 차이가 큰 토큰은 응답의 시작이나 형식을 잡는 말에 몰렸다고 보고했다.[^urial] 반면 Gekhman 등의 질의응답 실험에서는 base model이 모르던 사실도 SFT 데이터에 반복해 넣으면 학습했지만, 오래 학습할수록 다른 시험 질문의 정확도가 떨어졌다.[^gekhman] 두 연구는 SFT를 단순한 형식 학습이나 단순한 암기로 단정하기 어렵다는 점을 보여 준다. 모델과 과제가 달라 아래 RL 실험과 직접적인 우열 비교는 아니다.
+
 관련된 질문이 "RL은 일반화하고 SFT는 암기하는가"다. Chu 등은 규칙을 바꿀 수 있는 카드 게임(GeneralPoints)과 시각 내비게이션(V-IRL)에서, outcome 보상으로 학습한 RL은 학습 때 보지 않은 규칙·시각 변형으로 일반화한 반면 SFT는 학습 데이터를 암기하는 경향을 보였다고 보고했다. 동시에 RL 전에 출력 형식을 안정시키는 데는 SFT가 필요했다.[^chu] 이 결과는 두 과제에서 나온 것이므로 일반 명제로 넓히지 않지만, 04a §2-6에서 본 "SFT로 출발점을 만들고 RL은 그 위에서"라는 recipe의 구조와 맞아떨어진다. 서베이 §4.2는 검증 가능한 과제와 큰 분포 이동에서 RL이 더 잘 일반화하는 경향이 있지만 만능은 아니라고 보고, 실제 recipe가 SFT와 RL을 합치거나 번갈아 쓰는 방향으로 모이고 있다고 정리한다. 진짜 문제 해결과 답의 암기를 구별하는 일, 재현 가능한 분포 밖 벤치마크는 아직 풀리지 않은 과제로 남긴다.[^survey]
 
 ## 5. 정리
@@ -144,3 +146,6 @@ Long CoT는 깊은 추론·넓은 탐색·되돌아보기의 결합으로 정의
 [^dragoi]: Dragoi, M., et al. (2025). *Beyond Pass@k: Breadth-Depth Metrics for Reasoning Boundaries*. [arXiv:2510.08325v2](https://arxiv.org/abs/2510.08325v2).
 [^wen]: Wen, X., et al. (2026). *Reinforcement Learning with Verifiable Rewards Implicitly Incentivizes Correct Reasoning in Base LLMs*. ICLR 2026. [arXiv:2506.14245v2](https://arxiv.org/abs/2506.14245v2).
 [^chu]: Chu, T., et al. (2025). *SFT Memorizes, RL Generalizes: A Comparative Study of Foundation Model Post-training*. ICML 2025. [arXiv:2501.17161v2](https://arxiv.org/abs/2501.17161v2).
+
+[^urial]: Lin, B. Y., et al. (2024). *The Unlocking Spell on Base LLMs: Rethinking Alignment via In-Context Learning*. ICLR 2024. [arXiv:2312.01552v1](https://arxiv.org/abs/2312.01552v1).
+[^gekhman]: Gekhman, Z., et al. (2024). *Does Fine-Tuning LLMs on New Knowledge Encourage Hallucinations?* EMNLP 2024. [arXiv:2405.05904v3](https://arxiv.org/abs/2405.05904v3).

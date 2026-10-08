@@ -4,14 +4,14 @@ week: 4
 order: 1
 ---
 
-04a Supervised fine-tuning 노트의 마지막에서 SFT(supervised fine-tuning)의 한계를 두 가지로 정리했다. 시연 데이터는 선택된 응답만 주고 응답 사이의 선호 순서를 직접 감독하지 않으며, 학습 때의 문맥과 모델이 스스로 생성할 때의 문맥이 다를 수 있다. 이 노트는 첫 번째 한계를 푸는 계보를 따라간다. 사람에게 응답을 쓰게 하는 대신 **두 응답 중 어느 쪽이 나은지 고르게** 하고, 그 선택을 배운 reward model의 점수를 모델 자신이 생성한 응답에 매겨 강화학습(reinforcement learning, RL)으로 올리는 방법, 즉 <strong>RLHF(reinforcement learning from human feedback)</strong>다.[^survey] 서베이의 사람 피드백 수집·reward model 학습·정책 최적화에 관한 부분이 이 노트의 읽을 범위다. 직접 계산하는 PPO 절은 그 세 단계 중 마지막을 풀어 쓴다.
+04a Supervised fine-tuning 노트의 마지막에서 SFT(supervised fine-tuning)의 한계를 두 가지로 정리했다. 응답 데이터는 선택된 응답만 주고 응답 사이의 선호 순서를 직접 감독하지 않으며, 학습 때의 문맥과 모델이 스스로 생성할 때의 문맥이 다를 수 있다. 이 노트는 첫 번째 한계를 푸는 계보를 따라간다. 사람에게 응답을 쓰게 하는 대신 **두 응답 중 어느 쪽이 나은지 고르게** 하고, 그 선택을 배운 reward model의 점수를 모델 자신이 생성한 응답에 매겨 강화학습(reinforcement learning, RL)으로 올리는 방법, 즉 <strong>RLHF(reinforcement learning from human feedback)</strong>다.[^survey] 서베이의 사람 피드백 수집·reward model 학습·정책 최적화에 관한 부분이 이 노트의 읽을 범위다. 직접 계산하는 PPO 절은 그 세 단계 중 마지막을 풀어 쓴다.
 
 <figure>
 <svg viewBox="0 0 600 300" role="img" aria-label="RLHF의 계보. 왼쪽의 SFT(04a)에서 '선호 순서를 감독 못 함'이라는 문제를 단 굵은 화살표가 '선호 비교 데이터와 reward model'로 간다. 여기서 '사람 주석의 비용'이라는 문제를 단 굵은 화살표가 위의 'AI 피드백(RLAIF)'으로 간다. Reward model에서 회색 화살표 두 개가 점선 상자 'reward model 점수로 정책 개선' 안의 두 갈래, 'PPO로 정책 갱신'과 'rejection sampling'으로 이어진다. 점선 상자 전체에서 굵은 화살표가 오른쪽 위 '04d Reward hacking(점수의 과최적화)'과 오른쪽 아래 '5주차 RLVR(선호 ≠ 정답)'으로 나가고, PPO 상자에서만 굵은 화살표가 '04c DPO(PPO의 비용·불안정)'로 나간다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
 <text x="300" y="20" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">이 노트가 따라가는 RLHF의 계보</text>
 <rect x="8" y="128" width="80" height="54" rx="8" fill="#f8fafc" stroke="#0f172a"/>
 <text x="48" y="151" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">SFT</text>
-<text x="48" y="170" font-size="11" text-anchor="middle" fill="#64748b">04a · 시연 모방</text>
+<text x="48" y="170" font-size="11" text-anchor="middle" fill="#64748b">04a · 응답 학습</text>
 <rect x="138" y="126" width="130" height="58" rx="8" fill="#e2e8f0" stroke="#0f172a" stroke-width="2"/>
 <text x="203" y="151" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">선호 비교 데이터</text>
 <text x="203" y="169" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">→ reward model</text>
@@ -54,7 +54,7 @@ order: 1
 
 ### 1-1. 응답을 쓰는 대신 고르기
 
-시연을 쓰는 것과 두 응답을 비교하는 것은 사람에게 요구하는 일이 다르다. 좋은 요약문을 직접 쓰려면 글을 잘 써야 하지만, 두 요약문 중 나은 쪽을 고르는 데는 그만한 작문 능력이 꼭 필요하지 않다. 게다가 비교는 정확성, 말투, 길이, 안전성 같은 여러 기준을 하나의 수치 함수로 미리 조합하지 않아도 된다. "정확하지만 무뚝뚝한 응답"과 "친절하지만 한 군데 틀린 응답" 중 어느 쪽이 나은지를 수식으로 적는 대신, 사람이 그 상충을 통째로 판정한다. 그렇다고 기준이 필요 없어지는 것은 아니다. InstructGPT는 무엇을 도움이 되는 응답으로 볼지 상세한 지침을 주석자에게 주었다.[^instructgpt] 지침은 상충을 어느 쪽으로 판정할지 방향을 주고, 개별 사례의 판단은 사람이 한다.
+응답을 직접 쓰는 것과 두 응답을 비교하는 것은 사람에게 요구하는 일이 다르다. 좋은 요약문을 직접 쓰려면 글을 잘 써야 하지만, 두 요약문 중 나은 쪽을 고르는 데는 그만한 작문 능력이 꼭 필요하지 않다. 게다가 비교는 정확성, 말투, 길이, 안전성 같은 여러 기준을 하나의 수치 함수로 미리 조합하지 않아도 된다. "정확하지만 무뚝뚝한 응답"과 "친절하지만 한 군데 틀린 응답" 중 어느 쪽이 나은지를 수식으로 적는 대신, 사람이 그 상충을 통째로 판정한다. 그렇다고 기준이 필요 없어지는 것은 아니다. InstructGPT는 무엇을 도움이 되는 응답으로 볼지 상세한 지침을 주석자에게 주었다.[^instructgpt] 지침은 상충을 어느 쪽으로 판정할지 방향을 주고, 개별 사례의 판단은 사람이 한다.
 
 이 발상은 언어 모델보다 먼저 게임과 로봇 제어에서 나왔다. Christiano 등은 2017년에 보상 함수를 손으로 설계하는 대신 에이전트의 짧은 행동 구간 두 개를 사람에게 보여 주고 나은 쪽을 고르게 했다. 그 비교로 보상 함수를 학습하고 그 보상으로 RL을 돌리자, 에이전트 상호작용의 1% 미만에만 피드백을 받고도 Atari 게임과 시뮬레이션 로봇 보행 과제를 풀 수 있었다.[^christiano] 언어 모델에 적용한 초기 연구인 Ziegler 등의 2019년 논문은 문체 이어 쓰기와 요약에서 사람의 비교 5천–6만 건으로 GPT-2를 fine-tuning했다.[^ziegler] 이어서 Stiennon 등이 Reddit 요약에 SFT, reward model, PPO로 이어지는 세 단계를 적용했고,[^stiennon] Ouyang 등의 InstructGPT가 이를 열린 지시 전체로 넓혔다.[^instructgpt]
 
@@ -78,7 +78,7 @@ B는 친절하지만 틀렸다. `xs.sort()`는 원래 리스트를 그 자리에
 
 [그림 출처](https://arxiv.org/html/2204.05862#S1.F6) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
-모은 양을 보면 비교 데이터가 시연보다 훨씬 많다. InstructGPT의 SFT 데이터는 약 13K 프롬프트, reward model 데이터는 약 33K 프롬프트였는데,[^instructgpt] 프롬프트마다 응답 $K$개의 순위를 받았으므로 비교 쌍으로 풀면 프롬프트 하나에서 $\binom{K}{2}$개, 즉 6–36개가 나온다. Llama 2는 SFT 주석을 27,540건에서 멈춘 반면 자체 수집한 비교는 약 142만 건이었고, 공개 데이터셋을 더해 약 292만 건의 비교를 썼다(원논문 Table 6).[^llama2] 한 건당 부담은 작아도 이만한 양을 모으는 비용은 여전히 크다. 이 비용을 줄이려는 시도가 노트 후반의 AI 피드백이다.
+모은 양을 보면 비교 데이터가 사람이 작성한 응답보다 훨씬 많다. InstructGPT의 SFT 데이터는 약 13K 프롬프트, reward model 데이터는 약 33K 프롬프트였는데,[^instructgpt] 프롬프트마다 응답 $K$개의 순위를 받았으므로 비교 쌍으로 풀면 프롬프트 하나에서 $\binom{K}{2}$개, 즉 6–36개가 나온다. Llama 2는 SFT 주석을 27,540건에서 멈춘 반면 자체 수집한 비교는 약 142만 건이었고, 공개 데이터셋을 더해 약 292만 건의 비교를 썼다(원논문 Table 6).[^llama2] 한 건당 부담은 작아도 이만한 양을 모으는 비용은 여전히 크다. 이 비용을 줄이려는 시도가 노트 후반의 AI 피드백이다.
 
 ## 2. Reward model
 
@@ -281,7 +281,7 @@ InstructGPT는 175B 정책에도 6B reward model을 썼는데, 175B reward model
 
 ### 3-5. Reward model을 쓰는 두 갈래
 
-Reward model이 있으면 정책을 개선하는 길이 둘로 갈린다. 하나는 지금까지 본 대로 보상으로 정책을 **직접 갱신**하는 PPO다. 다른 하나는 프롬프트마다 $K$개 응답을 생성해 reward model 점수가 가장 높은 것을 고르고, 그 응답으로 SFT하는 **rejection sampling**이다. 후자는 policy gradient 갱신 없이 04a의 학습 방법을 그대로 쓰므로 구현이 비교적 단순하지만, 탈락한 응답을 직접 억제하는 손실이 없다. Llama 2는 두 갈래를 차례로 썼다. RLHF 모델을 V1부터 V5까지 다섯 번 갱신했는데, V4까지는 rejection sampling만 쓰고 V5에서 그 checkpoint 위에 PPO를 더했다.[^llama2] 04a §3-4에서 본 Llama 3의 recipe도 rejection sampling으로 SFT 데이터를 만든다.
+Reward model이 있으면 정책을 개선하는 길이 둘로 갈린다. 하나는 지금까지 본 대로 보상으로 정책을 **직접 갱신**하는 PPO다. 다른 하나는 프롬프트마다 $K$개 응답을 생성해 reward model 점수가 가장 높은 것을 고르고, 그 응답으로 SFT하는 **rejection sampling**이다. 후자는 policy gradient 갱신 없이 04a의 학습 방법을 그대로 쓰므로 구현이 비교적 단순하지만, 탈락한 응답을 직접 억제하는 손실이 없다. Llama 2는 두 갈래를 차례로 썼다. RLHF 모델을 V1부터 V5까지 다섯 번 갱신했는데, V4까지는 rejection sampling만 쓰고 V5에서 그 checkpoint 위에 PPO를 더했다.[^llama2] Llama 3도 rejection sampling으로 SFT 데이터를 만든다.[^llama]
 
 ### 3-6. 결과
 

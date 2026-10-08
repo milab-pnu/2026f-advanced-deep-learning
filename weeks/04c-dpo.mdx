@@ -184,14 +184,14 @@ Rafailov 등은 과제별로 다른 방식으로 DPO를 PPO 기반 RLHF와 비�
 
 먼저 용어를 정한다. 강화학습 교재의 구분(Sutton과 Barto 2판 §5.5)을 따르면, 학습 데이터를 생성한 정책을 **behavior policy**, 학습으로 개선하려는 정책을 **target policy**라고 부르고, 둘이 같으면 on-policy, 다르면 off-policy다.[^sutton] 여기에 KL 벌점의 기준이 되는 고정된 **reference policy**(SFT 모델)가 하나 더 있다. 이것은 역할의 이름이라 behavior policy나 초기 target policy와 같은 분포일 수 있다. 원래 DPO 절차에서는 reference policy에서 응답을 뽑아 선호쌍을 만들고, 고정 데이터로 최적화하는 동안에는 확률 계산에만 쓴다.
 
-언어 모델의 post-training에서는 이렇게 읽으면 된다. 학습에 쓰는 응답을 **지금 갱신 중인 정책이 방금 생성했으면** on-policy이고, 사람이 썼거나 다른 모델이 만들었거나 자신의 과거 checkpoint가 만들었으면 off-policy다. 엄밀히는 같은 가중치라도 temperature 같은 decoding 설정이 다르면 표집 분포가 달라지므로, 기준은 "누가 만들었는가"보다 **표집 분포가 target policy와 같은가**다. 04a §4-2의 SFT는 남이 쓴 시연으로 학습하므로 이 노트에서는 데이터 분포의 관점에서 off-policy라고 부른다. RL 알고리즘의 분류를 SFT까지 넓혀 쓰는 용례이며, 교재도 off-policy 방법의 쓰임으로 사람 전문가가 만든 데이터에서 배우는 경우를 든다.[^sutton] 5주차에서도 같은 뜻으로 쓴다.
+언어 모델의 post-training에서는 이렇게 읽으면 된다. 학습에 쓰는 응답을 **지금 갱신 중인 정책이 방금 생성했으면** on-policy이고, 사람이 썼거나 다른 모델이 만들었거나 자신의 과거 checkpoint가 만들었으면 off-policy다. 엄밀히는 같은 가중치라도 temperature 같은 decoding 설정이 다르면 표집 분포가 달라지므로, 기준은 "누가 만들었는가"보다 **표집 분포가 target policy와 같은가**다. 04a §4-2의 SFT는 다른 작성자가 만든 응답으로 학습하므로 이 노트에서는 데이터 분포의 관점에서 off-policy라고 부른다. RL 알고리즘의 분류를 SFT까지 넓혀 쓰는 용례이며, 교재도 off-policy 방법의 쓰임으로 사람 전문가가 만든 데이터에서 배우는 경우를 든다.[^sutton] 5주차에서도 같은 뜻으로 쓴다.
 
 이와 별개의 축이 **online과 offline**이다. 학습 중에 데이터를 새로 모으면 online, 미리 모은 고정 데이터만 쓰면 offline이다.[^levine] 두 축은 독립이다. 04b의 PPO는 rollout마다 최신 정책으로 응답을 모으고 그 배치로 확률비를 써서 여러 번 갱신하므로 online이며 관례상 on-policy 알고리즘으로 분류한다. 두 축을 겹치면 네 칸이 생긴다.
 
 | | Online (학습 중 새로 수집) | Offline (고정 데이터) |
 |---|---|---|
 | **On-policy** (갱신 중인 정책이 생성) | 04b의 PPO(관례상 분류), online DPO, 5주차의 RLVR | 학습 첫 스텝에만 성립한다. 출발점 모델에서 뽑은 고정 데이터도 정책이 갱신되면 아래 칸으로 옮겨 간다 |
-| **Off-policy** (다른 정책이 생성) | 과거 데이터를 버퍼에 쌓아 함께 쓰는 RL, 생성과 학습을 비동기로 돌리는 RL(05d), 라운드마다 이전 모델로 데이터를 새로 모으는 Llama 3의 반복 절차 | SFT의 시연 데이터, 공개 선호 데이터셋으로 하는 DPO, offline RL |
+| **Off-policy** (다른 정책이 생성) | 과거 데이터를 버퍼에 쌓아 함께 쓰는 RL, 생성과 학습을 비동기로 돌리는 RL(05d), 라운드마다 이전 모델로 데이터를 새로 모으는 Llama 3의 반복 절차 | SFT의 응답 데이터, 공개 선호 데이터셋으로 하는 DPO, offline RL |
 
 오른쪽 위 칸은 사실상 비어 있다. 데이터를 고정하는 한, 정책이 한 번이라도 갱신되면 그 데이터는 off-policy가 된다.
 
