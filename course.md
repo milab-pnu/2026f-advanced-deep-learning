@@ -12,7 +12,7 @@ weeks:
   - { n: 1, topic: "Introduction, Transformer, BERT vs GPT" }
   - { n: 2, topic: "Tokenizer & Pre-training", submissionUrl: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/1" }
   - { n: 3, topic: "LLM Architecture Variants", submissionLinks: [{ label: "초청 특강 (배상민)", url: "https://drive.google.com/file/d/1-aOZsLSn0oCRUUMfx8PJ_uWsuomsFws8/view?usp=drive_link" }, { label: "과제 제출", url: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/2" }] }
-  - { n: 4, topic: "Post-training 1" }
+  - { n: 4, topic: "Post-training 1", submissionUrl: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/3" }
   - { n: 5, topic: "Post-training 2" }
   - { n: 6, topic: "Inference Optimization 1" }
   - { n: 7, topic: "Inference Optimization 2" }
