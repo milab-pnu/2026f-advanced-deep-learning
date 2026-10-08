@@ -4,26 +4,13 @@ week: 4
 order: 0
 ---
 
-2주차 Pre-training 노트에서 만든 base model은 텍스트를 이어 쓰는 모델이다. 질문을 넣으면 답 대신 비슷한 질문을 더 만들어 내기도 하고, 답을 하더라도 어디서 멈출지 모른다. 우리가 쓰는 chat model은 이 base model에 **post-training**을 더한 결과다. 그 첫 단계가 지시와 응답의 쌍으로 base model을 fine-tuning하는 <strong>supervised fine-tuning(SFT)</strong>이고, 지시 데이터에 초점을 두어 instruction tuning이라고도 부른다.[^survey] 서베이에서는 지시 데이터의 구성과 fine-tuning 방법을 먼저 읽고, 이 노트에서는 그중 데이터 선택·손실 mask·SFT의 역할을 따라간다.
+우리가 일반적으로 사용하는 chat model은 pre-training이 끝난 base model에 **post-training**을 더한 결과다. 그 첫 단계가 지시와 응답의 쌍으로 base model을 fine-tuning하는 <strong>supervised fine-tuning(SFT)</strong>이고, 지시 데이터에 초점을 두어 instruction tuning이라고도 부른다.[^survey]
 
-Post-training은 대개 한 단계로 끝나지 않는다. 아래는 Allen AI가 2025년에 공개한 Olmo 3의 전체 학습 흐름이다.[^olmo3] Base model을 만든 뒤 SFT, DPO(direct preference optimization), RLVR(reinforcement learning with verifiable rewards)을 차례로 거치고, 같은 base model에서 긴 사고 과정을 생성하는 Think, 바로 답하는 Instruct, SFT 없이 RLVR만 적용한 RL-Zero의 세 모델이 갈라진다. 4주차와 5주차는 이 단계들을 차례로 다룬다.
+Post-training 역시 한 단계로 끝나지 않는다. 아래는 Allen AI가 공개한 Olmo 3의 전체 학습 흐름이다.[^olmo3] Base model을 만든 뒤 SFT, DPO(direct preference optimization), RLVR(reinforcement learning with verifiable rewards)을 차례로 거치고, 같은 base model에서 긴 사고 과정을 생성하는 Think, 바로 답하는 Instruct, SFT 없이 RLVR만 적용한 RL-Zero의 세 모델이 갈라진다.
 
-<Figure hero src="https://arxiv.org/html/2512.13961v2/olmo3_figure.svg" alt="Olmo 3의 model flow. 왼쪽은 Olmo 3 Base를 만드는 pretraining, midtraining, long context의 세 단계이고, 각 단계 아래에 web text, science PDFs, code, math, reasoning, synthetic 같은 데이터 종류가 아이콘으로 적혀 있다. 오른쪽은 post-training으로, Olmo 3 Think는 Think SFT, Think DPO, Think RLVR을 거친다. Olmo 3 Instruct는 Think SFT에서 내려오는 화살표로 시작해 Instruct SFT, Instruct DPO, Instruct RLVR을 거친다. Olmo 3 RL-Zero는 base model에서 바로 RLVR로 이어진다." caption="Olmo 3의 학습 흐름. 왼쪽이 base model 학습, 오른쪽이 post-training이다. 단계마다 데이터와 학습 방법을 따로 정하며, Instruct는 base model이 아니라 Think SFT를 마친 checkpoint에서 출발한다." source="Team Olmo (2025), Olmo 3, Figure 2. arXiv:2512.13961v2 · CC BY 4.0 · 수정 없음" />
+<Figure hero src="https://arxiv.org/html/2512.13961v2/olmo3_figure.svg" alt="Olmo 3의 model flow. 왼쪽은 pre-training으로, 각 단계 아래에 다양한 데이터 종류가 적혀 있다. 오른쪽은 post-training으로, SFT, DPO, RLVR을 거친다." caption="Olmo 3의 학습 흐름. 왼쪽은 pre-training으로, 각 단계 아래에 다양한 데이터 종류가 적혀 있다. 오른쪽은 post-training으로, SFT, DPO, RLVR을 거친다." source="Team Olmo (2025), arXiv:2512.13961v2 · CC BY 4.0 · 수정 없음" />
 
-[라이선스](https://creativecommons.org/licenses/by/4.0/)
-
-이 그림은 한 모델 계열의 recipe이지 모든 모델이 거쳐야 하는 순서는 아니다. 4·5주차는 두 질문으로 방법을 비교한다. **무엇을 잘했다고 채점하는가**, 그리고 **누가 학습할 응답을 만드는가**다. 시연을 모방하는 SFT에서 출발해 선호를 학습하는 RLHF와 DPO를 비교하고, 점수와 실제 품질이 갈라지는 문제를 살핀다. 5주차에는 검증기의 정답 신호로 정책을 갱신하고, 그 결과를 긴 추론·도구 사용으로 확장하거나 다른 모델에 옮기는 방법을 본다.
-
-| 노트 | 이어지는 질문 |
-|---|---|
-| 04a SFT | 어떤 시연을 주고 어느 토큰을 학습하는가? |
-| 04b RLHF · 04c DPO | 시연에 없는 선호 순서를 어떻게 학습하는가? 두 방법은 그 문제를 푸는 서로 다른 접근이다. |
-| 04d Reward hacking and evaluation | 학습 점수가 실제 품질을 대변하는지 어떻게 확인하는가? |
-| 05a RLVR · 05b Policy optimization | 정답을 검증할 수 있다면 어떤 보상을 주고 어떻게 갱신하는가? |
-| 05c Long CoT · 05d RL systems | 길어진 추론에서 무엇을 얻으며, 그 학습 비용은 어떻게 줄이는가? |
-| 05e Agentic RL · 05f Distillation | 환경과 상호작용하며 배우거나 teacher의 능력을 전달할 때 무엇이 달라지는가? |
-
-SFT의 학습 목표는 pre-training과 같은 next-token prediction(NTP)이다. 목적함수가 거의 같은데도 모델의 행동은 크게 바뀐다. 이 노트는 SFT가 base model의 무엇을 바꾸고 무엇을 바꾸지 못하는지를 따라간다.
+SFT의 학습 목표는 pre-training과 같은 next-token prediction(NTP)이다. 목적함수가 같은데도 모델의 행동은 크게 바뀐다.
 
 ## 1. SFT의 목적함수
 
@@ -36,9 +23,9 @@ SFT의 학습 목표는 pre-training과 같은 next-token prediction(NTP)이다.
 | GPT-3 | Explain the theory of gravity to a 6 year old. Explain the theory of relativity to a 6 year old in a few sentences. Explain the big bang theory to a 6 year old. Explain evolution to a 6 year old. |
 | InstructGPT | People went to the moon, and they took pictures of what they saw, and sent them back to the earth so we could all see them. |
 
-GPT-3는 지시를 따르지 않고 그럴듯한 다음 텍스트를 썼다. 웹 문서의 다음 토큰을 예측하도록 학습한 모델에게 이 문장은 질문 목록의 한 줄로 보일 수 있고, 그렇다면 뒤에 올 확률이 높은 것은 답이 아니라 다음 질문이다. 표의 InstructGPT 응답은 SFT에 이어 04b에서 볼 RLHF(reinforcement learning from human feedback)까지 거친 모델의 출력이다.
+GPT-3는 지시를 따르지 않고 그럴듯한 다음 텍스트를 썼다. 웹 문서의 다음 토큰을 예측하도록 학습한 모델에게 이 문장은 질문 목록의 한 줄로 보일 수 있고, 그렇다면 뒤에 올 확률이 높은 것은 답이 아니라 다음 질문이다.
 
-SFT는 이 문제를 데이터로 푼다. 지시(instruction)와 그에 대한 응답(response)의 쌍을 모아, 지시가 주어졌을 때 응답을 생성하도록 가중치를 갱신한다. 지시가 대화 형식이면 여러 턴의 user·assistant 메시지가 된다. 학습 목표는 여전히 NTP이며, 달라지는 것은 **어떤 텍스트를 넣고, 그중 어느 토큰의 예측을 채점하는가**다. 아래에서는 decoder-only chat model을 예로 들지만, 지시 데이터의 계보에서 볼 FLAN이나 encoder-decoder 모델인 T0처럼 대화 형식을 쓰지 않는 instruction tuning도 같은 원리다.
+SFT는 이 문제를 데이터로 푼다. **지시(instruction)와 그에 대한 응답(response)의 쌍**을 모아, 지시가 주어졌을 때 응답을 생성하도록 가중치를 갱신한다. 지시가 대화 형식이면 여러 턴의 user·assistant 메시지가 된다. 학습 목표는 여전히 NTP이며, 달라지는 것은 **어떤 텍스트를 넣고, 그중 어느 토큰의 예측을 채점하는가**다. 아래에서는 decoder-only chat model을 예로 들지만, 지시 데이터의 계보에서 볼 FLAN이나 encoder-decoder 모델인 T0처럼 대화 형식을 쓰지 않는 instruction tuning도 같은 원리다.
 
 ### 1-2. Chat template
 
@@ -52,7 +39,9 @@ SFT는 이 문제를 데이터로 푼다. 지시(instruction)와 그에 대한 �
 부산항입니다.<|eot_id|>
 ```
 
-추론할 때는 이 토큰열에서 응답과 마지막 `<|eot_id|>`를 뺀 부분, 즉 assistant 헤더까지가 프롬프트가 된다. 프롬프트가 헤더로 끝나야 모델이 그 뒤를 assistant의 응답으로 이어 쓴다. 헤더가 없으면 사용자의 메시지를 이어 쓰기 쉽다. Transformers의 `add_generation_prompt=True`가 이 헤더를 붙이는 옵션이며, assistant 응답 앞에 별도 토큰이 없는 template에서는 아무 효과가 없다.[^hf-chat] 학습할 때는 응답까지 붙인 전체 토큰열을 넣으므로 이 옵션을 끈다. 학습 토큰열과 추론 프롬프트는 응답의 유무만 다를 뿐, 역할 표시·경계 토큰·줄바꿈 같은 직렬화 규칙이 같아야 한다. Transformers 문서는 제어 토큰을 잘못 쓰면 chat model의 성능이 크게 떨어진다고 경고한다.[^hf-chat]
+추론할 때 사람이 입력하는 내용은 "부산의 항구 이름은?"이라는 질문뿐이지만, 모델에 전달되는 프롬프트에는 그 앞의 `user` 메시지 표기와 끝 토큰, 그리고 이어서 답할 차례임을 나타내는 `assistant` 헤더까지 포함된다. 즉, 모델은 `<|end_header_id|>` 뒤에서 응답을 생성하기 시작한다. 이 헤더가 없으면 모델이 assistant 답변이 아니라 앞선 메시지를 이어 쓰는 형식으로 입력을 해석할 수 있다. 학습 토큰열과 추론 프롬프트는 응답의 유무만 다를 뿐, 역할 표시·경계 토큰·줄바꿈 같은 직렬화 규칙이 같아야 하고 잘못 사용하는 경우 성능이 크게 떨어진다.
+
+따라서 chat template은 대화 데이터를 보기 좋게 포장하는 형식에 그치지 않고, 전처리·토크나이징·loss mask·추론 입력을 연결하는 학습 엔지니어링의 핵심 약속이다. 학습과 추론에서 template이 어긋나면 모델이 익힌 역할·응답 경계와 실제 입력의 경계가 달라지고, 특수 토큰이 중복되거나 assistant 응답을 가리키는 loss mask가 잘못 적용될 수 있다. 데이터셋을 만들 때 실제 tokenizer의 template으로 샘플을 직렬화하고 토큰과 학습 대상 구간을 확인하는 과정이 필요하다.
 
 ### 1-3. Loss mask
 
@@ -65,54 +54,42 @@ $$
 Pre-training에서는 문서의 거의 모든 토큰에 $m_i=1$을 주었다. SFT에서는 흔히 **assistant 응답 토큰에만** $m_i=1$을 주고 지시 토큰은 0으로 둔다. 아래 예제는 앞의 토큰열을 교육용으로 단순화한 것이다.
 
 <Callout type="example">
-**대화 한 턴의 loss mask.** 실제 tokenizer는 단어를 더 잘게 나누고 헤더도 여러 토큰이지만, 어느 위치가 채점되는지는 같다. 입력과 정답은 한 칸 어긋나 있다. BOS(beginning of sequence)는 `<|begin_of_text|>`, EOT는 `<|eot_id|>`에 해당하는 특수 토큰이다.
+**대화 한 턴의 loss mask.** 아래의 직렬화된 예시에서, 배경색이 있는 토큰만 손실에 들어가며, 앞의 지시와 역할 헤더는 문맥으로 입력되지만 채점하지 않는다. 실제 tokenizer에서는 단어와 헤더가 더 잘게 나뉘지만 적용 원리는 같다. BOS(beginning of sequence)는 `<|begin_of_text|>`, EOT는 `<|eot_id|>`에 해당한다. 입력과 정답은 한 칸 어긋나므로 각 토큰의 색은 그 토큰을 정답으로 예측할 때의 mask를 나타낸다.
 
-| 위치 | 입력 토큰 | 정답 토큰 | $m_i$ | 채점 여부 |
-|---|---|---|---|---|
-| 0 | BOS | `[user]` | 0 | 지시 부분 |
-| 1 | `[user]` | 부산의 | 0 | 지시 부분 |
-| 2 | 부산의 | 항구 | 0 | 지시 부분 |
-| 3 | 항구 | 이름은? | 0 | 지시 부분 |
-| 4 | 이름은? | EOT | 0 | 지시 부분 |
-| 5 | EOT | `[assistant]` | 0 | 헤더 |
-| 6 | `[assistant]` | 부산항 | 1 | 응답 |
-| 7 | 부산항 | 입니다 | 1 | 응답 |
-| 8 | 입니다 | . | 1 | 응답 |
-| 9 | . | EOT | 1 | 응답의 끝 |
+<code>&lt;|begin_of_text|&gt;&lt;|start_header_id|&gt;user&lt;|end_header_id|&gt; 부산의 항구 이름은? &lt;|eot_id|&gt;&lt;|start_header_id|&gt;assistant&lt;|end_header_id|&gt;</code>{" "}
+<mark>부산항입니다. &lt;|eot_id|&gt;</mark>
 
-모델이 네 정답에 준 확률이 0.5, 0.8, 0.9, 0.6이었다고 하자. 토큰별 손실은 $-\log$ 값으로 0.693, 0.223, 0.105, 0.511이다. 채점하는 토큰이 4개이므로
-
-$$
-\mathcal{L}=(0.693+0.223+0.105+0.511)/4=0.383
-$$
-
-이다. 위치 0–5의 예측은 계산되지만 손실에 들어가지 않는다. 마지막 EOT를 채점하는 이유는 모델이 "여기서 멈춘다"를 배워야 하기 때문이다. 이 토큰을 mask하면 응답을 끝내는 시점을 직접 학습하는 신호가 빠진다.
+회색은 입력 문맥이지만 채점하지 않는 부분($m_i=0$), 강조색은 정답으로 예측하고 손실에 넣는 부분($m_i=1$)이다.
+지시와 헤더의 다음 토큰도 예측은 하지만 손실에는 넣지 않는다. 마지막 EOT를 채점하는 이유는 모델이 "여기서 멈춘다"를 배워야 하기 때문이다. 이 토큰을 mask하면 응답을 끝내는 시점을 직접 학습하는 신호가 빠진다.
 </Callout>
-
-지시 토큰은 손실에서 빠질 뿐 입력에서는 빠지지 않는다. Loss mask는 attention mask처럼 토큰을 가리는 것이 아니라 그 위치의 예측을 채점하지 않을 뿐이다. 응답의 각 토큰은 앞선 지시 전체를 조건으로 예측되고, 그 gradient는 지시 토큰의 표현을 거쳐서도 흐른다. 전체 토큰열을 채점하는 선택도 가능하지만, 그러면 모델은 사용자의 질문을 생성하는 법도 함께 배운다. 이 노트와 뒤 노트에서는 응답 토큰만 채점하는 설정을 기본으로 삼는다.
-
-구현에서도 이 설정을 명시하는 경우가 많다. Llama 3 보고서는 SFT에서 프롬프트 토큰의 손실을 mask한다고 밝히고,[^llama] Hugging Face TRL의 `SFTTrainer`는 prompt-completion 데이터에서 completion 토큰만 채점하는 `completion_only_loss`를 기본값으로 둔다. 대화 데이터에는 `assistant_only_loss` 옵션이 있어 user·system 메시지를 빼고 모든 assistant 턴을 채점하며, 여러 턴 중 마지막 응답만 채점하려면 앞선 턴을 prompt로, 마지막 응답을 completion으로 나눈 형식을 쓴다. 다만 `assistant_only_loss`는 chat template이 assistant 구간을 `{% generation %}`과 `{% endgeneration %}`으로 표시해야 동작한다. TRL은 Qwen3 같은 일부 모델 계열의 template만 자동으로 고쳐 주므로, 다른 모델에서는 template을 확인하고 짧은 대화 하나를 토큰화해 어느 위치의 정답이 손실에서 빠지는지(TRL은 `-100`으로 표시한다) 직접 출력해 보는 편이 안전하다.[^trl-sft]
 
 ### 1-4. 배치 안의 평균
 
-위 식의 분모 $\sum_i m_i$를 어디까지 합하는가에 따라 토큰마다 받는 가중치가 달라진다. 위 예의 4토큰 응답과 200토큰 응답을 한 배치에 넣었다고 하자.
+위 강조색 구간을 교육용으로 단순화해 `부산항입니다. <|eot_id|>`가 총 4토큰으로 나뉜다고 하자. 실제 tokenizer의 분절과는 다를 수 있으며, 계산 원리를 보이기 위한 가정이다. 이 4토큰 응답과 200토큰 응답을 한 배치에 넣으면, 분모 $\sum_i m_i$를 어디까지 합하는가에 따라 토큰마다 받는 가중치가 달라진다.
 
-- 배치 전체의 유효 토큰 204개로 한 번에 나누면 모든 토큰의 가중치가 $1/204$로 같다.
-- 샘플마다 평균을 낸 뒤 두 값을 다시 평균하면, 짧은 응답의 토큰은 $\tfrac{1}{2}\cdot\tfrac{1}{4}=1/8$, 긴 응답의 토큰은 $\tfrac{1}{2}\cdot\tfrac{1}{200}=1/400$을 받는다. 짧은 응답의 토큰 하나가 50배 큰 가중치를 받는 셈이다.
+- **Token-level 평균.** 배치 전체의 유효 토큰 204개로 나누면 모든 토큰의 가중치가 $1/204$로 같다. 따라서 200토큰 응답은 4토큰 응답보다 전체 손실에 50배 큰 비중을 준다. TRL의 표준 SFT 손실도 응답의 각 토큰에 대한 cross-entropy를 합산하는 이 계열이다.[^trl-sft]
+- **Sample-level 평균.** 먼저 각 응답의 토큰 손실을 그 응답의 길이로 나눈 뒤, 두 응답의 평균을 내면 각 샘플의 비중이 $1/2$로 같다. 이때 짧은 응답의 토큰 하나는 $\tfrac{1}{2}\cdot\tfrac{1}{4}=1/8$, 긴 응답의 토큰 하나는 $\tfrac{1}{2}\cdot\tfrac{1}{200}=1/400$의 가중치를 받는다. 짧은 응답의 토큰 하나가 50배 큰 셈이다.
 
-샘플마다 같은 가중치를 주는 쪽도 하나의 선택이다. 문제는 집계 방식이 의도와 다르게 바뀌는 경우다. 2주차 Training engineering 노트의 gradient accumulation이나 여러 장치에 나눈 학습에서는 microbatch나 장치마다 먼저 평균을 내기 쉬워서, 토큰 단위로 의도한 집계가 샘플 단위에 가깝게 바뀐다. 2주차 Pre-training 노트에서 "loss의 합과 유효 정답 수를 각각 합친 뒤 나누어야" 한다고 한 원칙이 응답 길이가 크게 다른 SFT에서 특히 중요해지는 이유다.
+두 방식 사이의 절충도 가능하다. 먼저 샘플 $j$ 안에서 토큰 손실을 평균해 $\bar{\ell}_j$라 두고, 그 샘플의 길이 $T_j$로 샘플 가중치 $w_j$를 정한다.
 
-Tülu 3는 Transformers 라이브러리의 기본 손실 집계가 padding과 gradient accumulation을 고려하지 않아 다른 환경에서 학습한 모델과 성능 차이가 났다고 보고했다. 해결책은 평균 대신 <strong>합(sum loss)</strong>을 쓰는 것이었다. 분모를 없애면 모든 토큰이 같은 가중치를 받는 대신 learning rate를 그에 맞게 조정해야 하며, Tülu 3는 8B 모델에 sum loss와 learning rate $5\times10^{-6}$, 2 epoch를 최종 설정으로 택했다(70B는 $2\times10^{-6}$).[^tulu3] 손실을 어떻게 집계하는가는 구현 세부처럼 보이지만, 실제로는 **긴 응답과 짧은 응답 중 어느 쪽을 더 배울 것인가**를 정하는 선택이다.
+$$
+\bar{\ell}_j=\frac{1}{T_j}\sum_{t=1}^{T_j}\ell_{j,t},
+\qquad
+w_j=\frac{T_j^\alpha}{\sum_k T_k^\alpha},
+\qquad
+\mathcal{L}=\sum_j w_j\bar{\ell}_j
+$$
+
+여기서 길이 가중치의 지수 $\alpha$를 0으로 두면 모든 샘플의 가중치가 같아져 sample-level 평균이 되고, 1로 두면 token-level 평균과 같아진다. 그 사이 값은 긴 샘플에 더 큰 가중치를 주면서 길이 차이의 영향을 완화한다. 즉, 길이는 샘플 평균 손실에 곱하는 가중치를 정할 뿐, 토큰 손실 자체를 바꾸지는 않는다. 길이에 따른 과도한 편중을 줄이는 선택지지만 모든 SFT의 표준 설정은 아니며, 실제로는 데이터의 응답 길이 분포와 학습 목표에 맞춰 정하고 검증해야 한다.
 
 ### 1-5. 학습 설정
 
-공개된 recipe에서 SFT는 대개 pre-training보다 작은 learning rate로 데이터를 몇 번만 반복해서 돈다. Llama 3는 가장 큰 모델에 $10^{-5}$로 8.5K–9K 스텝을,[^llama] Olmo 3 Think 7B는 $5\times10^{-5}$로 2 epoch, 약 45.4B 토큰을 학습했다.[^olmo3] 같은 모델의 pre-training 5.9T 토큰에 비하면 1%도 안 된다.
-
-몇 epoch를 돌지는 validation loss만으로 정하기 어렵다. InstructGPT의 SFT는 16 epoch를 돌았는데, validation loss는 1 epoch 뒤부터 과적합했지만 reward model 점수와 사람의 선호 평가는 더 학습할수록 좋아졌다(원논문 §3.5).[^instructgpt] 시연 텍스트를 잘 예측하는 것과 사람이 좋아하는 응답을 내는 것은 같은 평가 기준이 아니다. 대리 지표와 실제 목표의 이런 어긋남은 04d에서 다시 다룬다.<Sidenote>어떤 파라미터를 갱신할지도 선택이다. 모든 가중치를 갱신하는 full fine-tuning 대신 LoRA(low-rank adaptation)처럼 작은 저차원 행렬만 학습하는 방법을 쓰면 optimizer 상태와 gradient의 메모리가 크게 줄고, 이는 2주차 Training engineering 노트의 메모리 계산과 연결된다. 서베이 §III이 두 방식을 함께 정리한다.[^survey] 이 노트의 논의는 갱신 방식과 무관하게 성립한다.</Sidenote>
+학습 설정에서 먼저 정할 것은 **어떤 파라미터를 갱신할지**다. Full fine-tuning은 사전학습된 모델의 전체 가중치를 갱신한다. 반면 PEFT(parameter-efficient fine-tuning)는 전체 가중치를 고정하고 일부 추가 파라미터만 학습해 필요한 메모리를 줄이는 접근이다. 대표적인 LoRA(low-rank adaptation)는 기존 가중치 행렬에 더할 저랭크 행렬을 학습한다. 고정된 가중치 경로와 학습하는 두 저랭크 행렬의 병렬 구조를 갖고 준다. 이 선택은 학습 가능한 파라미터 수와 메모리 사용량을 바꾸므로, GPU 자원과 목표 성능을 고려해 recipe 초기에 정해야 한다.[^survey]
+그다음 학습률, 데이터 반복 횟수(epoch)를 정한다. 공개된 SFT recipe는 대개 pre-training보다 작은 learning rate로 데이터를 몇 번만 반복한다.
 
 ## 2. 지시 데이터의 계보
 
-목적함수가 거의 그대로이므로 SFT의 발전은 주로 데이터에서 일어났다. 무엇을 지시로 삼고 누가 응답을 쓰는지가 바뀌어 왔다. 기존 NLP(natural language processing) 과제를 지시문으로 감싼 데이터와, 실제 사용자의 열린 요청에 사람이 시연을 붙인 데이터는 서로 다른 출발점이다. 전자는 다양한 정형 과제를 덮는 데, 후자는 사용자의 요청에 맞는 응답을 보여 주는 데 초점을 둔다. 사람의 시연은 비싸서, 그 비용에 대한 대응이 두 방향으로 갈렸다. 모델로 데이터를 생성해 양을 늘리는 방향과, 적은 양을 엄격히 골라 품질을 높이는 방향이다. 두 방향은 서로 배타적이지 않다. Self-Instruct도 생성한 것을 걸러 내고, LIMA도 기존 데이터에서 고른 것과 직접 쓴 것을 함께 쓴다. 최근 recipe는 둘을 결합해 사람·기존 과제·합성 데이터를 능력별로 섞고, 추론 모델의 recipe는 여기에 긴 풀이 과정을 담은 응답을 더한다.
+목적함수가 그대로이므로 SFT의 발전은 주로 데이터에서 일어났다. 무엇을 지시(instruction) 로 삼고 누가 응답(response)을 쓰는지가 바뀌어 왔다. 기존 NLP(natural language processing) 과제를 지시문으로 감싼 데이터와, 실제 사용자의 열린 요청에 사람이 시연을 붙인 데이터는 서로 다른 출발점이다. 전자는 다양한 정형 과제를 덮는 데, 후자는 사용자의 요청에 맞는 응답을 보여 주는 데 초점을 둔다. 사람의 시연은 비싸서, 그 비용에 대한 대응이 두 방향으로 갈렸다. 모델로 데이터를 생성해 양을 늘리는 방향과, 적은 양을 엄격히 골라 품질을 높이는 방향이다. 두 방향은 서로 배타적이지 않다. Self-Instruct도 생성한 것을 걸러 내고, LIMA도 기존 데이터에서 고른 것과 직접 쓴 것을 함께 쓴다. 최근 recipe는 둘을 결합해 사람·기존 과제·합성 데이터를 능력별로 섞고, 추론 모델의 recipe는 여기에 긴 풀이 과정을 담은 응답을 더한다.
 
 <figure>
 <svg viewBox="0 0 560 536" role="img" aria-label="지시 데이터의 계보도. 기존 NLP 과제의 지시문(FLAN, T0, 2021)과 실제 사용자의 요청에 사람이 쓴 시연(InstructGPT, 2022)은 별도 출발점이다. 사람 시연은 응답을 사람이 써야 해 비용이 크다는 문제가 있고, 여기서 두 방향으로 갈린다. 왼쪽은 생성해서 늘리는 방향으로 모델이 만든 지시와 응답(Self-Instruct, Alpaca)이며, 비슷한 지시와 생성 모델 오류의 학습이 문제로 남는다. 오른쪽은 골라서 높이는 방향으로 소량 고품질 선별(LIMA, 2023)이며, 적은 양이 덮는 능력 범위가 불분명하다는 문제가 남는다. 두 방향은 능력별 혼합(Tülu 3, 2024와 Olmo 3, 2025)에서 결합되어 사람, 기존 과제, 합성 데이터를 섞고 ablation으로 비율을 정한다. 그 아래에 점선으로, 혼합 안에 함께 넣는 응답 구성으로서 긴 풀이 시연으로 추론 행동을 학습하는 사고 과정을 담은 응답(Qwen3, Olmo 3 Think, 2025)이 붙어 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -155,70 +132,64 @@ Tülu 3는 Transformers 라이브러리의 기본 손실 집계가 padding과 gr
 <text x="280" y="497" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">사고 과정을 담은 응답</text>
 <text x="280" y="515" font-size="12" text-anchor="middle" fill="#64748b">Qwen3 · Olmo 3 Think (2025)</text>
 </svg>
-<figcaption>지시 데이터의 문제와 대응. 각 문헌을 바탕으로 직접 구성한 교육용 지도이며, 화살표가 연구 사이의 직접적인 영향 관계를 뜻하지는 않는다. 회색 글씨는 앞 방식에 남은 문제다. 두 방향은 데이터의 출처(생성)와 선택 기준(선별)이라 함께 쓸 수 있고, 최근 recipe는 둘을 능력별 혼합으로 결합한다. 점선 아래 상자는 앞 방식의 문제를 푼 다음 단계가 아니라, 혼합 안에 함께 넣는 응답의 구성이다.</figcaption>
+<figcaption>지시 데이터의 문제와 대응. 화살표가 연구 사이의 직접적인 영향 관계를 뜻하지는 않는다.</figcaption>
 </figure>
 
 ### 2-1. FLAN과 T0의 과제 지시문
 
-출발점은 이미 있는 NLP 데이터셋이다. 2021년 Google의 FLAN은 62개 데이터셋을 자연어 지시문 템플릿으로 감싸 137B 모델을 fine-tuning했다. 예를 들어 감성 분류 데이터셋은 "이 영화평은 긍정인가 부정인가?" 같은 지시문으로 바뀐다. 데이터셋을 과제 유형별 묶음(cluster)으로 나누고, 평가할 묶음을 뺀 나머지로 학습한 모델을 그 묶음에서 평가했다. 이렇게 학습에 쓰지 않은 과제에서 zero-shot 성능이 base model보다 크게 올랐고, dev set에서 가장 좋았던 템플릿으로 재면 25개 데이터셋 중 20개에서 175B GPT-3의 zero-shot 성능을 넘었다.[^flan] 같은 시기 T0는 여러 사람이 쓴 다양한 프롬프트 템플릿으로 같은 접근을 encoder-decoder 모델에 적용했다.[^t0] 두 연구가 보인 것은 **지시문의 형식을 배우면 보지 않은 과제로도 일반화된다**는 점이다.
+출발점은 이미 있는 NLP 데이터셋이다. 2021년 Google의 FLAN은 62개 데이터셋을 자연어 지시문 템플릿으로 감싸 137B 모델을 fine-tuning했다. 예를 들어 감성 분류 데이터셋은 "이 영화평은 긍정인가 부정인가?" 같은 지시문으로 바뀐다. 데이터셋을 과제 유형별 묶음(cluster)으로 나누고, 평가할 묶음을 뺀 나머지로 학습한 모델을 그 묶음에서 평가했다. 이렇게 학습에 쓰지 않은 과제에서 zero-shot 성능이 base model보다 크게 올랐고, dev set에서 가장 좋았던 템플릿으로 재면 25개 데이터셋 중 20개에서 175B GPT-3의 zero-shot 성능을 넘었다.[^flan] 같은 시기 T0는 여러 사람이 쓴 다양한 프롬프트 템플릿으로 같은 접근을 encoder-decoder 모델에 적용했다.[^t0]
 
-Google은 이어서 과제 수를 1,836개로 늘리고 CoT(chain of thought) 데이터를 섞은 Flan-PaLM으로 규모의 효과를 쟀다.[^flan-palm] 모델 크기와 과제 수 모두에서 성능이 올랐고, 정규화 평균의 절대 증가량은 작은 모델에서 더 컸다. 구체적인 수치는 SFT의 효과를 볼 때 base model과 나란히 놓는다.
+여러 과제를 자연어 지시와 정답의 같은 형태로 학습하면, 모델은 특정 데이터셋의 입력 형식만 외우는 대신 지시문에서 요구하는 일을 읽고 응답하는 연습을 반복한다. 이 훈련이 학습에 없던 과제에도 도움이 되었을 가능성이 있다. 두 연구가 확인한 것은 보지 않은 과제에서의 성능 향상이며, 모델 내부에서 일반화가 일어나는 정확한 이유까지 밝힌 것은 아니다.
+Google은 이어서 과제 수를 1,836개로 늘린 Flan-PaLM으로 규모의 효과를 쟀다. 학습 데이터에는 답만 제시하는 예시와 함께, 풀이 과정을 거쳐 답에 이르는 CoT(chain of thought) 예시도 섞었다.[^flan-palm]
 
 ### 2-2. InstructGPT의 사람 시연
 
-기존 데이터셋을 지시문으로 감싸면 과제가 분류·질의응답 같은 정형 과제에 치우친다. 사용자가 실제로 묻는 것은 "이메일을 정중하게 고쳐 줘" 같은 형식이 정해지지 않은 요청이다. OpenAI의 InstructGPT는 API(application programming interface)에 들어온 프롬프트를 바탕으로 <strong>사람이 직접 쓴 응답(demonstration)</strong>을 모아 GPT-3를 SFT했다.[^instructgpt] 이 논문의 전체 파이프라인은 SFT, reward model, 강화학습의 세 단계이고 뒤의 두 단계는 04b에서 다룬다. 여기서 볼 것은 첫 단계의 효과다. 175B 모델의 사람 평가에서 SFT 모델의 출력은 few-shot 프롬프트를 준 GPT-3의 출력보다 선호되었다(원논문 Figure 1).[^instructgpt] 논문의 대표 결과인 "1.3B 모델이 175B GPT-3보다 선호되었다"는 SFT가 아니라 RLHF까지 마친 모델의 결과이므로 여기서 SFT의 근거로 쓰지 않는다.
+기존 데이터셋을 지시문으로 감싸면 과제가 분류·질의응답 같은 정형 과제에 치우친다. 사용자가 실제로 묻는 것은 "이메일을 정중하게 고쳐 줘" 같은 형식이 정해지지 않은 요청이다. OpenAI의 InstructGPT는 API에 들어온 프롬프트를 바탕으로 <strong>사람이 직접 쓴 응답(demonstration)</strong>을 모아 GPT-3를 SFT했다. 175B 모델의 사람 평가에서 SFT 모델의 출력은 few-shot 프롬프트를 준 GPT-3의 출력보다 선호되었다.[^instructgpt]
 
 사람이 응답을 쓰는 방식의 문제는 비용이다. 응답을 하나하나 써야 하고, 다양한 주제를 고르게 덮으려면 많은 작성자가 필요하다.
 
 ### 2-3. Self-Instruct와 Alpaca의 합성 지시
 
-첫째 방향은 이 비용 문제를 모델로 푼다. Self-Instruct는 사람이 쓴 175개의 시드 과제를 과제 풀에 넣고 출발한다. 풀에서 몇 개를 뽑아 예시로 주고 모델에게 새 지시문을 만들게 한 뒤, 그 지시가 분류 과제인지 판별해 분류 과제면 정답 라벨부터, 아니면 입력부터 만들게 하고 나머지를 채운다. 기존 지시문과 너무 비슷한 것(두 문장의 최장 공통 부분열로 겹침을 재는 ROUGE-L(Recall-Oriented Understudy for Gisting Evaluation) 유사도가 0.7 이상)과 품질이 낮은 것은 걸러 내고, 남은 과제를 다시 풀에 넣어 반복한다.[^self-instruct]
+첫째 방향은 사람이 응답을 일일이 쓰는 비용을 줄여 데이터의 양을 늘리는 것이다. Self-Instruct는 사람이 직접 쓴 175개의 시드 과제에서 출발한다. 시드 과제 하나는 **지시문과 그 지시를 수행한 예시 한 개**로 이루어진다. 실제 시드 중에는 “건강한 식사의 장보기 목록을 만들어라”라는 지시와 그에 대한 목록의 예시가 있다.[^self-instruct-seeds]
 
-<Figure src="https://arxiv.org/html/2212.10560v2/data_generation_pipeline_v6.png" alt="Self-Instruct의 데이터 생성 과정. 왼쪽 위의 175개 시드 과제(과제마다 지시 1개와 예시 1개)가 task pool에 들어간다. 1단계에서 LM이 'Give me a quote from a famous person on this topic' 같은 새 지시를 생성하고, 2단계에서 LM이 그 지시가 분류 과제인지 판별한다. 3단계에서 분류 과제이면 Output-first로 클래스 라벨을 먼저 만든 뒤 입력을 만들고(낙태 찬반 판별 예), 아니면 Input-first로 입력을 먼저 만든 뒤 출력을 만든다(정직에 관한 명언 예). 4단계 filtering을 거친 과제는 다시 task pool로 돌아간다." caption="Self-Instruct의 한 바퀴. 시드 과제에서 뽑은 예시로 새 지시를 만들고(1단계), 분류 과제 여부에 따라 라벨과 입력 중 무엇을 먼저 만들지 정한 뒤(2–3단계), 걸러 낸 결과를 과제 풀에 되돌린다(4단계). 그림 속 과제는 모두 GPT-3가 생성한 것이다." source="Wang et al. (2023), Self-Instruct, Figure 2. arXiv:2212.10560v2 · CC BY 4.0 · 수정 없음" />
+새 지시문을 만드는 단계에서는 과제 풀에서 지시문 8개를 뽑아 “Task 1: …, Task 2: …, …, Task 8: …, Task 9:”처럼 모델에 보여 준다. 모델이 다음 칸에 새로운 **과제 자체를 제안**하도록 하는 것이다. 아래 그림의 “이 주제에 관한 유명인의 명언을 제시하라”가 이렇게 생성된 지시문의 한 예다.
 
-[라이선스](https://creativecommons.org/licenses/by/4.0/)
+새 지시문을 기반으로 입력과 정답을 만든다. 먼저 분류 과제인 지 판별하여, 분류 과제라면 정답 라벨을 먼저 정한 뒤 그에 맞는 입력을 만들고, 그 밖의 과제는 입력을 먼저 만든 뒤 출력을 만든다. 기존 지시문과 너무 비슷한 것과 품질이 낮은 것은 걸러 내고, 남은 과제를 다시 풀에 넣어 반복한다.[^self-instruct]
 
-GPT-3로 이렇게 만든 약 52K개의 지시와 82K개의 입력·출력 예시로 GPT-3 자신을 fine-tuning하자, Super-NaturalInstructions 평가에서 정답 텍스트와의 ROUGE-L이 6.8에서 39.9로 33.1점 올랐다(원논문 Table 3). 전문가가 새로 쓴 지시 252개에 대한 사람 평가에서는, 사소한 오류가 있는 응답까지 유효로 세는 기준으로 사람 데이터로 학습한 InstructGPT-001과 5%p 차이였다(원논문 Figure 6).[^self-instruct] Stanford의 Alpaca는 이 방법을 단순화한 파이프라인을 text-davinci-003으로 실행해 52K 시연을 500달러 미만으로 만들고 LLaMA 7B를 fine-tuning했다.[^alpaca]
+<Figure hero src="https://arxiv.org/html/2212.10560v2/data_generation_pipeline_v6.png" alt="Self-Instruct의 데이터 생성 과정. 왼쪽 위의 175개 시드 과제(과제마다 지시 1개와 예시 1개)가 task pool에 들어간다. 1단계에서 LM이 'Give me a quote from a famous person on this topic' 같은 새 지시를 생성하고, 2단계에서 LM이 그 지시가 분류 과제인지 판별한다. 3단계에서 분류 과제이면 Output-first로 클래스 라벨을 먼저 만든 뒤 입력을 만들고(낙태 찬반 판별 예), 아니면 Input-first로 입력을 먼저 만든 뒤 출력을 만든다(정직에 관한 명언 예). 4단계 filtering을 거친 과제는 다시 task pool로 돌아간다." caption="Self-Instruct의 데이터 합성 과정." source="Wang et al. (2023), Self-Instruct. arXiv:2212.10560v2 · CC BY 4.0 · 수정 없음" />
 
-모델이 만든 데이터에도 문제가 있다. 지시문이 서로 비슷해지고, 데이터를 만든 모델의 오류가 그대로 학습된다. Alpaca처럼 더 강한 모델(teacher)의 응답으로 다른 모델(학생)을 학습시키면 학생이 teacher의 표면적 문체만 배우는 것 아니냐는 우려도 있는데, 이 문제는 5주차 Distillation 노트에서 다시 다룬다.
+이렇게 만든 약 5만 2천 개의 지시와 8만 2천 개의 입력·출력 예시로 GPT-3 자신을 SFT하자, 새로운 지시를 따르는 성능이 크게 올랐다.[^self-instruct] Stanford의 Alpaca는 이 방법을 단순화한 파이프라인을 text-davinci-003으로 실행해 52K 시연을 500달러 미만으로 만들고 LLaMA 7B를 fine-tuning했다.[^alpaca]
+
+모델이 만든 데이터에도 문제가 있다. 지시문이 서로 비슷해지고, 데이터를 만든 모델의 오류가 그대로 학습된다. 그럼에도 강한 모델로 지시와 응답을 생성해 다른 모델의 학습에 쓰는 방법은 계속 발전했다. 예를 들어 Tülu 3는 GPT-4o로 수학 문제와 풀이를, Claude 3.5 Sonnet으로 코드 문제의 해답을 생성해 SFT 데이터에 넣었다.[^tulu3]
+
+이런 데이터 생성에는 모델 제공사의 이용 약관도 관계된다. OpenAI의 API 계약은 명시된 예외를 제외하고 출력을 경쟁 AI 모델 개발에 쓰는 것을 제한하고, Google의 Gemini API 약관도 서비스와 경쟁하는 모델 개발에 해당 서비스를 쓰지 못하게 한다.[^openai-terms][^gemini-terms]
 
 ### 2-4. LIMA의 소량 고품질 데이터
 
-둘째 방향은 양을 늘리는 대신 고른다. Meta의 연구진은 Stack Exchange·wikiHow 등에서 고르고 일부는 직접 쓴 **1,000개**의 프롬프트·응답으로 65B LLaMA를 SFT했다. 사람 평가에서 LIMA의 응답은 GPT-4의 응답과 같거나 더 낫다고 판정된 비율이 43%였고, Bard에 대해서는 58%, DaVinci003에 대해서는 65%였다. 52K 예시로 학습한 Alpaca 65B보다도 선호되었다(원논문 Figure 1, 테스트 프롬프트 300개).[^lima] 같은 논문은 7B 모델의 ablation에서 프롬프트의 다양성과 응답의 품질을 높이면 ChatGPT가 매긴 응답 점수가 오르지만, 같은 출처의 데이터를 16배까지 늘려도 점수가 정체한다고 보고한다(원논문 Figure 5, 6).[^lima]
+둘째 방향은 데이터의 양보다 품질에 집중하는 것이다. Meta 연구진이 제안한 LIMA(Less Is More for Alignment)는 Stack Exchange·wikiHow 등에서 좋은 프롬프트·응답을 선별하고 일부는 직접 써서, **1,000개**의 예시만으로 65B LLaMA를 SFT했다. 사람 평가에서 LIMA의 응답은 GPT-4의 응답과 같거나 더 낫다고 판정된 비율이 43%였고, Bard에 대해서는 58%, DaVinci003에 대해서는 65%였다. 52K 예시로 학습한 Alpaca 65B보다도 선호되었다.[^lima] 같은 논문은 7B 모델의 ablation에서 프롬프트의 다양성과 응답의 품질을 높이면 ChatGPT가 매긴 응답 점수가 오르지만, 같은 출처의 데이터를 16배까지 늘려도 점수가 정체한다고 보고한다.[^lima]
 
-저자들은 이 결과를 **superficial alignment hypothesis**로 설명한다. 모델의 지식과 능력은 거의 전부 pre-training에서 익히고, alignment는 pre-training에서 익힌 여러 응답 방식 중 사용자와 대화할 때 맞는 방식을 고르도록 유도할 뿐이라는 가설이다.[^lima] 이 가설이 맞다면 SFT 뒤 벤치마크 점수가 크게 올라도, 새 지식을 배운 결과라기보다 이미 있는 능력을 답 형식으로 꺼내게 된 결과일 수 있다. 다만 LIMA의 평가는 대화 품질에 대한 사람의 선호였다. 수학이나 코드처럼 정답이 있는 과제에서 소량 SFT가 얼마나 통하는지, 지식이 정말 늘지 않는지는 이 논문이 직접 답하지 않는다. 이 가설을 더 직접 시험한 연구는 SFT의 효과를 볼 때 함께 본다.
+저자들은 이 결과를 **superficial alignment hypothesis**로 설명한다. 모델의 지식과 능력은 거의 전부 pre-training에서 익히고, alignment는 pre-training에서 익힌 여러 응답 방식 중 사용자와 대화할 때 맞는 방식을 고르도록 유도할 뿐이라는 가설이다.[^lima] 이 가설이 맞다면 SFT 뒤 벤치마크 점수가 크게 올라도, 새 지식을 배운 결과라기보다 이미 있는 능력을 답 형식으로 꺼내게 된 결과일 수 있다. 다만 LIMA의 평가는 대화 품질에 대한 사람의 선호였다. 수학이나 코드처럼 정답이 있는 과제에서 소량 SFT가 얼마나 통하는지, 지식이 정말 늘지 않는지는 이 논문이 직접 답하지 않는다.
 
 ### 2-5. Tülu 3와 Olmo 3의 능력별 혼합
 
-2024년 이후의 공개 recipe는 두 방향을 결합한다. 사람이 쓴 데이터, 기존 과제, 모델이 만든 데이터를 **능력별로 나누어** 섞고, 각 부분이 어느 벤치마크를 올리는지 ablation으로 확인한다. Tülu 3의 SFT 프롬프트 939,344개는 다음과 같이 구성된다(원논문 Table 7에서 SFT에 쓴 항목 전체).[^tulu3]
+2024년 이후의 공개 recipe는 앞의 두 방향을 결합해 사람이 쓴 데이터, 기존 과제, 모델이 만든 데이터를 대규모로 섞는다. Tülu 3는 이미 사전학습된 Llama 3.1 base model에 적용할 post-training 절차를 설계했다. SFT에는 일반 대화·지식·수학·코드·안전·다국어·지시 따르기 등 여러 능력을 겨냥한 프롬프트 약 94만 개를 혼합했다.[^tulu3] Olmo 3는 base model의 pre-training부터 mid-training과 post-training까지 직접 설계·공개한 모델 계열이며, SFT에서도 여러 능력을 위한 데이터를 조합한다.[^olmo3]
 
-| 범주 | 데이터와 프롬프트 수 |
-|---|---|
-| 일반 대화 | WildChat(GPT-4 부분집합) 100,000, OpenAssistant 7,132, No Robots 9,500, Tülu 3 Hardcoded 240 |
-| 지식 회상 | FLAN v2 89,982, SciRIFF 10,000, TableGPT 5,000 |
-| 수학·추론 | Persona MATH 149,960, Persona GSM 49,980, Persona Algebra 20,000, OpenMathInstruct 2 50,000, NuminaMath-TIR 64,312 |
-| 코딩 | Evol CodeAlpaca 107,276, Persona Python 34,999 |
-| 안전 | CoCoNot 10,983, WildJailbreak 50,000, WildGuardMix 50,000 |
-| 다국어 | Aya 100,000 |
-| 정밀한 지시 따르기 | Persona IF 29,980 |
+2주차 Pre-training 노트 §3-3에서 웹·코드·수학 데이터의 혼합 비율이 모델에 무엇을 얼마나 학습시킬지 정한다고 봤다. SFT에서도 마찬가지로, 어떤 능력의 지시와 응답을 얼마나 섞느냐가 모델이 연습하는 답변 행동을 정한다. 따라서 데이터 혼합은 post-training에서도 핵심 설정이다. Olmo 3 개발 과정의 SFT 실험에서는 지시 따르기 데이터를 더하자 해당 능력은 좋아졌지만 코드 성능은 내려갔다.[^olmo3] 그래서 데이터의 양뿐 아니라 어떤 능력을 얼마나 섞을지 평가하며 정한다. 아래 그림은 Tülu 3가 데이터를 모으고 평가 데이터와 겹치는 부분을 제거한 뒤, SFT와 그다음 학습 단계로 이어 가는 전체 흐름을 보여 준다.
 
-"Persona"가 붙은 데이터는 Persona Hub의 방식으로 만든 합성 데이터다. 웹에서 추출한 10억 개의 인물 설명(persona)을 프롬프트에 넣어 같은 과제라도 서로 다른 관점의 문제를 생성하게 하는 방법으로, 합성 데이터의 지시문이 서로 비슷해지는 문제를 겨냥한다.[^persona] WildChat은 실제 사용자와 챗봇의 대화 기록이며 Tülu 3는 그중 GPT-4가 응답한 부분집합을 쓰고, FLAN v2는 FLAN의 계보를 잇는 정형 과제 모음이다.
-
-데이터 범주와 능력의 대응은 Olmo 3의 SFT ablation에서 볼 수 있다. 내부의 OLMo 2 long-context checkpoint에 기본 혼합만 SFT한 경우와 거기에 범주 하나를 더한 경우를 비교한 실험이다(원논문 Table 18).[^olmo3] 정밀한 지시 따르기 데이터(Persona IF)를 더하자 IFEval이 35.7에서 70.4로 올랐고 MMLU(Massive Multitask Language Understanding)도 52.4에서 64.1로 올랐지만, 코드 생성 벤치마크 HumanEval+(원논문 표기 CHE)는 35.4에서 25.0으로 내려갔다. 데이터 범주를 더하면 겨냥한 능력이 오르지만 다른 능력과 상충할 수 있으므로, 최종 혼합은 이런 ablation을 여러 범주에 대해 돌린 뒤 정한다.
-
-혼합 비율을 읽을 때는 예시 수와 학습 신호를 구분해야 한다. 앞에서 본 것처럼 배치 전체의 토큰 수로 나누는 손실에서는 응답 토큰 하나하나가 같은 가중치를 받는다. 교육용으로 두 범주를 100개씩 섞었는데 평균 응답 길이가 100토큰과 1,000토큰이라면, 예시 수는 1:1이어도 손실에 들어가는 토큰은 1:10이다. 프롬프트 토큰은 계산량에는 들어가지만 손실에는 들어가지 않으므로, 처리한 총 토큰 수와 채점된 응답 토큰 수도 따로 세야 한다.
-
-데이터를 섞는 만큼 평가 데이터가 학습에 새어 들어갈 위험도 커진다. 공개 데이터셋, 특히 실제 사용자가 API 모델을 쓴 기록에는 벤치마크 문제가 섞여 있기 쉽다. Tülu 3는 학습 프롬프트와 평가 문제가 8-gram을 공유하는 토큰이 평가 문제의 절반을 넘으면 겹친다고 판정하고, 평가 문제의 2% 넘게 겹치는 학습 데이터셋을 오염으로 보아 데이터셋 전체나 겹친 예시를 뺐다. 평가도 둘로 나누었다. 데이터 혼합과 설정을 고르는 데 쓰는 development 평가와, 그 선택에 쓰지 않고 따로 떼어 둔 unseen 평가다. Unseen 평가로는 최종 모델의 성능뿐 아니라 개발 중에 내린 선택이 development 평가에 과적합하지 않았는지도 확인했다.[^tulu3] 아래 그림의 decontaminate와 development evals, unseen evals가 이 절차다.
-
-<Figure src="https://arxiv.org/html/2411.15124v5/tulu3_figure1_v2.png" alt="Tülu 3의 개요. 왼쪽 위의 프롬프트 수집(public datasets, persona-driven synthetic instructions, decontaminate)과 왼쪽 아래의 핵심 능력 선정(knowledge, reasoning, math, coding, chat, safety)이 데이터 구성 단계를 이룬다. 오른쪽에서는 base model이 supervised finetuning(data mixing), direct preference optimization(on-policy·off-policy data), RL with verifiable rewards를 거쳐 Tülu3-SFT, Tülu3-DPO, Tülu3가 된다. 세 학습 단계 아래에 development evals가 있고, 최종 모델은 unseen evals로 평가한다." caption="Tülu 3의 post-training. 핵심 능력을 먼저 정하고, 프롬프트를 모아 평가 데이터와의 중복을 제거한 뒤 SFT, DPO, RLVR을 거친다. 각 단계의 선택은 development 평가로 하고, 그 선택이 일반화되는지는 따로 떼어 둔 unseen 평가로 확인한다." source="Lambert et al. (2024), Tülu 3, Figure 1. arXiv:2411.15124v5 · CC BY 4.0 · 수정 없음" />
-
-[라이선스](https://creativecommons.org/licenses/by/4.0/)
+<Figure src="https://arxiv.org/html/2411.15124v5/tulu3_figure1_v2.png" alt="Tülu 3의 개요. 왼쪽 위의 프롬프트 수집(public datasets, persona-driven synthetic instructions, decontaminate)과 왼쪽 아래의 핵심 능력 선정(knowledge, reasoning, math, coding, chat, safety)이 데이터 구성 단계를 이룬다. 오른쪽에서는 base model이 supervised finetuning(data mixing), direct preference optimization(on-policy·off-policy data), RL with verifiable rewards를 거쳐 Tülu3-SFT, Tülu3-DPO, Tülu3가 된다. 세 학습 단계 아래에 development evals가 있고, 최종 모델은 unseen evals로 평가한다." caption="Tülu 3의 post-training." source="Lambert et al. (2024), Tülu 3. arXiv:2411.15124v5 · CC BY 4.0 · 수정 없음" />
 
 ### 2-6. 사고 과정을 담은 응답
 
-추론 모델의 recipe는 SFT 데이터에 긴 풀이 과정을 담는다. 이 SFT는 RL 전에 모델이 긴 사고 과정을 쓰는 행동을 익히게 하는 cold start 역할을 맡는다. Qwen3의 대형 모델은 검증 가능한 수학·코드 문제를 골라 QwQ-32B가 생성한 사고 과정 응답을 걸러 첫 단계 SFT 데이터로 썼다.[^qwen3] Olmo 3 Think 7B의 SFT 데이터는 일부 프롬프트를 다른 응답과 함께 반복한 것까지 약 227만 개로 Tülu 3의 두 배가 넘는데, 대부분이 수학·코드 문제에 대한 긴 사고 과정 응답이다(원논문 Table 17).[^olmo3] 사고 과정 응답은 수천 토큰에 이르기도 해서, 앞의 계산처럼 예시 수에 비해 손실에 들어가는 토큰이 훨씬 많다.
+앞의 SFT 예시에서는 모델이 질문을 받고 곧바로 답했다. 이 절에서 다루는 추론 모델(reasoning model)은 답에 앞서 풀이 과정을 생성하도록 학습한다. 응답의 형태를 단순화하면 다음과 같다. 대괄호 안의 표시는 설명을 위한 것으로, 실제 구분 토큰은 모델마다 다르다.
 
-흥미로운 결과는 사고 과정을 쓰지 않는 Instruct 모델에서도 나온다. Instruct 7B의 중간 checkpoint를 비교하면, 사고 과정 SFT를 먼저 거친 뒤 Instruct SFT를 한 쪽이 거치지 않은 쪽보다 평균 3.3점, MATH에서 5.6점 높았다(원논문 Table 29).[^olmo3] 맨 위 그림에서 Olmo 3 Instruct의 SFT가 Think SFT checkpoint에서 출발하는 것도 이 때문이다. 최종 모델이 사고 과정을 출력하지 않아도, 그것을 한 번 학습한 가중치가 더 좋은 출발점이 되었다는 관찰이다.
+```
+질문: 17 × 24는?
+[사고 과정] 17 × (20 + 4) = 340 + 68 = 408
+[최종 답] 408
+```
+
+추론 모델의 SFT 데이터에는 이처럼 사고 과정과 최종 답이 함께 담긴다. 이 SFT는 RL 전에 모델이 긴 사고 과정을 쓰는 행동을 익히게 하는 cold start 역할을 맡는다. Qwen3의 대형 모델은 검증 가능한 수학·코드 문제를 골라 QwQ-32B가 생성한 사고 과정 응답을 걸러 첫 단계 SFT 데이터로 썼다.[^qwen3] 사고 과정 응답은 수천 토큰에 이르기도 해서, 앞의 계산처럼 예시 수에 비해 손실에 들어가는 토큰이 훨씬 많다.
+짧은 풀이와 긴 풀이의 차이, 풀이 길이가 성능과 생성 비용에 미치는 영향은 다음 주 노트에서 자세히 다룬다.
 
 ## 3. SFT의 효과
 
@@ -342,9 +313,11 @@ SFT는 teacher forcing으로 학습한다. 응답의 각 토큰을 예측할 때
 [^t0]: Sanh, V., et al. (2022). *Multitask Prompted Training Enables Zero-Shot Task Generalization*. ICLR 2022. [arXiv:2110.08207](https://arxiv.org/abs/2110.08207).
 [^flan-palm]: Chung, H. W., et al. (2022). *Scaling Instruction-Finetuned Language Models*. [arXiv:2210.11416v5](https://arxiv.org/abs/2210.11416v5).
 [^self-instruct]: Wang, Y., Kordi, Y., Mishra, S., Liu, A., Smith, N. A., Khashabi, D., & Hajishirzi, H. (2023). *Self-Instruct: Aligning Language Models with Self-Generated Instructions*. ACL 2023. [arXiv:2212.10560v2](https://arxiv.org/abs/2212.10560v2).
+[^self-instruct-seeds]: Wang, Y., et al. (2023). *Self-Instruct seed tasks*. [공개 데이터](https://github.com/yizhongw/self-instruct/blob/main/data/seed_tasks.jsonl).
+[^openai-terms]: OpenAI. (2026). *OpenAI Services Agreement*, §3.3(e). [공식 약관](https://openai.com/policies/services-agreement/).
+[^gemini-terms]: Google. (2026). *Gemini API Additional Terms of Service*, Use Restrictions. [공식 약관](https://ai.google.dev/gemini-api/terms).
 [^alpaca]: Taori, R., et al. (2023). *Alpaca: A Strong, Replicable Instruction-Following Model*. [Stanford CRFM 블로그](https://crfm.stanford.edu/2023/03/13/alpaca.html).
 [^lima]: Zhou, C., et al. (2023). *LIMA: Less Is More for Alignment*. NeurIPS 2023. [arXiv:2305.11206v1](https://arxiv.org/abs/2305.11206v1).
-[^persona]: Ge, T., et al. (2024). *Scaling Synthetic Data Creation with 1,000,000,000 Personas*. [arXiv:2406.20094](https://arxiv.org/abs/2406.20094).
 [^qwen3]: Qwen Team. (2025). *Qwen3 Technical Report*. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
 [^mmlu]: Hendrycks, D., et al. (2021). *Measuring Massive Multitask Language Understanding*. ICLR 2021. [arXiv:2009.03300](https://arxiv.org/abs/2009.03300).
 [^ifeval]: Zhou, J., et al. (2023). *Instruction-Following Evaluation for Large Language Models*. [arXiv:2311.07911](https://arxiv.org/abs/2311.07911).
