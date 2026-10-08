@@ -12,7 +12,7 @@ order: 1
 
 ### 1-1. Value model의 비용과 추정 오차
 
-04b §3-2의 policy gradient는 토큰마다 advantage $\hat A_t$가 필요했고, PPO는 그것을 value model $V(x,y_{<t})$로 추정했다. 언어 모델의 RLVR(reinforcement learning with verifiable rewards)에서 이 설계에는 두 가지 부담이 있다. 첫째, 정책과 비슷한 크기의 별도 value model을 두는 구성에서는 메모리와 계산이 정책 학습만큼 든다(04b §3-4의 InstructGPT처럼 작은 value model을 쓰는 구성도 있으며, 비용은 크기와 공유 여부에 달렸다). 둘째, 보상이 응답 끝에 한 번만 주어지는 긴 응답에서 토큰마다 "앞으로 받을 보상의 기대값"을 정확히 배우기는 어렵고, 04b §3-2의 GAE처럼 부정확한 value로 bootstrapping하면 advantage에 편향이 들어간다.
+04b §3-1의 policy gradient는 토큰마다 advantage $\hat A_t$가 필요했고, PPO는 그것을 value model $V(x,y_{<t})$로 추정했다. 언어 모델의 RLVR(reinforcement learning with verifiable rewards)에서 이 설계에는 두 가지 부담이 있다. 첫째, 정책과 비슷한 크기의 별도 value model을 두는 구성에서는 메모리와 계산이 정책 학습만큼 든다(04b §3-4의 InstructGPT처럼 작은 value model을 쓰는 구성도 있으며, 비용은 크기와 공유 여부에 달렸다). 둘째, 보상이 응답 끝에 한 번만 주어지는 긴 응답에서 토큰마다 "앞으로 받을 보상의 기대값"을 정확히 배우기는 어렵고, 04b §3-1의 GAE처럼 부정확한 value로 bootstrapping하면 advantage에 편향이 들어간다.
 
 Ahmadian 등은 이 설정이 사실상 bandit 문제에 가깝다고 지적했다. 보상이 응답 전체에 한 번 오므로 응답 하나를 행동 하나로 보면 상태 전이가 없고, 강한 사전학습 모델에서 출발하므로 policy gradient의 분산이 걱정만큼 크지 않다는 것이다. 그래서 value model·clipping·GAE(generalized advantage estimation) 없이 REINFORCE에 간단한 baseline만 붙인 RLOO(REINFORCE leave-one-out)가 요약과 대화 과제에서 PPO를 앞섰다고 보고했다.[^rloo] Baseline은 같은 프롬프트에서 뽑은 $k$개 응답 중 자기를 뺀 나머지 $k-1$개의 보상 평균이다.
 
