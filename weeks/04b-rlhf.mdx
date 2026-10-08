@@ -149,7 +149,7 @@ InstructGPT는 175B 정책에도 6B reward model을 썼는데, 175B reward model
 
 ### 3-5. Reward model을 쓰는 두 갈래
 
-Reward model이 있으면 정책을 개선하는 길이 둘로 갈린다. 하나는 지금까지 본 대로 보상으로 정책을 **직접 갱신**하는 PPO다. 다른 하나는 프롬프트마다 $K$개 응답을 생성해 reward model 점수가 가장 높은 것을 고르고, 그 응답으로 SFT하는 **rejection sampling**이다. 후자는 policy gradient 갱신 없이 04a의 학습 방법을 그대로 쓰므로 구현이 비교적 단순하지만, 탈락한 응답을 직접 억제하는 손실이 없다. Llama 2는 두 갈래를 차례로 썼다. RLHF 모델을 V1부터 V5까지 다섯 번 갱신했는데, V4까지는 rejection sampling만 쓰고 V5에서 그 checkpoint 위에 PPO를 더했다.[^llama2] 04a §1-2에서 본 Llama 3의 recipe도 rejection sampling으로 SFT 데이터를 만든다.
+Reward model이 있으면 정책을 개선하는 길이 둘로 갈린다. 하나는 지금까지 본 대로 보상으로 정책을 **직접 갱신**하는 PPO다. 다른 하나는 프롬프트마다 $K$개 응답을 생성해 reward model 점수가 가장 높은 것을 고르고, 그 응답으로 SFT하는 **rejection sampling**이다. 후자는 policy gradient 갱신 없이 04a의 학습 방법을 그대로 쓰므로 구현이 비교적 단순하지만, 탈락한 응답을 직접 억제하는 손실이 없다. Llama 2는 두 갈래를 차례로 썼다. RLHF 모델을 V1부터 V5까지 다섯 번 갱신했는데, V4까지는 rejection sampling만 쓰고 V5에서 그 checkpoint 위에 PPO를 더했다.[^llama2] 04a §3-4에서 본 Llama 3의 recipe도 rejection sampling으로 SFT 데이터를 만든다.
 
 ### 3-6. 결과
 
