@@ -4,7 +4,7 @@ week: 3
 order: 0
 ---
 
-Self-attention은 토큰 사이의 관계를 계산하지만, 그 자체로는 토큰의 순서를 알지 못한다. 그렇다면 위치 정보를 어디에, 어떤 형태로 넣어야 할까? 그리고 그렇게 넣은 위치 정보는 학습 때보다 긴 입력에서도 통할까? 이 노트는 입력에 위치 벡터를 더하는 **절대 위치 인코딩**에서 출발해, attention score에 상대 거리를 반영하는 **상대 위치 인코딩**, query와 key를 회전시키는 **RoPE**(rotary position embedding), 그리고 RoPE를 학습 길이 밖으로 늘리는 **long context 확장**(position interpolation → YaRN(Yet another RoPE extensioN method) → LongRoPE)으로 이어진다.[^survey]
+Self-attention은 토큰 사이의 관계를 계산하지만, 그 자체로는 토큰의 순서를 알지 못한다. 그렇다면 위치 정보를 어디에, 어떤 형태로 넣어야 할까? 그리고 그렇게 넣은 위치 정보는 학습 때보다 긴 입력에서도 통할까? 이 노트는 입력에 위치 벡터를 더하는 **절대 위치 인코딩**(absolute positional encoding)에서 출발해, attention score에 상대 거리를 반영하는 **상대 위치 인코딩**(relative positional encoding), query와 key를 회전시키는 **RoPE**(rotary position embedding), 그리고 RoPE를 학습 길이 밖으로 늘리는 **long context 확장**(position interpolation → YaRN(Yet another RoPE extensioN method) → LongRoPE)으로 이어진다.[^survey]
 
 이번 주 노트는 LLM 블록의 부품을 하나씩 바꿔 보는 구성이고, 이 부품들이 실제 모델에서 어떻게 조합되는지는 Sebastian Raschka의 [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/)에서 볼 수 있다.[^gallery] 모델마다 블록 구성도와 config·기술 보고서 링크를 모아 두었고, 두 모델의 구조를 나란히 비교하는 기능도 있다.
 
@@ -47,7 +47,7 @@ $$
 
 왜 같은 $\omega$의 사인과 코사인을 나란히 둘까? 같은 $\omega$로 계산한 두 값 $(\sin p\omega,\ \cos p\omega)$는 반지름 1인 원 위의 한 점이고, 위치가 하나 늘 때마다 이 점이 $\omega$만큼 돈다. 즉, 코사인을 함께 두면 점의 자리가 정해지므로 한 주기 안에서는 각도를 (=위치를) 하나로 읽어 낼 수 있다.
 
-세 벡터를 나란히 보면 차원마다 값이 변하는 속도가 다르다. 앞쪽 차원 0과 1은 위치가 하나 바뀔 때마다 값이 크게 달라져 바로 옆 위치끼리도 쉽게 구분되지만, 약 6.3토큰마다 같은 값으로 돌아온다. 뒤쪽 차원 126과 127은 세 위치에서 거의 변하지 않는 대신 약 5만 4천 토큰에 걸쳐 한 주기를 돌아, 멀리 떨어진 위치를 구분한다. 정리하면 sinusoidal encoding은 빠르게 변하는 차원과 느리게 변하는 차원을 한 벡터에 섞어, 가까운 위치와 먼 위치를 함께 구분한다.
+세 벡터를 나란히 보면 차원마다 값이 변하는 속도가 다르다. 앞쪽 차원 0과 1은 위치가 하나 바뀔 때마다 값이 크게 달라져 바로 옆 위치끼리도 쉽게 구분되지만, 연속 위치로 보면 약 6.3토큰마다 한 주기를 돈다. 실제 위치는 정수이므로 6칸이나 7칸 뒤의 값이 정확히 같아지지는 않는다. 뒤쪽 차원 126과 127은 세 위치에서 거의 변하지 않는 대신 약 5만 4천 토큰에 걸쳐 한 주기를 돌아, 멀리 떨어진 위치를 구분한다. 정리하면 sinusoidal encoding은 빠르게 변하는 차원과 느리게 변하는 차원을 한 벡터에 섞어, 가까운 위치와 먼 위치를 함께 구분한다.
 
 ### 2-2. Learned position embedding
 
@@ -200,7 +200,7 @@ $$
 
 $b$는 RoPE base다. RoFormer와 초기 모델은 $b=10{,}000$을 썼고, Llama 3는 $b=500{,}000$으로 올렸다.[^llama3] Llama 3 8B는 head 차원이 128이므로 64개 쌍이 각자의 속도로 회전한다.
 
-적용 위치도 절대 위치 인코딩과 다르다. RoPE는 입력 embedding이 아니라 **각 층의 attention 안에서 query와 key에** 적용하며, value에는 적용하지 않는다. 절대 위치로 회전을 계산하지만 그 효과는 내적 안에서만 상대 위치로 나타난다. 회전을 적용한 뒤의 key는 이후 토큰이 생성되어도 바뀌지 않으므로(RoPE 배율 같은 설정이 생성 도중에 바뀌지 않는다면), KV cache에 그대로 저장할 수 있다.
+적용 위치도 절대 위치 인코딩과 다르다. RoPE는 입력 embedding이 아니라 **각 층의 attention 안에서 query와 key에** 적용하며, value에는 적용하지 않는다. 절대 위치로 회전을 계산하지만 그 효과는 내적 안에서만 상대 위치로 나타난다. 회전을 적용한 뒤의 key는 이후 토큰이 생성되어도 바뀌지 않으므로(RoPE 배율 같은 설정이 생성 도중에 바뀌지 않는다면), KV(key-value) cache에 그대로 저장할 수 있다.
 
 쌍별 기여를 모두 더하면 RoPE의 attention score는 거리 $m-n$에 대한 $d/2$개 사인파의 가중합이 되고, 각 사인파의 진폭과 위상은 토큰 내용이 정한다. 이 표현은 뒤에서 외삽 실패를 설명할 때 다시 쓴다.
 
@@ -250,6 +250,8 @@ RoPE도 학습 길이를 넘어서면 오래 버티지 못한다. Press 등의 �
 - **유효 길이**: 모델이 실제로 정보를 활용하는 길이. Needle-in-a-haystack이나 RULER 같은 과제로 측정하며, 설정 길이보다 짧을 수 있다.
 
 <Figure src="https://arxiv.org/html/2503.19786v1/assets/lc_all_sizes3.png" alt="Gemma 3 4B, 12B, 27B의 문맥 길이별 평균 perplexity. 가로축은 16K부터 512K까지 로그 간격이다. 점선은 32K로 학습한 모델, 실선은 긴 문맥으로 확장한 모델이다. 12B 점선은 32K를 조금 넘자 perplexity가 급격히 치솟고, 4B와 27B 점선은 64K–128K 부근에서 평탄해진 뒤 천천히 오른다. 실선은 128K를 넘어서도 perplexity가 내려가다가, 4B와 12B는 256K 부근을 지나며 다시 오르고 12B는 급격히 치솟는다. 27B 실선은 400K 부근까지 내려간 뒤 약간 오른다." caption="Gemma 3의 사전학습 모델. 32K로 학습한 모델(점선) 중 12B는 32K를 조금 넘자 급격히 나빠지고, 4B와 27B는 그 뒤로도 한동안 개선된 뒤 64K–128K 부근에서 평탄해지거나 다시 오른다. RoPE를 rescale해 128K로 확장한 모델(실선)은 128K를 넘어서도 한동안 개선되지만, 4B와 12B는 256K 부근을 지나며 다시 나빠진다. 언어 모델링 perplexity 기준으로도 학습 길이, 설정 길이(128K), 성능이 유지되는 길이가 서로 다르다. 유효 길이는 과제별로 따로 측정해야 하며, 보고서는 RULER·MRCR 결과를 표 15에서 따로 보고한다." source="Gemma Team (2025), Gemma 3 Technical Report, Figure 7 · arXiv · CC BY 4.0 · 수정 없음" />
+
+[그림 출처](https://arxiv.org/html/2503.19786v1) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 ### 5-2. RoPE의 외삽 실패
 
@@ -326,9 +328,11 @@ $$
 f'(x, m) = f\!\left(x, \frac{m}{s}\right),\qquad s=\frac{L'}{L}
 $$
 
-<Figure src="https://arxiv.org/html/2306.15595v2/sin.png" alt="RoPE의 한 성분을 위치에 따라 그린 그림. 위쪽은 학습 범위 0부터 2048까지 파란 점으로 표시되고, 2048부터 4096까지는 학습에서 보지 못한 범위로 붉게 칠해진 채 빨간 점이 이어진다. 아래쪽은 position interpolation으로 위치 0부터 4096을 절반으로 줄여, 모든 점이 학습 범위 0부터 2048 안의 곡선 위에 촘촘히 놓인다. 원래 정수 위치는 파란 점, 새로 생긴 정수 사이 위치는 초록 점이다." caption="외삽과 보간. 위: 2,048로 학습한 모델에 4,096 길이를 넣으면 위치 2,048 이후는 학습 범위 밖이다(빨간 점). 아래: PI는 위치를 절반으로 줄여 모든 점을 학습 범위 안에 놓는다(초록 점은 원래 없던 정수 사이 위치). 한 성분만 보면 빨간 점의 값도 [−1, 1] 안에 있다는 점에 주목하자. 낯선 것은 여러 성분의 조합이다." source="Chen et al. (2023), Extending Context Window of Large Language Models via Positional Interpolation, Figure 1 · arXiv · CC BY 4.0 · 수정 없음" />
+<Figure src="https://arxiv.org/html/2306.15595v2/sin.png" alt="RoPE의 한 성분을 위치에 따라 그린 그림. 위쪽은 학습 범위 0부터 2048까지 파란 점으로 표시되고, 2048부터 4096까지는 학습에서 보지 못한 범위로 붉게 칠해진 채 빨간 점이 이어진다. 아래쪽은 position interpolation으로 위치 0부터 4096을 절반으로 줄여, 모든 점이 학습 범위 0부터 2048 안의 곡선 위에 촘촘히 놓인다. 원래 정수 위치는 파란 점, 새로 생긴 정수 사이 위치는 초록 점이다." caption="외삽과 보간. 위: 2,048로 학습한 모델에 4,096 길이를 넣으면 위치 2,048 이후는 학습 범위 밖이다(빨간 점). 아래: PI는 위치를 절반으로 줄여 모든 점을 학습 범위 안에 놓는다(초록 점은 원래 없던 정수 사이 위치). 한 성분만 보면 빨간 점의 값도 [−1, 1] 안에 있다는 점에 주목하자. 낯선 것은 여러 성분의 조합이다." source="Chen et al. (2023), Extending Context Window of Large Language Models via Position Interpolation, Figure 1 · arXiv · CC BY 4.0 · 수정 없음" />
 
-2,048로 학습한 모델을 4,096으로 늘리면($s=2$) 위치 3,000은 1,500으로, 4,095는 2,047.5로 바뀐다. 모든 위치와 거리가 학습 범위 안에 들어오고, 정수 사이의 위치는 RoPE가 실수 위치에서도 정의되므로 문제없이 계산된다.
+[그림 출처](https://arxiv.org/html/2306.15595v2) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
+
+2,048로 학습한 모델을 4,096으로 늘리면($s=2$) 위치 3,000은 1,500으로, 4,095는 2,047.5로 바뀐다. 위치와 거리는 원래 길이에 해당하는 연속 구간 $[0,2048)$로 압축되고, 정수 사이의 위치도 RoPE 식으로 계산된다. 다만 학습에서 실제로 본 마지막 정수 위치는 2,047이므로, 2,047.5처럼 그 끝점을 조금 넘는 값도 있다. PI는 학습 때 본 정수 위치만 재사용하는 방법이 아니라 위치 축의 척도를 줄이는 방법이다.
 
 Chen 등은 보간한 위치의 score가 양쪽 정수 위치의 score를 선형 보간한 값에서 벗어날 수 있는 크기의 상한을 구하고, 이것이 외삽에서 score가 커질 수 있는 상한보다 약 600배 작다고 분석했다. 두 상한의 비교이지, 실제 모델의 오차나 perplexity가 600배 좋아진다는 뜻은 아니다. 게다가 이 상한의 증명에는 부등호 방향의 오류가 있다(아래 접힌 부분). 그래서 600배는 저자들의 보고로만 소개하고, 보간이 안정적이라는 결론은 뒤의 실험 결과로 뒷받침한다.
 
@@ -363,7 +367,7 @@ $$
 \operatorname{softmax}\!\left(\frac{q_m^\top k_n}{t\sqrt{d}}\right),\qquad \sqrt{1/t}=0.1\ln s+1
 $$
 
-온도식은 미세조정하지 않은 LLaMA 7B–65B에서 $s$별로 perplexity가 가장 낮은 $t$를 찾아 적합한 경험식이다. $s=16$이면 $\sqrt{1/t}\approx1.277$이고, query와 key에 각각 이 값을 곱하면 logit은 $1/t\approx1.63$배가 되어 분포가 날카로워진다. 1.277을 RoPE의 sin·cos 계수에 미리 곱해 두면 query와 key가 회전과 함께 배율을 받으므로 attention 코드를 고칠 필요가 없다(RoPE가 head 차원 전체에 걸릴 때 성립하는 방법이다). RoPE가 head 차원의 일부에만 걸리는 모델에서는 이 방법을 그대로 쓸 수 없다. DeepSeek-V3가 그런 예로, 보고서는 문맥을 128K로 늘릴 때 MLA의 decoupled RoPE key에 YaRN을 적용했다고 쓴다.[^deepseek3] 공식 추론 구현을 보면 조정된 주파수는 RoPE를 받는 query·key 성분에만 걸리고, temperature 배율은 RoPE를 받지 않는 성분까지 포함한 attention score 전체에 곱해진다.[^deepseek3-code]
+온도식은 미세조정하지 않은 LLaMA 7B–65B에서 $s$별로 perplexity가 가장 낮은 $t$를 찾아 적합한 경험식이다. $s=16$이면 $\sqrt{1/t}\approx1.277$이고, query와 key에 각각 이 값을 곱하면 logit은 $1/t\approx1.63$배가 되어 분포가 날카로워진다. 1.277을 RoPE의 sin·cos 계수에 미리 곱해 두면 query와 key가 회전과 함께 배율을 받으므로 attention 코드를 고칠 필요가 없다(RoPE가 head 차원 전체에 걸릴 때 성립하는 방법이다). RoPE가 head 차원의 일부에만 걸리는 모델에서는 이 방법을 그대로 쓸 수 없다. DeepSeek-V3가 그런 예로, 보고서는 문맥을 128K로 늘릴 때 MLA(multi-head latent attention)의 decoupled RoPE key에 YaRN을 적용했다고 쓴다.[^deepseek3] 공식 추론 구현을 보면 조정된 주파수는 RoPE를 받는 query·key 성분에만 걸리고, temperature 배율은 RoPE를 받지 않는 성분까지 포함한 attention score 전체에 곱해진다.[^deepseek3-code]
 
 YaRN은 Llama 2 7B·13B를 64K용 배율로 400 step, 이어서 128K용 배율로 200 step 미세조정해 128K 문맥으로 늘렸다. 논문은 이를 원래 사전학습 데이터의 약 0.1% 미만이라고 표현한다. 두 단계 모두 64K 길이의 시퀀스로 학습했으므로, step 수·batch·시퀀스 길이로 다시 계산하면 600 × 64 × 64K ≈ 2.5B 토큰이고, Llama 2의 사전학습 2T 토큰에 대해 약 0.13%다. 자릿수는 맞지만 엄밀히 0.1% 미만은 아니다. 방법 간 비교는 LLaMA 7B를 32K로 늘리는 같은 400 step 예산에서 했고, YaRN이 PI보다 낮은 perplexity를 보였다.
 
@@ -412,7 +416,7 @@ Ding 등의 LongRoPE는 대역 규칙을 사람이 정하는 대신 **쌍별 배
 
 앞에서 본 것처럼 causal decoder는 명시적 위치 신호 없이도 위치를 추론할 수 있다. 그렇다면 일부 층, 혹은 모든 층에서 위치 신호를 빼면 어떨까? 동기는 **학습 길이 밖의 위치에서 낯선 위치 신호를 아예 만들지 않는 것**이다.
 
-Kazemnejad 등은 추론·수학 합성 과제의 길이 일반화에서 NoPE decoder가 APE(absolute position embedding)·ALiBi·RoPE보다 낫고, T5 bias와는 비슷하거나 조금 나은 결과를 냈다고 보고했다. 코드 데이터(StarCoder)로 1.3B 모델을 1,024 길이로 학습한 추가 실험(부록 F)에서는 RoPE의 perplexity가 학습 길이 밖에서 폭발한 반면, NoPE와 ALiBi는 약 1,800토큰(학습 길이의 약 1.8배)까지 일반화했다고 요약한다.[^nope] 다만 같은 부록의 표 3은 저자 요약보다 보수적으로 읽힌다. 두 모델 모두 문맥 1,600부터 perplexity가 뚜렷이 오르고, ALiBi는 일부 길이 구간에서 1,200–1,400부터 조금씩 오른다. 예컨대 문서 길이 2,500–2,750 구간에서 문맥을 1,400에서 1,800토큰으로 늘리면 NoPE는 2.37에서 25.7로, ALiBi는 2.58에서 12.4로 오른다.
+Kazemnejad 등은 추론·수학 합성 과제의 길이 일반화에서 NoPE(no positional encoding) decoder가 APE(absolute position embedding)·ALiBi·RoPE보다 낫고, T5 bias와는 비슷하거나 조금 나은 결과를 냈다고 보고했다. 코드 데이터(StarCoder)로 1.3B 모델을 1,024 길이로 학습한 추가 실험(부록 F)에서는 RoPE의 perplexity가 학습 길이 밖에서 폭발한 반면, NoPE와 ALiBi는 약 1,800토큰(학습 길이의 약 1.8배)까지 일반화했다고 요약한다.[^nope] 다만 같은 부록의 표 3은 저자 요약보다 보수적으로 읽힌다. 두 모델 모두 문맥 1,600부터 perplexity가 뚜렷이 오르고, ALiBi는 일부 길이 구간에서 1,200–1,400부터 조금씩 오른다. 예컨대 문서 길이 2,500–2,750 구간에서 문맥을 1,400에서 1,800토큰으로 늘리면 NoPE는 2.37에서 25.7로, ALiBi는 2.58에서 12.4로 오른다.
 
 Meta는 Llama 4에서 위치 인코딩이 없는 attention 층을 RoPE 층 사이에 끼워 넣고, 긴 문맥에서 추론 시점에 attention temperature를 조정하는 구조를 iRoPE(interleaved RoPE)라 불렀다.[^llama4-blog] 공식 구현에서는 `nope_layer_interval`마다 한 층이 NoPE 층이 된다.[^llama4-code] RoPE 층은 일정 길이(chunk) 단위의 지역 attention을, NoPE 층은 전체 문맥 attention을 맡는다. Hugging Face 구현의 기본값은 네 층마다 NoPE 한 층, chunk 8,192다.[^llama4-hf] 온도 조정은 NoPE 층의 query에만 곱한다.
 
@@ -428,7 +432,7 @@ Partial RoPE는 head 차원 중 일부 쌍에만 회전을 적용하고, 나머�
 
 ### 6-3. 층별 RoPE base
 
-Gemma 3는 1,024토큰 sliding window를 쓰는 지역 attention 층 다섯 개와 전체 attention 층 하나를 번갈아 쌓는다. 전체 attention 층의 RoPE base는 1,000,000으로 올리고, 지역 층은 10,000을 유지했다.[^gemma3] 지역 층은 1,024토큰보다 먼 거리를 볼 일이 없으므로 기존 base로도 충분하고, 먼 거리를 구분해야 하는 층에만 느린 회전을 준 설계로 읽을 수 있다. 다만 보고서는 설정값을 밝힐 뿐 층별 base의 ablation은 제시하지 않는다. 32K로 사전학습한 뒤 전체 attention 층에 PI와 비슷한 방식(배율 8)을 적용해 128K로 늘렸고, 앞의 Gemma 3 perplexity 그림이 그 결과다.
+Gemma 3의 4B·12B·27B 모델은 1,024토큰 sliding window를 쓰는 지역 attention 층 다섯 개와 전체 attention 층 하나를 번갈아 쌓는다. 전체 attention 층의 RoPE base는 1,000,000으로 올리고, 지역 층은 10,000을 유지했다.[^gemma3] 지역 층은 1,024토큰보다 먼 거리를 볼 일이 없으므로 기존 base로도 충분하고, 먼 거리를 구분해야 하는 층에만 느린 회전을 준 설계로 읽을 수 있다. 다만 보고서는 설정값을 밝힐 뿐 층별 base의 ablation은 제시하지 않는다. 32K로 사전학습한 뒤 전체 attention 층에 PI와 비슷한 방식(배율 8)을 적용해 128K로 늘렸고, 앞의 Gemma 3 perplexity 그림이 그 결과다. 1B 모델은 지원 문맥이 32K이므로 이 128K 확장 설명에 포함하지 않는다.
 
 [^survey]: Zhao, L., Feng, X., Feng, X., Zhong, W., Xu, D., Yang, Q., Liu, H., Qin, B., & Liu, T. (2024). *Length Extrapolation of Transformers: A Survey from the Perspective of Positional Encoding*. Findings of EMNLP 2024. [arXiv:2312.17044](https://arxiv.org/abs/2312.17044).
 [^gallery]: Raschka, S. (2026). *LLM Architecture Gallery*. [sebastianraschka.com](https://sebastianraschka.com/llm-architecture-gallery/).
@@ -442,7 +446,7 @@ Gemma 3는 1,024토큰 sliding window를 쓰는 지역 attention 층 다섯 개�
 [^abf]: Xiong, W., et al. (2024). *Effective Long-Context Scaling of Foundation Models*. NAACL 2024. [arXiv:2309.16039](https://arxiv.org/abs/2309.16039).
 [^qwen3-card]: Qwen Team. (2025). *Qwen3-8B model card*. [Hugging Face](https://huggingface.co/Qwen/Qwen3-8B).
 [^gemma3]: Gemma Team. (2025). *Gemma 3 Technical Report*. [arXiv:2503.19786](https://arxiv.org/abs/2503.19786).
-[^pi]: Chen, S., Wong, S., Chen, L., & Tian, Y. (2023). *Extending Context Window of Large Language Models via Positional Interpolation*. [arXiv:2306.15595](https://arxiv.org/abs/2306.15595).
+[^pi]: Chen, S., Wong, S., Chen, L., & Tian, Y. (2023). *Extending Context Window of Large Language Models via Position Interpolation*. [arXiv:2306.15595](https://arxiv.org/abs/2306.15595).
 [^yarn]: Peng, B., Quesnelle, J., Fan, H., & Shippole, E. (2024). *YaRN: Efficient Context Window Extension of Large Language Models*. ICLR 2024. [arXiv:2309.00071](https://arxiv.org/abs/2309.00071).
 [^ntkparts]: bloc97. (2023). *Add NTK-Aware interpolation "by parts" correction*. [GitHub jquesnelle/scaled-rope PR #1](https://github.com/jquesnelle/scaled-rope/pull/1).
 [^yarn-code]: Quesnelle, J. (2023). *yarn: scaled_rope/LlamaYaRNScaledRotaryEmbedding.py*. [GitHub jquesnelle/yarn](https://github.com/jquesnelle/yarn/blob/master/scaled_rope/LlamaYaRNScaledRotaryEmbedding.py).
