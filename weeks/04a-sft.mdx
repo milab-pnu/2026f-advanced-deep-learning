@@ -160,7 +160,7 @@ Google은 이어서 과제 수를 1,836개로 늘리고 CoT(chain of thought) �
 
 GPT-3로 이렇게 만든 약 52K개의 지시와 82K개의 입력·출력 예시로 GPT-3 자신을 fine-tuning하자, Super-NaturalInstructions 평가에서 정답 텍스트와의 ROUGE-L이 6.8에서 39.9로 33.1점 올랐다(원논문 Table 3). 전문가가 새로 쓴 지시 252개에 대한 사람 평가에서는, 사소한 오류가 있는 응답까지 유효로 세는 기준으로 사람 데이터로 학습한 InstructGPT-001과 5%p 차이였다(원논문 Figure 6).[^self-instruct] Stanford의 Alpaca는 이 방법을 단순화한 파이프라인을 text-davinci-003으로 실행해 52K 시연을 500달러 미만으로 만들고 LLaMA 7B를 fine-tuning했다.[^alpaca]
 
-모델이 만든 데이터에는 반대 방향의 문제가 있다. 지시문이 서로 비슷해지고 응답의 오류가 그대로 학습된다. 학생 모델이 teacher의 표면적 문체만 배우는 것 아니냐는 우려도 있는데, 이 문제는 5주차 Distillation 노트에서 다시 다룬다.
+모델이 만든 데이터에도 문제가 있다. 지시문이 서로 비슷해지고, 데이터를 만든 모델의 오류가 그대로 학습된다. Alpaca처럼 더 강한 모델(teacher)의 응답으로 다른 모델(학생)을 학습시키면 학생이 teacher의 표면적 문체만 배우는 것 아니냐는 우려도 있는데, 이 문제는 5주차 Distillation 노트에서 다시 다룬다.
 
 ### 2-4. LIMA의 소량 고품질 데이터
 
@@ -196,7 +196,7 @@ GPT-3로 이렇게 만든 약 52K개의 지시와 82K개의 입력·출력 예�
 
 추론 모델의 recipe는 SFT 데이터에 긴 풀이 과정을 담는다. 이 SFT는 RL 전에 모델이 긴 사고 과정을 쓰는 행동을 익히게 하는 cold start 역할을 맡는다. Qwen3의 대형 모델은 검증 가능한 수학·코드 문제를 골라 QwQ-32B가 생성한 사고 과정 응답을 걸러 첫 단계 SFT 데이터로 썼다.[^qwen3] Olmo 3 Think 7B의 SFT 데이터는 일부 프롬프트를 다른 응답과 함께 반복한 것까지 약 227만 개로 Tülu 3의 두 배가 넘는데, 대부분이 수학·코드 문제에 대한 긴 사고 과정 응답이다(원논문 Table 17).[^olmo3] 사고 과정 응답은 수천 토큰에 이르기도 해서, 앞의 계산처럼 예시 수에 비해 손실에 들어가는 토큰이 훨씬 많다.
 
-흥미로운 결과는 사고 과정을 쓰지 않는 Instruct 모델에서도 나온다. 맨 위 그림에서 Olmo 3 Instruct의 SFT가 Think SFT checkpoint에서 출발하는 이유다. Instruct 7B의 중간 checkpoint를 비교하면, 사고 과정 SFT를 먼저 거친 뒤 Instruct SFT를 한 쪽이 거치지 않은 쪽보다 평균 3.3점, MATH에서 5.6점 높았다(원논문 Table 29).[^olmo3] 최종 모델이 사고 과정을 출력하지 않아도, 그것을 한 번 학습한 가중치가 더 좋은 출발점이 되었다는 관찰이다.
+흥미로운 결과는 사고 과정을 쓰지 않는 Instruct 모델에서도 나온다. Instruct 7B의 중간 checkpoint를 비교하면, 사고 과정 SFT를 먼저 거친 뒤 Instruct SFT를 한 쪽이 거치지 않은 쪽보다 평균 3.3점, MATH에서 5.6점 높았다(원논문 Table 29).[^olmo3] 맨 위 그림에서 Olmo 3 Instruct의 SFT가 Think SFT checkpoint에서 출발하는 것도 이 때문이다. 최종 모델이 사고 과정을 출력하지 않아도, 그것을 한 번 학습한 가중치가 더 좋은 출발점이 되었다는 관찰이다.
 
 ## 3. SFT의 효과
 
@@ -254,9 +254,11 @@ SFT가 바꾸는 것이 지식인지 형식인지는 점수 표만으로 가리�
 
 <Figure src="https://arxiv.org/html/2405.05904v3/figs/training_accuracy_plot.png" alt="Fine-tuning epoch에 따른 정확도. 위쪽 그래프에서 Train Known 곡선은 1 epoch 무렵 60% 가까이 오르고 10 epoch에 약 82%에 이르는 반면, Train Unknown 곡선은 10 epoch에 약 15%에 머물다 50 epoch 가까이 되어서야 100%에 닿는다. 10 epoch에 'Overfitting starts'라는 수직 점선이 있다. 아래쪽 그래프의 Dev 정확도는 약 10 epoch에서 43% 부근으로 가장 높고, 이후 Unknown 예시를 학습해 갈수록 40% 아래로 내려간다." caption="Known 50%, Unknown 50%로 SFT할 때의 학습 곡선. Unknown 예시(주황)는 Known 예시(청록)보다 훨씬 늦게 학습되고, development 정확도(아래)는 Known 대부분과 Unknown 일부만 맞힌 시점에 가장 높았다가 Unknown을 맞혀 갈수록 떨어진다." source="Gekhman et al. (2024), Does Fine-Tuning LLMs on New Knowledge Encourage Hallucinations?, Figure 1. arXiv:2405.05904v3 · CC BY 4.0 · 수정 없음" />
 
-결과는 두 가지다. 첫째, Unknown 학습 예시는 Known보다 훨씬 늦게 맞혀졌다. 둘째, 학습을 오래 해 Unknown 예시까지 맞히게 될수록 시험 질문의 정확도는 떨어졌다. 시험 질문 중 base model이 원래 모르던 것은 어차피 맞히지 못하므로, 정확도의 차이는 주로 원래 알던 질문에서 생긴다. 저자들은 이를 이미 가진 지식에 비추어 틀린 답을 내는 hallucination의 증가로 해석하고(원논문 부록 B), 시험 정확도가 맞힌 Known 예시의 비율에 따라 오르고 맞힌 Unknown 예시의 비율에 따라 거의 선형으로 내려간다는 회귀 결과를 보고한다(원논문 §4.4, Table 1). Unknown의 비율이 높을수록 하락이 컸고, development 성능으로 학습을 일찍 멈추면 Unknown 예시를 대부분 맞히기 전이라 피해가 작았다(원논문 Figure 3). 한편 확실히 아는 질문(HighlyKnown)만으로 학습한 모델도 가장 좋은 결과를 내지 못했다. 저자들은 어떤 예시를 고르느냐가 이미 가진 지식을 얼마나 잘 쓰는지를 바꾸므로, SFT가 문체나 형식만 배우는 과정은 아니라고 덧붙인다.[^gekhman]
+모델이 Unknown 학습 예시를 맞히기까지는 Known보다 훨씬 오래 걸렸고, 학습을 오래 해 Unknown 예시까지 맞히게 될수록 시험 질문의 정확도는 떨어졌다. 시험 질문 중 base model이 원래 모르던 것은 fine-tuning 뒤에도 거의 맞히지 못하므로(정확도 0.4–3.2%, 원논문 Table 2), 모델 사이의 정확도 차이는 주로 원래 알던 질문에서 생긴다. 저자들은 이를 이미 가진 지식에 비추어 틀린 답을 내는 hallucination의 증가로 해석하고(원논문 부록 B), 시험 정확도가 맞힌 Known 예시의 비율에 따라 오르고 맞힌 Unknown 예시의 비율에 따라 거의 선형으로 내려간다는 회귀 결과를 보고한다(원논문 §4.4, Table 1).
 
-두 결과는 LIMA의 가설과 같은 방향을 가리키지만, 가설을 그대로 확인해 주지는 않는다. 첫째 분석은 같은 앞부분을 두 모델에 주었을 때 다음 토큰의 순위가 얼마나 같은지를 잰 것이지, 두 모델이 가진 지식의 양을 잰 것이 아니다. 둘째 실험에서도 새 사실은 결국 학습되었고, 그 대가로 원래 알던 질문의 정확도가 떨어졌다. 그래서 "SFT는 형식만 바꾼다"보다는 "SFT는 이미 있는 지식을 언제 어떻게 꺼낼지를 크게 바꾸고, 새 사실은 느리게, 다른 질문의 정확도를 대가로 배운다"가 근거에 맞는 요약이다. 앞의 Flan-PaLM 8B 결과도 이 해석과 어긋나지 않는다. 다만 앞의 분석은 7B 규모의 대화 모델, 뒤의 실험은 한 모델의 closed-book 질의응답이라는 특정 조건의 결과다. SFT 데이터를 만들 때도 시사점이 있다. Base model이 모르는 사실을 담은 응답을 많이 넣고 오래 학습하면, 원래 알던 질문에서도 틀린 답이 늘 수 있다.
+학습 데이터의 구성과 학습 길이도 결과를 바꾸었다. Unknown의 비율이 높을수록 하락이 컸고, development 성능으로 학습을 일찍 멈추면 Unknown 예시를 대부분 맞히기 전이라 피해가 작았다(원논문 Figure 3). Unknown 예시를 걸러 내도 성능을 잃지 않고 과적합 위험이 크게 줄었다. 그렇다고 확실히 아는 질문(HighlyKnown)만으로 학습한 모델이 가장 좋지도 않았다. 저자들은 어떤 예시를 고르느냐가 이미 가진 지식을 얼마나 잘 쓰는지를 바꾸므로, SFT가 문체나 형식만 배우는 과정은 아니라고 덧붙인다.[^gekhman]
+
+두 결과는 LIMA의 가설과 같은 방향을 가리키지만, 가설을 그대로 확인해 주지는 않는다. 토큰 순위 분석은 같은 앞부분을 두 모델에 주었을 때 다음 토큰의 순위가 얼마나 같은지를 잰 것이지, 두 모델이 가진 지식의 양을 잰 것이 아니다. 통제 실험에서도 새 사실은 결국 학습되었고, 그 과정에서 원래 알던 질문의 정확도가 떨어졌다. 그래서 "SFT는 형식만 바꾼다"보다는 "SFT는 이미 있는 지식을 언제 어떻게 꺼낼지를 크게 바꾸고, 새 사실은 느리게, 다른 질문의 정확도를 대가로 배운다"가 근거에 맞는 요약이다. 앞의 Flan-PaLM 8B 결과도 이 해석과 어긋나지 않는다. 다만 앞의 분석은 7B 규모의 대화 모델, 뒤의 실험은 한 모델의 closed-book 질의응답이라는 특정 조건의 결과다. SFT 데이터를 만들 때 응답에 담긴 사실을 base model이 이미 아는지 따져 볼 이유가 여기 있다.
 
 ### 3-4. SFT 이후의 단계
 
@@ -271,7 +273,7 @@ SFT의 효과를 보는 다른 방법은 뒤 단계와 비교하는 것이다. �
 
 네 recipe 모두 SFT 단계를 포함하며, 선호 학습이나 RL과 결합하거나 라운드로 반복한다. Llama 3에서 reward model 학습이 SFT보다 먼저 오는 것은 SFT 데이터의 일부를 그 reward model로 고르기 때문이다.
 
-모델별 post-training의 성과를 비교할 때는 출발점인 base model의 상태도 고려해야 한다. 네 모델의 base model은 서로 같은 상태가 아니다. Qwen3는 pre-training의 두 번째 단계에서 STEM(science, technology, engineering, mathematics)·코드·추론 데이터의 비중을 높인 약 5T 토큰을 추가로 학습했고,[^qwen3] Olmo 3는 mid-training 100B 토큰에 수학·코드 문제뿐 아니라 지시 데이터와 사고 과정(thinking trace)까지 넣어 post-training의 기반을 미리 닦는다.[^olmo3] 그래서 post-training 뒤의 점수 차이를 SFT나 RL만의 효과로 읽으면 안 된다. Mid-training은 2주차 Pre-training 노트에서 본 데이터 혼합 변경과 같은 원리다.
+모델별 post-training의 성과를 비교할 때는 출발점인 base model의 상태도 고려해야 한다. 네 모델의 base model은 서로 같은 상태가 아니다. Qwen3는 pre-training의 두 번째 단계에서 STEM(science, technology, engineering, mathematics)·코드·추론 데이터의 비중을 높인 약 5T 토큰을 추가로 학습했고,[^qwen3] Olmo 3는 mid-training 100B 토큰에 수학·코드 문제뿐 아니라 지시 데이터와 사고 과정(thinking trace)까지 넣어 post-training의 기반을 미리 닦는다.[^olmo3] 그래서 post-training 뒤의 점수 차이를 SFT나 RL만의 효과로 읽기는 어렵다. Mid-training은 2주차 Pre-training 노트에서 본 데이터 혼합 변경과 같은 원리다.
 
 같은 base model에서 출발해 단계별 checkpoint를 공개한 경우에는 비교가 더 깨끗하다. Tülu 3 8B의 세 checkpoint와 같은 base model에서 출발한 Llama 3.1 8B Instruct를 나란히 놓으면 다음과 같다(원논문 Table 6). 평균은 원논문 전체 평가 항목의 평균이고, 아래 행은 그중 일부다.[^tulu3]
 
@@ -301,7 +303,7 @@ SFT 뒤에 무엇을 거치는가도 최종 성능을 바꾼다. Olmo 3의 7B ab
 
 SFT는 teacher forcing으로 학습한다. 응답의 각 토큰을 예측할 때 조건이 되는 앞부분은 모델이 생성한 것이 아니라 데이터에 적힌 시연이다. 추론 때는 모델이 자기 출력을 조건으로 다음 토큰을 만든다. 수학 풀이 시연이 모두 올바른 계산만 담고 있다면, "3 × 7 = 24"라고 잘못 쓴 뒤에 어떻게 이어 가거나 바로잡을지는 이 SFT 데이터가 감독하지 않는다. 추론 중 그런 문맥에 놓이면 오류가 그대로 누적될 수 있다. 이처럼 학습 때는 시연의 문맥만 보고 생성 때는 자기 문맥을 보는 차이를 **노출 편향**(exposure bias)이라 부른다.
 
-이 차이를 뒤 노트에서는 **어느 정책이 학습 데이터를 생성했는가**로 정리한다. 학습되는 모델과 다른 정책(사람, 다른 모델, 자신의 과거 checkpoint)이 만든 데이터로 학습하면 off-policy, 지금 학습 중인 정책이 방금 생성한 데이터로 학습하면 on-policy라고 부르며, 시연 데이터의 SFT는 off-policy의 대표적인 경우다. 강화학습에서 온 이 용어를 SFT에 쓰는 것은 학습 데이터의 분포가 지금 정책의 표집 분포와 같은가를 묻는 넓은 용법이고, 엄밀히는 같은 가중치라도 decoding 설정이 다르면 분포가 달라진다. 정의의 세부는 04c에서, 이 문제를 직접 겨냥한 방법은 5주차 Distillation 노트에서 본다.
+뒤 노트에서는 응답을 고르는 모델을 정책(policy)이라 부르고, 이 차이를 **어느 정책이 학습 데이터를 생성했는가**로 정리한다. 학습되는 모델과 다른 정책(사람, 다른 모델, 자신의 과거 checkpoint)이 만든 데이터로 학습하면 off-policy, 지금 학습 중인 정책이 방금 생성한 데이터로 학습하면 on-policy라고 부르며, 시연 데이터의 SFT는 off-policy의 대표적인 경우다. 강화학습에서 온 이 용어를 SFT에 쓰는 것은 학습 데이터의 분포가 지금 정책의 표집 분포와 같은가를 묻는 넓은 용법이고, 엄밀히는 같은 가중치라도 decoding 설정이 다르면 분포가 달라진다. 정의의 세부는 04c에서, 이 문제를 직접 겨냥한 방법은 5주차 Distillation 노트에서 본다.
 
 [^survey]: Han, X., et al. (2025). *Towards Alignment-Centric Paradigm: A Survey of Instruction Tuning in Large Language Models*. [arXiv:2508.17184v2](https://arxiv.org/abs/2508.17184v2).
 [^olmo3]: Team Olmo. (2025). *Olmo 3*. [arXiv:2512.13961v2](https://arxiv.org/abs/2512.13961v2).
