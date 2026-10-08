@@ -22,9 +22,11 @@ Dense 구조에서는 이 FFN 가중치를 **모든 토큰이 전부** 사용한
 
 ### 2-1. MoE layer의 구조
 
-MoE layer는 dense FFN 하나를 **expert** $E$개와 **router**(gating network) 하나로 바꾼다. Expert는 보통 dense FFN과 같은 모양의 작은 FFN이다. Router는 토큰 벡터 $x\in\mathbb{R}^d$를 expert별 점수로 바꾸는 선형층 $W_g\in\mathbb{R}^{d\times E}$다. 각 토큰은 점수가 높은 $k$개 expert만 통과하고, layer의 출력은 선택된 expert 출력의 가중합이다. Attention·normalization·residual 경로는 dense 모델과 같다.
+MoE layer는 dense FFN 하나를 **expert** $E$개와 **router**(gating network) 하나로 바꾼다. Expert는 보통 dense FFN과 같은 구조의 FFN이다. 폭은 설계에 따라 달라서 Mixtral은 기준 dense FFN과 같은 폭을 쓰고, §4의 fine-grained expert는 더 좁은 폭을 쓴다. Router는 토큰 벡터 $x\in\mathbb{R}^d$를 expert별 점수로 바꾸는 선형층 $W_g\in\mathbb{R}^{d\times E}$다. 각 토큰은 점수가 높은 $k$개 expert만 통과하고, layer의 출력은 선택된 expert 출력의 가중합이다. Attention·normalization·residual 경로는 dense 모델과 같다.
 
 <Figure src="https://arxiv.org/html/2401.04088v1/images/smoe.png" alt="Mixtral 논문의 MoE layer 그림. 입력이 router로 들어가고, router는 겹쳐 그려진 여러 expert 중 두 개로 입력을 보낸다. Router가 낸 gating weights가 점선으로 출력 쪽에 전달되고, 두 expert의 출력이 가중합되어 layer의 출력이 된다." caption="Mixtral 8x7B의 MoE layer. 각 입력 벡터는 router에 의해 8개 expert 중 2개로 보내지고, 출력은 두 expert 출력의 가중합이다." source="Jiang et al. · Mixtral of Experts (arXiv:2401.04088) Figure 1 · CC BY 4.0 · 수정 없음" />
+
+[그림 출처](https://arxiv.org/html/2401.04088v1) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 Mixtral 8x7B는 이 구조를 이해하기 좋은 사례다. 층 수 32, hidden dimension 4096, FFN 중간 차원 14336, query head 32개와 key-value head 8개로, attention과 FFN 한 개의 모양이 Llama 3 8B와 같다. 차이는 각 층의 FFN 자리에 같은 모양의 SwiGLU FFN 8개를 두고, 토큰마다 2개를 고른다는 점이다.[^mixtral]
 
@@ -121,7 +123,7 @@ expert를 100개 넘게 두고 그중 몇 개만 고르는 최근 모델에서�
 
 ## 3. Load balancing과 capacity
 
-Top-k routing을 그대로 학습시키면 두 문제가 생긴다. 하나는 **학습 중 expert 사용이 한쪽으로 쏠리는 문제**이고, 다른 하나는 **한 batch 안에서 특정 expert에 배정된 토큰이 그 expert의 처리 용량을 넘는 문제**다. 앞의 문제는 routing을 학습시키는 방식(§3-1–3-3)으로, 뒤의 문제는 expert마다 처리할 토큰 수의 상한을 정하는 방식(§3-4)으로 다룬다. 두 문제는 연결되어 있다. 쏠림이 심하면 용량 초과도 잦아진다. 다만 balancing이 잘 되어도 batch마다 우연한 불균형은 남으므로 용량 규칙이 따로 필요하다.
+Top-k routing을 그대로 학습시키면 두 문제가 생긴다. 하나는 **학습 중 expert 사용이 한쪽으로 쏠리는 문제**이고, 다른 하나는 **한 batch 안에서 특정 expert에 배정된 토큰이 그 expert의 처리 용량을 넘는 문제**다. 앞의 문제는 routing을 학습시키는 방식(§3-1–3-3)으로, 뒤의 문제는 expert별 capacity와 overflow 처리, 또는 가변 길이 계산(§3-4)으로 다룬다. 두 문제는 연결되어 있다. 쏠림이 심하면 용량 초과도 잦아진다. 다만 balancing이 잘 되어도 batch마다 우연한 불균형은 남으므로 이를 처리할 계산·메모리 설계가 따로 필요하다.
 
 ### 3-1. Expert 쏠림
 
@@ -224,7 +226,9 @@ $$
 L_z=\frac{1}{B}\sum_{i=1}^{B}\Bigl(\log\sum_{j=1}^{N}e^{x_j^{(i)}}\Bigr)^2
 $$
 
-$B$는 토큰 수, $N$은 expert 수, $x^{(i)}$는 $i$번째 토큰의 router logit이다. 이 항은 logit 전체가 커지는 것을 벌한다. 근거는 수치 정밀도다. bfloat16은 가수 비트가 7개뿐이라 큰 수일수록 반올림 오차가 크고, softmax의 지수 함수는 작은 입력 오차를 큰 출력 차이로 키운다. ST-MoE의 예에서 logit 10개가 128이고 하나가 128.5일 때, bfloat16 반올림으로 128.5가 128이 되면 가장 큰 확률이 약 0.142에서 0.091로 바뀐다. Router 확률은 expert 출력에 곱해지는 gate이므로 이런 오차가 바로 출력에 반영된다.
+$B$는 토큰 수, $N$은 expert 수, $x^{(i)}$는 $i$번째 토큰의 router logit이다. 이 항은 log-sum-exp가 0에서 멀어지는 것을 벌한다. 모든 logit을 같은 값만큼 옮겨도 softmax 확률은 같지만 log-sum-exp는 그만큼 바뀌므로, 확률 분포만으로는 정해지지 않는 logit의 공통 크기를 조절한다. 각 logit의 절댓값을 하나씩 제한하는 식은 아니다.
+
+이렇게 크기를 조절하는 근거는 수치 정밀도다. bfloat16은 가수 비트가 7개뿐이라 큰 수일수록 반올림 오차가 크고, softmax의 지수 함수는 작은 입력 오차를 큰 출력 차이로 키운다. ST-MoE의 예에서 logit 10개가 128이고 하나가 128.5일 때, bfloat16 반올림으로 128.5가 128이 되면 가장 큰 확률이 약 0.142에서 0.091로 바뀐다. Router 확률은 expert 출력에 곱해지는 gate이므로 이런 오차가 바로 출력에 반영된다.
 
 ST-MoE는 전체 loss를 $L_{CE}+c_BL_B+c_zL_z$로 두고 $c_z=0.001$을 썼다. 실험에서 update clipping은 학습을 안정시켰지만 품질을 크게 떨어뜨렸고, router z-loss는 품질 저하 없이 안정화했다(Table 4).[^stmoe]
 
@@ -305,6 +309,8 @@ $f$는 attention과 MLP이고, $\tilde{X}^l$은 선택된 토큰들의 집합이
 
 <Figure src="https://arxiv.org/html/2404.02258v1/mod.png" alt="Mixture-of-Depths 그림. 왼쪽에는 두 토큰의 블록 처리가 있다. Router 가중치 0.41인 토큰은 self-attention과 MLP를 건너뛰고 residual로 통과하며, 0.65인 토큰은 블록을 계산하고 출력에 router 가중치를 곱한다. 오른쪽 위에는 층과 시퀀스 위치에 따른 routing 결정이 보라색(블록 사용)과 주황색(우회)으로 섞여 있고, 아래에는 모든 칸이 보라색인 vanilla Transformer와 뒤쪽 층을 연속으로 건너뛰는 early-exit의 패턴이 비교되어 있다." caption="Mixture-of-Depths. 왼쪽은 router 가중치에 따라 블록을 계산하거나 건너뛰는 두 토큰, 오른쪽은 학습된 모델의 routing 결정과 vanilla Transformer·early-exit 방식의 비교다." source="Raposo et al. · Mixture-of-Depths (arXiv:2404.02258) Figure 1 · CC BY 4.0 · 수정 없음" />
 
+[그림 출처](https://arxiv.org/html/2404.02258v1) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
+
 그림 오른쪽의 비교가 중요하다. Early exit은 토큰이 어느 층에서 멈추면 그 뒤 층을 모두 건너뛴다. MoD에서는 앞쪽 블록을 건너뛴 토큰도 뒤쪽 블록에서 다시 계산될 수 있다.[^mod]
 
 MoD는 토큰별 선택 대신 블록이 상위 $k$개 토큰을 고르는 **expert-choice routing**을 쓴다. 블록마다 처리할 토큰 수가 정확히 $k$로 고정되므로 §3의 load balancing 문제와 보조 손실이 필요 없다. 이 $k$가 MoD의 capacity다. 논문에서 가장 좋았던 설정은 한 블록 걸러 하나씩 routing 블록을 두고 capacity를 12.5%로 둔 것이다. 시퀀스 길이 2048에서 256개 토큰만 블록을 계산하고 1792개는 건너뛴다. 이 블록에서 MLP 계산은 1/8로, attention의 query–key 곱은 $(256/2048)^2=1/64$로 줄어든다(이 노트에서 계산한 값이다).
@@ -327,7 +333,9 @@ Bae 등(2025)의 **Mixture-of-Recursions**(MoR)은 두 갈래를 합친다. 가�
 
 **KV cache.** 반복 단계마다 계산하는 토큰이 달라지므로 KV(key-value) cache도 설계해야 한다. **Recursion-wise caching**은 단계마다 그 단계에 남은 토큰의 key·value만 새로 만들어 저장하고, 남은 토큰끼리만 attention한다. **Recursive KV sharing**은 첫 반복에서 모든 토큰의 key·value를 계산해 두고 이후 단계가 재사용하므로, 남은 토큰의 query가 전체 문맥을 본다.[^mor] 두 방식의 세부 trade-off는 원논문 §2.2.2와 실험을 참고한다.
 
-<Figure src="https://arxiv.org/html/2507.10524v3/overview_main3.png" alt="Mixture-of-Recursions의 토큰별 반복 예시. 위쪽 격자는 층과 시퀀스 위치에 따라 계산된 칸(진한 색)과 건너뛴 칸(연한 색)을 보여 주며, 맨 아래 층은 모든 위치가 계산되고 위로 갈수록 일부 위치만 계산된다. 아래쪽에는 영어 문장의 subword 토큰이 세 가지 색으로 칠해져 있어 토큰마다 반복 횟수가 1, 2, 3회로 다름을 나타낸다." caption="MoR에서 학습된 토큰별 반복 횟수의 예. 진한 칸은 반복 블록을 계산한 위치이고, 아래 문장의 색은 각 subword 토큰의 반복 횟수(1·2·3회)를 나타낸다." source="Bae et al. · Mixture-of-Recursions (arXiv:2507.10524v3) Figure 1 오른쪽 패널 · CC BY 4.0 · 수정 없음" />
+<Figure src="https://arxiv.org/html/2507.10524v3/overview_main3.png" alt="Mixture-of-Recursions의 구조와 routing 예시. 왼쪽은 공유 층 묶음과 반복 여부를 정하는 router, 가운데는 이를 반복 적용하는 전체 모델, 오른쪽은 토큰별 계산 경로와 1·2·3회 반복 횟수다." caption="MoR의 전체 구조와 토큰별 반복. 왼쪽의 공유 블록을 가운데 모델에서 반복하며, 오른쪽의 진한 칸은 실제 계산한 위치다. 문장의 색은 해당 위치에서 다음 토큰을 예측하기 위해 쓴 반복 횟수(1·2·3회)를 나타낸다." source="Bae et al. · Mixture-of-Recursions (arXiv:2507.10524v3) Figure 1 · CC BY 4.0 · 수정 없음" />
+
+[그림 출처](https://arxiv.org/html/2507.10524v3) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 <Details summary="심화: 반복 횟수 분포에 따른 계산량 비율">
 
