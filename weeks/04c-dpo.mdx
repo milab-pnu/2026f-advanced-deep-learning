@@ -281,7 +281,7 @@ $\beta$도 두 섹션에서 같은 계수다. §1-1에서는 log 확률비 차�
 
 **On-policy와 off-policy는 학습 데이터의 생성 분포를 구분한다.** 데이터를 생성한 정책을 behavior policy, 개선하려는 정책을 target policy라고 한다. 두 분포가 같으면 on-policy, 다르면 off-policy다.[^sutton] KL penalty의 기준인 reference policy는 별도 역할이며, 데이터를 만든 정책과 같을 수도 있다.
 
-| | PPO 기반 RLHF | 기본 DPO |
+| | PPO | DPO |
 |---|---|---|
 | 응답 수집 | 각 rollout에서 현재 정책으로 생성 | 학습 전에 모은 선호쌍 사용 |
 | 정책 갱신 | 생성한 응답의 보상으로 갱신 | 주어진 두 응답의 log 확률비로 갱신 |
