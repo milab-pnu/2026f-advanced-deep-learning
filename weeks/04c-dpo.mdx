@@ -4,36 +4,50 @@ week: 4
 order: 2
 ---
 
-같은 질문에 대한 두 답변을 놓고 사람이 더 나은 쪽을 골랐다고 하자. **질문, 두 답변, 어느 답변을 더 좋다고 골랐는지**를 함께 기록한 데이터가 선호쌍이다.
+같은 질문에 대한 두 응답을 놓고 사람이 더 나은 쪽을 골랐다고 하자. **질문, 선호하는 응답, 선호하지 않는 응답**을 함께 기록한 것이 선호쌍이다.
 
-DPO(direct preference optimization)는 이 비교 기록으로 언어 모델을 학습한다. SFT(supervised fine-tuning)가 예시 답변 하나를 따라 쓰도록 학습하는 데 비해, DPO는 두 답변 중 더 좋다고 선택된 쪽에 유리하도록 학습한다. 주어진 답변을 모델에 입력해 손실을 계산하고 역전파한다는 학습 방식은 SFT와 같다.[^survey]
-
-Xiao 등의 서베이는 DPO의 유도, 손실을 바꾼 변형, 학습 중 데이터를 새로 모으는 확장을 정리한다. 이 노트에서는 먼저 선호쌍 하나가 어떻게 학습 신호가 되는지 계산하고, 그 손실이 04b의 KL 벌점 보상 최대화와 어떻게 연결되는지 살펴본다. 그 뒤 비용·데이터·과최적화 문제에서 갈라지는 발전을 따라간다.
+DPO(direct preference optimization)는 이 비교 기록으로 언어 모델을 학습한다. SFT(supervised fine-tuning)가 예시 응답 하나를 따라 쓰도록 학습하는 데 비해, DPO는 두 응답 중 선택된 응답이 상대적으로 더 높은 확률을 얻도록 학습한다. 주어진 응답을 모델에 입력해 손실을 계산하고 역전파한다는 학습 방식은 SFT와 같다.
 
 <figure>
 <img src="https://arxiv.org/html/2305.18290v3/figures/diagrams/teaser.png" alt="두 파이프라인의 비교. 왼쪽 RLHF에서는 'write me a poem about the history of jazz' 같은 프롬프트 x에 대한 선호 데이터(y_w가 y_l보다 선호됨)로 maximum likelihood를 써서 reward model을 학습하고, reward model과 LM policy 사이를 'sample completions'와 'label rewards' 화살표가 오가는 reinforcement learning 루프로 정책을 학습한다. 오른쪽 DPO에서는 같은 선호 데이터에서 maximum likelihood 하나로 바로 final LM을 얻는다." loading="lazy" decoding="async" />
-<figcaption>두 학습 방식의 비교. 왼쪽 RLHF(reinforcement learning from human feedback)는 답변에 점수를 주는 reward model을 학습한 뒤, 그 점수를 높이도록 언어 모델을 학습한다. 오른쪽 DPO는 두 답변을 비교한 데이터로 언어 모델을 직접 학습한다.<span class="lecture-figure__source"> 출처: <a href="https://arxiv.org/abs/2305.18290">Rafailov et al. (2023), DPO, Figure 1</a> · <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a> · 수정 없음.</span></figcaption>
+<figcaption>두 학습 방식의 비교. 왼쪽 RLHF는 응답에 점수를 주는 reward model을 학습한 뒤, 그 점수를 높이도록 언어 모델을 학습한다. 오른쪽 DPO는 두 응답을 비교한 데이터로 언어 모델을 직접 학습한다.<span class="lecture-figure__source"> 출처: <a href="https://arxiv.org/abs/2305.18290">Rafailov et al. (2023), DPO, Figure 1</a> · <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a> · 수정 없음.</span></figcaption>
 </figure>
 
-## 1. 두 답변의 비교로 모델 학습
+## 1. 두 응답의 비교로 모델 학습
 
 ### 1-1. 선호 데이터와 학습 손실
 
-질문이나 지시문인 프롬프트를 $x$, 두 답변 중 선택된 답변을 $y_w$, 선택되지 않은 답변을 $y_l$로 쓴다. 이 세 값을 모은 데이터셋이 $\mathcal{D}$다. 선택되지 않았다고 반드시 틀린 답변인 것은 아니며, 그 비교에서 덜 좋다고 평가받았다는 뜻이다.
+질문이나 지시문인 프롬프트를 $x$, 두 응답 중 선택된 응답을 $y_w$, 선택되지 않은 응답을 $y_l$로 쓴다. 이 세 값을 모은 데이터셋이 $\mathcal{D}$다. 선택되지 않았다고 반드시 틀린 응답인 것은 아니며, 그 비교에서 덜 좋다고 평가받았다는 뜻이다.
 
-학습할 언어 모델을 <strong>정책(policy)</strong>이라고 부르고, 그 파라미터를 $\theta$로 쓴다. $\pi_\theta(y\mid x)$는 이 모델이 질문 $x$에 답변 $y$를 생성할 확률이다. 질문과 기록된 답변을 모델에 입력하면 이 확률을 계산할 수 있다. 응답의 log 확률은 프롬프트를 제외한 응답 토큰들의 log 확률을 합한 값이다.
+학습할 언어 모델을 <strong>정책(policy)</strong>이라고 부르고, 그 파라미터를 $\theta$로 쓴다. $\pi_\theta(y\mid x)$는 이 모델이 프롬프트 $x$에 응답 $y$를 생성할 확률이다. 프롬프트와 응답을 모델에 입력하면 이 확률을 계산할 수 있다. **응답의 log 확률은 프롬프트를 제외한 응답 토큰들의 log 확률을 합한 값**이다.
 
-DPO는 학습 시작 시점의 모델을 복사해 파라미터를 고정한 **reference model**도 사용한다. 보통 SFT를 마친 모델이며, 그 응답 확률을 $\pi_{\mathrm{ref}}(y\mid x)$로 쓴다. 같은 답변을 두 모델에 입력해 $\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}$를 계산하면, 그 답변의 확률이 시작 시점보다 얼마나 높아졌거나 낮아졌는지 알 수 있다. 이것이 **log 확률비**다.
+DPO는 학습 시작 시점의 모델을 복사해 파라미터를 고정한 **reference model**을 사용한다. 보통 SFT를 마친 모델이며, 그 응답 확률을 $\pi_{\mathrm{ref}}(y\mid x)$로 쓴다. 같은 응답을 두 모델에 입력해 $\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}$를 계산하면, 그 응답의 확률이 시작 시점보다 얼마나 높아졌거나 낮아졌는지 알 수 있다. 이것이 **log 확률비**다.
 
-<strong>DPO는 선택된 답변의 log 확률비가 선택되지 않은 답변보다 높아지도록 학습한다.</strong> 두 값의 차이에 양수 계수 $\beta$를 곱하고 sigmoid $\sigma$로 0과 1 사이의 값으로 바꾸면, 모형이 예측하는 선호 확률이 된다. $\beta$는 log 확률비 차이를 선호 확률에 반영하는 척도를 조절한다. 이 선호 확률에 음의 로그를 취하고 데이터셋의 비교 기록들에 대해 평균한 것이 다음 손실이다.[^dpo]
+두 응답을 비교하는 **Bradley–Terry 모형**을 다시 떠올려 보자. 각 응답에 점수 $r(x,y)$를 부여하면, $y_l$보다 $y_w$가 선호될 확률을 $p(y_w\succ y_l\mid x)=\sigma(r(x,y_w)-r(x,y_l))$로 정의한다. 두 점수가 같으면 이 확률은 0.5이고, $y_w$의 점수가 상대적으로 높을수록 1에 가까워진다.
+
+DPO는 이 모형의 점수 자리에 앞에서 설명한 log 확률비를 사용한다. 여기에 양수 계수 $\beta$를 곱한 값을 **implicit reward**로 정의한다.[^dpo]
 
 $$
-\mathcal{L}_{\mathrm{DPO}}(\theta)=-\mathbb{E}_{(x,y_w,y_l)\sim\mathcal{D}}\Big[\log\sigma\Big(\beta\log\frac{\pi_\theta(y_w\mid x)}{\pi_{\mathrm{ref}}(y_w\mid x)}-\beta\log\frac{\pi_\theta(y_l\mid x)}{\pi_{\mathrm{ref}}(y_l\mid x)}\Big)\Big]
+\hat r_\theta(x,y)=\beta\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}
 $$
 
-$\hat r_\theta(x,y)=\beta\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}$를 **implicit reward**라고 부른다. 별도 신경망이 낸 점수가 아니라 정책과 reference model의 log 확률비로 계산한 값이다. DPO는 이 값의 차이로 관측된 선호를 설명하도록 정책을 학습한다.
+응답의 확률이 reference model에 비해 얼마나 달라졌는지가 보상 점수의 역할을 한다. 여기서 hat은 보상 $r$과 구분해, 정책에서 계산한 점수임을 나타낸다.
 
-두 답변은 데이터에 이미 들어 있으므로, 이 손실을 계산할 때 모델이 답변을 새로 생성할 필요는 없다. 각 답변의 확률을 계산하고, 손실을 역전파해 학습할 모델의 파라미터만 갱신한다.
+이제 Bradley–Terry 모형의 두 점수에 implicit reward를 넣으면, DPO의 선호 확률은 $p_\theta(y_w\succ y_l\mid x)=\sigma(\hat r_\theta(x,y_w)-\hat r_\theta(x,y_l))$가 된다. $\beta$는 같은 log 확률비 차이에서 이 확률이 0.5로부터 얼마나 멀어지는지를 조절한다.
+
+데이터에 기록된 선택은 $y_w$이므로, 모형이 이 선택에 부여하는 확률을 높이도록 학습한다. 선호쌍마다 그 확률에 음의 로그를 취하고 데이터셋 전체에서 평균한 것이 **DPO 손실**이다.[^dpo]
+
+$$
+\begin{aligned}
+\mathcal{L}_{\mathrm{DPO}}(\theta)
+&=\mathbb{E}_{(x,y_w,y_l)\sim\mathcal{D}}\Big[-\log\sigma\big(\hat r_\theta(x,y_w)-\hat r_\theta(x,y_l)\big)\Big] \\
+&=\mathbb{E}_{(x,y_w,y_l)\sim\mathcal{D}}\Big[-\log\sigma\Big(\beta\log\frac{\pi_\theta(y_w\mid x)}{\pi_{\mathrm{ref}}(y_w\mid x)}-\beta\log\frac{\pi_\theta(y_l\mid x)}{\pi_{\mathrm{ref}}(y_l\mid x)}\Big)\Big]
+\end{aligned}
+$$
+
+직관적으로는 선호 응답 $y_w$의 log 확률에서 비선호 응답 $y_l$의 log 확률을 뺀 차이를 reference model에서의 차이보다 더 크게 만드는 방향으로 학습한다. 이 차이가 커질수록 모형이 예측하는 선호 확률이 높아지고 손실이 줄어든다.
+
+**Implicit reward는 정책의 확률로 계산하므로, 손실을 역전파하면 정책 파라미터 $\theta$가 직접 갱신된다**. Reference model은 고정해 둔다. 두 응답은 데이터에 이미 들어 있으므로 학습 중에 응답을 새로 생성하거나 별도 reward model로 점수를 매길 필요는 없다.
 
 계산 순서를 풀어 쓰면 다음과 같다.
 
@@ -46,51 +60,67 @@ $\hat r_\theta(x,y)=\beta\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid
 정책과 reference가 같은 출발점에서는 모든 응답의 log 확률비가 0이므로, DPO가 예측하는 선호 확률은 모든 쌍에서 0.5이고 손실은 $\log2\approx0.693$이다. 원래 모델이 두 응답에 같은 생성 확률을 준다는 뜻은 아니다. **출발점에 비해 어느 응답을 더 밀어 주었는가**를 재는 척도이므로, 아직 갱신하지 않았다면 두 쪽 모두 변화가 0인 것이다.
 </Callout>
 
-<Details summary="Reference model의 확률을 미리 계산하는 구현">
-
-데이터와 reference model이 고정되어 있으므로, reference model의 log 확률은 학습 전에 한 번 계산해 저장할 수 있다. 그러면 학습 중에는 갱신할 모델만 메모리에 올리면 된다. Tülu 3는 70B 모델의 DPO에서 이 방법을 사용했다.[^tulu3]
-
-</Details>
-
-<Callout type="example">
-**선호쌍 하나의 DPO 손실.** 파이썬 정렬 질문에서 정확한 응답 A가 $y_w$, 친절하지만 틀린 응답 B가 $y_l$이고, $\beta=0.1$이라고 하자. 응답 전체의 log 확률은 다음과 같다(교육용 가상 값).
-
-| 응답 | $\log\pi_\theta(y\mid x)$ | $\log\pi_{\mathrm{ref}}(y\mid x)$ | log 확률비 | Implicit reward $\hat r_\theta$ |
-|---|---|---|---|---|
-| $y_w$ (A, 선호) | $-20.0$ | $-21.0$ | $+1.0$ | $0.1$ |
-| $y_l$ (B, 탈락) | $-24.0$ | $-23.0$ | $-1.0$ | $-0.1$ |
-
-Implicit reward의 차이는 $0.2$이고 $\sigma(0.2)=0.550$이므로 손실은 $-\log0.550=0.598$이다. 정책 자체는 이미 $y_w$에 $e^{4}\approx55$배 높은 확률을 주지만, implicit reward가 예측한 선호 확률은 0.55에 그친다. Reference model도 $y_w$를 훨씬 높게 보므로 **reference 대비** 얼마나 더 벌렸는가만 세기 때문이다.
-
-Reward model을 학습할 때는 별도 모델이 낸 두 점수의 차이가 선호 확률을 정한다. DPO에서는 정책 자신의 log 확률비가 그 점수의 자리를 차지한다.
-</Callout>
-
 ### 1-2. Gradient가 하는 일
 
-Reference model은 고정하고 정책 파라미터 $\theta$만 미분한다. 손실의 gradient는 다음과 같다.[^dpo]
+DPO 손실을 정책 파라미터 $\theta$에 대해 미분해 보자. Reference model과 데이터셋은 고정하고 정책만 미분한다. 먼저 선호쌍 하나의 implicit reward 차이를 $z_\theta$로 쓰자.
 
 $$
-\nabla_\theta\mathcal{L}_{\mathrm{DPO}}=-\beta\,\mathbb{E}\Big[\underbrace{\sigma\big(\hat r_\theta(x,y_l)-\hat r_\theta(x,y_w)\big)}_{\text{가중치}}\Big(\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\Big)\Big]
+z_\theta=\hat r_\theta(x,y_w)-\hat r_\theta(x,y_l)
+=\beta\Big(\log\frac{\pi_\theta(y_w\mid x)}{\pi_{\mathrm{ref}}(y_w\mid x)}-\log\frac{\pi_\theta(y_l\mid x)}{\pi_{\mathrm{ref}}(y_l\mid x)}\Big)
 $$
 
-손실을 줄이는 갱신 방향은 위 gradient의 반대다. 괄호 안의 두 항이 주는 **직접적인 학습 신호**는 선호된 응답의 log 확률을 올리고 탈락한 응답의 log 확률을 내리는 방향이다. SFT처럼 $y_w$의 확률만 올리는 것과 달리 $y_l$의 확률을 **내리는 항**이 있다는 점이 DPO를 구분 짓는다. 앞의 가중치는 implicit reward가 순서를 **틀리게** 매기고 있을수록 커진다. 이미 $y_w$에 훨씬 높은 implicit reward를 주는 쌍은 거의 갱신되지 않고, 순서가 뒤집힌 쌍에 더 큰 가중치를 준다. 앞의 계산 예시에서는 가중치가 $\sigma(-0.2)=0.450$이고, $\beta$를 곱한 계수는 0.045다.
+그러면 손실은 다음처럼 쓸 수 있다. $\ell_\theta$는 선호쌍 하나에서 계산한 손실이다.
 
-<Details summary="가중치를 뺀 unlikelihood 학습의 결과">
+$$
+\mathcal{L}_{\mathrm{DPO}}(\theta)=\mathbb{E}_{(x,y_w,y_l)\sim\mathcal{D}}[\ell_\theta],\qquad
+\ell_\theta=-\log\sigma(z_\theta)
+$$
 
-가중치 없이 $y_w$의 log 확률을 올리고 $y_l$의 log 확률을 내리기만 하는 unlikelihood 학습은 요약 과제에서 "when when when …"처럼 한 단어를 되풀이하는 응답을 냈고, 저자들은 이를 제약 없이 likelihood를 끌어내린 결과로 보았다(Appendix C.3·Table 3).[^dpo]
+먼저 $-\log\sigma(z)$를 $z$에 대해 미분한다. Sigmoid의 미분 $\sigma'(z)=\sigma(z)(1-\sigma(z))$을 이용하면 다음과 같다.
 
-</Details>
+$$
+\begin{aligned}
+\frac{d}{dz}\big[-\log\sigma(z)\big]
+&=-\frac{1}{\sigma(z)}\sigma'(z) \\
+&=-\frac{\sigma(z)(1-\sigma(z))}{\sigma(z)} \\
+&=-(1-\sigma(z)) \\
+&=-\sigma(-z)
+\end{aligned}
+$$
 
-다만 직접적인 신호와 실제 결과는 다르다. 두 응답은 파라미터를 공유하므로, 한 스텝 뒤 $\log\pi_\theta(y_w\mid x)$가 실제로 오르는지는 두 gradient 벡터의 관계에 달려 있다. 두 응답이 비슷해 gradient가 많이 겹치면 $y_l$을 내리는 항이 $y_w$의 확률도 끌어내릴 수 있다. 이를 **likelihood displacement**라고 부른다.
+마지막 줄에서는 $1-\sigma(z)=\sigma(-z)$를 썼다. 이제 chain rule을 적용하면 선호쌍 하나의 gradient는 다음과 같다.
 
-### 1-3. 실험 결과
+$$
+\nabla_\theta\ell_\theta=-\sigma(-z_\theta)\,\nabla_\theta z_\theta
+$$
 
-Rafailov 등은 DPO를 PPO(proximal policy optimization) 기반 RLHF와 비교했다.[^dpo] IMDb 영화 리뷰의 감성을 조절하는 생성 과제에서는 감성 분류기의 점수를 보상으로 사용했다. 시작 모델에서 얼마나 멀어졌는지를 KL(Kullback–Leibler) divergence로 재고 보상과 비교했는데, DPO가 같은 KL에서 PPO보다 높은 보상에 도달했다(Figure 2 왼쪽). Reddit 게시글을 요약하는 TL;DR 과제에서는 GPT-4를 판정자로 사람이 쓴 참조 요약과 비교한 승률이 sampling temperature 0에서 DPO 61%, PPO 57%였다(Figure 2 오른쪽). 도움됨과 안전성을 평가하는 Anthropic HH(helpful and harmless) 대화 과제에서는 계산 비용이 작은 방법 중 DPO만 데이터셋의 선호 응답보다 나은 응답을 냈다. 이 결과는 각 실험의 데이터와 평가 조건에서 나온 비교이며, DPO가 항상 PPO보다 낫다는 뜻은 아니다.
+남은 것은 $z_\theta$의 미분이다. Log 확률비를 두 log 확률의 차이로 풀면 다음과 같다.
 
-<figure class="lecture-figure">
-<img src="https://arxiv.org/html/2305.18290v3/frontier.svg" alt="IMDb sentiment generation 실험의 산점도. 가로축은 정책과 reference model 사이의 KL divergence(0에서 20), 세로축은 감성 분류기가 준 보상(0.4에서 1.0)이다. 점 하나가 학습된 정책 하나다. DPO(노란 점)는 KL 3.5 근처에서 보상 약 0.97에 도달하고 KL 5 이후로는 대체로 1.0에 가깝다. PPO(분홍)와 정답 보상을 쓴 PPO-GT(주황)는 KL이 커질수록 보상이 0.5에서 0.9 정도로 올라가며 DPO보다 아래에 있고, TRL 구현의 PPO-GT(보라), Unlikelihood(청록), 선호 응답만 SFT한 Preferred-FT(연두)는 그보다 더 흩어져 있거나 낮다." loading="lazy" decoding="async" />
-<figcaption>IMDb 감성 제어에서 KL 거리별 보상. 같은 KL 거리에서 위에 있는 점일수록 KL 제약 보상 최대화 문제를 더 잘 푼 것이다. DPO(노란 점)는 거의 모든 KL 구간에서 PPO 계열보다 높은 보상에 있다. 감성 분류기를 정답 보상으로 둘 수 있는 통제된 과제의 결과다.<span class="lecture-figure__source"> 출처: <a href="https://arxiv.org/abs/2305.18290">Rafailov et al. (2023), DPO, Figure 2 왼쪽 패널</a> · <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a> · 수정 없음.</span></figcaption>
-</figure>
+$$
+z_\theta=\beta\Big(\log\pi_\theta(y_w\mid x)-\log\pi_{\mathrm{ref}}(y_w\mid x)-\log\pi_\theta(y_l\mid x)+\log\pi_{\mathrm{ref}}(y_l\mid x)\Big)
+$$
+
+Reference model은 $\theta$에 의존하지 않으므로 reference의 두 항은 미분하면 0이다. $\beta$도 고정한 계수이므로 정책의 두 log 확률을 미분한 항만 남는다.
+
+$$
+\nabla_\theta z_\theta=\beta\Big(\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\Big)
+$$
+
+이를 chain rule의 식에 넣고 $-z_\theta=\hat r_\theta(x,y_l)-\hat r_\theta(x,y_w)$를 대입하면, 선호쌍 하나의 gradient를 얻는다.
+
+$$
+\nabla_\theta\ell_\theta=-\beta\,\sigma\big(\hat r_\theta(x,y_l)-\hat r_\theta(x,y_w)\big)\Big(\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\Big)
+$$
+
+데이터셋은 고정된 선호쌍들의 집합이므로, 전체 손실의 gradient는 각 쌍의 gradient를 평균한 값이다. 따라서 최종 식은 다음과 같다(Appendix A.4).[^dpo]
+
+$$
+\nabla_\theta\mathcal{L}_{\mathrm{DPO}}=-\beta\,\mathbb{E}_{(x,y_w,y_l)\sim\mathcal{D}}\Big[\underbrace{\sigma\big(\hat r_\theta(x,y_l)-\hat r_\theta(x,y_w)\big)}_{\text{가중치}}\Big(\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\Big)\Big]
+$$
+
+손실을 줄이는 갱신 방향은 위 gradient의 반대다. 괄호 안의 두 항이 주는 **직접적인 학습 신호**는 선호 응답의 log 확률을 올리고 비선호 응답의 log 확률을 내리는 방향이다. SFT처럼 $y_w$의 확률만 올리는 것과 달리 $y_l$의 확률을 **내리는 항**이 있다는 점이 DPO를 구분 짓는다. 가중치는 비선호 응답의 implicit reward가 선호 응답보다 높을수록 커진다.
+
+다만 직접적인 신호와 실제 결과는 다르다. 두 응답은 파라미터를 공유하므로, 한 번 갱신한 뒤 $\log\pi_\theta(y_w\mid x)$가 실제로 오르는지는 두 gradient 벡터의 관계에 달려 있다. 두 응답이 비슷해 gradient가 많이 겹치면 $y_l$을 내리는 항이 $y_w$의 확률도 끌어내릴 수 있다. 이를 **likelihood displacement**라고 부른다.
 
 ## 2. RLHF 목적함수와의 연결
 
