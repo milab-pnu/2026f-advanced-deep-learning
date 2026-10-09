@@ -4,12 +4,12 @@ week: 4
 order: 1
 ---
 
-SFT(supervised fine-tuning)의 한계를 두 가지로 정리했다. 응답 데이터는 선택된 응답만 주고 응답 사이의 선호 순서를 직접 감독하지 않으며, 학습 때의 문맥과 생성할 때의 문맥이 다를 수 있다. 이 노트는 첫 번째 한계를 푸는 계보를 따라간다. 사람에게 **응답 중 어느 쪽이 나은지 고르게** 하고, 그 선택을 배우도록 reward model을 학습한다. 그 다음 reward model을 사용하여, 모델이 생성한 응답에 점수를 매겨 강화학습(reinforcement learning, RL)으로 학습한다. 이를, <strong>RLHF(reinforcement learning from human feedback)</strong>라 한다.[^survey]
+SFT(supervised fine-tuning)의 한계를 두 가지로 정리했다. 응답 데이터는 선택된 응답만 주고 응답 사이의 선호 순서를 직접 감독하지 않으며, 학습 때의 문맥과 생성할 때의 문맥이 다를 수 있다. 이 노트는 첫 번째 한계를 푸는 계보를 따라간다. 사람에게 **응답 중 어느 쪽이 나은지 고르게** 하고, 그 선택을 배우도록 reward model을 학습한다. 그 다음 reward model을 사용하여, 모델이 생성한 응답에 점수를 매겨 강화학습(reinforcement learning, RL)으로 학습한다. 이를, <strong>RLHF(reinforcement learning from human feedback)</strong>라 한다. 또는, 선호를 학습한다는 측면에서 선호 학습(preference optimization)이라고도 한다.[^survey]
 
 용어의 층위에 대해 먼저 정리한다. **RL은 기대 누적 보상을 최대화하도록 행동을 선택하는 정책을 학습하는 방법**이다. **RLHF에서는 이 보상을 사람의 선호 데이터로 학습한 reward model**에서 얻는다. REINFORCE와 PPO(proximal policy optimization)는 받은 보상으로 모델을 갱신하는 대표적인 **정책 최적화 알고리즘**이다. 따라서 PPO는 RLHF에 쓸 수 있는 한 방법이지, RLHF 자체의 다른 이름은 아니다.
 
 <figure>
-<svg viewBox="0 0 600 300" role="img" aria-label="RLHF의 흐름. SFT에서 선호 비교와 reward model로, 이어 PPO 또는 rejection sampling으로 간다. 사람 판정 비용은 AI 피드백, 보상의 한계는 reward hacking, PPO의 비용은 DPO로 이어진다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 600 210" role="img" aria-label="RLHF의 흐름. SFT에서 선호 비교와 reward model로, 이어 PPO로 정책을 갱신한다. 사람 판정 비용은 AI 피드백, 보상의 한계는 reward hacking, PPO의 비용은 DPO로 이어진다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
 <text x="300" y="20" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">이 노트가 따라가는 RLHF의 계보</text>
 <rect x="8" y="128" width="80" height="54" rx="8" fill="#f8fafc" stroke="#0f172a"/>
 <text x="48" y="151" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">SFT</text>
@@ -20,14 +20,11 @@ SFT(supervised fine-tuning)의 한계를 두 가지로 정리했다. 응답 데�
 <rect x="138" y="38" width="130" height="46" rx="8" fill="#f8fafc" stroke="#0f172a"/>
 <text x="203" y="58" font-size="12" text-anchor="middle" fill="#0f172a" font-weight="600">AI 피드백 (RLAIF)</text>
 <text x="203" y="75" font-size="11" text-anchor="middle" fill="#64748b">판정자를 모델로</text>
-<rect x="292" y="102" width="160" height="172" rx="10" fill="none" stroke="#94a3b8" stroke-dasharray="4 3"/>
+<rect x="292" y="102" width="160" height="94" rx="10" fill="none" stroke="#94a3b8" stroke-dasharray="4 3"/>
 <text x="372" y="118" font-size="10" text-anchor="middle" fill="#64748b">reward model 점수로 정책 개선</text>
 <rect x="306" y="130" width="132" height="54" rx="8" fill="#e2e8f0" stroke="#0f172a" stroke-width="2"/>
 <text x="372" y="153" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">PPO로 정책 갱신</text>
 <text x="372" y="172" font-size="11" text-anchor="middle" fill="#64748b">KL penalty · clipping</text>
-<rect x="306" y="206" width="132" height="54" rx="8" fill="#f8fafc" stroke="#0f172a"/>
-<text x="372" y="229" font-size="12" text-anchor="middle" fill="#0f172a" font-weight="600">Rejection sampling</text>
-<text x="372" y="248" font-size="11" text-anchor="middle" fill="#64748b">최고점 응답으로 SFT</text>
 <rect x="472" y="36" width="120" height="46" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
 <text x="532" y="56" font-size="12" text-anchor="middle" fill="#0f172a" font-weight="600">Reward hacking</text>
 <text x="532" y="73" font-size="11" text-anchor="middle" fill="#64748b">점수의 과최적화</text>
@@ -40,7 +37,6 @@ SFT(supervised fine-tuning)의 한계를 두 가지로 정리했다. 응답 데�
 <path d="M203 126 L203 84" stroke="#0f172a" stroke-width="2" fill="none"/><polygon points="203,84 198,92 208,92" fill="#0f172a"/>
 <text x="209" y="109" font-size="10" fill="#0f172a">사람 주석의 비용</text>
 <path d="M268 157 L306 157" stroke="#94a3b8" fill="none"/><polygon points="306,157 299,153 299,161" fill="#94a3b8"/>
-<path d="M268 172 C287 172 287 233 306 233" stroke="#94a3b8" fill="none"/><polygon points="306,233 299,229 299,237" fill="#94a3b8"/>
 <path d="M452 112 C464 112 460 59 472 59" stroke="#0f172a" stroke-width="2" fill="none"/><polygon points="472,59 464,54 464,64" fill="#0f172a"/>
 <path d="M438 157 L472 157" stroke="#0f172a" stroke-width="2" fill="none"/><polygon points="472,157 464,152 464,162" fill="#0f172a"/>
 </svg>
@@ -106,7 +102,7 @@ $$
 $$
 
 위 식은 비교쌍 한 건마다 손실 하나를 계산해 평균한다. 이 손실은 선택된 응답의 점수 자체보다 **두 응답의 점수 차이** $r_\phi(x_i,y_{w,i})-r_\phi(x_i,y_{l,i})$를 키우도록 학습 신호를 준다. 선택된 응답의 점수를 높이거나 선택되지 않은 응답의 점수를 낮추어 이 차이를 키울 수 있으며, 두 점수의 절대값은 손실을 결정하지 않는다.
-출력층에 점수를 양수로 제한하는 함수가 없으므로, $r_\phi(x,y)$는 음수와 양수를 모두 낼 수 있다.
+출력층에 점수를 양수로 제한하는 함수가 없으므로, $r_\phi(x,y)$는 음수와 양수를 모두 낼 수 있다. 다만 0은 좋은 응답과 나쁜 응답을 나누는 기준이 아니다.
 
 ## 3. Policy optimization
 
@@ -129,7 +125,7 @@ $\theta$는 policy의 파라미터이고, $\phi$는 reward model의 파라미터
 
 ### 3-1. REINFORCE와 advantage
 
-REINFORCE는 생성한 응답의 확률을 보상에 따라 높이거나 낮추는 정책 학습 방법이다(Williams, 1992).[^reinforce] 앞 표의 policy는 토큰 하나의 선택 확률을 정한다. 토큰 $t$를 생성할 때 state는 $s_t=(x,y_{<t})$이고 action은 $a_t=y_t$다. 응답 전체 $y$를 생성할 확률 $\pi_\theta(y\mid x)$는 이 토큰별 확률을 모두 곱한 값이다.
+REINFORCE는 생성한 응답의 확률을 보상에 따라 높이거나 낮추는 정책 학습 방법이다.[^reinforce] 앞 표의 policy는 토큰 하나의 선택 확률을 정한다. 토큰 $t$를 생성할 때 state는 $s_t=(x,y_{<t})$이고 action은 $a_t=y_t$다. 응답 전체 $y$를 생성할 확률 $\pi_\theta(y\mid x)$는 이 토큰별 확률을 모두 곱한 값이다.
 
 목표는 정책이 생성하는 응답의 기대 보상을 최대화하는 것이다. 프롬프트 $x$ 하나를 고정하면, 가능한 응답마다 생성 확률과 보상을 곱해 더한 값이 기대 보상이다.
 
@@ -138,7 +134,7 @@ J(\theta)=\mathbb{E}_{y\sim\pi_\theta}[R(x,y)]
 =\sum_y\pi_\theta(y\mid x)R(x,y)
 $$
 
-여기서 $\sum_y$는 가능한 응답 전체에 대한 합이다. 실제 학습에서는 여러 프롬프트에 대해서도 평균한다. $\nabla_\theta$는 policy의 파라미터에 대한 미분이다. 보상이 $\theta$에 직접 의존하지 않으므로, 위 식에서는 생성 확률만 미분한다.
+여기서 $\sum_y$는 가능한 응답 전체에 대한 합이다. 실제 학습에서는 여러 프롬프트에 대해서도 평균한다. **우선 $R(x,y)=r_\phi(x,y)$로 두고**, 고정된 reward model의 점수를 보상으로 사용한다. $\nabla_\theta$는 policy의 파라미터에 대한 미분이다. 이 보상은 $\theta$에 직접 의존하지 않으므로 생성 확률만 미분한다.
 
 $$
 \nabla_\theta J(\theta)
@@ -165,101 +161,68 @@ $$
 \end{aligned}
 $$
 
-이것이 REINFORCE의 gradient 식이다. 현재 정책에서 응답을 생성하고, 각 응답의 $R(x,y)\nabla_\theta\log\pi_\theta(y\mid x)$를 계산해 평균하면 이 기대값을 추정할 수 있다. 모든 응답을 열거하는 대신, 생성한 응답의 log 확률을 미분하고 보상을 가중치로 사용하는 것이다. 응답의 log 확률은 토큰별 log 확률의 합이다.
+이것이 REINFORCE의 gradient 식이다. 현재 정책에서 응답을 생성하고, 각 응답의 $R(x,y)\nabla_\theta\log\pi_\theta(y\mid x)$를 계산해 평균하면 이 기대값을 추정할 수 있다. 모든 응답을 열거하는 대신, 생성한 응답의 log 확률을 미분하고 **보상을 가중치로 사용하는 것**이다. 응답의 log 확률은 토큰별 log 확률의 합이다.
 
 예를 들어 응답이 세 토큰이면 $\pi_\theta(y\mid x)=\pi_\theta(y_1\mid x)\pi_\theta(y_2\mid x,y_1)\pi_\theta(y_3\mid x,y_1,y_2)$다. 로그를 취하면 곱이 합으로 바뀐다. 응답 전체에 점수 하나를 받더라도, 이 합을 통해 응답을 구성한 각 토큰의 선택 확률에 학습 신호가 전달된다. 다만 점수 하나만으로 어느 토큰이 잘못됐는지 정답처럼 알려 주는 것은 아니다.
 
+기대값을 정확히 계산하려면 가능한 응답 전체의 기여를 합해야 하지만, 언어 모델에서는 응답의 수가 너무 많아 직접 계산하기 어렵다. 기대값이 반드시 무한 개의 응답을 생성해야 한다는 뜻은 아니다. 실제 학습에서는 현재 정책에서 유한한 수의 응답을 생성하고, 그 표본들의 gradient를 평균해 기대 gradient를 추정한다.
 
-<strong>SFT처럼 응답의 log 확률로 학습하되, 자신이 생성한 응답에 받은 보상을 가중치로 붙인다.</strong> 이 손실을 최소화하면 양수 보상은 해당 응답의 확률을 높이고, 음수 보상은 낮추는 신호가 된다.
-보상에서 기준값(baseline)을 뺀 값으로 보상을 재조정 할 수도 있다. 앞 표의 $V(s)$를 이 기준값으로 사용할 수 있다.
+이를 구현하기 위해 생성한 응답 $y$와 받은 보상을 고정하고, 다음 **표본 목적함수**를 최대화한다.
 
-$V(s)$는 현재 정책이 상태 $s$에서 얻을 누적 보상의 기대값으로, 여기서 새로 정의하는 양이 아니다. 실제로는 가능한 모든 응답을 생성해 이 기대값을 계산하기 어려우므로, **value model이 예측한 값** $\hat V(s_t)$를 사용한다. 토큰 $t$부터 응답이 끝날 때까지 실제로 받은 누적 보상(return)을 $G_t$라 하면, $\hat A_t=G_t-\hat V(s_t)$로 advantage를 추정할 수 있다. 앞 표의 $A(s,a)$는 기대값으로 정의한 advantage이고, $\hat A_t$는 생성한 응답과 value 예측으로 계산한 추정값이다. PPO는 이 추정값을 사용해 양수이면 해당 토큰의 확률을 높이고, 음수이면 낮추는 신호를 준다.
+$$
+\begin{aligned}
+J^{\mathrm{sample}}(\theta)
+&=R(x,y)\log\pi_\theta(y\mid x)\\
+&=R(x,y)\Big[\log\pi_\theta(y_1\mid x)
++\log\pi_\theta(y_2\mid x,y_1)
++\cdots
++\log\pi_\theta(y_T\mid x,y_1,\ldots,y_{T-1})\Big]
+\end{aligned}
+$$
+
+$T$는 응답의 토큰 수다. 이 목적함수의 gradient는 $R(x,y)\nabla_\theta\log\pi_\theta(y\mid x)$다. 현재 정책에서 생성한 표본들의 gradient를 평균하면 $\nabla_\theta J(\theta)$를 추정할 수 있으므로, 그 방향으로 정책을 갱신한다. 기대 보상을 높이는 gradient를 계산하기 위한 목적함수다.
+
+SFT는 응답 토큰의 NLL(negative log-likelihood)을 최소화하며, 이는 응답의 log 확률을 최대화하는 것과 같다. 위 식은 그 log 확률에 **보상을 가중치로 붙인 형태**다. 다만 SFT는 데이터에 주어진 응답으로 학습하고, REINFORCE는 **현재 정책이 생성한 응답**으로 학습한다. 최대화할 때 양수 보상은 해당 응답의 확률을 높이고, 음수 보상은 낮추는 신호를 준다.
+
+지금까지는 응답의 보상 $R(x,y)$를 모든 토큰의 학습 가중치로 사용했다. 그런데 보상이 모두 양수에 몰려 있으면, 상대적으로 못한 응답에도 확률을 높이는 신호가 간다. 예를 들어 두 응답의 보상이 3과 1이면 둘 다 양수지만, 현재 정책이 평균적으로 2를 얻는다면 보상 1은 그 기준보다 낮다. 따라서 **보상 자체보다 기준값(baseline)과의 차이**를 학습 가중치로 사용할 수 있다. 행동을 선택하기 전의 state에만 의존하는 baseline을 고정된 값으로 빼면 기대 gradient는 유지되며, 적절한 baseline은 표본에 따른 gradient의 분산을 줄인다.[^gae]
+
+이 기준으로 앞 표의 $V(s_t)$, 즉 현재 문맥에서 정책이 얻을 기대 누적 보상을 사용한다. 이를 직접 계산하기 어려우므로, 문맥을 입력받아 $V(s_t)$를 예측하는 **value model**을 학습한다. 그 예측값이 $\hat V(s_t)$다.
+
+토큰 $t$부터 응답 끝까지 실제로 받은 누적 보상을 $G_t$라 하자. 지금처럼 응답 끝에만 보상 $R(x,y)$를 주면 모든 토큰에서 $G_t=R(x,y)$다. 따라서 각 토큰의 advantage 추정값은 다음과 같다.
+
+$$
+\hat A_t=G_t-\hat V(s_t)=R(x,y)-\hat V(s_t)
+$$
+
+이제 표본 목적함수에서 $R(x,y)$ 대신 $\hat A_t$를 토큰별 가중치로 사용하고, 같은 최대화 방향으로 학습한다.
+
+$$
+J^{\mathrm{sample}}(\theta)
+=\sum_{t=1}^{T}\hat A_t\log\pi_\theta(y_t\mid s_t)
+$$
+
+보상이 양수여도 예상한 기준보다 낮으면 $\hat A_t$는 음수가 되어 해당 토큰의 확률을 낮추는 신호가 된다. 같은 응답의 보상을 받아도 문맥별 $\hat V(s_t)$가 다르므로 토큰별 가중치는 달라진다. 목적함수를 미분할 때는 계산한 $\hat A_t$를 고정된 가중치로 사용한다. 이후 토큰별 KL penalty를 적용하면 $G_t$는 해당 토큰부터 응답 끝까지의 보상을 합해 계산한다.
 
 ### 3-2. KL penalty
 
 보상 점수만 최대화하면, 정책은 reward model이 잘못 높게 평가하는 응답도 늘릴 수 있다. 보상 상승만으로는 실제 품질의 개선과 모델 오류의 이용을 구분할 수 없다.
 
-이를 막기 위해, RLHF에서는 목표를 **기존 응답 분포를 크게 바꾸지 않으면서 보상을 높이는 것**으로 정한다. 기존 응답 분포를 내는 정책으로는 SFT 모델을 사용한다. SFT에서 멀어지는 정도에 벌점(penalty)을 붙이면, 정책은 보상 상승과 변화의 비용을 함께 고려하게 된다.[^stiennon]
+이 위험을 줄이기 위해, 여기서 다루는 PPO 기반 RLHF에서는 목표를 **기존 응답 분포를 크게 바꾸지 않으면서 보상을 높이는 것**으로 정한다. 기존 응답 분포를 내는 정책으로는 SFT 모델을 사용한다. SFT에서 멀어지는 정도에 벌점(penalty)을 붙이면, 정책은 보상 상승과 변화의 비용을 함께 고려하게 된다.[^stiennon]
 
 $$
 R(x,y)=r_\phi(x,y)-\beta\,\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)},\qquad \beta>0
 $$
 
-$r_\phi(x,y)$는 고정된 reward model의 점수이고, $\pi_{\mathrm{ref}}$는 시작할 때의 SFT 모델을 고정한 reference model이다. $\beta$는 penalty의 강도다. 앞 절에서는 reward model 점수를 그대로 보상으로 사용했고, 여기서는 그 점수에 KL penalty를 반영한 값을 $R(x,y)$로 사용한다. 정책은 이 보상의 기대값을 높이도록 학습한다. 둘째 항의 기대값은 KL(Kullback–Leibler) divergence에 $\beta$를 곱한 값이므로 **KL penalty**라 부른다.
+$r_\phi(x,y)$는 고정된 reward model의 점수이고, $\pi_{\mathrm{ref}}$는 시작할 때의 SFT 모델을 고정한 reference model이다. $\beta$는 penalty의 강도다. 앞 절에서는 reward model 점수를 보상으로 사용하고, baseline을 빼 학습 가중치를 만들었다. 여기서는 reward model 점수에 KL penalty를 반영한 값을 $R(x,y)$로 사용한다. 정책은 이 보상의 기대값을 높이도록 학습한다. 둘째 항의 기대값은 KL(Kullback–Leibler) divergence에 $\beta$를 곱한 값이므로 **KL penalty**라 부른다.
 KL penalty는 reward model의 오류를 고치지는 못하며, 그 오류를 좇아 응답 분포가 크게 바뀌는 것을 억제한다.
 
-<Details summary="기대 보상과 KL penalty">
+### 3-3. PPO의 학습 절차
 
-프롬프트 $x$를 고정하고, 현재 정책 $\pi_\theta$에서 응답을 생성한다고 하자. Log 확률비의 기대값을 가능한 응답에 대한 합으로 풀면 다음과 같다.
+그렇다면 이제 정책을 학습하는 과정을 생각해 보자. 정책은 자신이 생성한 응답의 기대 보상을 높이는 방향으로 갱신된다. 정책이 바뀌면 생성하는 응답의 확률 분포도 달라지므로, 바뀐 정책이 어떤 응답을 만들고 어떤 보상을 받는지 확인하려면 응답을 주기적으로 새로 생성해야 한다.
 
-$$
-\begin{aligned}
-\mathbb{E}_{y\sim\pi_\theta}\left[\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}\right]
-&=\sum_y\pi_\theta(y\mid x)\log\frac{\pi_\theta(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}\\
-&=D_{\mathrm{KL}}\big(\pi_\theta(\cdot\mid x)\,\|\,\pi_{\mathrm{ref}}(\cdot\mid x)\big)
-\end{aligned}
-$$
+학습 중 새 응답을 생성해 데이터를 모으는 것을 **online 학습**이라 한다. 미리 모은 응답 데이터만 사용하는 offline 학습과 구분한다. 또한 **현재 정책이 생성한 응답**을 바탕으로 학습하는 것을 **on-policy** 방식이라 한다. Online은 학습 중 새 데이터를 모으는지, on-policy는 데이터를 생성한 정책과 학습하는 정책의 관계를 말한다.
 
-마지막 합이 KL divergence의 정의다. $\pi(\cdot\mid x)$는 특정 응답 하나의 확률이 아니라, 프롬프트 $x$에 대한 응답 전체의 확률 분포를 뜻한다. 현재 정책의 확률로 평균하므로 KL의 방향은 현재 정책에서 reference로 향한다.
-
-따라서 학습에서 최대화하는 기대 보상은 다음과 같다.
-
-$$
-\begin{aligned}
-J(\theta)
-&=\mathbb{E}_{y\sim\pi_\theta}[R(x,y)]\\
-&=\mathbb{E}_{y\sim\pi_\theta}[r_\phi(x,y)]
--\beta D_{\mathrm{KL}}\big(\pi_\theta(\cdot\mid x)\,\|\,\pi_{\mathrm{ref}}(\cdot\mid x)\big)
-\end{aligned}
-$$
-
-즉 reward model 점수의 기대값을 높이되, reference와의 분포 차이에 비용을 붙이는 목적함수다.
-
-</Details>
-
-### 3-3. PPO의 clipping
-
-응답을 생성하고 채점하는 데 비용이 들므로, 한 배치를 여러 번 학습에 쓰고 싶다. 하지만 같은 학습 신호를 반복 적용하면 정책의 변화가 지나치게 커질 수 있다. PPO는 <strong>배치를 재사용하면서 정책의 지나친 변화를 억제한다.</strong>[^ppo]
-
-배치를 생성한 정책을 $\pi_{\mathrm{old}}$, 갱신 중인 정책을 $\pi_\theta$라 하자. 같은 문맥 $s_t$에서 생성했던 토큰 $y_t$의 확률이 얼마나 변했는지를 다음 비율로 잰다.
-
-$$
-\rho_t=\frac{\pi_\theta(y_t\mid s_t)}{\pi_{\mathrm{old}}(y_t\mid s_t)}
-$$
-
-REINFORCE의 log 확률에서 이 확률비로 바뀌는 이유도 짚어 보자. 저장한 생성 확률을 고정하면 $\nabla_\theta\rho_t=\rho_t\nabla_\theta\log\pi_\theta(y_t\mid s_t)$다. 배치를 막 생성해 현재 정책과 생성 정책이 같을 때는 $\rho_t=1$이므로, $\rho_t\hat A_t$의 gradient는 앞에서 본 $\hat A_t\nabla_\theta\log\pi_\theta$와 같다. 출발점에서는 같은 갱신 방향을 주고, 배치를 재사용하며 정책이 변하면 그 토큰의 확률 변화가 비율에 반영된다. 이것은 이전 정책이 방문한 문맥들에서 계산하는 국소적인 대리 목적함수이며, 이전 배치가 새 정책의 모든 응답을 정확히 대표한다는 뜻은 아니다.
-
-앞 절에서 계산한 advantage 추정값 $\hat A_t$가 양수이면 선택 확률을 높이고, 음수이면 낮추는 방향으로 학습한다. PPO는 이 방향으로 확률비가 일정 범위를 넘으면 추가 이득을 주지 않는다. <strong>Clipping은 확률 자체를 제한하는 것이 아니라, 지나친 변화에 대한 추가 학습 신호를 끊는 장치다.</strong> 반대로 advantage와 어긋나는 방향으로 확률이 변하면, 이를 되돌리는 신호는 남는다.
-
-$$
-\mathcal{J}^{\mathrm{PPO}}(\theta)=\mathbb{E}_t\Big[\min\big(\rho_t\hat A_t,\ \operatorname{clip}(\rho_t,1-\varepsilon,1+\varepsilon)\hat A_t\big)\Big]
-$$
-
-이는 앞의 기대 보상 자체가 아니라, 저장한 배치로 정책을 갱신하기 위한 surrogate objective다. 이 목적함수는 최대화한다. $\varepsilon$은 clipping 범위의 폭을 정하며 보통 작은 양수로 둔다. $\operatorname{clip}$은 확률비를 $[1-\varepsilon,1+\varepsilon]$ 범위로 잘라 낸 값이다. $\hat A_t$는 advantage 추정값이고, $\mathbb{E}_t$는 배치의 응답 토큰에 대한 평균이다. 같은 배치로 학습하는 동안 생성 당시의 확률과 $\hat A_t$는 고정하고 현재 정책을 갱신한다. 한 표본의 신호가 멈춰도 다른 표본의 gradient 때문에 그 토큰의 확률은 더 변할 수 있다.
-
-예를 들어 $\hat A_t=1$, $\varepsilon=0.2$일 때 확률비가 1.3으로 올라가도 목적함수에는 $\min(1.3,1.2)=1.2$만 반영된다. 이 표본의 추가 이득을 막는 것이며, 확률비를 강제로 1.2로 되돌리지는 않는다.
-
-음수 advantage에서도 같은 원리를 확인할 수 있다. 다음 표는 $\varepsilon=0.2$인 가상 계산이다. ‘두 항 중 작은 값’ 열의 수치가 **최대화**하는 목적함수에 들어간다.
-
-| $\hat A_t$ | $\rho_t$ | 원래 항 $\rho_t\hat A_t$ | 잘린 항 | 두 항 중 작은 값 | 이 표본의 신호 |
-|---|---|---|---|---|---|
-| $+1$ | 1.3 | 1.3 | 1.2 | 1.2 | 좋은 선택의 확률을 더 올리는 이득이 멈춤 |
-| $+1$ | 0.7 | 0.7 | 0.8 | 0.7 | 좋은 선택의 확률을 다시 올리는 신호가 남음 |
-| $-1$ | 0.7 | $-0.7$ | $-0.8$ | $-0.8$ | 나쁜 선택의 확률을 더 내리는 이득이 멈춤 |
-| $-1$ | 1.3 | $-1.3$ | $-1.2$ | $-1.3$ | 나쁜 선택의 확률을 다시 내리는 신호가 남음 |
-
-셋째 행에서는 $-0.7$보다 $-0.8$이 작으므로 잘린 항을 택한다. 확률을 낮춰 목적함수를 더 높이려는 이득을 여기서 멈추는 것이다. 반대로 넷째 행까지 잘라 버리면 나쁜 선택의 확률이 커진 것을 되돌릴 신호도 사라지므로, $\min$은 원래 항을 남긴다.
-
-KL penalty와 PPO clipping은 정책을 붙잡는 기준이 다르다.
-
-| 장치 | 비교 대상 | 갱신 주기 | 역할 |
-|---|---|---|---|
-| KL penalty ($\beta$) | 고정된 reference model $\pi_{\mathrm{ref}}$ | 학습 내내 고정 | 출발점에서 멀어지는 데 비용을 붙여 분포 변화를 억제함 |
-| PPO clipping ($\varepsilon$) | 배치를 생성한 직전 정책 $\pi_{\mathrm{old}}$ | 배치마다 갱신 | 같은 배치로 여러 번 갱신할 때 선택 확률의 지나친 변화를 억제함 |
-
-조금씩 갱신해도 반복하면 출발점에서 멀어질 수 있으므로, 전통적인 RLHF는 PPO clipping과 SFT 기준 KL penalty를 함께 사용한다.<Sidenote>KL penalty는 필수 항은 아니다. 이후 RLVR의 추론 학습에서는 DAPO처럼 이를 제거하는 방법도 있고,[^dapo] ProRL처럼 유지하는 방법도 있다.[^prorl]</Sidenote>
-
-### 3-4. PPO의 학습 절차
+하지만 매번 정책을 한 번 갱신한 뒤 모든 응답을 새로 생성하면 비용이 크다. LLM이 토큰을 순서대로 생성하고, 생성된 응답을 reward model로 채점하는 과정을 반복해야 하기 때문이다. 여러 프롬프트에서 생성해 모은 응답 묶음을 **배치**라고 하자. 배치로 모으면 여러 응답의 gradient를 평균하고 계산을 병렬로 처리할 수 있다. PPO는 여기에 더해, 한 번 모은 배치를 여러 번의 정책 갱신에 재사용해 응답 수집 비용을 나누어 부담한다. 같은 배치로 여러 번 갱신한 뒤에는 갱신된 정책으로 다음 배치를 생성한다.[^ppo] 같은 배치를 학습하는 동안에는 응답과 생성 당시의 토큰 확률, advantage 추정값을 저장해 사용한다.
 
 이 절의 PPO 기반 RLHF에는 다음 네 역할이 필요하다. 구현에 따라 정책과 value model이 본체를 공유하고 출력층만 나누기도 하므로, 반드시 독립된 대형 모델 네 벌을 뜻하지는 않는다.[^hf-ppo]
 
@@ -270,88 +233,93 @@ KL penalty와 PPO clipping은 정책을 붙잡는 기준이 다르다.
 | Reward model | $r_\phi$ | 사람의 선호를 학습한 응답 채점 모델 | 고정 |
 | Value model | $\hat V$ | 현재 정책의 state value $V(s)$를 예측하는 모델 | 갱신 |
 
-각 역할의 모델 크기도 같을 필요가 없다. InstructGPT는 175B 정책을 학습할 때도 reward model과 value model은 각각 6B를 썼고, value model의 초기값은 학습된 reward model에서 가져왔다(Appendix C).[^instructgpt] 출발 파라미터를 복사하더라도 이후의 학습 목표와 갱신 여부는 위 표처럼 다르다.
+각 역할의 모델 크기도 같을 필요가 없다. InstructGPT는 175B LLM을 학습할 때도 reward model과 value model은 각각 6B를 썼고, value model의 초기값은 학습된 reward model에서 가져왔다.[^instructgpt] 출발 파라미터를 복사하더라도 이후의 학습 목표와 갱신 여부는 위 표처럼 다르다.
 
-Value model은 앞서 구분한 기대값 $V(s)$를 예측하는 모델이다. 학습 목표로는 실제로 받은 보상합이나 GAE에서 만든 return 추정값을 사용하고, 예측과 목표 사이의 오차를 줄인다. Reward model이 사람의 비교를 배우는 것과 달리, value model은 **현재 정책이 얻는 보상의 예측**을 배운다. 정책이 달라지면 앞으로 얻을 보상도 달라지므로 value model도 함께 갱신한다.
+Value model은 앞서 구분한 기대값 $V(s)$를 예측하는 모델이다. 실제로 받은 누적 보상이나 그 추정값을 목표로 삼아, 예측과 목표 사이의 오차를 줄인다. Reward model이 사람의 비교를 배우는 것과 달리, value model은 **현재 정책이 얻는 보상의 예측**을 배운다. 정책이 달라지면 앞으로 얻을 보상도 달라지므로 value model도 함께 갱신한다.
 
-현재 정책으로 응답을 생성하고 평가하는 과정이 rollout이다. 응답과 보상, advantage, 생성 당시의 토큰 확률을 계산해 저장한 뒤, 같은 배치로 정책과 value model을 여러 번 갱신한다. 다음 rollout에서는 갱신된 정책으로 새 응답을 모으고, 그때의 정책이 새 $\pi_{\mathrm{old}}$가 된다. 이 반복 때문에 학습 루프가 SFT보다 복잡하다.
+현재 정책으로 응답을 생성하는 과정을 rollout이라고도 한다. 응답과 보상, advantage, 생성 당시의 토큰 확률을 계산해 저장한 뒤, 같은 배치로 정책과 value model을 여러 번 갱신한다. 다음 rollout에서는 갱신된 정책으로 새 응답을 모으고, 그 **배치를 생성한 시점의 정책**을 $\pi_{\mathrm{old}}$로 기록한다. 같은 배치로 갱신하는 동안 이 기준은 고정한다. 같은 배치를 반복해서 학습할 때 정책의 변화가 지나치게 커지지 않도록 PPO 목적함수에 clipping을 적용한다.
 
-<Details summary="PPO 구현 그림과 추가 손실">
+### 3-4. PPO의 clipping
 
-Zheng 등의 Figure 1은 응답 수집과 모델 갱신 단계를 나누어 그린다.[^ppo-secrets] 왼쪽과 오른쪽의 policy는 서로 다른 역할의 모델 두 개가 아니라, 배치를 만들 때와 그 배치로 갱신할 때의 정책이다. 왼쪽의 SFT model이 이 노트의 reference model이다.
+같은 배치로 정책을 여러 번 갱신하면, 현재 정책은 그 배치를 생성한 정책과 달라진다. PPO는 두 정책의 토큰 확률을 비교하고, 같은 학습 신호로 지나치게 갱신하는 것을 clipping으로 억제한다.[^ppo] PPO는 on-policy 계열이지만, 배치 재사용 중에는 생성 정책과 학습 정책이 같지 않다.
 
-<Figure src="https://arxiv.org/html/2307.04964v2/ppo_framework.png" alt="PPO 학습 흐름. 왼쪽에서 정책이 응답을 만들고 reward·value model이 평가한다. 오른쪽에서 저장된 응답으로 정책과 value model을 갱신한다." caption="PPO 한 반복. 왼쪽에서 응답을 생성·채점하고, 오른쪽에서 정책과 value model을 갱신한다." source="Zheng et al. (2023), Figure 1 · arXiv:2307.04964v2 · CC BY 4.0 · 수정 없음" />
+§3-1에서는 advantage로 가중한 log 확률을 최대화했다. PPO는 배치를 재사용하기 위해 log 확률 대신 생성 당시와 현재 정책의 **확률비**를 사용한다. 이 확률비를 advantage와 곱하고 clipping을 적용한 갱신용 목적함수가 $J^{\mathrm{PPO}}$다. 이것도 기대 보상 자체가 아니라, 정책을 갱신하기 위한 대리 목적함수(surrogate objective)다.
 
-[CC BY 4.0 라이선스](https://creativecommons.org/licenses/by/4.0/)
+배치를 생성한 정책 $\pi_{\mathrm{old}}$와 현재 정책 $\pi_\theta$의 확률비는 다음과 같다.
 
-그림 오른쪽의 `MSE Loss`는 value 예측과 목표 return 사이의 평균제곱오차(mean squared error)를 줄이는 손실이다. `LM Loss`는 pre-training 텍스트에 대한 언어 모델 손실을 함께 쓰는 추가 장치다. 모든 PPO 구현에 필수인 항은 아니며, InstructGPT는 기존 언어 능력의 저하를 줄이려고 이 항을 섞은 변형을 PPO-ptx라고 구분했다.[^instructgpt]
+$$
+\rho_t=\frac{\pi_\theta(y_t\mid s_t)}{\pi_{\mathrm{old}}(y_t\mid s_t)}
+$$
 
-</Details>
+배치를 막 생성했을 때는 $\rho_t=1$이다. 같은 문맥에서 같은 토큰의 선택 확률이 커지면 1보다 커지고, 작아지면 1보다 작아진다. PPO는 advantage 추정값 $\hat A_t$에 이 확률비를 곱한 항을 다음처럼 조정한다.
 
-### 3-5. Rejection sampling fine-tuning
+$$
+J^{\mathrm{PPO}}(\theta)=\mathbb{E}_t\Big[\min\big(\rho_t\hat A_t,\ \operatorname{clip}(\rho_t,1-\varepsilon,1+\varepsilon)\hat A_t\big)\Big]
+$$
 
-Reward model을 쓰는 다른 방법은 **rejection sampling fine-tuning**이다. 한 프롬프트에서 여러 응답을 생성해 점수가 가장 높은 응답을 고르고, 이를 정답 데이터처럼 SFT한다. 선택만으로는 가중치가 바뀌지 않는다. Llama 2는 초기 RLHF 라운드에서 이 방법만 쓰다가, 후반에는 rejection sampling으로 학습한 모델에 PPO를 추가했다.[^llama2]
+이 목적함수는 최대화한다. $\mathbb{E}_t$는 배치의 응답 토큰에 대한 평균이며, 각 토큰에서 계산한 항을 평균해 정책을 갱신한다. 생성 당시의 확률과 $\hat A_t$는 같은 배치를 학습하는 동안 고정한다.
+
+첫째 항 $\rho_t\hat A_t$는 **기준보다 나았던 토큰의 확률은 높이고, 못했던 토큰의 확률은 낮추도록** 한다. $\hat A_t>0$이면 $\rho_t$를 키울수록 이 항이 커진다. $\hat A_t<0$이면 $\rho_t$를 줄일수록 음수의 크기가 작아져 이 항이 커진다. 두 경우 모두 advantage가 가리키는 방향으로 확률을 바꾸면 목적함수가 높아진다.
+
+그런데 첫째 항만 최대화하면, 같은 배치를 반복해서 학습하며 그 방향으로 계속 밀어붙일 수 있다. 둘째 항은 확률비를 $[1-\varepsilon,1+\varepsilon]$ 범위로 자른 뒤 advantage를 곱한다. $\varepsilon>0$은 생성 당시의 확률에서 어느 정도 변한 뒤 추가 이득을 멈출지 정한다.
+
+$\min$은 두 항 중 작은 값을 사용해, **유리한 방향으로 이미 충분히 바꾼 선택에는 더 바꿀 이득을 주지 않는다.** 양수 advantage의 토큰은 확률비가 $1+\varepsilon$을 넘으면 잘린 항이 선택되어 추가 이득이 멈춘다. 음수 advantage의 토큰은 확률비가 $1-\varepsilon$ 아래로 내려가면 잘린 항이 선택되어 추가 이득이 멈춘다. 반대로 양수 advantage의 토큰 확률이 낮아지거나 음수 advantage의 토큰 확률이 높아지면, 원래 항을 남겨 그 변화를 되돌리는 신호를 유지한다.
+
+**Clipping은 실제 확률을 범위 안에 강제로 묶는 장치가 아니다.** 해당 표본에서 더 바꿀 이득을 멈추는 것이며, 다른 표본의 gradient로 그 확률은 더 변할 수 있다.
+
+SFT 기준 KL penalty와 clipping은 다음처럼 구분한다.
+
+| 장치 | 비교 기준 | 기준의 유지 기간 | 역할 |
+|---|---|---|---|
+| SFT 기준 KL penalty ($\beta$) | 출발 SFT 모델 $\pi_{\mathrm{ref}}$ | 학습 내내 고정 | 보상에 비용을 붙여 출발 모델과의 분포 차이를 억제 |
+| PPO clipping ($\varepsilon$) | 배치를 생성한 정책 $\pi_{\mathrm{old}}$ | 새 배치마다 갱신 | 갱신 목적함수의 추가 이득을 제한해 배치 재사용 중 지나친 변화를 억제 |
+
+배치마다 조금씩 갱신해도 반복하면 출발 모델에서 멀어질 수 있으므로, 여기서 다루는 RLHF는 두 장치를 함께 사용한다.
 
 ## 4. 사람 대신 AI의 피드백
 
-SFT에서는 사람이 지시와 응답을 일일이 쓰는 비용을 줄이기 위해 학습 데이터의 일부를 AI로 생성한다. 선호 학습에서도 데이터 제작이 사람의 반복 작업에 의존한다. 응답 후보는 모델이 만들지만, 어느 쪽이 나은지는 사람이 읽고 골라야 한다. 비교가 응답 작성보다 수월해도, 데이터가 많아지면 판정에 드는 시간과 비용이 커진다.
+선호 데이터를 모으려면 사람이 응답을 읽고 비교하는 작업을 반복해야 한다. 응답 후보는 모델이 만들지만, 어느 쪽이 나은지는 사람이 고른다. 비교가 응답을 직접 쓰는 것보다 수월하더라도, 데이터가 많아지면 판단에 드는 시간과 비용이 커진다.
 
-그래서 **SFT에서 응답 작성을 AI에 맡겼듯, 선호 학습에서는 응답 비교를 AI에 맡긴다.** AI가 만든 선호 라벨로 reward model을 학습하고 RL을 수행하는 방법이 RLAIF(reinforcement learning from AI feedback)다.[^cai] 학습 절차는 앞의 RLHF와 같고, 비교 데이터의 판정자가 달라진다.
+SFT에서 응답 작성의 일부를 AI에 맡겼듯, 선호 학습에서도 **응답 비교를 AI에 맡길 수 있다.** AI가 선택한 응답쌍으로 reward model을 학습하고, 그 점수를 보상으로 정책을 갱신하는 방법이 RLAIF(reinforcement learning from AI feedback)다.[^cai] 여기서는 앞의 RLHF 절차를 유지하면서, 비교하는 주체를 사람에서 AI로 바꾼다.
 
-Anthropic의 Constitutional AI는 사람이 정한 원칙 목록(constitution)을 AI에 주고 두 단계를 수행한다.[^cai]
+사람에게 응답을 비교할 기준을 알려 주었듯, AI에게도 무엇을 좋은 응답으로 볼지 지침을 주어야 한다. Constitutional AI는 사람이 정한 원칙에 따라 AI가 두 응답을 비교하도록 했다.[^cai] 평가 항목과 점수별 기준을 구체적으로 정한 채점 지침은 **rubric**이라 부른다. UltraFeedback은 instruction following, truthfulness, honesty, helpfulness를 평가 항목으로 나누고, 각 항목의 1–5점 기준에 따라 GPT-4가 응답을 평가하도록 했다.[^ultrafeedback]
 
-1. **위쪽, 응답을 고쳐 SFT:** 출발점은 이미 유용성을 학습한 `Helpful RLHF Model`이다. 유해한 답을 유도하는 red-teaming 프롬프트에 응답을 생성한 뒤, 원칙에 따라 문제를 지적하고(`Critique`) 고쳐 쓴다(`Revision`). 수정한 응답을 학습 데이터로 SFT한 결과가 `SL-CAI Model`이다. SL은 supervised learning을 뜻한다.
-2. **아래쪽, 응답을 비교해 RL:** SL-CAI 모델이 만든 응답 쌍을 AI가 원칙에 따라 비교한다. 이 선호 정보로 `Preference Model(PM)`을 학습한다. PM은 앞에서 설명한 reward model이다. 그 점수를 보상으로 SL-CAI 모델을 RL로 갱신하면 최종 `RL-CAI Model`이 된다.<Sidenote>이 연구는 한쪽을 선택할 확률을 soft label로 사용했고, CoT(chain of thought)를 사용하는 설정에서는 확률을 일정 범위로 제한했다.[^cai]</Sidenote>
-
-<strong>가운데서 갈라지는 화살표는 SL-CAI 모델의 두 역할을 나타낸다.</strong> 왼쪽으로는 비교할 응답을 생성하고, 오른쪽으로는 RL 학습의 출발 정책이 된다. 응답을 고쳐 쓰는 위쪽 단계와, 선호 점수로 정책을 갱신하는 아래쪽 단계는 서로 다른 학습이다.
-
-<Figure src="https://arxiv.org/html/2212.08073v1/CAI-Overview.png" alt="Constitutional AI의 두 단계. 위에서는 원칙에 따라 응답을 고쳐 SFT하고, 아래에서는 AI가 응답 쌍을 비교해 reward model과 RL에 쓴다." caption="위쪽: 응답 생성 → 비판 → 수정본으로 SFT(SL-CAI). 아래쪽: 응답 쌍 생성 → AI 비교 → reward model(PM) 학습 → SL-CAI 정책을 RL로 갱신(RL-CAI)." source="Bai et al. (2022), Figure 1 · arXiv:2212.08073 · CC BY 4.0 · 수정 없음" />
-
-[CC BY 4.0 라이선스](https://creativecommons.org/licenses/by/4.0/)
-
-이 연구에서는 무해성(harmlessness) 비교를 AI로 대체했고, 유용성(helpfulness) 비교에는 사람의 피드백을 유지했다.[^cai]
-
-Rubric은 평가 항목과 각 점수의 판정 기준을 명시한 채점 지침이다. Constitutional AI(2022)는 원칙에 따라 두 응답을 비교했고, UltraFeedback(2023)은 지시 이행·truthfulness·honesty·helpfulness를 나누어 각 항목의 1–5점 기준으로 GPT-4가 응답을 평가하게 했다.[^ultrafeedback] <strong>판정을 AI에 맡겨도 무엇을 좋은 응답으로 볼지는 기준으로 정해 주어야 한다.</strong><Sidenote>LLM을 성능 평가의 판정자로 쓰는 LLM-as-a-judge도 이 시기에 발전했다. MT-Bench(2023)는 GPT-4로 모델 응답을 평가한다.[^mtbench] 다만 Constitutional AI의 주요 성능 비교는 사람이 했으며, 학습용 AI 피드백과 성능 평가의 판정자는 구분해야 한다.[^cai]</Sidenote>
-
-AI 피드백도 판정자의 오류나 편향을 학습에 전달할 수 있다. 판정자가 긴 응답을 선호하면 정책도 길이를 늘리는 방향으로 학습할 수 있다.
+AI의 판단에도 오류와 편향이 있을 수 있으며, 이는 학습 신호에 반영된다. 예를 들어 AI가 내용보다 응답 길이에 끌려 긴 답을 선호하면, 정책도 답을 길게 쓰는 방향으로 학습할 수 있다.
 
 ## 5. RLHF의 문제
 
 ### 5-1. Reward model의 과최적화
 
-Reward model은 사람 선호의 근사이며 학습 분포 밖에서는 신뢰성이 떨어질 수 있다. Stiennon 등은 KL penalty를 약하게 두고 정책을 더 최적화하면 reward model 점수는 계속 오르지만 사람의 선호는 어느 지점부터 떨어지는 현상을 보였다.[^stiennon] 이처럼 대리 보상을 과도하게 높여 실제 품질이 떨어지는 현상이 over-optimization이다. 정책이 보상의 허점을 이용하는 reward hacking으로 이어질 수 있다. KL penalty는 이런 위험을 줄이지만 없애지는 않으므로, 학습 보상과 별개의 평가를 함께 봐야 한다.
+정책이 높이려는 것은 reward model의 점수다. 그런데 reward model이 사람의 판단을 완벽하게 배운 것은 아니므로, 점수가 높아졌다고 사람이 보기에 답이 좋아졌다고 단정할 수는 없다. 정책을 계속 갱신하다 보면 reward model은 높게 평가하지만 사람은 좋아하지 않는 응답이 늘어날 수 있다.
+
+Stiennon 등의 요약 실험에서는 KL penalty를 약하게 두고 정책을 더 학습하자, reward model 점수는 계속 오르는데 사람이 그 요약을 선택하는 비율은 어느 지점부터 낮아졌다.[^stiennon] 이처럼 점수를 높이는 데 지나치게 맞춰 학습한 결과 실제 평가가 나빠지는 현상을 과최적화(over-optimization)라 한다. 정책이 reward model의 허점을 이용해 점수를 얻는다면 reward hacking에 해당한다. KL penalty는 이런 위험을 줄이는 장치지만, reward model의 잘못된 판단 자체를 고치지는 못한다. 따라서 학습 점수와 함께 사람 평가처럼 별도로 측정한 결과도 확인해야 한다.
 
 ### 5-2. 비용과 불안정
 
-PPO는 응답 생성, 보상·value 계산, 정책·value model 갱신을 묶어야 하며, 구현 세부에 따라 결과가 달라진다.[^hf-ppo] Llama 3는 현재 정책이 생성한 응답으로 학습하는 PPO 같은 on-policy 알고리즘도 시험했지만 계산 비용과 성능을 고려해 DPO(direct preference optimization)를 택했다.[^llama] DPO는 미리 모은 선호쌍에서 정책을 직접 갱신하므로, 기본 절차에서는 학습 중 응답 생성과 reward·value model이 필요 없다.
+PPO 기반 RLHF는 응답을 생성하고 채점하는 과정과, 모은 응답으로 모델을 갱신하는 과정을 번갈아 수행한다. 응답을 새로 만들 때마다 생성과 채점에 계산이 들고, 정책과 value model도 함께 학습해야 한다. SFT보다 학습 과정이 복잡하며, 보상이나 advantage를 어떻게 계산하고 정책을 얼마나 갱신하는지에 따라 결과가 달라질 수 있다.[^hf-ppo]
+
+이 부담을 줄이는 방법 중 하나가 DPO(direct preference optimization)다. 기본 DPO는 미리 모은 선호 응답쌍으로 정책을 직접 학습한다. 학습 중 응답을 생성해 채점하는 반복이 없고, 별도의 reward model과 value model도 필요하지 않다.
 
 ### 5-3. 선호와 정확성
 
-선호 비교로 학습한 보상은 주어진 기준에서 어느 응답이 더 나은지를 근사한다. 판정 기준에 정확성을 넣어도, 정답을 검증해 준다는 보장은 없다. 예를 들어 수학 문제에서 틀린 풀이가 더 자신 있게 쓰였다면 판정자가 그쪽을 고를 수 있다.
+사람이 더 좋아하는 답이 반드시 맞는 답은 아니다. 수학 풀이가 틀렸어도 자신 있고 설득력 있게 쓰여 있으면, 오류를 알아채지 못한 판정자가 그 답을 고를 수 있다. 정확성을 비교 기준에 넣더라도, 사람이나 AI가 매번 정답을 확인할 수 있다는 뜻은 아니다. Reward model은 이런 판단을 학습하므로 같은 한계를 가질 수 있다.
 
-정답이나 테스트로 결과를 확인할 수 있는 과제에서는 **검증기**(verifier)의 판정을 보상으로 쓸 수 있다. 이것이 RLVR(reinforcement learning with verifiable rewards)이다. 정책을 보상으로 갱신한다는 원리는 같고, 보상의 출처가 선호 판정에서 결과 검증으로 바뀐다. 다만 검증기가 검사하는 조건이 실제 성공을 충분히 담지 못하면, 여기서도 점수와 품질이 갈라질 수 있다.
-
-Reward model과 PPO의 세부를 더 읽으려면 Lambert의 RLHF 교재가 각 구성 요소를 한 권으로 정리한다.[^rlhfbook]
+수학의 최종 답이나 코드의 테스트 결과처럼 정오를 확인할 수 있다면, 그 결과를 보상으로 사용할 수 있다. 이런 방식이 RLVR(reinforcement learning with verifiable rewards)이다. 예를 들어 코드가 테스트를 통과하면 보상을 주도록 정할 수 있다. 정책을 보상으로 학습한다는 원리는 같지만, 보상을 정하는 근거가 응답에 대한 선호에서 검증 결과로 바뀐다.
 
 [^survey]: Srivastava, S. S., & Aggarwal, V. (2026). A Technical Survey of Reinforcement Learning Techniques for Large Language Models. *ACM Transactions on Intelligent Systems and Technology*. [arXiv:2507.04136v2](https://arxiv.org/abs/2507.04136v2).
 [^instructgpt]: Ouyang, L., et al. (2022). Training language models to follow instructions with human feedback. *NeurIPS 2022*. [arXiv:2203.02155](https://arxiv.org/abs/2203.02155).
 [^christiano]: Christiano, P. F., Leike, J., Brown, T. B., Martic, M., Legg, S., & Amodei, D. (2017). Deep Reinforcement Learning from Human Preferences. *NeurIPS 2017*. [arXiv:1706.03741](https://arxiv.org/abs/1706.03741).
 [^ziegler]: Ziegler, D. M., Stiennon, N., Wu, J., Brown, T. B., Radford, A., Amodei, D., Christiano, P., & Irving, G. (2019). Fine-Tuning Language Models from Human Preferences. [arXiv:1909.08593](https://arxiv.org/abs/1909.08593).
 [^stiennon]: Stiennon, N., et al. (2020). Learning to summarize from human feedback. *NeurIPS 2020*. [arXiv:2009.01325](https://arxiv.org/abs/2009.01325).
-[^llama2]: Touvron, H., et al. (2023). Llama 2: Open Foundation and Fine-Tuned Chat Models. [arXiv:2307.09288](https://arxiv.org/abs/2307.09288).
 [^llama]: Llama Team, AI @ Meta. (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
 [^bt]: Bradley, R. A., & Terry, M. E. (1952). Rank Analysis of Incomplete Block Designs: I. The Method of Paired Comparisons. *Biometrika*, 39(3/4), 324–345. [doi:10.2307/2334029](https://doi.org/10.2307/2334029).
 [^hf-ppo]: Huang, S., Liu, T., & von Werra, L. (2023). The N Implementation Details of RLHF with PPO. [Hugging Face 블로그](https://huggingface.co/blog/the_n_implementation_details_of_rlhf_with_ppo).
 [^reinforce]: Williams, R. J. (1992). Simple Statistical Gradient-Following Algorithms for Connectionist Reinforcement Learning. *Machine Learning*, 8(3–4), 229–256. [doi:10.1007/BF00992696](https://doi.org/10.1007/BF00992696).
 [^ppo]: Schulman, J., Wolski, F., Dhariwal, P., Radford, A., & Klimov, O. (2017). Proximal Policy Optimization Algorithms. [arXiv:1707.06347](https://arxiv.org/abs/1707.06347).
-[^ppo-secrets]: Zheng, R., et al. (2023). Secrets of RLHF in Large Language Models Part I: PPO. [arXiv:2307.04964v2](https://arxiv.org/abs/2307.04964v2).
 [^cai]: Bai, Y., et al. (2022). Constitutional AI: Harmlessness from AI Feedback. [arXiv:2212.08073](https://arxiv.org/abs/2212.08073).
 [^rlhfbook]: Lambert, N. (2025). Reinforcement Learning from Human Feedback. [arXiv:2504.12501](https://arxiv.org/abs/2504.12501). [웹판](https://rlhfbook.com/).
 
 [^nlhf]: Munos, R., et al. (2023). Nash Learning from Human Feedback. [arXiv:2312.00886v2](https://arxiv.org/abs/2312.00886v2).
-
-[^dapo]: Yu, Q., et al. (2025). DAPO: An Open-Source LLM Reinforcement Learning System at Scale. [arXiv:2503.14476v1](https://arxiv.org/abs/2503.14476v1).
-[^prorl]: Liu, M., et al. (2025). ProRL: Prolonged Reinforcement Learning Expands Reasoning Boundaries in Large Language Models. [arXiv:2505.24864v1](https://arxiv.org/abs/2505.24864v1).
 
 [^gae]: Schulman, J., Moritz, P., Levine, S., Jordan, M., & Abbeel, P. (2016). High-Dimensional Continuous Control Using Generalized Advantage Estimation. *ICLR 2016*. [arXiv:1506.02438](https://arxiv.org/abs/1506.02438).
 
