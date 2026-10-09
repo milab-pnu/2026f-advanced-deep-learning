@@ -4,7 +4,7 @@ week: 4
 order: 1
 ---
 
-SFT(supervised fine-tuning)의 한계를 두 가지로 정리했다. 응답 데이터는 선택된 응답만 주고 응답 사이의 선호 순서를 직접 감독하지 않으며, 학습 때의 문맥과 생성할 때의 문맥이 다를 수 있다. 이 노트는 첫 번째 한계를 푸는 계보를 따라간다. 사람에게 **응답 중 어느 쪽이 나은지 고르게** 하고, 그 선택을 배우도록 reward model을 학습한다. 그 다음 reward model을 사용하여, 모델이 생성한 응답에 점수를 매겨 강화학습(reinforcement learning, RL)으로 학습한다. 이를, <strong>RLHF(reinforcement learning from human feedback)</strong>라 한다. 또는, 선호를 학습한다는 측면에서 선호 학습(preference optimization)이라고도 한다.[^survey]
+SFT(supervised fine-tuning)의 한계를 두 가지로 정리했다. 응답 데이터는 선택된 응답만 주고 응답 사이의 선호 순서를 직접 감독하지 않으며, 학습 때의 문맥과 생성할 때의 문맥이 다를 수 있다. 사람에게 **응답 중 어느 쪽이 나은지 고르게** 하고, 그 선택을 배우도록 reward model을 학습한다. 그 다음 reward model을 사용하여, 모델이 생성한 응답에 점수를 매겨 강화학습(reinforcement learning, RL)으로 학습한다. 이를, <strong>RLHF(reinforcement learning from human feedback)</strong>라 한다. 또는, 선호를 학습한다는 측면에서 선호 학습(preference optimization)이라고도 한다.[^survey]
 
 용어의 층위에 대해 먼저 정리한다. **RL은 기대 누적 보상을 최대화하도록 행동을 선택하는 정책을 학습하는 방법**이다. **RLHF에서는 이 보상을 사람의 선호 데이터로 학습한 reward model**에서 얻는다. REINFORCE와 PPO(proximal policy optimization)는 받은 보상으로 모델을 갱신하는 대표적인 **정책 최적화 알고리즘**이다. 따라서 PPO는 RLHF에 쓸 수 있는 한 방법이지, RLHF 자체의 다른 이름은 아니다.
 
