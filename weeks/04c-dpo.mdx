@@ -112,13 +112,13 @@ $$
 \nabla_\theta\ell_\theta=-\beta\,\sigma\big(\hat r_\theta(x,y_l)-\hat r_\theta(x,y_w)\big)\Big(\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\Big)
 $$
 
-데이터셋은 고정된 선호쌍들의 집합이므로, 전체 손실의 gradient는 각 쌍의 gradient를 평균한 값이다. 따라서 최종 식은 다음과 같다(Appendix A.4).[^dpo]
+데이터셋은 고정된 선호쌍들의 집합이므로, 전체 손실의 gradient는 각 쌍의 gradient를 평균한 값이다. 따라서 최종 식은 다음과 같다.[^dpo]
 
 $$
 \nabla_\theta\mathcal{L}_{\mathrm{DPO}}=-\beta\,\mathbb{E}_{(x,y_w,y_l)\sim\mathcal{D}}\Big[\underbrace{\sigma\big(\hat r_\theta(x,y_l)-\hat r_\theta(x,y_w)\big)}_{\text{가중치}}\Big(\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\Big)\Big]
 $$
 
-손실을 줄이는 갱신 방향은 위 gradient의 반대다. 괄호 안의 두 항이 주는 **직접적인 학습 신호**는 선호 응답의 log 확률을 올리고 비선호 응답의 log 확률을 내리는 방향이다. SFT처럼 $y_w$의 확률만 올리는 것과 달리 $y_l$의 확률을 **내리는 항**이 있다는 점이 DPO를 구분 짓는다. 가중치는 비선호 응답의 implicit reward가 선호 응답보다 높을수록 커진다.
+괄호 안의 두 항이 주는 **직접적인 학습 신호**는 선호 응답의 log 확률을 올리고 비선호 응답의 log 확률을 내리는 방향이다. SFT처럼 $y_w$의 확률만 올리는 것과 달리 $y_l$의 확률을 **내리는 항**이 있다는 점이 DPO를 구분 짓는다. 가중치는 비선호 응답의 implicit reward가 선호 응답보다 높을수록 커진다.
 
 다만 직접적인 신호와 실제 결과는 다르다. 두 응답은 파라미터를 공유하므로, 한 번 갱신한 뒤 $\log\pi_\theta(y_w\mid x)$가 실제로 오르는지는 두 gradient 벡터의 관계에 달려 있다. 두 응답이 비슷해 gradient가 많이 겹치면 $y_l$을 내리는 항이 $y_w$의 확률도 끌어내릴 수 있다. 이를 **likelihood displacement**라고 부른다.
 
