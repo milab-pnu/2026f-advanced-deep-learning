@@ -103,7 +103,7 @@ R1-Zero의 출력은 읽기 어려웠다. 사고 과정에 영어와 중국어�
 | 3. Rejection sampling과 SFT | 2단계 모델의 응답을 생성해 걸러 추론 데이터 약 60만 건을 확보하고, 일반 과제 데이터 약 20만 건과 합쳐 base model을 다시 SFT | 추론 능력을 일반 과제와 합침 |
 | 4. 전 과제 RL | 추론 과제는 규칙 보상, 일반 과제는 reward model 보상으로 RL | 사람의 선호와 안전성 |
 
-Cold start를 평가할 때는 풀이를 담은 응답의 validation loss뿐 아니라 다음 RL이 안정적으로 출발하는지도 봐야 한다(04a §1-5, §2-6). 이 recipe에서 SFT의 역할은 읽기 좋은 추론의 출발점을 만드는 것이다. 1단계는 04a의 SFT, 3단계는 04b §3-5의 rejection sampling, 4단계의 reward model 보상은 04b의 RLHF다. 4주차의 요소가 검증 가능한 보상을 축으로 다시 배열된 것이다. Qwen3 flagship 모델의 네 단계(long-CoT cold start, reasoning RL, thinking mode fusion, general RL)와 Olmo 3 Think의 SFT, DPO, RLVR(일반 대화는 RLVR 단계에 함께 섞인다)도 사고 과정을 담은 응답의 학습과 검증 보상을 결합하면서 일반 과제의 성능을 함께 유지한다는 점을 공유한다. 단계의 순서와 수는 모델마다 다르다.[^qwen3][^olmo3]
+Cold start를 평가할 때는 풀이를 담은 응답의 validation loss뿐 아니라 다음 RL이 안정적으로 출발하는지도 봐야 한다(04a §1-5, §2-6). 이 recipe에서 SFT의 역할은 읽기 좋은 추론의 출발점을 만드는 것이다. 1단계는 04a의 SFT, 4단계의 reward model 보상은 04b의 RLHF다. 4주차의 요소가 검증 가능한 보상을 축으로 다시 배열된 것이다. Qwen3 flagship 모델의 네 단계(long-CoT cold start, reasoning RL, thinking mode fusion, general RL)와 Olmo 3 Think의 SFT, DPO, RLVR(일반 대화는 RLVR 단계에 함께 섞인다)도 사고 과정을 담은 응답의 학습과 검증 보상을 결합하면서 일반 과제의 성능을 함께 유지한다는 점을 공유한다. 단계의 순서와 수는 모델마다 다르다.[^qwen3][^olmo3]
 
 ### 3-3. 데이터의 규모
 
