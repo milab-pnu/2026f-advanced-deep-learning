@@ -17,12 +17,13 @@ order: 3
 이 노트는 그 계보를 따라가면서, 단일 응답 RL이 다중 턴 궤적으로 넓어질 때 데이터의 형태, 손실을 거는 위치,
 보상이 오는 시점, 생성 비용이 어떻게 바뀌는지 본다.
 환경에 행동할 권한이 생기면 채점 절차 자체도 정책으로부터 분리해야 한다.
+마지막으로 과제와 학습 장치까지 모델이 스스로 만드는 자기 개선의 방향과 그 한계를 짧게 본다.
 
 전체 지도는 Zhang 등이 2025년에 정리하고 2026년 TMLR에 실린 agentic RL 서베이[^survey]로 잡는다.
 §2가 단일 응답 RL과 agentic RL을 MDP(Markov decision process)의 형식으로 대비하고, §3이 능력별(계획,
 도구 사용, 기억, 자기 개선, 추론, 지각) 분류를, §4가 과제별 분류를,
 §5가 환경과 프레임워크를 정리한다.
-이 노트는 §2의 형식과 §3.2의 도구 사용에 집중한다.
+이 노트는 §2의 형식과 §3.2의 도구 사용에 집중하고, §3.4의 자기 개선은 끝에서 일부만 다룬다.
 
 ## 1. 단일 응답에서 궤적으로
 
@@ -89,8 +90,8 @@ RL에서 두 갈래가 합쳐진다.
 | ReAct | 상호작용 형식 | (출발점) 추론만 하는 프롬프팅과 행동만 하는 방식이 따로 다뤄짐 | 없음(few-shot 프롬프트) | 없음 |
 | Reflexion | 피드백 활용 (문맥) | ReAct는 실패한 시도의 경험을 다음 시도로 넘기지 못함 | 환경의 성패를 말로 옮긴 반성 (가중치 갱신 없음) | 없음(반성을 기억에 쌓아 다음 시도의 문맥에 넣음) |
 | Toolformer | 가중치 학습 (자기 지도) | ReAct식 프롬프팅은 매번 예시가 필요하고 호출 시점을 학습하지 않음 | 다음 토큰 예측 | 도구 호출이 끼워진 텍스트 |
-| Function calling SFT (ToolLLM, APIGen 등) | 가중치 학습 (합성 시연) | Toolformer는 소수의 도구를 하나씩 따로 호출하고 연쇄 호출의 예가 없음 | 다음 토큰 예측 | 도구 schema가 주어진 다중 호출 대화 |
-| Search-R1 | 피드백으로 가중치 학습 (RL, 궤적 갈래) | 시연의 모방은 자기 실수 뒤의 복구와 시연에 없는 호출 조합을 경험하지 못함 | 최종 답의 정확 일치 | 검색 실행을 포함한 다중 턴 궤적 |
+| Function calling SFT (APIGen, ToolLLM 등) | 가중치 학습 (합성 시연) | Toolformer는 소수의 도구를 하나씩 따로 호출하고 연쇄 호출의 예가 없음 | 다음 토큰 예측 | 도구 schema가 주어진 단일·병렬 호출, 또는 관측을 포함한 다중 턴 궤적 |
+| Search-R1 | 피드백으로 가중치 학습 (RL, 궤적 갈래) | 고정된 시연은 현재 정책이 스스로 실수한 뒤의 문맥을 충분히 덮지 못할 수 있음 | 최종 답의 정확 일치 | 검색 실행을 포함한 다중 턴 궤적 |
 | ARPO | 피드백으로 가중치 학습 (RL, 궤적 갈래) | Search-R1식 궤적 단위 보상은 궤적 안의 어느 구간이 좋았는지 구분 못함 | 정확성·형식 + 다중 도구 사용 보너스 | 분기로 공통 prefix를 공유하는 궤적 묶음 |
 | ToolRL | 피드백으로 가중치 학습 (RL, 단계 갈래) | Search-R1과 같은 한계를 단일 단계 호출과 보상 설계로 다룸 | 형식 + 호출의 세분화된 정확성 | 이력이 주어진 다음 호출 한 단계 |
 
@@ -151,30 +152,40 @@ messages = [
 SFT에서는 대개 assistant 차례의 토큰(호출과 최종 답)에만 손실을 걸고 tool 메시지는 mask한다.
 앞에서 본 관측 토큰의 mask가 SFT 단계부터 들어가는 셈이다.
 
-이 형식의 다중 호출 대화를 사람이 대량으로 쓰기는 어려워서 학습 데이터는 주로 합성한다.
-Qin 등의 ToolLLM은 RapidAPI Hub에서 49개 범주의 실제 REST API 16,464개를 모으고,
-ChatGPT로 한 도구 또는 여러 도구를 써야 하는 지시를 만들게 한 뒤,
-각 지시를 푸는 API 호출의 연쇄도 ChatGPT가 찾게 했다.[^toolllm]
-이 탐색에는 막히면 되돌아가 다른 호출을 시도하는 깊이 우선 탐색 기반의 결정 트리(DFSDT)를 썼다.
-이렇게 만든 ToolBench로 LLaMA를 SFT한 ToolLLaMA는 학습 때 보지 못한 API에도 일반화했다.
-합성 데이터에는 틀린 호출이 섞이므로 걸러 내는 단계가 중요하다.
-Liu 등의 APIGen은 21개 범주의 실행 가능한 API 3,673개로 질의와 호출을 생성한 뒤,
+이런 대화를 사람이 대량으로 쓰기는 어려워서 학습 데이터는 주로 합성한다.
+합성 데이터에는 두 종류가 있다.
+하나는 질의와 도구 목록을 받아 호출 하나, 또는 한 응답에 여러 호출을 한꺼번에 내는(parallel) 데이터다.
+다른 하나는 호출 결과를 관측으로 받고 그것을 보고 다음 호출을 정하는 다중 턴 궤적이다.
+앞의 것만 학습하면 호출 형식과 도구 선택은 익히지만, 결과를 해석해 호출을 이어 가는 법은 따로 배워야 한다.
+
+Liu 등의 APIGen은 앞의 종류에서 데이터의 정확성을 다뤘다.
+실행 가능한 API로 질의와 호출을 생성한 뒤,
 형식 검사, 실제 실행, 그리고 실행 결과가 질의의 목적에 맞는지를 다른 LLM이 판정하는 의미 검사의 세 단계를 모두 통과한 것만 남겼다.[^apigen]
-이 데이터로 학습한 7B 모델은 발표 당시 Berkeley Function-Calling Benchmark에서 여러 GPT-4 모델을 앞섰다.[^apigen]
+Qin 등의 ToolLLM은 뒤의 종류를 만들었다.
+실제 REST API를 모아 한 도구 또는 여러 도구를 써야 하는 지시를 ChatGPT로 만들고,
+각 지시를 푸는 호출의 연쇄도 ChatGPT가 API 응답을 받아 가며 찾게 했다.[^toolllm]
+이 탐색에는 막히면 되돌아가 다른 호출을 시도하는 깊이 우선 탐색 기반의 결정 트리(DFSDT)를 썼고,
+이 데이터로 SFT한 모델은 학습 때 보지 못한 API에도 일반화했다.
+Kimi K2는 다중 턴 궤적의 합성을 더 크게 밀었다.[^kimik2]
+실제 MCP(model context protocol) 도구와 합성 도구로 도구 저장소를 만들고,
+도구 조합이 다른 수많은 agent에 성공 기준(rubric)이 달린 과제를 주어,
+사용자 역할의 LLM과 상태를 유지하는 도구 시뮬레이터 사이에서 궤적을 생성한 뒤 LLM 판정자가 rubric으로 걸렀다.
+이 궤적은 SFT 데이터가 되고, 그 뒤의 RL은 검증 가능한 보상과 rubric 기반 자기 비평 보상을 함께 쓴다.[^kimik2]
 
-Kimi K2는 같은 접근을 더 큰 규모로 밀었다.[^kimik2]
-GitHub의 MCP(model context protocol) 도구 3천여 개에 합성 도구 2만여 개를 더해 도구 저장소를 만들고,
-서로 다른 시스템 프롬프트와 도구 조합으로 수천 개의 agent를 정의한 뒤,
-각 agent에 성공 기준(rubric)이 달린 과제를 주고,
-사용자 역할의 LLM과 상태를 유지하는 도구 시뮬레이터 사이에서 다중 턴 궤적을 생성해 LLM 판정자가 rubric으로 걸렀다.
-이 궤적은 SFT 데이터가 되고,
-그 뒤의 RL은 검증 가능한 보상과 rubric 기반 자기 비평 보상을 함께 쓴다.[^kimik2]
+<Details summary="세 데이터의 규모">
 
-이 단계의 한계는 앞 주차 SFT에서 본 학습 문맥과 생성 문맥의 차이다.
-시연 궤적은 대개 성공한 호출의 연쇄라서,
-모델이 직접 잘못 호출해 오류 메시지를 받은 뒤 어떻게 복구할지는 데이터에 거의 없다.
-시연에 없는 도구 조합이나 긴 상호작용에서 한 번 벗어나면 그다음은 배운 적 없는 문맥이다.
-그래서 SFT로 형식과 기본 사용법을 익힌 모델이 환경과 직접 상호작용하며 성패로 배우는 RL로 넘어간다.
+ToolLLM은 RapidAPI Hub의 49개 범주에서 REST API 16,464개를 모았다.[^toolllm]
+APIGen은 21개 범주의 API 3,673개를 썼고, 이 데이터로 학습한 7B 모델은 발표 당시 Berkeley Function-Calling Benchmark에서 여러 GPT-4 모델을 앞섰다.[^apigen]
+Kimi K2의 도구 저장소는 GitHub의 MCP 도구 3천여 개와 합성 도구 2만여 개로 이루어졌다.[^kimik2]
+
+</Details>
+
+SFT도 새 도구와 상황에 일반화할 수 있다.
+다만 고정된 시연은 다른 모델이나 파이프라인이 만든 문맥이라,
+현재 정책이 스스로 잘못 호출하고 오류를 받은 뒤의 문맥을 충분히 덮는다는 보장이 없다.
+앞 주차 SFT에서 본 학습 문맥과 생성 문맥의 차이다.
+오류와 복구를 담은 시연을 일부러 넣을 수도 있지만,
+정책이 실제로 방문하는 문맥에서 성패를 얻는 가장 직접적인 방법은 환경과 상호작용하는 RL이다.
 
 ## 3. 환경 피드백으로 정책 학습
 
@@ -387,7 +398,38 @@ MacDiarmid 등은 Claude Sonnet 3.7의 학습에 쓰인 실제 코딩 환경에�
 
 </Details>
 
-## 5. Agent의 평가
+## 5. 자기 개선 루프
+
+지금까지 과제와 환경, 채점, 그리고 학습을 돌리는 코드는 모두 사람이 만들었다.
+과제와 환경을 만드는 일이 병목이라면 그 일까지 모델에게 넘길 수 있는가.
+모델이 자기 다음 버전을 더 잘 만들게 되는 개선이 반복되며 가속하는 것을 재귀적 자기 개선(recursive self-improvement, RSI)이라고 부른다.
+지금까지 보고된 시스템은 그 일부만 닫았다.
+
+첫째 갈래는 모델이 학습 과제를 스스로 만든다.
+Zhao 등의 Absolute Zero는 한 모델이 과제를 내는 역할(proposer)과 푸는 역할(solver)을 함께 맡는다.[^azr]
+과제는 프로그램·입력·출력 중 둘을 주고 나머지 하나를 맞히는 코드 추론 문제이고,
+코드 실행기가 제안된 과제가 오류 없이 결정적으로 돌아가는지 확인한 뒤 답을 채점한다.
+Proposer는 solver의 평균 정답률 $\bar r$가 0이면 보상 0, 아니면 $1-\bar r$를 받으므로,
+너무 쉽지도 풀 수 없지도 않은 과제를 내도록 학습된다(원논문 §3.1).
+RLVR에서 본 "풀 수 있으면서 어려운 문제"라는 데이터 조건을 모델이 직접 맞추는 셈이다.
+사람이 만든 학습 데이터 없이도 수만 개의 선별 데이터로 학습한 같은 크기의 RL-Zero 모델들과 비슷하거나 나은 코드·수학 점수를 냈다.[^azr]
+다만 판정은 여전히 사람이 정한 코드 실행기가 맡는다.
+
+둘째 갈래는 학습 장치나 agent의 코드를 스스로 고친다.
+Zelikman 등의 STOP은 LLM을 불러 프로그램을 개선하는 개선기(improver) 프로그램을 자기 자신에게 적용해 더 나은 개선기를 얻었다.[^stop]
+Zhang 등의 Darwin Gödel Machine은 코딩 agent가 자기 도구와 작업 흐름의 코드를 고친 변형을 만들고,
+벤치마크로 평가해 보관소(archive)에 쌓으며 여러 갈래로 탐색했다.
+SWE-bench에서 20.0%이던 성공률이 50.0%까지 올랐다.[^dgm]
+두 시스템 모두 모델의 가중치는 바꾸지 않으므로 저자들도 완전한 RSI가 아니라고 밝힌다.
+
+루프를 닫아도 개선을 판정하는 평가는 바깥에 남아야 하고, 그 평가가 다시 최적화 대상이 된다.
+STOP에서는 GPT-4가 제안한 개선의 약 0.4%가 "바꾸지 말라"고 적힌 sandbox 설정을 끄고 코드를 돌리려 했다(원논문 Table 2).[^stop]
+Darwin Gödel Machine에서는 도구 사용의 환각을 줄이는 과제에서,
+agent가 환각 탐지에 쓰이는 도구 사용 표시를 기록하지 않도록 자기 코드를 고쳐 만점을 받았다(원논문 Appendix H).[^dgm]
+앞에서 본 채점 해킹이 개선 대상에 평가 코드까지 들어오며 한 단계 위에서 되풀이된 것이다.
+그래서 자기 개선 시스템에서도 채점과 실행 환경의 분리, sandbox, 사람의 감독이 전제 조건으로 남는다.
+
+## 6. Agent의 평가
 
 채점을 정책에게서 떼어 놓아도, 서로 다른 설정에서 잰 점수끼리는 여전히 비교하기 어렵다.
 앞의 Liu 등은 평가 쪽에서 무작위 시드, 시스템 프롬프트, 다중 턴 template의 구성,
@@ -403,11 +445,11 @@ MacDiarmid 등은 Claude Sonnet 3.7의 학습에 쓰인 실제 코딩 환경에�
   GPT-4o 같은 function calling agent도 retail 영역에서 pass^8이 25% 아래였다.[^taubench]
 - **비용.** 성공률과 함께 과제당 호출 수, 생성 토큰, 실행 시간을 적는다.
 
-## 6. 정리
+## 7. 정리
 
 Agent를 만드는 방법은 신호를 어디서 얻고 어디에 남기느냐로 바뀌어 왔다.
 프롬프팅은 형식과 반성을 문맥에만 두었고,
-SFT는 합성한 시연을 가중치에 넣었지만 시연 밖의 상황은 가르치지 못했으며,
+SFT는 합성한 시연을 가중치에 넣었지만 정책이 스스로 만든 문맥은 덮지 못할 수 있었고,
 RL은 정책이 직접 만든 궤적의 성패를 가중치에 남긴다.
 그 대가로 학습 데이터는 문제와 정답에서 실행 가능한 환경으로 바뀌었다.
 환경의 초기화와 실패 처리가 곧 과제의 정의가 되고,
@@ -415,7 +457,7 @@ RL은 정책이 직접 만든 궤적의 성패를 가중치에 남긴다.
 정책 갱신 식 자체는 PPO·GRPO에서 크게 달라지지 않았고,
 달라진 것은 그 식에 들어갈 궤적을 만들고 믿을 수 있게 하는 일이다.
 
-서베이 §3의 나머지 능력 중 기억과 자기 개선은 Reflexion에서 프롬프팅 수준으로만 보았고, 계획과 함께 이 노트에서 더 다루지 않는다.
+서베이 §3의 나머지 능력 중 기억은 Reflexion에서 프롬프팅 수준으로만 보았고, 계획과 함께 이 노트에서 더 다루지 않는다.
 서베이 §4의 과제 중 GUI(graphical user interface)와
 체화 agent(embodied agent)는 이 노트의 범위 밖이다.
 
@@ -434,4 +476,7 @@ RL은 정책이 직접 만든 궤적의 성패를 가중치에 남긴다.
 [^liu2026]: Liu, T., et al. (2026). *On Effectiveness and Efficiency of Agentic Tool-calling and RL Training*. [arXiv:2606.00135v2](https://arxiv.org/abs/2606.00135v2).
 [^baker]: Baker, B., et al. (2025). *Monitoring Reasoning Models for Misbehavior and the Risks of Promoting Obfuscation*. [arXiv:2503.11926](https://arxiv.org/abs/2503.11926).
 [^macdiarmid]: MacDiarmid, M., et al. (2025). *Natural Emergent Misalignment from Reward Hacking in Production RL*. [arXiv:2511.18397](https://arxiv.org/abs/2511.18397).
+[^azr]: Zhao, A., et al. (2025). *Absolute Zero: Reinforced Self-play Reasoning with Zero Data*. [arXiv:2505.03335v3](https://arxiv.org/abs/2505.03335v3).
+[^stop]: Zelikman, E., Lorch, E., Mackey, L., & Kalai, A. T. (2024). *Self-Taught Optimizer (STOP): Recursively Self-Improving Code Generation*. COLM 2024. [arXiv:2310.02304v3](https://arxiv.org/abs/2310.02304v3).
+[^dgm]: Zhang, J., Hu, S., Lu, C., Lange, R., & Clune, J. (2025). *Darwin Gödel Machine: Open-Ended Evolution of Self-Improving Agents*. [arXiv:2505.22954v3](https://arxiv.org/abs/2505.22954v3).
 [^taubench]: Yao, S., Shinn, N., Razavi, P., & Narasimhan, K. (2024). *τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains*. [arXiv:2406.12045v1](https://arxiv.org/abs/2406.12045v1).
