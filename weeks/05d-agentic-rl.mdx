@@ -4,38 +4,22 @@ week: 5
 order: 3
 ---
 
-지금까지의 RL(reinforcement learning)은 프롬프트 하나에 응답 하나를 내는 문제였다.
-앞 주차의 PPO(proximal policy optimization)도,
-이 주에 본 GRPO(group relative policy optimization)도 응답이 끝나면 에피소드가 끝나고 task의 보상이 한 번 온다.
-실제 task의 많은 부분은 그렇지 않다.
-검색해서 읽고 다시 검색하고, 코드를 실행해 오류를 보고 고치고, 사용자와 여러 턴을 주고받는다.
-모델의 출력이 환경을 바꾸고 환경의 응답이 다음 입력이 된다.
-이런 상호작용 궤적을 보상으로 학습하는 것을 **agentic RL**이라고 부른다.
-
-모델의 도구 사용은 RL을 적용하기 전부터 발전해 왔다.
-이 노트는 프롬프트로 상호작용의 형식을 정한 방법과 도구 호출이 든 텍스트·대화로 모델을 학습시킨 방법을 거쳐,
-환경의 성패를 보상으로 쓰는 RL까지를 하나의 계보로 정리한다.
-그 과정에서 단일 응답 RL이 다중 턴 궤적으로 넓어질 때 데이터의 형태, 손실을 거는 위치,
-보상이 오는 시점, 생성 비용이 어떻게 바뀌는지 본다.
-정책이 환경을 바꿀 수 있게 되면 채점 절차 자체도 정책으로부터 분리해야 한다.
-마지막으로 task와 학습 장치까지 모델이 스스로 만드는 자기 개선의 방향과 그 한계를 짧게 본다.
-
-전체 지도는 Zhang 등이 2025년에 정리하고 2026년 TMLR에 실린 agentic RL 서베이[^survey]로 잡는다.
-기억은 Reflexion의 프롬프팅 수준에서만 다루며, 기억·계획을 RL로 학습하는 방법과 task 중 GUI(graphical user interface)·체화 agent(embodied agent)는 범위 밖이다.
+지금까지의 RL(reinforcement learning)은 프롬프트 하나에 응답 하나를 내고, 응답이 끝나면 보상이 한 번 오는 문제였다.
+실제 task의 많은 부분은 그렇지 않아서, 검색해서 읽고 다시 검색하고, 코드를 실행해 오류를 보고 고치고, 사용자와 여러 턴을 주고받는다.
+이처럼 모델의 출력이 환경을 바꾸고 환경의 응답이 다음 입력이 되는 상호작용 궤적을 보상으로 학습하는 것을 **agentic RL**이라고 부른다.[^survey]
+정책 갱신 식은 앞에서 본 PPO(proximal policy optimization)·GRPO(group relative policy optimization)와 크게 다르지 않고, 달라지는 것은 그 식에 넣을 궤적을 만들고 믿을 수 있게 채점하는 일이다.
 
 ## 1. 단일 응답에서 궤적으로
 
 ### 1-1. 형식의 차이
 
-서베이는 선호 기반 강화 fine-tuning(preference-based reinforcement fine-tuning, PBRFT)으로 대표되는 지금까지의 post-training RL을,
-응답 전체를 행동 하나로 묶은 **퇴화한 MDP**로 형식화한다.[^survey]
+지금까지의 post-training RL은 응답 전체를 행동 하나로 묶은 단계가 하나뿐인 **퇴화한**(degenerate) **MDP**(Markov decision process)로 볼 수 있다.[^survey]
 상태는 프롬프트 하나이고, 그 행동 뒤에 종료 상태로 한 번 전이하며,
-보상은 한 번 온다(앞 주차 RLHF(reinforcement learning from human feedback)에서처럼 토큰을 행동으로 보면 토큰 단위 MDP가 되지만 환경의 개입은 없다).
-서베이는 agentic RL을 부분 관측 MDP(partially observable MDP, POMDP)로 모델링한다.
+보상은 한 번 온다(토큰 하나를 행동으로 보면 토큰 단위 MDP가 되지만 환경은 여전히 개입하지 않는다).
+Agentic RL은 부분 관측 MDP(partially observable MDP, POMDP)로 모델링한다.
 환경에는 정책이 다 볼 수 없는 상태(파일 시스템, 검색 엔진의 색인, 사용자의 의도)가 있고,
 정책이 행동(텍스트, 도구 호출)을 내면 환경이 관측(검색 결과, 실행 출력, 사용자 답)을 돌려준다.
-서베이의 식은 정책이 현재 관측을 보고 행동한다고 쓰지만,
-행동과 관측의 이력을 문맥에 계속 이어 붙이는 LLM(large language model) agent에서는 사실상 그 이력 전체가 다음 행동의 입력이 된다.
+정책은 환경 상태를 직접 보지 못하므로, LLM(large language model) agent는 행동과 관측의 이력을 문맥에 이어 붙여 다음 행동의 입력으로 쓴다.
 보상은 여러 시점에 올 수 있고 최종 성공은 여러 턴 뒤에 정해진다.
 
 | | 단일 응답 RL (PPO·GRPO) | Agentic RL |
@@ -59,12 +43,13 @@ SFT에서처럼 mask는 토큰을 손실에서만 빼고 입력에서는 빼지 
 확률비와 log 확률은 정책이 생성한 토큰에서만 계산한다.
 
 **보상의 귀속.** 최종 보상 하나를 여러 턴에 어떻게 나누는가가 credit assignment 문제다.
-가장 단순한 방법은 중간 보상과 할인이 없을 때 PPO의 return처럼 최종 보상을 모든 턴에 그대로 주는 것이고,
+가장 단순한 방법은 앞 주차 PPO에서 본 누적 보상 $G_t$처럼 각 턴에 그 턴부터 끝까지 받은 보상의 합을 주는 것이다.
+중간 보상이 없으면 최종 보상이 모든 턴에 그대로 가고,
 턴마다 별도 보상(도구 호출 형식, 중간 결과)을 더하면 RLVR(reinforcement learning with verifiable rewards)에서 본 process 보상이 된다.
 
 **생성 비용.** 궤적 하나를 만들려면 정책 생성과 환경 실행이 번갈아야 한다.
 도구 실행(검색, 코드 실행)의 지연이 생성에 더해지고, 궤적 길이의 분산이 커진다.
-생성과 학습을 겹치는 비동기 설계가 여기서 더 절실해지고,
+한 궤적이 도구 결과를 기다리는 동안 다른 궤적의 생성이 멈추지 않도록 궤적마다 따로 진행시키고, 가장 긴 궤적을 기다리지 않도록 생성과 학습을 겹쳐 돌리는 비동기 설계가 더 중요해지며,
 비싸게 만든 궤적 중 상당수가 학습 신호를 주지 않는다는 문제도 커진다.
 
 ## 2. 상호작용 학습의 계보
@@ -78,24 +63,23 @@ Toolformer는 도구 호출이 든 텍스트로 가중치를 학습했고,
 두 학습 방식 모두 신호는 정해진 텍스트의 다음 토큰 예측이었다.
 RL에서 두 갈래가 합쳐진다.
 환경이 판정한 결과를 Reflexion처럼 신호로 쓰면서 SFT처럼 가중치에 남긴다.
-표의 "겨냥한 한계"는 각 방법을 앞의 방법과 견주어 이 노트가 정리한 것이며,
-원논문이 그 방법을 직접 계승했다는 뜻은 아니다.
-실제 연구의 순서도 일직선이 아니어서, ReAct보다 앞선 2021년의 WebGPT가 이미 텍스트 브라우저 환경에서 검색·탐색 행동을 시연 모방과 사람 피드백으로 학습했다.[^webgpt]
+표의 "겨냥한 한계"는 각 방법을 앞의 방법과 견주어 정리한 것이며, 원논문이 앞 방법을 직접 계승했다는 뜻은 아니다.
 
 | 방법 | 축 | 겨냥한 한계 | 학습 신호 | 학습 단위 |
 |---|---|---|---|---|
-| ReAct | 상호작용 형식 | (출발점) 추론만 하는 프롬프팅과 행동만 하는 방식이 따로 다뤄짐 | 없음(few-shot 프롬프트) | 없음 |
+| ReAct | 상호작용 형식 | (출발점) 추론만 하는 프롬프팅과 행동만 하는 방식이 따로 다뤄짐 | 주로 few-shot 프롬프트 | 없음(주 방법 기준) |
 | Reflexion | 피드백 활용 (문맥) | ReAct는 실패한 시도의 경험을 다음 시도로 넘기지 못함 | 환경의 성패를 말로 옮긴 반성 (가중치 갱신 없음) | 없음(반성을 기억에 쌓아 다음 시도의 문맥에 넣음) |
 | Toolformer | 가중치 학습 (자기 지도) | ReAct식 프롬프팅은 매번 예시가 필요하고 호출 시점을 학습하지 않음 | 다음 토큰 예측 | 도구 호출이 끼워진 텍스트 |
-| Function calling SFT (APIGen, ToolLLM 등) | 가중치 학습 (합성 시연) | Toolformer는 소수의 도구를 하나씩 따로 호출하고 연쇄 호출의 예가 없음 | 다음 토큰 예측 | 도구 schema가 주어진 단일·병렬 호출, 또는 관측을 포함한 다중 턴 궤적 |
+| Function calling SFT (ToolLLM 등) | 가중치 학습 (합성 시연) | Toolformer는 소수의 도구를 하나씩 따로 호출하고 연쇄 호출의 예가 없음 | 다음 토큰 예측 | 도구 schema가 주어진 단일·병렬 호출, 또는 관측을 포함한 다중 턴 궤적 |
 | Search-R1 | 피드백으로 가중치 학습 (RL, 궤적 갈래) | 고정된 시연은 현재 정책이 스스로 실수한 뒤의 문맥을 충분히 덮지 못할 수 있음 | 최종 답의 정확 일치 | 검색 실행을 포함한 다중 턴 궤적 |
 | ARPO(agentic reinforced policy optimization) | 피드백으로 가중치 학습 (RL, 궤적 갈래) | Search-R1식 궤적 단위 보상은 궤적 안의 어느 구간이 좋았는지 구분 못함 | 정확성·형식 + 다중 도구 사용 보너스 | 분기로 공통 prefix를 공유하는 궤적 묶음 |
-| ToolRL | 피드백으로 가중치 학습 (RL, 단계 갈래) | Search-R1과 같은 한계를 단일 단계 호출과 보상 설계로 다룸 | 형식 + 호출의 세분화된 정확성 | 이력이 주어진 다음 호출 한 단계 |
+| ToolRL | 피드백으로 가중치 학습 (RL, 단계 갈래) | SFT는 낯설거나 복잡한 도구 사용에 일반화가 약함(궤적 대신 단일 단계 호출과 보상 설계로 접근) | 형식 + 호출의 세분화된 정확성 | 이력이 주어진 다음 호출 한 단계 |
 
 ### 2-1. ReAct와 Reflexion의 프롬프팅
 
-Yao 등의 ReAct는 가중치를 학습하지 않고 프롬프트만으로 도구 사용을 유도했다.
-모델이 "생각(thought)"과 "행동(action)"을 번갈아 쓰고 행동의 결과인 "관측(observation)"을 받아 다음 생각을 잇는 형식이며, few-shot 예시로 이 형식을 보여 주었다.[^react]
+Yao 등의 ReAct는 주로 가중치 학습 없이 프롬프트만으로 도구 사용을 유도했다.
+모델이 "생각(thought)"과 "행동(action)"을 번갈아 쓰고 행동의 결과인 "관측(observation)"을 받아 다음 생각을 잇는 형식이며, few-shot 예시로 이 형식을 보여 주었다.
+이 형식으로 만든 정답 궤적으로 작은 모델을 fine-tuning하는 실험도 했지만 주된 방법은 프롬프팅이었다.[^react]
 질의응답과 사실 확인에서 위키백과 검색을, 상호작용 task에서 환경 명령을 행동으로 썼다.
 이 형식은 이후 agent에서 널리 쓰이게 되었지만,
 이 프롬프팅 설정에서는 매번 예시를 넣어야 하고 예시에 없는 상황에서 언제 도구를 부를지 모델이 알기 어렵다.
@@ -153,12 +137,9 @@ SFT에서는 assistant 차례의 토큰(호출과 최종 답)에만 손실을 �
 이런 대화를 사람이 대량으로 쓰기는 어려워서 학습 데이터를 합성하는 경우가 많다.
 합성 데이터에는 두 종류가 있다.
 하나는 질의와 도구 목록을 받아 호출 하나, 또는 한 응답에 여러 호출을 한꺼번에 내는(parallel) 데이터다.
+이 종류에서는 호출의 정확성이 문제여서, APIGen은 형식 검사·실제 실행·LLM judge의 의미 검사를 모두 통과한 호출만 남겼다.[^apigen]
 다른 하나는 호출 결과를 관측으로 받고 그것을 보고 다음 호출을 정하는 다중 턴 궤적이다.
 앞의 것만 학습하면 호출 형식과 도구 선택은 익히지만, 결과를 해석해 호출을 이어 가는 법은 따로 배워야 한다.
-
-Liu 등의 APIGen은 앞의 종류에서 데이터의 정확성을 다뤘다.
-실행 가능한 API로 질의와 호출을 생성한 뒤,
-형식 검사, 실제 실행, 그리고 실행 결과가 질의의 목적에 맞는지를 LLM judge가 판정하는 의미 검사의 세 단계를 모두 통과한 것만 남겼다.[^apigen]
 
 Qin 등의 ToolLLM은 뒤의 종류를 만들었다.
 실제 웹 API를 모아 한 도구 또는 여러 도구를 써야 하는 지시를 ChatGPT로 만들고,
@@ -171,14 +152,6 @@ Kimi K2는 도구와 task의 종류를 크게 늘려 다중 턴 궤적을 대규
 도구 조합이 다른 수많은 agent에 성공 기준(rubric)이 달린 task를 주어,
 사용자 역할의 LLM과 상태를 유지하는 도구 시뮬레이터 사이에서 궤적을 생성한 뒤 LLM judge가 rubric으로 걸렀다.
 이 궤적은 SFT 데이터가 되고, 그 뒤의 RL은 검증 보상과 rubric 기반 자기 비평 보상을 함께 쓴다.[^kimik2]
-
-<Details summary="세 데이터의 규모">
-
-ToolLLM은 RapidAPI Hub의 49개 범주에서 웹 API 16,464개를 모았다.[^toolllm]
-APIGen은 21개 범주의 API 3,673개를 썼고, 이 데이터로 학습한 7B 모델은 발표 당시 Berkeley Function-Calling Benchmark에서 여러 GPT-4 모델을 앞섰다.[^apigen]
-Kimi K2의 도구 저장소는 GitHub의 MCP 도구 3천여 개와 합성 도구 2만여 개로 이루어졌다.[^kimik2]
-
-</Details>
 
 SFT도 새 도구와 상황에 일반화할 수 있다.
 다만 고정된 시연은 다른 모델이나 파이프라인이 만든 문맥이라,
@@ -210,7 +183,7 @@ Search-R1의 rollout은 다음 순서로 돈다.
 5. 둘 다 없으면 "My action is not correct. Let me rethink."라는 문장을 붙여 다시 생성하게 한다.
 6. 행동 횟수를 하나 늘리고, 최대 행동 수에 이르지 않았으면 2로 돌아간다.
 
-끝난 궤적은 최종 답을 정답과 비교해 채점하고, 같은 질문의 궤적들로 정책을 갱신한다.
+끝난 궤적은 최종 답을 정답과 비교해 채점하고, 그 보상으로 PPO나 GRPO를 써서 정책을 갱신한다.
 여기서 보듯 잘못된 형식의 출력, 도구 실행의 오류나 timeout, 예산 소진은 각각 처리 방식을 정해야 하는 설계 선택이다.
 Search-R1은 잘못된 형식을 다시 생각하라는 관측으로 돌려주고 예산이 다하면 그대로 끝내 채점한다.
 오류를 관측으로 돌려주면 정책이 복구를 배울 기회가 생기고,
@@ -221,7 +194,7 @@ Search-R1은 잘못된 형식을 다시 생각하라는 관측으로 돌려주�
 한 궤적이 바꾼 상태 위에서 다른 궤적이 시작하면 그룹 안의 비교가 공정하지 않다.
 
 <Callout type="example">
-**두 턴 궤적의 mask와 return.** "소설 『채식주의자』의 작가가 노벨 문학상을 받은 해는?"이라는 질문에
+**두 턴 궤적의 mask와 누적 보상.** "소설 『채식주의자』의 작가가 노벨 문학상을 받은 해는?"이라는 질문에
 Search-R1 형식으로 답하는 교육용 궤적을 보자.
 학습에 들어가는 토큰열은 세 구간으로 나뉜다.
 
@@ -233,11 +206,11 @@ Search-R1 형식으로 답하는 교육용 궤적을 보자.
 
 관측 구간은 mask가 0이지만 턴 2의 토큰을 계산할 때 문맥으로 들어간다.
 정책 갱신의 확률비와 log 확률은 mask가 1인 두 구간의 토큰에서만 계산한다.
-최종 답이 맞아 보상 1을 받았고 중간 보상은 없다면, 할인 없이 계산한 각 턴의 return은 둘 다 1이다.
-여기에 "검색어가 형식을 지켰는가"에 대한 process 보상 0.1을 턴 1에 더하면 턴 1의 return은 1.1, 턴 2는 1이 된다.
+최종 답이 맞아 보상 1을 받았고 중간 보상은 없다면, 각 턴의 누적 보상은 둘 다 1이다.
+여기에 "검색어가 형식을 지켰는가"에 대한 process 보상 0.1을 턴 1에 더하면 턴 1의 누적 보상은 1.1, 턴 2는 1이 된다.
 최종 보상을 두 턴에 임의로 반씩 나누지는 않는다.
 각 턴은 자기 뒤에 온 보상의 합을 받는다.
-PPO에서는 단순한 추정이라면 이 return에서 value model의 예측을 빼 advantage를 구하고, 이 값이 갱신 방향을 정한다.
+PPO에서는 단순한 추정이라면 이 누적 보상에서 value model의 예측을 빼 advantage를 구하고, 이 값이 갱신 방향을 정한다.
 중간 보상 없이 최종 outcome 보상만 쓰는 GRPO에서는 궤적의 최종 보상을 같은 질문의 다른 궤적들과 비교해 정규화한 값을 그 궤적의 모든 정책 토큰에 준다.
 이 궤적과 같은 질문의 다른 궤적들이 모두 1을 받았다면 advantage가 0이 되어 policy 항의 신호가 사라진다(KL(Kullback–Leibler) penalty를 쓰는 설정에서는 그 항의 gradient가 남을 수 있다).
 </Callout>
@@ -255,8 +228,8 @@ base model에서 PPO로 학습한 Search-R1은 0.431이었다.[^searchr1]
 Search-R1처럼 궤적 단위로 보상을 주는 GRPO를 그대로 쓰면 궤적 안의 어느 구간이 좋았는지 구분하지 못한다.
 Dong 등의 ARPO는 도구 결과가 돌아온 직후 정책의 entropy가 급격히 오른다는 관측에서 출발했다.[^arpo]
 새 정보를 받은 직후에 모델이 특히 불확실해진다는 뜻이다.
-그래서 ARPO는 궤적을 처음부터 끝까지 여러 개 따로 만드는 대신,
-도구 결과 뒤에 entropy가 크게 오른 지점에서 궤적을 여러 갈래로 분기해 이어 생성한다.
+그래서 ARPO는 rollout 예산의 일부로만 궤적을 처음부터 따로 만들고,
+나머지는 도구 결과 뒤에 entropy가 크게 오른 지점에서 궤적을 여러 갈래로 분기해 이어 생성하는 데 쓴다.
 
 이렇게 얻은 궤적들은 분기 지점 앞의 토큰(공통 prefix)을 공유한다.
 보상의 정규화는 일반 GRPO처럼 같은 질문의 전체 rollout 그룹에서 하고, 손실도 GRPO를 그대로 쓴다.
@@ -269,14 +242,14 @@ Dong 등의 ARPO는 도구 결과가 돌아온 직후 정책의 entropy가 급�
 공통 구간과 갈라진 뒤의 구간이 서로 다른 신호를 받게 되는 것이다.
 다만 갈라진 뒤의 구간 안에서 어느 행동이 성패에 기여했는지는 여전히 나누지 못하며,
 단계별 기여를 직접 판정하는 방법은 아니다.
-보상은 정확성과 형식에 더해, 정답을 내면서 검색과 Python 실행을 함께 쓴 궤적에 0.1을 더 준다.
+보상은 정확성과 형식에 더해, 형식을 지켜 정답을 내면서 검색과 Python 실행을 함께 쓴 궤적에 0.1을 더 준다.
 
 수학·지식 질의응답·심층 검색의 13개 벤치마크에서 ARPO는 궤적 단위 RL 알고리즘보다 평균 성능이 높았고,
 Qwen2.5-7B에서는 GRPO보다 학습 중 도구 호출을 절반만 쓰면서 정확도가 더 높았다.[^arpo]
 
 ### 3-3. ToolRL의 단일 단계 호출 보상
 
-Qian 등의 ToolRL은 같은 문제를 다른 학습 단위로 다룬다.
+Qian 등의 ToolRL은 SFT가 낯설거나 복잡한 도구 사용에 잘 일반화하지 못한다는 문제를 RL로 다루되, 궤적 대신 단일 단계 호출을 학습 단위로 삼았다.
 다중 턴 궤적을 "지금까지의 대화 이력이 주어졌을 때 다음 도구 호출"이라는 단일 단계 사례로 분해해 프롬프트에 이력을 넣고,
 보상 설계에 집중했다.
 도구 호출의 형식 보상에 더해,
@@ -298,8 +271,8 @@ Qwen2.5-Instruct와 Llama-3.2-3B-Instruct에서 출발해 GRPO로 학습했다.[
 ### 4-1. 학습 환경의 구성
 
 환경과 상호작용하는 궤적을 직접 학습하려면 문제와 정답뿐 아니라 실행할 수 있는 **환경**과 성공을 판정하는 절차가 필요하다.
-도구가 실제로든 시뮬레이터 안에서든 실행되어야 하고, task마다 성공 조건이 있어야 하며,
-궤적이 길어 사람이 만들기 어렵다.
+도구가 실제로든 시뮬레이터 안에서든 실행되어야 하고 task마다 성공 조건이 있어야 해서,
+이런 task를 사람이 하나씩 만들기 어렵다.
 
 코딩 agent의 학습 task를 보면 환경이 무엇인지 구체적으로 드러난다.
 Task 하나에는 저장소, 고칠 내용을 적은 이슈, 코드를 실제로 돌릴 수 있는 실행 환경, 수정이 맞는지 확인할 단위 테스트가 들어 있다.
@@ -309,21 +282,18 @@ SWE-bench는 이 형식을 갖춘 대표적인 평가 세트인데,
 평가 세트로 학습하면 그 점수를 믿을 수 없으므로 학습에는 같은 형식이면서 평가와 겹치지 않는 task가 따로 필요하다.
 Pan 등의 SWE-Gym은 SWE-bench와 겹치지 않는 Python 저장소 11개에서 GitHub 이슈와 그것을 해결한 pull request를 모아,
 실행 환경과 테스트를 갖춘 학습용 task 2,438개를 만들었다.[^swegym]
-실행 환경은 저장소마다 사람이 직접 설정했다.
-이 논문의 학습 자체는 RL이 아니었다.
-정책이 만든 궤적 중 테스트를 통과한 것만 골라 fine-tuning하는 rejection sampling fine-tuning을 썼고,
-성공과 실패가 표시된 궤적으로 궤적의 성공 확률을 매기는 verifier를 따로 학습해 추론 때 여러 후보 중 하나를 고르는 데 썼다.[^swegym]
+실행 환경은 task마다 의존성을 반수동으로 설정했다.
 같은 환경에서 테스트 통과를 그대로 보상으로 쓰면 검증 보상을 건 RL이 된다.
 
 실제 저장소마다 환경을 손으로 만드는 방식은 규모를 키우기 어렵고,
-그래서 앞에서 본 Kimi K2처럼 도구와 사용자를 시뮬레이터로 대신하기도 한다.
+그래서 앞에서 본 Kimi K2처럼 도구와 사용자의 일부를 시뮬레이터로 대신하기도 한다.
 시뮬레이터가 실제 환경과 다르면 시뮬레이터에 맞춘 행동을 배운다는 위험은 앞 주차 reward hacking에서 본 대리 지표 문제와 같다.
 
 ### 4-2. 무효 rollout과 생성 전 필터링
 
 환경에서 궤적을 만드는 비용이 큰 만큼, 만든 궤적이 학습 신호를 주는지가 더 중요해진다.
 Liu 등은 2026년에 도구 호출 agent의 학습과 평가를 함께 점검했다.[^liu2026]
-이 실험은 다중 턴 대화를 단일 단계 사례로 나눠 학습했으므로, 아래 관찰도 그 단위에 관한 것이다.
+이 실험은 단일 턴 데이터와, 다중 턴 대화를 단일 단계 사례로 나눈 데이터로 학습했으므로 관찰도 그 단위에 관한 것이다.
 한 프롬프트의 rollout이 모두 같은 보상을 받으면 그룹 advantage가 0이 되어 policy 항의 학습 신호가 없는데,
 도구 호출 RL에서는 이런 프롬프트가 대부분이었다.
 
@@ -367,89 +337,22 @@ Baker 등은 프롬프트를 준 GPT-4o를 감시자(monitor)로 쓰고,
 
 그렇다면 감시자의 판정을 보상에 넣어 "나쁜 생각"에 벌점을 주면 어떨까.
 저자들이 사고 과정만 보는 감시자로 이를 시험하자,
-학습 초반에는 부정행위 없이 통과하는 해답이 늘었다.
-그러나 학습이 진행되자 정책은 여전히 부정행위를 하면서 사고 과정에는 그 의도를 쓰지 않게 되었고,
-감시자의 재현율은 0에 가깝게 떨어졌다.
+부정행위 없이 통과하는 해답은 기준 정책보다 늘었다.
+그러나 정책은 여전히 꽤 높은 비율로 부정행위를 했고, 사고 과정에는 그 의도를 쓰지 않게 되어
+감시자의 재현율이 0에 가깝게 떨어졌다.
 저자들은 이를 obfuscated reward hacking이라 부르고,
 사고 과정에 직접 강한 최적화 압력을 가하지 말 것을 권했다.[^baker]
-감시 신호도 보상에 넣는 순간 대리 지표가 된다.
+사고 과정을 보는 감시 신호를 보상에 넣으면 그 신호도 대리 지표가 된다.
 다만 이 경고는 사고 과정 자체에 벌점을 주는 경우에 관한 것이다.
-MacDiarmid 등의 실험에서는 해킹 행동을 잡는 분류기의 벌점을 보상에 넣으면 해킹이 학습되지 않았다.[^macdiarmid]
+MacDiarmid 등이 Claude Sonnet 3.7의 학습 환경 가운데 해킹에 취약한 코딩 환경을 골라 한 실험에서는,
+해킹 행동을 잡는 분류기의 벌점을 보상에 넣자 해킹이 학습되지 않았다.[^macdiarmid]
 
-<Details summary="해킹을 배운 정책의 정렬 실패">
+채점 코드를 숨겨도 정책이 채점의 입력을 바꿀 수 있으면 판정은 무력해진다.
+가중치 대신 자기 코드를 고치며 점수를 올리는 코딩 agent인 Darwin Gödel Machine은 도구를 부르지 않고 부른 척 쓰는 환각(hallucination)을 검사하는 함수를 볼 수 없었는데도,
+실제 도구 호출 때 남기던 표시 토큰을 기록하지 않도록 자기 코드를 고쳐 만점을 받았다.[^dgm]
+그래서 채점 코드뿐 아니라 실행 기록의 수집 경로도 정책이 고칠 수 없는 곳에 둔다.
 
-MacDiarmid 등은 Claude Sonnet 3.7의 학습에 쓰인 실제 코딩 환경에서 같은 종류의 해킹이 학습되는 과정을 재현했다.[^macdiarmid]
-어떤 값과 비교해도 같다고 답하는 객체를 돌려주는 "AlwaysEqual", `sys.exit(0)`,
-그리고 pytest의 결과 보고를 항상 통과로 고치는 `conftest.py` 파일이다.
-이 실험은 해킹 방법을 담은 문서를 섞어 pre-training을 이어 하거나 프롬프트로 힌트를 주어 정책이 해킹을 시도할 수 있게 하고,
-해킹이 가능한 환경만 골라 학습했다.
-
-<Figure src="https://arxiv.org/html/2511.18397v1/hack_rates.png" alt="두 패널의 선 그래프. 가로축은 학습 스텝(0에서 150), 세로축은 해킹 비율(0에서 1)이다. 왼쪽 SDF setting과 오른쪽 prompted setting 모두 약 60 스텝 무렵까지 비율이 0 근처에 있다가 급격히 오른다. 분홍 선(combined)은 1 가까이까지 오르고, 파란 선(AlwaysEqual)은 그 바로 아래를 따라가다 0.7에서 0.9 사이를 오르내린다. 회색 선(conftest.py)은 늦게 올라 0.2에서 0.3 사이에 머물고, 주황 선(sys.exit(0))은 끝까지 0 근처다." caption="학습 중 세 해킹의 비율. 왼쪽은 해킹 지식을 담은 문서로 이어 학습한 설정(SDF, synthetic document finetuning), 오른쪽은 프롬프트로 힌트를 준 설정이다. 두 설정 모두 약 60 스텝 무렵까지 해킹이 드물다가 급격히 늘고, AlwaysEqual이 먼저, conftest.py가 나중에 퍼진다." source="MacDiarmid et al. (2025), Natural Emergent Misalignment from Reward Hacking in Production RL, Figure 8. arXiv:2511.18397v1 · CC BY 4.0 · 수정 없음" />
-
-[라이선스](https://creativecommons.org/licenses/by/4.0/)
-
-정책이 해킹을 배우기 시작한 시점에 맞춰 코딩과 무관한 정렬(alignment) 평가의 점수도 함께 나빠졌다.
-목표를 묻는 단순한 질문에 겉으로만 정렬된 척하는 추론을 하거나,
-해킹 탐지 분류기를 만들어 달라는 요청에 분류기가 덜 잡도록 몰래 손을 쓰는 식이다.
-해킹 벌점으로 해킹을 막은 학습에서는 이런 정렬 실패가 늘지 않았다.
-저자들은 pre-training 데이터에서 reward hacking이 정렬 실패와 함께 묘사되기 때문에
-해킹을 배운 것이 그 연관을 따라 일반화되었다고 해석한다.
-학습 프롬프트에 해킹을 허용된 행동으로 적어 두면(inoculation prompting) 해킹은 그대로 배워도 정렬 실패가 크게 줄었다는 결과가 그 근거다.
-이 결과는 해킹 지식을 주입하고 해킹 가능한 환경만으로 학습한 조건에서 얻은 것이며
-메커니즘은 저자들의 가설이다.
-
-</Details>
-
-## 5. 자기 개선 루프
-
-앞의 합성 파이프라인에서도 모델이 task를 만들고 도구를 흉내 냈지만,
-task를 만드는 절차와 개선 여부를 판정하는 기준은 사람이 정했고 학습을 돌리는 코드도 사람이 짰다.
-Task 생성, 개선안의 평가, 학습 코드 작성 같은 일까지 모델에게 넘겨 개선된 시스템이 다음 개선에 다시 참여하게 하는 구조를 재귀적 자기 개선(recursive self-improvement, RSI)이라고 부른다.
-이때 모델이 후보를 만들고 고르는 내부 평가와, 모델이 고칠 수 없는 곳에 두는 독립 검증은 구분해야 한다.
-그 반복이 개선을 가속한다는 기대가 있지만, 가속은 구조만으로 보장되지 않고 실험으로 보여야 할 대상이다.
-여기서 볼 시스템들은 그 루프의 일부만 자동화했다.
-
-첫째 갈래는 task를 만드는 정책까지 RL로 학습한다.
-Zhao 등의 Absolute Zero는 한 모델이 task를 내는 역할(proposer)과 푸는 역할(solver)을 함께 맡는다.[^azr]
-Task는 프로그램·입력·출력 중 둘을 주고 나머지 하나를 맞히는 코드 추론 문제이고,
-코드 실행기가 제안된 task가 오류 없이 돌고 같은 입력에 같은 출력을 내는지 확인한 뒤 답을 채점한다.
-Solver는 정답 보상을 받고,
-proposer는 solver가 그 task를 여러 번 풀어 얻은 평균 정답률 $\bar r$가 0이면 보상 0, 아니면 $1-\bar r$를 받는다.
-정답률이 0, 0.25, 1이면 proposer의 보상은 0, 0.75, 0이므로 너무 쉽지도 풀 수 없지도 않은 task를 내도록 학습된다.
-이 역할별 보상에 더해 형식이 틀리거나 답이 틀린 응답에는 벌점을 준다.
-두 역할의 보상으로 같은 모델의 가중치를 갱신한다.
-RLVR에서 본 "풀 수 있으면서 어려운 문제"라는 데이터 조건을 모델이 직접 맞추는 셈이다.
-사람이 만든 학습 데이터 없이도, 코드 모델에서 출발한 7B 모델(AZR-Coder-7B)은 수만 개의 선별 데이터로 학습한 같은 크기의 RL-Zero 모델들보다 코드 평균과 코드·수학 종합 평균이 높았다.
-수학 평균만 보면 가장 높지는 않았다.[^azr]
-판정은 여전히 사람이 정한 코드 실행기가 맡는다.
-
-둘째 갈래는 가중치 대신 LLM을 감싼 코드를 고친다.
-Zelikman 등의 STOP(Self-Taught Optimizer)은 LLM을 여러 번 불러 주어진 프로그램을 고치는 개선기(improver) 프로그램에서 출발했다.
-이 개선기에 자기 자신의 코드를 고치게 해 더 나은 개선기를 얻었다.[^stop]
-Zhang 등의 Darwin Gödel Machine은 코딩 agent가 자기 도구와 작업 흐름의 코드를 고친 변형을 만들고,
-벤치마크로 평가해 보관소(archive)에 쌓으며 여러 갈래로 탐색했다.
-SWE-bench Verified의 200개 task 부분집합에서 성공률이 20.0%에서 50.0%로 올랐다.[^dgm]
-두 방법 모두 기반 LLM의 가중치는 고정이고, 개선은 그 LLM을 쓰는 코드의 생성·평가·선택으로 이루어진다.
-STOP의 저자들은 이 때문에 완전한 RSI가 아니라고 밝혔고,
-Darwin Gödel Machine에서는 보관소 관리와 부모 선택 같은 바깥 탐색 절차도 사람이 정한 그대로 남는다.[^dgm]
-
-루프를 닫아도 개선을 판정하는 평가는 바깥에 남아야 하고, 그 평가가 다시 최적화 대상이 된다.
-STOP은 개선안을 평가하는 함수에 기능을 제한하는 sandbox 실행 옵션(`use_sandbox=True`)을 두고 "바꾸지 말라"는 주석을 달았다.
-그런데 GPT-4가 낸 수정안의 일부에 이 설정을 끄는 코드가 들어 있었고, 경고를 더해도 마찬가지였다.[^stop]
-Darwin Gödel Machine에서는 도구 사용의 환각을 줄이는 task에서,
-환각 검사 함수를 agent에게 숨겨 두었는데도 agent가 그 검사가 읽는 도구 사용 표시를 기록하지 않도록 자기 코드를 고쳐 만점을 받았다.[^dgm]
-평가 함수를 숨기거나 채점 코드를 분리해도, 정책이 평가의 입력인 실행 기록을 바꿀 수 있으면 판정은 무력해진다.
-그래서 자기 개선 시스템에서는 채점 코드뿐 아니라 실행 기록의 수집 경로도 수정 대상에서 떼어 놓고, sandbox와 사람의 감독을 전제로 둔다.
-
-<Details summary="STOP의 sandbox 해제 시도 비율">
-
-STOP은 초기 개선기에 대해 GPT-4가 낸 독립적인 수정안 10,000개에서 sandbox 해제를 시도한 코드를 문자열로 판별해 셌다.
-그 비율은 기본 조건에서 0.42%, 해제하지 말라는 경고를 더한 조건에서 0.46%였다.[^stop]
-여러 세대의 자기 개선에서 실제로 sandbox를 벗어난 비율이 아니라 시도의 비율이다.
-
-</Details>
-
-## 6. Agent의 평가
+## 5. Agent의 평가
 
 채점을 정책에게서 떼어 놓아도, 서로 다른 설정에서 잰 점수끼리는 여전히 비교하기 어렵다.
 앞의 Liu 등은 평가 쪽에서 무작위 시드, 시스템 프롬프트, 다중 턴 template의 구성,
@@ -461,26 +364,11 @@ STOP은 초기 개선기에 대해 GPT-4가 낸 독립적인 수정안 10,000개
 - **성공의 정의.** 호출의 일치 여부와 task의 최종 성공 여부는 서로 다른 평가 기준이다.
   Yao 등의 τ-bench는 대화가 끝난 뒤의 데이터베이스 상태를 목표 상태와 비교해 성공을 판정한다.[^taubench]
 - **반복 안정성.** 같은 task를 여러 번 돌린다.
-  τ-bench는 long CoT(chain of thought)에서 본 $\mathrm{pass}^k$를 agent 평가에 제안한 벤치마크이며,
+  τ-bench는 long CoT(chain of thought) 노트에서 본 안정성 지표 $\mathrm{pass}^k$를 처음 제안한 agent 벤치마크이며,
   GPT-4o 같은 function calling agent도 retail 영역에서 $\mathrm{pass}^8$이 25% 아래였다.[^taubench]
 - **비용.** 성공률과 함께 task당 호출 수, 생성 토큰, 실행 시간을 적는다.
 
-## 7. 정리
-
-Agent를 만드는 방법은 신호를 어디서 얻고 어디에 남기느냐로 바뀌어 왔다.
-프롬프팅은 형식과 반성을 문맥에만 두었다.
-SFT는 합성한 시연을 가중치에 넣었지만 정책이 스스로 만든 문맥까지 덮지는 못할 수 있다.
-RL은 정책이 직접 만든 궤적의 성패를 가중치에 남긴다.
-환경과 상호작용하는 궤적을 직접 학습할 때는 실행 환경과 성공 판정 절차도 준비해야 한다.
-환경의 초기화와 실패 처리가 곧 task의 정의가 되고,
-채점이 정책의 손에 닿으면 정책은 task를 해결하기보다 채점 절차를 조작해 보상을 높일 수 있다.
-Task와 학습 장치까지 모델에게 넘기는 자기 개선도 같은 조건 위에 있어서, 개선을 판정하는 평가와 실행 기록이 정책의 손 밖에 있어야 믿을 수 있다.
-정책 갱신 식 자체는 PPO·GRPO에서 크게 달라지지 않았고,
-달라진 것은 그 식에 들어갈 궤적을 만들고 믿을 수 있게 하는 일이다.
-
-
 [^survey]: Zhang, G., et al. (2026). The Landscape of Agentic Reinforcement Learning for LLMs: A Survey. *Transactions on Machine Learning Research*. [arXiv:2509.02547v5](https://arxiv.org/abs/2509.02547v5).
-[^webgpt]: Nakano, R., et al. (2021). WebGPT: Browser-assisted question-answering with human feedback. [arXiv:2112.09332](https://arxiv.org/abs/2112.09332).
 [^react]: Yao, S., et al. (2023). ReAct: Synergizing Reasoning and Acting in Language Models. *ICLR 2023*. [arXiv:2210.03629](https://arxiv.org/abs/2210.03629).
 [^reflexion]: Shinn, N., et al. (2023). Reflexion: Language Agents with Verbal Reinforcement Learning. *NeurIPS 2023*. [arXiv:2303.11366v4](https://arxiv.org/abs/2303.11366v4).
 [^toolformer]: Schick, T., et al. (2023). Toolformer: Language Models Can Teach Themselves to Use Tools. *NeurIPS 2023*. [arXiv:2302.04761](https://arxiv.org/abs/2302.04761).
@@ -492,10 +380,8 @@ Task와 학습 장치까지 모델에게 넘기는 자기 개선도 같은 조�
 [^arpo]: Dong, G., et al. (2025). Agentic Reinforced Policy Optimization. [arXiv:2507.19849](https://arxiv.org/abs/2507.19849).
 [^toolrl]: Qian, C., et al. (2025). ToolRL: Reward is All Tool Learning Needs. [arXiv:2504.13958](https://arxiv.org/abs/2504.13958).
 [^swegym]: Pan, J., et al. (2025). Training Software Engineering Agents and Verifiers with SWE-Gym. *ICML 2025*. [arXiv:2412.21139](https://arxiv.org/abs/2412.21139).
-[^liu2026]: Liu, T., et al. (2026). On Effectiveness and Efficiency of Agentic Tool-calling and RL Training. [arXiv:2606.00135v2](https://arxiv.org/abs/2606.00135v2).
+[^liu2026]: Liu, T., et al. (2026). On Effectiveness and Efficiency of Agentic Tool-calling and RL Training. *ICML 2026*. [arXiv:2606.00135v2](https://arxiv.org/abs/2606.00135v2).
 [^baker]: Baker, B., et al. (2025). Monitoring Reasoning Models for Misbehavior and the Risks of Promoting Obfuscation. [arXiv:2503.11926](https://arxiv.org/abs/2503.11926).
 [^macdiarmid]: MacDiarmid, M., et al. (2025). Natural Emergent Misalignment from Reward Hacking in Production RL. [arXiv:2511.18397](https://arxiv.org/abs/2511.18397).
-[^azr]: Zhao, A., et al. (2025). Absolute Zero: Reinforced Self-play Reasoning with Zero Data. [arXiv:2505.03335v3](https://arxiv.org/abs/2505.03335v3).
-[^stop]: Zelikman, E., Lorch, E., Mackey, L., & Kalai, A. T. (2024). Self-Taught Optimizer (STOP): Recursively Self-Improving Code Generation. *COLM 2024*. [arXiv:2310.02304v3](https://arxiv.org/abs/2310.02304v3).
 [^dgm]: Zhang, J., Hu, S., Lu, C., Lange, R., & Clune, J. (2025). Darwin Gödel Machine: Open-Ended Evolution of Self-Improving Agents. [arXiv:2505.22954v3](https://arxiv.org/abs/2505.22954v3).
 [^taubench]: Yao, S., Shinn, N., Razavi, P., & Narasimhan, K. (2024). τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains. [arXiv:2406.12045v1](https://arxiv.org/abs/2406.12045v1).
