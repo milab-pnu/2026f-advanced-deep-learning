@@ -1,7 +1,7 @@
 ---
 title: "RL systems for post-training"
 week: 5
-order: 3
+order: 5
 ---
 
 05b의 목적함수는 응답을 생성한 정책과 갱신 중인 정책이 같다고 가정하거나,
@@ -281,7 +281,11 @@ Qi 등은 값의 범위가 pre-training에서 이미 자리 잡은 RL fine-tunin
 비동기식 설계는 그 대기를 없애는 대신 여러 정책 버전이 섞인 데이터를 넘긴다.
 엔진과 학습기를 따로 두는 한 버전이 같아도 확률은 어긋날 수 있다.
 그래서 처리량을 위해 시스템을 바꿀 때는 응답을 만든 분포를 기록하고 원인에 맞는 보정이 목적함수에 들어 있는지 함께 확인해야 한다.
-이 절충이 정책과 환경이 여러 번 주고받는 05e Agentic RL에서 어떻게 더 어려워지는지가 다음 노트다.
+05d의 agentic RL처럼 환경 실행이 생성 사이에 끼면 궤적 길이의 분산과 대기가 더 커져 이 절충이 더 날카로워진다.
+
+이 노트는 inference engine을 학습 루프에 끼워 넣는 쪽에서 보았다.
+다음 주에는 engine 자체로 들어가, 생성 길이·동시 요청 수·모델 크기가 prefill과 decode의 연산·메모리·지연에 어떻게 나타나는지 살핀다.
+더 좋은 응답을 학습하는 문제에서, 그 응답을 주어진 자원 안에서 생성하는 문제로 이어진다.
 
 [^survey]: Gholipour, N., et al. (2026). *Rollout Efficiency in Reinforcement Learning for Reasoning Large Language Models: A Taxonomy and Future Directions*. [arXiv:2609.25463v1](https://arxiv.org/abs/2609.25463v1).
 [^rlsurvey]: Zhang, K., et al. (2025). *A Survey of Reinforcement Learning for Large Reasoning Models*. [arXiv:2509.08827v3](https://arxiv.org/abs/2509.08827v3).

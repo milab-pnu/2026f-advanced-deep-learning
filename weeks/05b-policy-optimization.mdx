@@ -16,7 +16,7 @@ GRPO의 목적함수가 만드는 세 가지 문제(길이·난이도 편향, �
 
 전체 지도는 05a와 같은 Zhang 등의 서베이[^survey]로 잡되, 이 노트에는 §3.2(정책 최적화: critic 기반,
 critic 없는 알고리즘, off-policy 최적화, 정규화 항)와 §3.3(표집 전략)이 대응한다.
-학습 시스템이 만드는 off-policy 문제는 05d에서 따로 다루며, 이 노트는 정책 갱신식 자체에 집중한다.
+학습 시스템이 만드는 off-policy 문제는 05f에서 따로 다루며, 이 노트는 정책 갱신식 자체에 집중한다.
 
 ## 1. PPO에서 GRPO로
 
@@ -301,7 +301,7 @@ REINFORCE++는 더 작은 KL로 보상을 안정적으로 올렸다고 보고했
 실제 recipe는 이 중 여러 개를 섞는다.
 Olmo 3의 RL은 GRPO를 바탕으로 DAPO의 clip-higher·token-level loss, Dr. GRPO의 표준편차 정규화 제거,
 KL 항 제거에 더해,
-보상이 모두 같은 프롬프트를 걸러 배치를 채우는 active sampling과 05d §4-2에서 볼 truncated
+보상이 모두 같은 프롬프트를 걸러 배치를 채우는 active sampling과 05f §4-2에서 볼 truncated
 importance sampling을 함께 채택했다.[^olmo3]
 서베이 §3.2는 이 알고리즘들을 critic 유무와 off-policy 보정 방식으로 분류하고,
 §3.2.5에서 KL 정규화의 역할을 논쟁적인 주제로 정리하며 추론 RL에서는 그 필요성을 다시 따져야 한다고 본다.[^survey]
@@ -337,7 +337,7 @@ on-policy REINFORCE 추정량이라 확률비가 필수가 아니다).
 CISPO처럼 가중치만 자르는 방식에서는 잘린 가중치 때문에 보정 편향이 생길 수 있다.
 실제 시스템에서 이 차이가 어디서 생기는지,
 즉 응답을 만드는 inference engine과 학습 커널의 수치 차이,
-그리고 비동기 학습의 정책 지연이 05d의 주제다.
+그리고 비동기 학습의 정책 지연이 05f의 주제다.
 
 [^survey]: Zhang, K., et al. (2025). *A Survey of Reinforcement Learning for Large Reasoning Models*. [arXiv:2509.08827v3](https://arxiv.org/abs/2509.08827v3).
 [^rloo]: Ahmadian, A., et al. (2024). *Back to Basics: Revisiting REINFORCE-Style Optimization for Learning from Human Feedback in LLMs*. ACL 2024, pp. 12248–12267. [arXiv:2402.14740](https://arxiv.org/abs/2402.14740).

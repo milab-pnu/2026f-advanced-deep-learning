@@ -1,7 +1,7 @@
 ---
 title: "Agentic reinforcement learning"
 week: 5
-order: 4
+order: 3
 ---
 
 지금까지의 RL(reinforcement learning)은 프롬프트 하나에 응답 하나를 내는 문제였다.
@@ -13,7 +13,7 @@ order: 4
 것을 **agentic RL**이라고 부른다.
 상호작용의 형식(ReAct)과 도구 호출 텍스트의 자기 지도 학습(Toolformer)은 그에 앞선 단계다.
 이 노트는 단일 응답 RL이 도구 호출과 다중 턴 궤적으로 확장될 때 무엇이 달라지는지를 따라간다.
-데이터의 형태, 손실을 거는 위치, 보상이 오는 시점, 그리고 05d의 생성 비용이 모두 바뀐다.
+데이터의 형태, 손실을 거는 위치, 보상이 오는 시점, 그리고 생성 비용이 모두 바뀐다.
 환경에 행동할 권한이 생기면 채점 절차 자체도 정책으로부터 분리해야 한다.
 
 전체 지도는 Zhang 등이 2025년에 정리하고 2026년 TMLR에 실린 agentic RL 서베이[^survey]로 잡는다.
@@ -67,7 +67,7 @@ mask를 적용했을 때 성능 향상이 더 크고 학습이 더 안정적이�
 
 **생성 비용.** 궤적 하나를 만들려면 정책 생성과 환경 실행이 번갈아야 한다.
 도구 실행(검색, 코드 실행)의 지연이 생성에 더해지고, 궤적 길이의 분산이 커진다.
-05d의 비동기 설계가 여기서 더 절실해지고,
+생성과 학습을 겹치는 비동기 설계(05f §3)가 여기서 더 절실해지고,
 비싸게 만든 궤적 중 상당수가 학습 신호를 주지 않는다는 문제도 커진다(§3-2).
 
 <Callout type="example">
@@ -238,7 +238,7 @@ Liu 등은 2026년에 도구 호출 agent의 학습과 평가를 함께 점검�
 [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 05b §2-2의 dynamic sampling은 이런 그룹을 버리고 다시 뽑아 배치를 채우지만,
-05d §2-2에서 보았듯 그만큼 생성이 더 필요하고,
+버린 만큼 생성을 다시 해야 하고,
 Liu 등은 이 방식이 오히려 학습 시간을 크게 늘렸다고 관찰했다.
 대신 이들은 생성 **전에** 거르는 방법을 제안했다.
 최근 몇 epoch 동안 모든 rollout이 정답이었던 프롬프트는 한동안 계속 정답일 가능성이 높다는 관찰에 근거해,
@@ -333,9 +333,8 @@ MacDiarmid 등의 실험에서 정책이 해킹을 배우기 시작한 시점에
 체화 agent(embodied agent)는 이 노트의 범위 밖이며,
 14주차의 world model과 VLA(vision-language-action) 모델에서 다시 만난다.
 
-5주차의 마지막 질문이 남는다.
-이렇게 RL로 만든 큰 모델의 능력을 작은 모델에 어떻게 옮기는가.
-05f가 그 답을 04c §3-1의 on-policy 관점에서 찾는다.
+이렇게 RL로 만든 능력을 다른 모델에 어떻게 옮기는가가 05e의 질문이다.
+05e는 그 답을 04c §3-1의 on-policy 관점에서 찾는다.
 
 [^survey]: Zhang, G., et al. (2026). *The Landscape of Agentic Reinforcement Learning for LLMs: A Survey*. Transactions on Machine Learning Research. [arXiv:2509.02547v5](https://arxiv.org/abs/2509.02547v5).
 [^searchr1]: Jin, B., et al. (2025). *Search-R1: Training LLMs to Reason and Leverage Search Engines with Reinforcement Learning*. COLM 2025. [arXiv:2503.09516v5](https://arxiv.org/abs/2503.09516v5).
