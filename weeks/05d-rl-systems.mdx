@@ -109,8 +109,6 @@ RLHF(reinforcement learning from human feedback)의 dataflow는 정책·value·r
 HybridFlow는 모델 사이의 데이터 이동과 실행 순서는 single-controller가,
 모델 안의 병렬 실행은 multi-controller가 맡게 했다.
 그리고 3D-HybridEngine이 정책 모델을 학습용 병렬화와 생성용 병렬화 사이에서 메모리 중복 없이 재분할(reshard)하도록 했다.
-PPO(proximal policy optimization)·ReMax·Safe-RLHF를 7B–70B 모델로 돌린 비교에서 기존 RLHF 시스템
-대비 처리량이 1.53배에서 20.57배 높았다(원논문 §8.2, Figures 9–11).[^hybridflow]
 이 시스템은 verl이라는 이름으로 공개되었고,
 05b의 DAPO(decoupled clip and dynamic sampling policy optimization)도 verl 위에서 구현되었다.[^dapo]
 
@@ -135,8 +133,7 @@ HybridFlow가 비교 대상으로 삼은 OpenRLHF의 standalone 배치가 그런
 생성 worker는 쉬지 않고 응답을 만들고, 학습 worker는 응답이 충분히 모이면 갱신하며,
 새 가중치를 생성 쪽에 주기적으로 보낸다.
 Noukhovitch 등은 LLaMA 3.1 8B로 chatbot을 학습하는 RLHF에서 이 분리가 같은 최종 win rate를
-유지하면서 계산 시간을 약 38% 줄였고(원논문 표 1),
-비교한 갱신 알고리즘 중 online DPO(direct preference optimization)가 오래된 데이터에 가장 강건했다고 보고했다.[^async-rlhf]
+유지하면서 계산 시간을 약 38% 줄였다고 보고했다(원논문 표 1).[^async-rlhf]
 
 <Figure src="https://arxiv.org/html/2512.13961v2/olmo3_distributed_rl_light.svg" alt="Olmo 3의 비동기 RL 구조. 왼쪽의 Learner가 prompt를 Prompts queue에 넣고, 이 queue가 작업을 오른쪽 Actor의 여러 Network 복제본에 나누어 보낸다. Actor가 만든 결과는 Results queue에 쌓이고, Learner가 그 결과를 가져가 학습한다." caption="생성과 학습을 분리한 구조. 학습기(Learner)와 여러 생성 복제본(Actor)이 두 queue를 사이에 두고 서로를 기다리지 않는다." source="Team Olmo (2025), Olmo 3, Figure 17(a). arXiv:2512.13961v2 · CC BY 4.0 · 수정 없음" />
 
@@ -149,8 +146,7 @@ Fu 등의 AReaL은 이 설계를 긴 추론에 맞춰 밀어붙였다.[^areal]
 옛 가중치로 계산한 KV cache를 버린 뒤 새 가중치로 다시 계산해 이어서 생성한다(원논문 §4.1).
 그래서 한 응답 안에 서로 다른 정책 버전이 만든 구간이 섞인다.
 같은 GPU 수의 수학과 코드 과제에서 동기식 시스템 대비 학습 시간이 최대 2.77배 짧았고,
-최종 정확도는 동기식 AReaL과 비슷하거나 높았다.
-네 설정 중 32B 코드 과제만 61.2%에서 61.0%로 소폭 낮았다(원논문 표 1).[^areal]
+최종 정확도는 동기식으로 돌린 AReaL과 비슷했다(원논문 표 1).[^areal]
 
 Allen AI의 Olmo 3도 vLLM 생성 worker와 학습기를 분리한 비동기 구조를 쓴다.[^olmo3]
 생성 쪽은 continuous batching으로 끝난 응답의 자리에 곧바로 새 응답을 채우고,
@@ -164,12 +160,6 @@ Allen AI의 Olmo 3도 vLLM 생성 worker와 학습기를 분리한 비동기 구
 
 [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
-분리를 더 밀어붙여 생성·보상 계산·학습을 세 종류의 자원에 나눈 설계도 있다.
-StaleFlow는 이런 구조에서 응답의 staleness를 제한하는 일과 응답 길이 차이로 생기는 부하 불균형을
-줄이는 일이 서로 충돌한다고 보고 둘을 함께 다룬다.[^staleflow]
-생성과 학습을 겹치는 설계에서는 동기화 주기·응답 길이·스케줄링에 따라 정책 지연이 생기므로,
-다음 절처럼 그것을 관리해야 한다.
-
 ### 3-2. Staleness와 decoupled PPO
 
 분리의 대가는 **staleness**다.
@@ -177,7 +167,7 @@ StaleFlow는 이런 구조에서 응답의 staleness를 제한하는 일과 응�
 04c §3-1의 구분으로 online이지만 off-policy인 데이터다.
 AReaL은 두 가지로 대응했다.
 하나는 생성 요청을 제한해 최대 staleness $\eta$를 넘는 응답이 배치에 들어오지 않게 하는 것이고,
-다른 하나는 PPO의 확률비를 둘로 나눈 decoupled PPO 목적함수다.
+다른 하나는 PPO(proximal policy optimization)의 확률비를 둘로 나눈 decoupled PPO 목적함수다.
 04b §3-4의 표에서 clipping의 기준이 "배치를 생성한 직전 정책"이었는데,
 비동기에서는 응답을 만든 정책(behavior policy) $\pi_{\mathrm{behav}}$가 여러 버전이고 갱신을 제약할 기준으로 적합하지도 않다.
 그래서 최근의 정책 하나를 proximal policy $\pi_{\mathrm{prox}}$로 두고,
@@ -194,13 +184,13 @@ $0.25/0.20=1.25$이고 clipping 대상 비율은 $0.30/0.25=1.2$다.
 | 설계 | 생성과 학습 | 응답을 만든 정책 | 대표 |
 |---|---|---|---|
 | 동기식, 같은 GPU | 번갈아 실행, 매 스텝 재분할 | 직전 정책 하나 | HybridFlow(verl)[^hybridflow] |
-| 동기식, 분리 | 번갈아 실행, 한쪽이 놂, 매 스텝 가중치 동기화 | 직전 정책 하나 | OpenRLHF의 standalone 배치(HybridFlow §8.3의 비교)[^hybridflow] |
+| 동기식, 분리 | 번갈아 실행, 한쪽이 놂, 매 스텝 가중치 동기화 | 직전 정책 하나 | OpenRLHF의 standalone 배치[^hybridflow] |
 | 한 스텝 지연 | 다음 배치 생성과 현재 배치 학습을 겹침 | 한 스텝 전 정책 | 서베이 §5.2의 one-step lag[^survey] |
 | 완전 비동기 | 독립 실행. AReaL은 staleness 상한을 둠 | 여러 버전, 한 응답 안에서도 섞임 | AReaL[^areal], Olmo 3[^olmo3] |
 
 ## 4. 생성·학습 확률 불일치
 
-### 4-1. 수치 오차의 경로
+### 4-1. 불일치의 원인
 
 Staleness가 없어도 off-policy가 생기는 경로가 하나 더 있다.
 생성은 inference engine(vLLM 등)이, 학습의 확률 계산은 학습 프레임워크가 맡는데,
@@ -215,7 +205,18 @@ Qi 등은 BF16(brain floating point 16)의 짧은 가수부(7비트)에서 생�
 응답 전체의 확률비는 토큰 확률비의 곱이라 긴 응답일수록 이 차이가 커지며,
 Qi 등의 실험에서 BF16의 GRPO(group relative policy optimization)는 학습 도중 붕괴했다.[^fp16]
 
+엔진 쪽 확률이 달라지는 원인이 수치 오차만은 아니다.
+Temperature나 top-p(nucleus) sampling처럼 표집 전에 분포를 일부러 바꾸면 실제로 토큰을 뽑은 분포는 모델의 softmax 분포와 다르다.
+vLLM은 기본 설정에서 이런 후처리를 하기 전의 log 확률을 돌려주므로, 돌려받은 값이 실제 표집에 쓰인 확률과 다를 수 있다.[^vllm-logprobs]
+그래서 엔진의 log 확률을 확률비에 넣기 전에 그것이 원래 softmax 분포의 값인지 실제 표집 분포의 값인지 밝혀야 한다.
+의도한 표집 변환에서 오는 차이는 어느 분포를 기준으로 삼을지 정해서 다룰 문제라서,
+커널·정밀도의 수치 오차와 같은 문제로 취급하지 않는다.
+아래 §4-2의 대응은 수치 오차를 겨냥한다.
+
 ### 4-2. 확률비 보정과 정밀도 변경
+
+대응은 두 갈래다.
+불일치를 그대로 두고 확률비로 보정하거나, 불일치의 원인인 정밀도를 바꾼다.
 
 첫째 대응은 05b의 확률비를 하나 더 두는 것이다.
 갱신 비율 $\pi_\theta/\pi_{\theta_{\mathrm{old}}}$와 별도로,
@@ -245,13 +246,7 @@ Clipping은 갱신 비율에, truncation은 보정 가중치에 걸린다는 점
 Qi 등은 이런 보정의 한계를 세 가지로 짚었다.[^fp16]
 첫째, 자르지 않은 importance sampling은 분산이 커서 쓰기 어렵고,
 truncation은 분산을 줄이는 대신 편향을 남긴다.
-응답 전체의 확률비가 상한을 넘으면 그 응답을 학습에서 빼는 응답 단위 MIS(masked importance sampling)도 있는데,
-이 방식은 더 안정적이지만 확률비의 분산 때문에 수렴이 느리다.
-둘째, 그들이 분석한 GRPO 기반 보정 구현은 학습기 쪽 옛 정책 확률을 얻으려고 forward를 한 번 더 한다.
-원논문은 backward를 forward의 두 배로 두고 이 비용을 학습 비용의 약 25%로 추산한다.
-다만 기준을 밝히지 않았다.
-forward 한 번의 비용을 $F$라 하고 학습 비용을 forward와 backward 한 번씩($3F$)으로 보면,
-25%는 추가 후 전체 $4F$에서 추가분 $F$가 차지하는 몫이고 원래 비용 대비 증가율은 약 33%다.
+둘째, 학습기 쪽 옛 정책 확률을 얻으려면 forward가 한 번 더 든다.
 셋째,
 보정은 학습 중에만 작동하므로 학습기의 확률에 맞춰 최적화된 파라미터가 배포에 쓰는 엔진에서는 최적이
 아닌 배포 간격(deployment gap)이 남는다.
@@ -261,12 +256,8 @@ Qi 등은 학습과 생성 모두를 가수부가 10비트인 FP16(16-bit floati
 확률비로 잰 불일치가 BF16 대비 약 24분의 1로 줄고(원논문 §3.5, Figure 2),
 여러 알고리즘·모델·MoE(mixture of experts)·LoRA(low-rank adaptation) 설정에서 학습이 더 안정적이고
 빠르게 수렴했다고 보고했다.[^fp16]
-알고리즘을 가려내려고 만든 sanity test도 있다.
-MATH 문제마다 응답 40개를 뽑아 초기 정답률이 20–80%인 문제 1,460개만 남긴 데이터로,
-저자들은 모델이 풀 수 있는 문제만 모았으니 학습 정확도가 높은 값(예: 95% 이상)에 수렴하는지를 알고리즘의 진단 기준으로 삼았다.
-여기서 FP16은 학습 정확도 약 99%에 이른 반면, BF16의 GRPO와 토큰 단위 TIS는 73–88%에서 무너졌다.
-BF16에서 무너지지 않은 보정은 응답 단위 MIS뿐이었고,
-그마저 최고 약 95%에 그쳤다(원논문 §4, Figure 3).[^fp16]
+모델이 풀 수 있는 문제만 모아 학습 정확도가 끝까지 오르는지 보는 진단 실험에서도,
+BF16의 GRPO와 토큰 단위 TIS는 도중에 무너졌고 FP16은 끝까지 올랐다(원논문 §4, Figure 3).[^fp16]
 02e §2-1에서 본 BF16의 장점은 FP32(32-bit floating point)와 같은 지수 범위였다.
 Qi 등은 값의 범위가 pre-training에서 이미 자리 잡은 RL fine-tuning에서는 그 범위보다 BF16이 잃은 정밀도가 더 문제가 된다고 본다.
 생성·학습 일치라는 새 조건에서는 정밀도 선택이 달라질 수 있다는 사례다.
@@ -285,15 +276,11 @@ Qi 등은 값의 범위가 pre-training에서 이미 자리 잡은 RL fine-tunin
 
 ## 5. 정리
 
-RLVR 학습의 시간은 대체로 생성이 가장 많이 차지하고,
-동기식 생성은 가장 긴 응답에 묶인다(§1-1의 예시는 단순화한 것이며 실제 straggler 효과는 동시 실행 수와 스케줄링에 따라 다르다).
-동기식 설계는 생성과 학습이 한 장치를 나눠 쓰는 비용,
-즉 재분할을 줄이는 데서 출발했지만 차례를 기다리는 구조는 그대로였다.
-비동기식 설계는 생성과 학습을 분리해 학습 시간을 수십 퍼센트에서 몇 배까지 줄이는 대신 오래된 데이터를 다루어야 했다.
-분리하지 않아도 엔진과 학습기의 수치 차이가 비슷한 off-policy 문제를 만든다.
-Staleness에는 behavior와 proximal을 구분한 확률비가,
-엔진 불일치에는 같은 가중치 버전의 학습기·엔진 확률비나 정밀도 변경이 대응한다.
-원인마다 다른 보정이 필요하므로 시스템 설계를 바꾸면 알고리즘도 함께 점검해야 한다.
+생성 시간을 줄이려는 시스템 선택은 매번 학습 데이터의 통계적 성질도 바꿨다.
+동기식 설계는 응답을 만든 정책이 직전 정책 하나로 분명하지만 straggler를 기다리고,
+비동기식 설계는 그 대기를 없애는 대신 여러 정책 버전이 섞인 데이터를 넘긴다.
+엔진과 학습기를 따로 두는 한 버전이 같아도 확률은 어긋날 수 있다.
+그래서 처리량을 위해 시스템을 바꿀 때는 응답을 만든 분포를 기록하고 원인에 맞는 보정이 목적함수에 들어 있는지 함께 확인해야 한다.
 이 절충이 정책과 환경이 여러 번 주고받는 05e Agentic RL에서 어떻게 더 어려워지는지가 다음 노트다.
 
 [^survey]: Gholipour, N., et al. (2026). *Rollout Efficiency in Reinforcement Learning for Reasoning Large Language Models: A Taxonomy and Future Directions*. [arXiv:2609.25463v1](https://arxiv.org/abs/2609.25463v1).
@@ -303,5 +290,5 @@ Staleness에는 behavior와 proximal을 구분한 확률비가,
 [^async-rlhf]: Noukhovitch, M., et al. (2025). *Asynchronous RLHF: Faster and More Efficient Off-Policy RL for Language Models*. ICLR 2025. [arXiv:2410.18252](https://arxiv.org/abs/2410.18252).
 [^areal]: Fu, W., et al. (2026). *AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning*. [arXiv:2505.24298v5](https://arxiv.org/abs/2505.24298v5).
 [^olmo3]: Team Olmo. (2025). *Olmo 3*. [arXiv:2512.13961v2](https://arxiv.org/abs/2512.13961v2).
-[^staleflow]: Li, H., et al. (2026). *StaleFlow: Staleness-Aware Data Management for Mitigating Data Skewness in Fully Disaggregated RL Post-Training*. SIGMOD 2027. [arXiv:2601.12784](https://arxiv.org/abs/2601.12784).
 [^fp16]: Qi, P., et al. (2025). *Defeating the Training-Inference Mismatch via FP16*. [arXiv:2510.26788](https://arxiv.org/abs/2510.26788).
+[^vllm-logprobs]: vLLM Project. (2026). *V1 Guide: Semantic Changes to Logprobs*. vLLM documentation v0.23.0. [docs.vllm.ai](https://docs.vllm.ai/en/v0.23.0/usage/v1_guide/).
