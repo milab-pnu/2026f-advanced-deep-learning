@@ -5,7 +5,8 @@ order: 2
 ---
 
 앞의 두 노트는 같은 결론에 닿았다.
-H100 한 대에 Llama 3 8B를 올리면 가중치 16.1 GB와 실행 중 작업 공간을 빼고 KV(key-value) cache에 약 53.5 GB가 남는다.
+H100(80 GB) 한 대에 Llama 3 8B를 올리고 GPU 메모리의 92%를 쓰며 작업 공간으로 약 4 GB를 뺀다고 가정하면,
+가중치 16.1 GB를 올린 뒤 KV(key-value) cache에 약 53.5 GB가 남는다.
 KV를 BF16(bfloat16, 2 bytes)으로 저장하면 토큰당 128 KiB라서 8,192토큰 요청이 49개까지 들어간다고 계산했고,
 batch를 키워 처리량(throughput)을 올리는 일이 이 공간에서 먼저 막힌다는 것을 보았다.
 그런데 이 계산은 공간을 한 칸도 낭비하지 않는다고 가정했다.
@@ -56,7 +57,7 @@ Llama 3 8B로 최대 8,192토큰을 허용하는 서비스에서,
 입력 100토큰에 출력 200토큰을 생성하고 끝나는 요청을 생각하자.
 연속 할당은 요청이 들어오는 순간 8,192칸, 1 GiB를 잡는다.
 여기서 GiB·MiB·KiB는 $2^{30}$·$2^{20}$·$2^{10}$ bytes이고, GB·MB는 $10^9$·$10^6$ bytes다.
-실제로 쓰는 칸은 300칸, 37.5 MiB로 3.7%다.
+끝날 때까지 필요한 칸은 많아야 입력과 출력을 합한 300칸, 37.5 MiB로 3.7%다.
 앞에서 계산한 53.5 GB를 이런 요청에 나누어 준다면 동시에 49개만 받을 수 있지만,
 쓰는 만큼만 준다면 산술적으로 1,300개 넘게 받을 수 있다.
 </Callout>
@@ -100,7 +101,7 @@ Llama 3 8B에서 블록 하나는 $16\times128\ \text{KiB}=2\ \text{MiB}$다.
 연속 할당의 1 GiB 대신 38 MiB다.
 블록이 너무 작으면 kernel이 KV cache를 읽고 처리할 때 GPU의 병렬성을 충분히 쓰지 못하고,
 너무 크면 마지막 블록의 빈칸이 커진다.
-원논문은 ShareGPT 작업에서 16–128토큰 블록이 가장 좋았다고 보고했다.
+원논문은 ShareGPT 작업에서 16–128토큰 블록이 가장 좋았다고 보고했다(Figure 18(b)).
 </Callout>
 
 이 방식에는 대가가 있다.
@@ -127,7 +128,7 @@ OPT-13B로 Alpaca 데이터를 처리한 실험에서 parallel sampling은 6.1�
 ### 2-3. 결과와 선점
 
 이 설계를 구현한 것이 vLLM이다.
-원논문은 같은 지연 수준에서 기존 시스템(FasterTransformer, Orca)보다 처리량이 2–4배 높았다고 보고했다.[^vllm]
+원논문은 같은 지연 수준에서 기존 시스템(FasterTransformer, Orca)보다 처리량이 2–4배 높았다고 초록에서 요약했다.[^vllm]
 앞에서 20.4–38.2%였던 KV cache 공간의 실제 사용률은 96.3%로 올랐다(원논문 Figure 2).
 
 공간을 쓰는 만큼만 주면 새로운 문제가 생긴다.
@@ -153,11 +154,13 @@ Causal attention에서 어떤 위치의 key·value는 그 위치까지의 토큰
 
 <Callout type="example">
 2,000토큰짜리 시스템 프롬프트를 모든 요청 앞에 붙이는 서비스를 생각하자.
-Llama 3 8B에서 이 부분의 prefill은 약 33 TFLOP이다(1 TFLOP는 $10^{12}$번의 부동소수점 연산).
-H100 SXM의 BF16 dense peak인 989 TFLOP/s로도 약 33 ms, peak의 절반을 낸다면 약 67 ms다.
+앞 노트처럼 선형층 $2Nn$과 attention $2Ldn^2$을 더하는 단순화한 모형으로 세면($N$은 파라미터 수, $n$은 토큰 수, $L$은 층 수, $d$는 hidden 차원),
+Llama 3 8B에서 이 부분의 prefill은 약 33 TFLOP이다(FLOP은 floating-point operation, 1 TFLOP는 $10^{12}$ FLOP).
+같은 모형에서 H100 SXM의 BF16 dense peak인 989 TFLOP/s로도 약 34 ms, peak의 절반을 낸다면 약 67 ms다.
 KV cache로는 $2000\times128\ \text{KiB}\approx262$ MB다.
 이 부분을 한 번만 계산해 두고 재사용하면,
-요청마다 TTFT(time to first token)에서 수십 ms를 덜고 동시 요청마다 262 MB씩 중복 저장하던 공간을 하나로 줄인다.
+요청마다 수십 ms의 prefill이 줄어 TTFT(time to first token)가 짧아지고,
+동시 요청마다 262 MB씩 중복 저장하던 공간을 하나로 줄인다.
 </Callout>
 
 이렇게 이미 계산한 prefix의 KV cache를 다른 요청에서 찾아 쓰는 것이 **prefix caching**이다.
@@ -231,19 +234,22 @@ GPU 메모리에 둘 KV cache를 줄이는 방법은 토큰 하나를 적은 byt
 ### 4-1. Eviction
 
 Eviction은 생성 중에 모든 과거 토큰이 똑같이 중요하지는 않다는 관찰에서 출발한다.
-Zhang 등의 H2O는 각 행 최댓값의 1%보다 작은 값을 0으로 볼 때,
+Zhang 등의 H2O(Heavy-Hitter Oracle)는 각 행 최댓값의 1%보다 작은 값을 0으로 볼 때,
 OPT 모델의 attention 행렬이 거의 모든 층에서 95% 넘게 희소하고,
-누적 attention 점수가 power law를 따라 소수의 토큰에 몰린다는 것을 관찰했다.[^h2o]
+누적 attention 점수가 power law를 따라 소수의 토큰에 몰린다는 것을 관찰했다(원논문 Figure 2(a)(b)).[^h2o]
 그런 토큰을 heavy hitter라 부르고, 최근 토큰과 heavy hitter만 KV cache에 남기고 나머지를 지운다.
-KV cache 예산을 전체의 20%로 잡아 heavy hitter와 최근 토큰에 반씩 나누고도,
+생성 중에도 cache가 차면 스텝마다 점수가 가장 낮은 토큰을 하나씩 지운다.
+KV cache 예산을 프롬프트 길이의 20%로 잡아 heavy hitter와 최근 토큰에 반씩 나누고도,
 T4 GPU에서 CPU offloading이 필요한 OPT-30B의 처리량이 DeepSpeed·Accelerate보다 약 21–31배 높았다(원논문 Table 3–4의 값으로 계산).
 
-Li 등의 SnapKV는 지울 토큰을 정하는 시점을 prefill로 옮겼다.[^snapkv]
+Li 등의 SnapKV는 스텝마다 지울 토큰을 다시 고르는 대신,
+prefill이 끝날 때 프롬프트의 KV cache를 한 번 골라 압축하고 생성 중에는 고치지 않는다.[^snapkv]
 프롬프트의 마지막 부분(observation window)이 앞부분의 어느 위치에 attention하는지를 보면,
 생성하는 동안 각 head가 주목할 위치를 미리 알 수 있다는 관찰이다.
 Head마다 observation window의 attention 점수를 앞부분의 위치별로 더하고,
 이웃 위치끼리 pooling한 점수로 상위 위치를 고른다.
-Pooling은 고른 위치의 주변까지 함께 남겨, 전화번호에서 국가 번호만 남는 식으로 정보가 끊기는 것을 막는다.
+Pooling은 이웃 위치의 점수를 함께 반영해 점수가 높은 위치의 주변도 같이 뽑히기 쉽게 하고,
+전화번호에서 국가 번호만 남는 식으로 정보가 끊기는 것을 줄인다.
 고른 위치의 key·value에 observation window 자체의 key·value를 이어 붙인 것이 압축된 KV cache다.
 LWM-Text-Chat-1M을 A100 80GB 한 대에서 batch 2로 돌리고 압축한 prompt KV cache를 2,048토큰으로 둔 실험에서,
 16K토큰 입력의 decode 속도가 3.6배 빨라졌고,
@@ -264,7 +270,7 @@ Paging과 prefix caching은 결과를 바꾸지 않는다는 점에서 성격이
 마지막 갈래는 KV cache를 지우지 않고 GPU 밖으로 옮기는 것이다.
 GPU 메모리(HBM, high-bandwidth memory) 바깥에는 CPU 메모리(DRAM, dynamic random-access memory),
 SSD(solid-state drive), 네트워크로 연결된 다른 서버의 메모리가 있다.
-가까울수록 빠르고 작으며, 멀수록 느리고 크다.
+GPU에서 멀어질수록 대체로 용량은 커지지만, 다시 가져오는 비용은 장치와 연결 방식에 따라 다르다.
 서베이는 이런 계층 사이에서 KV cache를 배치하고 옮기는 방법을 §4.1에서 정리한다.[^survey]
 
 이 방식이 특히 잘 맞는 곳이 prefix caching이다.
@@ -281,10 +287,12 @@ Moonshot AI의 Kimi 서비스가 이 구조로 운영된다.[^mooncake]
 KV cache는 262 MB다.
 H100의 PCIe(peripheral component interconnect express) Gen5 대역폭 128 GB/s는 양방향을 합한 값이라 CPU에서 GPU로 가는 한 방향은 64 GB/s다.[^hopper]
 이를 모두 쓴다면 약 4.1 ms, 그 절반만 쓴다고 해도 약 8.2 ms다.
-같은 부분을 다시 prefill하는 데는 peak로도 약 33 ms가 든다.
+같은 부분을 다시 prefill하는 데는 앞의 모형에서 peak로도 약 34 ms가 든다.
 가져오는 쪽이 훨씬 싸다.
 반대로 SSD나 네트워크처럼 더 느린 곳에 있거나,
 prefix가 짧아 조회와 전송을 시작하는 고정 지연의 비중이 커지면 차이가 줄어 재계산이 나을 수도 있다.
+Prefix는 한 번 가져오면 되지만,
+실행 중인 긴 요청의 KV cache를 GPU 밖에 두면 decode 스텝마다 다시 읽어 와야 해서 전송 비용이 스텝마다 반복된다.
 </Callout>
 
 ## 5. Hybrid 모델의 cache
@@ -319,6 +327,8 @@ cache에 남은 일부 토큰으로 중간 시점의 상태를 다시 만들 수
 vLLM은 prefix caching을 켜면 기본으로 `align` 모드를 쓴다.
 스케줄러 스텝의 마지막 토큰이 블록 경계에 놓일 때 그 시점의 recurrent 상태를 실행 중의 상태와 별도로 저장해 두고,
 저장된 경계까지만 prefix를 재사용한다.[^vllm-mamba]
+예를 들어 블록이 4토큰이고 앞 10토큰이 같으며,
+4·8토큰 경계의 상태가 저장돼 있다면 재사용은 8토큰까지다.
 여러 층 종류의 조건을 동시에 만족하는 가장 긴 prefix만 재사용할 수 있으므로,
 같은 프롬프트라도 hybrid 모델의 prefix cache 적중은 full attention 모델보다 짧아질 수 있다.
 
