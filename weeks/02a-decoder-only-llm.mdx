@@ -131,7 +131,7 @@ Vocabulary와 병합 규칙의 학습, 어휘 크기의 선택,
 <text x="328" y="473" font-size="12" text-anchor="start" fill="#0f172a">입력 embedding과</text>
 <text x="328" y="492" font-size="12" text-anchor="start" fill="#0f172a">출력 head는 가중치 미공유</text>
 </svg>
-<figcaption>Meta의 Llama 3 공식 구현을 바탕으로 구성한 전체 구조도. 배치 차원은 생략했다. SwiGLU의 두 입력 투영 경로는 차원 변화로 요약했으며, 블록 내부의 연산과 residual 경로는 §2-3에서 설명한다.</figcaption>
+<figcaption>Meta의 Llama 3 공식 구현을 바탕으로 구성한 전체 구조도. 배치 차원은 생략했다. SwiGLU의 두 입력 투영 경로는 차원 변화로 요약했다.</figcaption>
 </figure>
 
 ### 2-3. 문맥과 벡터 변환
@@ -164,7 +164,6 @@ $$
   다른 경로와 원소별로 곱한 뒤 출력 차원으로 투영한다.
 
 여기서는 각 부품의 역할까지 이해하면 된다.
-RoPE·GQA·SwiGLU의 세부 연산은 3주차에서 다룬다.
 
 ### 2-4. Logits와 확률
 
@@ -271,7 +270,7 @@ Top-k는 상위 $k$개,
 top-p는 누적 확률이 기준에 도달하는 최소 후보 집합을 남기고 확률의 합이 1이 되도록 다시 정규화(renormalization)한다.[^nucleus]
 
 같은 logits $[2,1,0]$에서도 설정에 따라 실제로 뽑는 분포가 달라진다.
-아래 값은 §2-4의 세 후보만 놓고 계산한 예다.
+아래 값은 앞의 세 후보만 놓고 계산한 예다.
 각 행은 별도 설정이며, top-k와 top-p 예시는 $T=1$을 사용한다.
 
 | 설정 | `␠맑` | `␠흐` | `␠비` | 효과 |

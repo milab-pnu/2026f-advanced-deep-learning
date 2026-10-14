@@ -388,7 +388,7 @@ Vocabulary size는 tokenizer가 자동으로 알아내는 정답이라기보다 
 목표 크기에 도달하거나 더 병합할 쌍이 없으면 멈춘다.
 데이터 양·최소 빈도 같은 조건 때문에 실제 크기가 목표보다 작을 수도 있다.[^hf]
 
-§3의 예제는 기본 바이트 256개에 `an`과 `ban` 두 토큰을 추가했으므로 vocabulary가 258개다.
+앞의 byte-level BPE 예제는 기본 바이트 256개에 `an`과 `ban` 두 토큰을 추가했으므로 vocabulary가 258개다.
 Special token은 세지 않은 값이다.
 
 앞 노트의 Llama 3는 일반 텍스트용 토큰 128,000개와 예약 항목을 포함한 special token 256개로 총 128,256개를 사용한다.
@@ -425,7 +425,7 @@ print(enc.decode(ids) == text)
 ```
 
 문자열의 “늘”에 해당하는 부분은 ID 두 개로 나뉜다.
-바이트 조각을 직접 확인하면 §3-4의 설명이 실제 출력과 연결된다.
+바이트 조각을 직접 확인하면 앞의 바이트 복원 설명이 실제 출력과 연결된다.
 
 ```python
 parts = [enc.decode_single_token_bytes(i) for i in ids[1:3]]
