@@ -219,10 +219,10 @@ memory-bound인 작은 batch의 decode에서는 연산 속도보다 읽는 bytes
 특수한 kernel 없이 속도를 얻는 방법은 **구조 단위**로 지우는 것이다.
 Attention head, FFN(feed-forward network)의 중간 channel, hidden 차원, 층 전체를 통째로 없애면,
 남은 모델은 그저 더 작은 dense 모델이라 일반 kernel로 빨라진다.
-다만 남은 head 수와 차원이 GQA(grouped-query attention)의 head 묶음이나 kernel이 잘 처리하는 크기에 맞아야 하고,
-서빙 엔진이 그 구성을 불러올 수 있어야 한다.
 대신 지우는 단위가 커서 품질 손실이 크고,
 서베이의 정리대로 대개 미세조정으로 회복해야 한다(§4.2).[^survey]
+실제로 속도를 얻으려면 남은 head 수와 차원이 GQA(grouped-query attention)의 head 묶음이나 kernel이 잘 처리하는 크기에 맞고,
+서빙 엔진이 그 구성을 불러올 수 있어야 한다.
 
 구조 단위로 지울 때는 함께 지워야 하는 가중치를 묶어야 한다.
 층 출력을 $WX$로 쓰면 가중치의 행이 출력, 열이 입력에 대응한다.
@@ -255,7 +255,7 @@ Minitron은 Nemotron-4 15B의 너비(embedding 차원, head, FFN channel)를 줄
 원래 학습 데이터의 3% 미만으로 distillation해 품질을 되살렸다.
 모델마다 처음부터 학습할 때보다 학습 토큰이 최대 40배 적게 들었고,
 모델 계열 전체로는 계산을 1.8배 아꼈으며,
-처음부터 학습한 같은 크기의 모델보다 MMLU(Massive Multitask Language Understanding) 점수가 상대적으로 최대 16% 높았다(8B에서 54.7 대 63.8, Table 2).[^minitron]
+처음부터 학습한 같은 크기의 모델보다 MMLU(Massive Multitask Language Understanding) 점수가 높았다(8B에서 54.7 대 63.8, 상대 약 16.6%, Table 2).[^minitron]
 원논문은 실험에서 얻은 지침도 정리했다.
 이 규모(15B 이하)에서는 깊이보다 너비를 줄이는 편이 낫고,
 회복 학습은 일반 언어 모델링 loss 대신 teacher와의 logit KL(Kullback–Leibler) divergence만으로 하는 편이 낫다는 것이다.
@@ -263,14 +263,12 @@ Minitron은 Nemotron-4 15B의 너비(embedding 차원, head, FFN channel)를 줄
 지운 직후의 손실로 후보를 고르면 안 된다는 것도 보였다.
 Head와 FFN channel만 지운 모델은 지운 직후에는 embedding 차원까지 지운 모델보다 나았지만, 짧은 재학습 뒤에는 순서가 뒤집혔다(Table 1).
 
-후속 보고서는 같은 방법으로 Llama 3.1 8B를 약 4.5B 크기의 두 모델로 줄였다.[^minitron-practice]
-하나는 층을 32개에서 16개로 줄였고, 다른 하나는 hidden 차원과 FFN channel을 줄였다.
-원래 학습 데이터에 접근할 수 없어서 distillation 데이터로 teacher를 약 100B 토큰 미세조정하는 teacher correction을 먼저 했고,
-학생은 따로 94B 토큰으로 회복 학습했다.
-H100에서 TensorRT-LLM과 FP8(8-bit floating point)로 잰 처리량(requests/s)은 원래 8B보다 깊이를 줄인 모델이 2.7배, 너비를 줄인 모델이 1.8배 높았다(Figure 10).
-8B는 batch 32, 4B는 batch 64로 잰 값이라 작아진 모델이 더 큰 batch를 담는 이득도 들어 있다.
+후속 보고서는 같은 방법으로 Llama 3.1 8B에서 층을 절반으로 줄인 모델과 너비를 줄인 모델을 만들었다.[^minitron-practice]
+원래 학습 데이터가 없어서 teacher를 distillation 데이터에 먼저 맞추는 teacher correction도 더했다.
+H100의 TensorRT-LLM에서 잰 처리량은 원래 8B보다 깊이를 줄인 모델이 2.7배, 너비를 줄인 모델이 1.8배 높았다(Figure 10).
+작은 모델에 두 배 큰 batch를 준 비교라 그 이득도 섞여 있다.
 깊이 pruning은 순차로 계산할 층 수 자체를 줄여 속도 이득이 크고,
-너비 pruning은 MMLU가 60.5로 깊이 쪽의 58.7보다 높아 품질이 낫다는 맞교환이다.
+너비 pruning은 MMLU가 더 높아 품질이 낫다는 맞교환이다.
 
 ## 4. Distillation과 작은 모델
 
@@ -319,8 +317,9 @@ ASVD는 activation의 크기로 만든 대각 행렬 $S$를 가중치에 곱한 
 큰 activation이 들어오는 방향을 우선 보존한다.
 층마다 민감도가 달라서 rank도 층마다 다르게 정한다.
 그 결과 LLaMA-7B의 파라미터를 5%, 10%, 15% 줄였을 때 perplexity가 5.78, 6.09, 6.80으로 유지되었다.[^asvd]
-Wang 등의 SVD-LLM은 calibration 입력의 방향별 크기와 상관을 고르게 맞추는 whitening 변환을 가중치에 넣고 분해해,
-작은 특이값을 잘라 낸 만큼이 곧 층 출력의 오차가 되도록 만들었다.
+Wang 등의 SVD-LLM은 calibration 입력의 channel 간 상관을 없애고 크기를 정규화하는 whitening 변환을 가중치에 곱한 뒤 분해해,
+잘라 낸 특이값의 제곱합이 곧 calibration 입력에서 층 출력 오차의 제곱이 되도록 만들었다(Theorem 3.2, Corollary 3.3).
+그래서 작은 특이값부터 자르면 출력 오차가 가장 작다.
 20%를 줄인 LLaMA-2-7B의 perplexity는 원래 5.47, SVD 18,192, ASVD 10.10이었고,
 SVD-LLM은 whitening만으로 8.50, 분해한 두 행렬을 LoRA로 하나씩 미세조정하면 7.73이었다(Table 2).[^svdllm]
 
