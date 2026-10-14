@@ -56,6 +56,8 @@ Batch의 구성이 스텝마다 바뀌므로 이를 **continuous batching**이�
 
 <Figure src="https://arxiv.org/html/2512.13961v2/continuous_batching.svg" alt="Olmo 3 보고서의 Figure 17(c). 네 줄의 격자에서 가로축은 decode 반복이고 줄마다 하나의 자리다. 분홍 칸은 prefill, 회록색 칸은 decode한 토큰, 짙은 칸은 종료 토큰(EOS, end of sequence)이다. S3이 네 번째 칸에서 끝나자 바로 다음 칸에서 새 요청 S6가 그 자리에 들어오고, S1이 끝난 자리에는 S5가, S4가 끝난 자리에는 S7이 들어와 빈칸이 생기지 않는다." caption="Continuous batching. 요청이 끝나면 그 자리에 바로 새 요청을 넣어, static batching에서 비어 있던 회색 칸이 사라진다." source="Team Olmo (2025), Olmo 3, Figure 17(c). arXiv:2512.13961v2 · CC BY 4.0 · 수정 없음" />
 
+[그림 출처](https://arxiv.org/html/2512.13961v2) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
+
 이렇게 하려면 길이와 진행 상태가 다른 요청들을 한 번의 forward로 처리할 수 있어야 한다.
 새로 들어온 요청은 프롬프트 전체를 prefill해야 하고, 기존 요청은 토큰 하나를 decode한다.
 Orca는 이를 **selective batching**으로 풀었다.
@@ -131,6 +133,8 @@ Decode만 하는 batch에 prefill 하나를 더하자 decode 반복의 지연이
 반대로 prefill도 decode와 섞이면서 느려졌다(Figure 2).[^distserve]
 
 <Figure src="https://arxiv.org/html/2401.09670v3/prefill-decoding-interference.svg" alt="DistServe 논문의 Figure 2. 두 그래프 모두 가로축은 batch 크기, 세로축은 지연(ms)이다. 주황색 선은 decode만 하는 batch, 파란 선은 decode batch에 prefill 하나를 더한 경우다. 왼쪽(입력 128토큰)에서는 파란 선이 주황 선보다 몇 ms 위에 있다. 오른쪽(입력 1,024토큰)에서는 주황 선이 10–40 ms인 데 비해 파란 선은 120–150 ms로, prefill 하나가 decode 반복을 여러 배 느리게 한다. 두 그래프에 decoding slowdown과 prefill slowdown이 화살표로 표시되어 있다." caption="Decode batch에 prefill 하나를 더했을 때의 지연. 프롬프트가 길수록(오른쪽) decode 반복이 크게 느려지고, prefill도 decode와 섞여 느려진다." source="Zhong et al. (2024), DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving, Figure 2. arXiv:2401.09670v3 · CC BY-SA 4.0 · 수정 없음" />
+
+[그림 출처](https://arxiv.org/html/2401.09670v3) · [라이선스](https://creativecommons.org/licenses/by-sa/4.0/)
 
 Agrawal 등은 이 문제를 scheduler의 선택으로 정리했다.[^sarathi-serve]
 대기 중인 prefill을 먼저 넣는 prefill 우선 정책(vLLM 초기판, Orca)은 batch를 빨리 채워 처리량이 높지만 decode 요청의 토큰 간격이 튄다.
@@ -351,19 +355,19 @@ DeepSeek-V3는 이를 큰 규모의 expert parallelism과 disaggregation으로 �
 
 [^sarathi]: Agrawal, A., Panwar, A., Mohan, J., Kwatra, N., Gulavani, B. S., & Ramjee, R. (2023). SARATHI: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills. [arXiv:2308.16369](https://arxiv.org/abs/2308.16369).
 
-[^vllm-opt]: vLLM Project. *Optimization and Tuning*. [vLLM 문서](https://docs.vllm.ai/en/latest/configuration/optimization/).
+[^vllm-opt]: vLLM Project. (2026). Optimization and Tuning. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/configuration/optimization/).
 
 [^splitwise]: Patel, P., Choukse, E., Zhang, C., Shah, A., Goiri, Í., Maleki, S., & Bianchini, R. (2024). Splitwise: Efficient Generative LLM Inference Using Phase Splitting. *ISCA 2024*. [arXiv:2311.18677](https://arxiv.org/abs/2311.18677).
 
 [^mooncake]: Qin, R., Li, Z., He, W., Zhang, M., Wu, Y., Zheng, W., & Xu, X. (2025). Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving. [arXiv:2407.00079v4](https://arxiv.org/abs/2407.00079v4).
 
-[^vllm-disagg]: vLLM Project. *Disaggregated Prefilling (experimental)*. [vLLM 문서](https://docs.vllm.ai/en/latest/features/disagg_prefill/).
+[^vllm-disagg]: vLLM Project. (2026). Disaggregated Prefilling (experimental). *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/features/disagg_prefill/).
 
 [^sglang]: Zheng, L., Yin, L., Xie, Z., et al. (2024). SGLang: Efficient Execution of Structured Language Model Programs. *NeurIPS 2024*. [arXiv:2312.07104](https://arxiv.org/abs/2312.07104).
 
-[^sglang-args]: SGLang Team. *Server Arguments*. [SGLang 문서](https://docs.sglang.io/docs/advanced_features/server_arguments).
+[^sglang-args]: SGLang Team. Server Arguments. *SGLang documentation*. [docs.sglang.io](https://docs.sglang.io/docs/advanced_features/server_arguments).
 
-[^vllm-parallel]: vLLM Project. *Parallelism and Scaling*. [vLLM 문서](https://docs.vllm.ai/en/latest/serving/parallelism_scaling/).
+[^vllm-parallel]: vLLM Project. (2026). Parallelism and Scaling. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/serving/parallelism_scaling/).
 
 [^gptoss]: OpenAI. (2025). *gpt-oss-120b & gpt-oss-20b Model Card*. [arXiv:2508.10925](https://arxiv.org/abs/2508.10925).
 
