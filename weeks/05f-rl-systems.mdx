@@ -4,7 +4,7 @@ week: 5
 order: 5
 ---
 
-05b의 목적함수는 응답을 생성한 정책과 갱신 중인 정책이 같다고 가정하거나,
+앞에서 본 정책 최적화 목적함수는 응답을 생성한 정책과 갱신 중인 정책이 같다고 가정하거나,
 그 차이를 확률비로 보정한다.
 실제 학습 시스템에서 이 가정은 두 가지 이유로 깨진다.
 응답 생성이 학습보다 훨씬 오래 걸리므로 일반적인 비동기 설계는 생성과 학습을 분리해 겹치는데,
@@ -14,14 +14,14 @@ order: 5
 그 시간을 줄이려는 시스템 설계가 어떤 순서로 발전했고 그 과정에서 통계적 정확성과 처리량이 어떻게 충돌하는지를 따라간다.
 2주차 Training engineering 노트가 학습 한 스텝의 병렬화를 다뤘다면,
 이 노트는 그 스텝 앞에 붙는 생성 단계가 만드는 문제를 다룬다.
-Inference engine 내부(KV(key-value) cache 관리, batching, 커널)는 6주차에서 보고,
+Inference engine 내부(KV(key-value) cache 관리, batching, 커널)는 다음 주에 보고,
 여기서는 그것을 RL(reinforcement learning) 학습에 어떻게 끼워 넣는지만 본다.
 
 전체 지도는 Gholipour 등이 2026년에 정리한 rollout 효율 서베이[^survey]로 잡는다.
 §3.2가 학습용 rollout이 서비스용 추론과 어떻게 다른지,
 §5.1–5.4가 학습 프레임워크·생성과 학습의 분리·자원 배치·스케줄링을,
 §6.3이 바뀐 rollout 과정에서 추정량이 여전히 맞는지를 다룬다.
-05a의 Zhang 등 서베이에서는 RL 인프라를 정리한 §5.3이 보조 지도가 된다.[^rlsurvey]
+이 주의 RLVR 노트가 지도로 삼은 Zhang 등 서베이에서는 RL 인프라를 정리한 §5.3이 보조 지도가 된다.[^rlsurvey]
 
 ## 1. RL 학습의 시간 구성
 
@@ -32,16 +32,16 @@ Inference engine 내부(KV(key-value) cache 관리, batching, 커널)는 6주차
 **KV cache**는 앞 토큰의 key와 value를 저장해 매 decode에서 다시 계산하지 않게 한다.
 작은 decode 배치는 연산할 데이터보다 매번 읽어야 할 가중치가 많아 계산 속도보다 메모리 대역폭에 묶이기 쉽다(memory-bound).
 **Continuous batching**은 응답 하나가 끝나면 그 자리에 새 요청을 채우는 방식이다.
-다음 절들의 시스템 비교에는 이 뜻만 있으면 되며, 메모리 예산과 구현은 6주차에서 다룬다.
+다음 절들의 시스템 비교에는 이 뜻만 있으면 되며, 메모리 예산과 구현은 다음 주에 다룬다.
 
-05a §2-2의 학습 절차를 시간 축으로 다시 보자.
+RLVR에서 본 학습 절차를 시간 축으로 다시 보자.
 한 스텝은 프롬프트 배치에 대해 (1) 응답을 생성하고, (2) 검증기나 reward model로 보상을 매기고,
 (3) 정책의 forward·backward로 gradient를 계산해 갱신하고,
 (4) 갱신된 가중치를 생성 쪽에 반영하는 네 단계다.
-04b §3-3의 흐름과 같지만, 긴 추론에서는 (1)이 큰 비중을 차지하기 쉽다.
+RLHF에서 본 PPO 학습 흐름과 같지만, 긴 추론에서는 (1)이 큰 비중을 차지하기 쉽다.
 응답 하나가 수천에서 수만 토큰이고,
 토큰 하나를 만드는 decode 스텝은 배치가 충분히 크지 않은 한 가중치 전체를 읽는 memory-bound 연산이기
-때문이다(6주차에서 자세히 본다).
+때문이다.
 
 서베이는 동기식 학습에서 rollout 생성이 스텝 시간의 대부분을 차지하고 출력이 길수록 그 몫이 커진다는 앞선 측정들을 정리하고,
 저자들이 Qwen3-32B로 직접 잰 결과도 함께 싣는다.
@@ -71,7 +71,7 @@ decode 반복마다 살아 있는 응답 각각이 토큰 하나를 만들며, �
 
 ### 1-2. 학습용 rollout의 조건
 
-생성을 빠르게 하려면 6주차의 inference engine을 그대로 쓰면 될 것 같지만,
+생성을 빠르게 하려면 inference engine을 그대로 쓰면 될 것 같지만,
 학습용 rollout은 서비스용 추론과 조건이 다르다.
 서베이 §3.2는 그 차이를 다섯 가지로 정리한다.[^survey]
 첫째,
@@ -84,7 +84,6 @@ decode 반복마다 살아 있는 응답 각각이 토큰 하나를 만들며, �
 다섯째,
 생성한 토큰·보상·log 확률이 그대로 optimizer의 입력이 되므로 정책이 얼마나 최신인지와 생성·학습의
 확률 일치가 정확성의 조건이 된다.
-정책의 최신성은 §3, 확률 일치는 §4의 주제다.
 
 ## 2. 동기식 시스템
 
@@ -94,7 +93,7 @@ decode 반복마다 살아 있는 응답 각각이 토큰 하나를 만들며, �
 생성 단계에서는 정책 가중치를 inference engine에 싣고,
 학습 단계에서는 같은 가중치로 gradient를 계산한다.
 그런데 두 단계에 맞는 병렬화가 다르다.
-학습은 02e §4에서 본 것처럼 gradient·optimizer 상태까지 담느라 모델을 TP(tensor
+학습은 Training engineering 노트에서 본 것처럼 gradient·optimizer 상태까지 담느라 모델을 TP(tensor
 parallelism)·PP(pipeline parallelism)로 잘게 나눈다.
 생성은 decode가 memory-bound라서 같은 분할을 그대로 쓰면 계산 자원이 놀고,
 모델을 덜 나누는 대신 복제본을 늘리는 구성(작은 TP·PP, 큰 DP(data parallelism))이 처리량에 유리하다.[^hybridflow]
@@ -110,13 +109,13 @@ HybridFlow는 모델 사이의 데이터 이동과 실행 순서는 single-contr
 모델 안의 병렬 실행은 multi-controller가 맡게 했다.
 그리고 3D-HybridEngine이 정책 모델을 학습용 병렬화와 생성용 병렬화 사이에서 메모리 중복 없이 재분할(reshard)하도록 했다.
 이 시스템은 verl이라는 이름으로 공개되었고,
-05b의 DAPO(decoupled clip and dynamic sampling policy optimization)도 verl 위에서 구현되었다.[^dapo]
+앞에서 본 DAPO(decoupled clip and dynamic sampling policy optimization)도 verl 위에서 구현되었다.[^dapo]
 
 ### 2-2. 동기식의 한계
 
-재분할을 줄여도 동기식 설계에서 스텝은 §1-1의 예시처럼 가장 긴 응답을 기다린다.
+재분할을 줄여도 동기식 설계에서 스텝은 앞의 예시처럼 가장 긴 응답을 기다린다.
 긴 추론에서는 응답 길이의 분산도 커서 이 대기 시간이 늘어난다.
-배치를 채우기 위해 05b §2-2의 dynamic sampling처럼 보상이 모두 같은 그룹을 버리고 다시 뽑으면 생성이 한 번 더 필요하다.
+배치를 채우기 위해 DAPO의 dynamic sampling처럼 보상이 모두 같은 그룹을 버리고 다시 뽑으면 생성이 한 번 더 필요하다.
 
 재분할을 아예 피하려고 생성용 GPU와 학습용 GPU를 따로 두고 가중치 복사본을 두 개 유지하는 동기식 배치도 있다.
 HybridFlow가 비교 대상으로 삼은 OpenRLHF의 standalone 배치가 그런 예로,
@@ -156,7 +155,7 @@ Allen AI의 Olmo 3도 vLLM 생성 worker와 학습기를 분리한 비동기 구
 이 경우 한 응답 안에 정책 버전이 섞일 뿐 아니라,
 새 가중치로 만드는 토큰도 옛 가중치로 계산한 KV cache 위에서 나온다.
 
-<Figure src="https://arxiv.org/html/2512.13961v2/continuous_batching.svg" alt="§1-1의 static batching 그림과 같은 네 응답 S1–S4를 continuous batching으로 생성한 격자. S1이 여섯 번째 칸에서 EOS로 끝나자 그 자리에서 S5의 prefill이 시작되고, S3 뒤에는 S6, S4 뒤에는 S7이 이어져 빈 회색 칸이 없다." caption="Continuous batching. 끝난 응답의 자리를 곧바로 새 응답으로 채우므로 §1-1 그림의 회색 대기 칸이 사라진다. 대신 한 학습 배치의 응답들이 서로 다른 시점에 시작된다." source="Team Olmo (2025), Olmo 3, Figure 17(c). arXiv:2512.13961v2 · CC BY 4.0 · 수정 없음" />
+<Figure src="https://arxiv.org/html/2512.13961v2/continuous_batching.svg" alt="앞의 static batching 그림과 같은 네 응답 S1–S4를 continuous batching으로 생성한 격자. S1이 여섯 번째 칸에서 EOS로 끝나자 그 자리에서 S5의 prefill이 시작되고, S3 뒤에는 S6, S4 뒤에는 S7이 이어져 빈 회색 칸이 없다." caption="Continuous batching. 끝난 응답의 자리를 곧바로 새 응답으로 채우므로 static batching 그림의 회색 대기 칸이 사라진다. 대신 한 학습 배치의 응답들이 서로 다른 시점에 시작된다." source="Team Olmo (2025), Olmo 3, Figure 17(c). arXiv:2512.13961v2 · CC BY 4.0 · 수정 없음" />
 
 [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
@@ -164,10 +163,10 @@ Allen AI의 Olmo 3도 vLLM 생성 worker와 학습기를 분리한 비동기 구
 
 분리의 대가는 **staleness**다.
 학습 배치에 든 응답은 몇 스텝 전 정책이 만든 것이고, 응답마다 그 정도가 다르다.
-04c §3-1의 구분으로 online이지만 off-policy인 데이터다.
+DPO에서 본 구분으로 online이지만 off-policy인 데이터다.
 AReaL은 생성 요청을 제한해 최대 staleness $\eta$를 넘는 응답이 배치에 들어오지 않게 막고,
 PPO(proximal policy optimization)의 확률비를 둘로 나눈 decoupled PPO 목적함수를 썼다.
-04b §3-4의 표에서 clipping의 기준이 "배치를 생성한 직전 정책"이었는데,
+앞 주차 PPO에서 clipping의 기준이 "배치를 생성한 직전 정책"이었는데,
 비동기에서는 응답을 만든 정책(behavior policy) $\pi_{\mathrm{behav}}$가 여러 버전이고 갱신을 제약할 기준으로 적합하지도 않다.
 그래서 최근의 정책 하나를 proximal policy $\pi_{\mathrm{prox}}$로 두고,
 토큰마다 $\pi_{\mathrm{prox}}/\pi_{\mathrm{behav}}$를 표집 분포의 차이를 보정하는 importance sampling 가중치로 곱하며,
@@ -175,7 +174,7 @@ clipping은 $\pi_\theta/\pi_{\mathrm{prox}}$에만 건다(원논문 §5.2).
 
 예를 들어 어떤 토큰의 확률이 behavior 0.20, proximal 0.25, 현재 정책 0.30이면 보정 가중치는
 $0.25/0.20=1.25$이고 clipping 대상 비율은 $0.30/0.25=1.2$다.
-04b의 PPO는 두 정책이 같아 보정 가중치가 1인 특수한 경우다.
+일반 PPO는 두 정책이 같아 보정 가중치가 1인 특수한 경우다.
 1.5B 모델의 수학 과제 ablation에서는 이 목적함수를 빼면 staleness가 커질 때 성능이 크게 떨어졌고,
 목적함수가 있어도 staleness 상한을 없애면 지연 없는 기준보다 낮았다(원논문 §7.4, Figure 5, 표 2).[^areal]
 서베이는 겹치기가 유효하려면 정책 지연의 상한과 필요할 때의 off-policy 보정이 함께 있어야 한다고 정리한다.[^survey]
@@ -197,7 +196,7 @@ Staleness가 없어도 off-policy가 생기는 경로가 하나 더 있다.
 Qi 등은 BF16(brain floating point 16)의 짧은 가수부(7비트)에서 생기는 반올림 오차가 두 경로에서 다르게 누적되어,
 같은 응답에 대한 토큰 확률이 엔진과 학습기에서 달라진다고 분석했다.[^fp16]
 정책이 "방금 생성한" 응답인데도 학습기가 보는 확률은 그것을 만든 확률이 아니다.
-05b의 확률비 $\pi_\theta/\pi_{\theta_{\mathrm{old}}}$의 분모를 학습기가 다시 계산하면 갱신 전에는 1이고,
+정책 최적화 목적함수의 확률비 $\pi_\theta/\pi_{\theta_{\mathrm{old}}}$의 분모를 학습기가 다시 계산하면 갱신 전에는 1이고,
 생성 때 엔진이 저장한 확률을 분모로 쓰면 갱신 전에도 1이 아니다.
 앞의 경우 불일치는 보정되지 않은 채 남고,
 뒤의 경우 clipping이 정책 변화와 수치 불일치를 구분하지 못하고 한데 자른다.
@@ -210,13 +209,13 @@ vLLM은 기본 설정에서 이런 후처리를 하기 전의 log 확률을 돌�
 그래서 엔진의 log 확률을 확률비에 넣기 전에 그것이 원래 softmax 분포의 값인지 실제 표집 분포의 값인지 밝혀야 한다.
 의도한 표집 변환에서 오는 차이는 어느 분포를 기준으로 삼을지 정해서 다룰 문제라서,
 커널·정밀도의 수치 오차와 같은 문제로 취급하지 않는다.
-아래 §4-2의 대응은 수치 오차를 겨냥한다.
+아래의 두 대응은 수치 오차를 겨냥한다.
 
 ### 4-2. 확률비 보정과 정밀도 변경
 
 불일치는 그대로 두고 확률비로 보정하거나 불일치의 원인인 정밀도를 바꿔 대응한다.
 
-첫째 대응에서는 05b의 확률비를 하나 더 둔다.
+첫째 대응에서는 확률비를 하나 더 둔다.
 갱신 비율 $\pi_\theta/\pi_{\theta_{\mathrm{old}}}$와 별도로,
 학습기가 계산한 옛 정책 확률과 엔진이 생성 때 기록한 확률의 비
 $\pi_{\theta_{\mathrm{old}}}^{\mathrm{trainer}}/\pi_{\theta_{\mathrm{old}}}^{\mathrm{engine}}$를
@@ -257,18 +256,18 @@ Qi 등은 학습과 생성 모두를 가수부가 10비트인 FP16(16-bit floati
 빠르게 수렴했다고 보고했다.[^fp16]
 진단 실험에서는 모델이 풀 수 있는 문제만 모아 학습 정확도가 끝까지 오르는지 보았는데,
 여기서도 BF16의 GRPO와 토큰 단위 TIS는 도중에 무너졌고 FP16은 끝까지 올랐다(원논문 §4, Figure 3).[^fp16]
-02e §2-1에서 본 BF16의 장점은 FP32(32-bit floating point)와 같은 지수 범위였다.
+2주차에서 본 BF16의 장점은 FP32(32-bit floating point)와 같은 지수 범위였다.
 Qi 등은 값의 범위가 pre-training에서 이미 자리 잡은 RL fine-tuning에서는 그 범위보다 BF16이 잃은 정밀도가 더 문제가 된다고 본다.
 생성·학습 일치라는 새 조건이 붙으면 정밀도 선택이 달라질 수 있다.
 
 <Callout type="warning">
-§3의 staleness와 §4의 수치 불일치는 다른 원인이다.
+Staleness와 생성·학습의 수치 불일치는 다른 원인이다.
 전자는 응답을 만든 정책이 **다른 버전**이고, 후자는 **같은 버전**인데 확률 계산이 다르다.
 각 원인에 맞는 확률비로 보정하되, staleness는 시스템의 겹치기 정도로, 수치 불일치는 정밀도와 커널로 조절한다.
 학습 곡선이 무너졌을 때 어느 쪽인지 가르려면 두 가지를 따로 재 보는 것이 한 방법이다(원논문들의
 분석을 바탕으로 이 노트가 정리한 진단 절차다).
 수치 불일치는 같은 가중치 버전·같은 prefix·같은 확률 정의로 엔진과 학습기의 토큰 확률을 비교해서 잰다.
-이때 엔진 쪽 prefix의 KV cache도 같은 가중치로 계산된 것이어야 한다(§3-1의 in-flight 갱신에서는 그렇지 않을 수 있다).
+이때 엔진 쪽 prefix의 KV cache도 같은 가중치로 계산된 것이어야 한다(Olmo 3의 in-flight 갱신에서는 그렇지 않을 수 있다).
 정책 변화는 같은 계산 경로에서 응답을 만든 버전과 현재 checkpoint의 확률을 비교해서 잰다.
 그러려면 생성 당시의 정책 버전과 토큰 log 확률을 기록해 두어야 한다.
 </Callout>
@@ -280,7 +279,7 @@ Qi 등은 값의 범위가 pre-training에서 이미 자리 잡은 RL fine-tunin
 비동기식 설계는 그 대기를 없애는 대신 여러 정책 버전이 섞인 데이터를 넘긴다.
 엔진과 학습기를 따로 두는 한 버전이 같아도 확률은 어긋날 수 있다.
 그래서 처리량을 위해 시스템을 바꿀 때는 응답을 만든 분포를 기록하고 원인에 맞는 보정이 목적함수에 들어 있는지 함께 확인해야 한다.
-05d의 agentic RL처럼 환경 실행이 생성 사이에 끼면 궤적 길이의 분산과 대기가 더 커져 이 절충이 더 날카로워진다.
+Agentic RL처럼 환경 실행이 생성 사이에 끼면 궤적 길이의 분산과 대기가 더 커져 이 절충이 더 날카로워진다.
 
 이 노트는 inference engine을 학습 루프에 끼워 넣는 쪽에서 보았다.
 다음 주에는 engine 자체로 들어가, 생성 길이·동시 요청 수·모델 크기가 prefill과 decode의 연산·메모리·지연에 어떻게 나타나는지 살핀다.
