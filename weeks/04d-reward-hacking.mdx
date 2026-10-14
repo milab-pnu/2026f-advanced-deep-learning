@@ -50,7 +50,7 @@ DPO는 선호쌍에서 선호하는 응답과 선호하지 않는 응답의 점�
 |---|---|---|
 | Reward model | 사람의 선호 | RLHF 계열의 보상 |
 | Implicit reward | 사람의 선호 | DPO 계열의 손실 |
-| LLM 판정자 (LLM-as-a-judge) | 사람의 선호 및 평가 | RLAIF 계열의 보상, AlpacaEval·MT-Bench 같은 자동 평가 |
+| LLM judge (LLM-as-a-judge) | 사람의 선호 및 평가 | RLAIF 계열의 보상, AlpacaEval·MT-Bench 같은 자동 평가 |
 
 ## 2. Reward model over-optimization
 
@@ -121,36 +121,54 @@ Coste 등은 같은 데이터로 seed만 바꿔 학습한 reward model 다섯 �
 OAIF(online AI feedback)와 같이 iterative하게 지금까지 학습된 정책이 만든 응답으로 새 선호도
 데이터를 만들어 reward model을 더 학습하는 방법도 있다.
 
-## 3. 판정자의 편향
+## 3. Judge의 편향
 
 ### 3-1. LLM-as-a-judge
 
-사람의 평가는 비싸므로 열린 응답의 품질은 GPT-4 같은 LLM이 판정하는 경우가 많다.
-Zheng 등은 MT-Bench의 다중 턴 질문과 Chatbot Arena의 사람 투표로 이 판정자의 신뢰도를 쟀다.[^mtbench]
-동점을 제외하면 GPT-4 판정은 쌍 비교와 단일 채점 모두에서 사람 전문가와 일치하는 정도가 사람 전문가끼리 일치하는 정도와 비슷했다(Table 5).
-동점과 순서 불일치까지 포함하면 일치율은 눈에 띄게 내려간다.
-즉 이 설정에서 GPT-4 판정은 사람 사이의 일치도 수준이었지만,
-그 결과는 동점을 뺀 값이며 정답률이 아닌 선호 판단의 일치율이다.
-같은 논문은 판정자의 약점도 함께 보고한다.
-위치 편향과 장황함 편향이 확인되었고, 자기 선호 편향은 의심되지만 결론을 내리지 못했으며, 수학·추론 답을 채점하는 능력에도 한계가 있었다.
+사람의 평가는 비싸고 느리다.
+그래서 응답의 형식이나 길이를 제한하지 않은 열린 응답(open-ended response)의 품질은 GPT-4 같은 강한 LLM에게 평가시키는 경우가 많다.
+이렇게 LLM이 평가자 역할을 맡는 방식을 <strong>LLM-as-a-judge</strong>라 하고, 평가를 맡은 LLM을 judge라고 부른다.
+Judge는 두 응답을 보고 나은 쪽을 고르거나(쌍 비교, pairwise comparison), 응답 하나에 점수를 매긴다(단일 채점, single-answer grading).
+이 판정은 RLAIF의 보상이 되기도 하고, AlpacaEval 같은 자동 평가의 채점이 되기도 한다.
+
+그렇다면 GPT-4가 judge로서 사람과 얼마나 비슷하게 판단하는지, 그래서 judge로 써도 되는지가 문제다.[^mtbench]
+
+- **MT-Bench.** 글쓰기·추론·수학·코딩 등 8개 범주에 걸친 80개 질문 세트다.
+  각 질문은 첫 질문에 후속 질문이 이어지는 두 턴(multi-turn)으로 되어 있어 대화를 이어 가는 능력까지 본다.
+  여러 모델의 답을 사람 전문가가 두 개씩 비교해 투표한 데이터가 함께 공개되어, judge와 견줄 기준이 된다.
+- **Chatbot Arena.** 익명의 두 모델에 같은 질문을 던지고 사용자가 더 나은 쪽에 투표하는 공개 플랫폼이다.
+  전문가가 만든 질문이 아니라 사용자가 직접 입력한 질문과 투표라서 실제 쓰임에 가까운 선호를 담는다.
+
+결과는 judge로 쓸 만하다는 쪽이다.
+동점을 제외하면 GPT-4와 사람 전문가가 일치하는 정도는 사람 전문가끼리 일치하는 정도와 비슷했고, Chatbot Arena의 사용자 투표에서도 같은 경향이 나타났다.
+다만, 동점을 포함하거나 순서에 따라 판정이 달라지는 경우를 포함하면 일치도는 눈에 띄게 내려간다.
+이에 관련하여, 아래와 같은 약점도 함께 보고한다.
 
 | 약점 | 내용 | 보고된 결과[^mtbench] |
 |---|---|---|
-| 위치 편향(position bias) | 두 응답의 순서를 바꾸면 판정이 바뀜 | 거의 같은 두 응답의 순서만 바꿔도 GPT-4의 판정이 상당수에서 달라짐 (Table 2) |
-| 장황함 편향(verbosity bias) | 내용을 더하지 않고 늘린 응답을 선호 | 목록 항목을 바꿔 말해 길이만 늘린 응답에 GPT-3.5·Claude-v1 판정자는 대부분 넘어갔고, GPT-4는 비교적 잘 버팀 (Table 3) |
-| 자기 선호 편향(self-enhancement bias) | 자기 모델의 응답을 선호 | GPT-4는 자기 응답에 사람보다 다소 높은 승률을 주었지만, 데이터가 적어 결론을 내리지 못함 (Figure 3(b)) |
-| 채점 능력의 한계 | 수학·추론 답의 정오를 잘못 판정 | 틀린 답을 맞다고 판정하는 경우가 많았고, 참조 답을 주면 크게 줄어듦 (Table 4) |
+| 위치 편향(position bias) | 두 응답의 순서를 바꾸면 판정이 바뀜 | 거의 같은 두 응답의 순서만 바꿔도 GPT-4의 판정이 상당수에서 달라짐 |
+| 장황함 편향(verbosity bias) | 내용을 더하지 않고 늘린 응답을 선호 | 목록 항목을 바꿔 말해 길이만 늘린 응답에 GPT-3.5·Claude-v1은 대부분 넘어갔고, GPT-4는 비교적 잘 버팀 |
+| 자기 선호 편향(self-enhancement bias) | 자기 모델의 응답을 선호 | GPT-4는 자기 응답에 사람보다 다소 높은 승률을 주었음 |
+| 채점 능력의 한계 | 수학·추론 답의 정오를 잘못 판정 | 틀린 답을 맞다고 판정하는 경우가 많았고, 참조 답을 주면 크게 줄어듦 |
 
-이 약점들은 판정자를 보상으로 쓰는 RLAIF의 학습 신호와 평가 벤치마크에 함께 반영될 수 있다.
-위치 편향은 순서를 바꿔 두 번 판정하고 합치는 것으로,
-채점 한계는 참조 답을 주는 것으로 줄일 수 있다.
-장황함은 내용을 개선하지 않고도 점수를 높일 수 있는 허점이어서, 다음 절에서 보듯 실제 평가 벤치마크에서도 문제가 된다.
+이 약점은 최근 모델에서 일부는 줄었고 일부는 남아 있다.
+장황함 편향은 GPT-5.4, Claude Opus 4.6, Gemini 3.1 Pro 같은 2026년의 최신 모델까지 21개 judge를 평가한 연구에서 모두 작았다(쌍 비교 한 가지 설정 기준).[^reliability]
+정답이 정해진 문제의 채점은 답하기 전에 오래 생각하는 추론 모델에서 크게 나아졌다.[^judgebench]
+반면 위치 편향은 최신 모델에도 남았고, 모델에 따라 편차가 커서 최신이라고 항상 작지는 않았다.[^reliability]
+같은 입력에 같은 판정을 내리는 일관성이 높아도 한쪽 위치를 계속 선호할 수 있다.
+선호 판단의 일관성도 완전하지 않아서, Gemini-2.5-Pro와 GPT-5 계열도 어려운 사례의 상당수에서 쌍마다 판단이 엇갈렸다.[^sage]
+사람의 판단 역시 완벽하게 일관되지는 않았다.
+
+그래서 judge는 모델을 최신으로 바꾸는 것만으로는 충분하지 않고 평가 설계가 중요하다.
+순서를 바꿔 두 번 판정해 합치고, 정답이 있는 문제는 참조 답을 주고, 평가 기준(rubric)을 명시한다.
+Sage에서는 질문마다 judge가 만든 기준 하나를 모든 응답쌍에 똑같이 적용했더니 판단이 엇갈리는 정도가 줄었고, 추론 모드와 여러 judge를 합치는 방식도 일관성을 높였다.[^sage]
+또 사람과 일치한다는 수치는 우연히 맞은 몫을 보정하지 않으면 부풀려지므로, 일치율을 볼 때는 어떤 기준으로 쟀는지 확인해야 한다.[^reliability]
 
 ### 3-2. 길이 편향과 그 보정
 
-판정자가 긴 응답에 유리한 점수를 주면, 내용이 같아도 길게 쓰는 모델의 승률이 높아질 수 있다.
+judge가 긴 응답에 유리한 점수를 주면, 내용이 같아도 길게 쓰는 모델의 승률이 높아질 수 있다.
 Dubois 등은 AlpacaEval에서 이 영향을 줄이는 통계적 보정을 제안했다.[^alpacaeval-lc]
-판정자의 선호를 로지스틱 회귀로 모형화하되,
+judge의 선호를 로지스틱 회귀로 모형화하되,
 설명 변수에 어느 모델인지뿐 아니라 두 응답의 길이 차이와 지시의 난이도를 넣는다.
 그런 다음 길이 차이를 0으로 두고 예측한 승률이 <strong>길이 보정 승률(length-controlled win rate)</strong>이다.
 평가표에서 AlpacaEval 2 LC라고 표기한 값이 이것이다.
@@ -167,17 +185,21 @@ claude-2.1 같은 약한 모델도 장황하게 쓰게 하는 것만으로 승�
 보정한 승률은 사람 투표로 만든 Chatbot Arena 순위와도 더 높은 순위 상관을 보였다.
 다만 저자들의 검정에서도 이 개선은 경계선 수준이라 확정된 결과로 읽기는 이르다.
 
+Chatbot Arena도 같은 문제를 다룬다.
+승패를 예측하는 Bradley–Terry 모형에 응답 길이와 마크다운 요소(제목·굵은 글씨·목록) 수를 설명 변수로 넣어 문체의 영향을 분리한 순위를 따로 공개했다.[^arena-style]
+그러자 순위가 눈에 띄게 달라지는 모델이 있었고, 문체 중에서는 길이의 영향이 가장 컸다.
+
 <Callout type="example">
-**가상의 길이 민감 판정자.** 판정자가 응답 A를 B보다 선호할 확률을 $\sigma(a\,\Delta q+b\,\Delta\ell)$로 모형화하자.
+**가상의 길이 민감 judge.** judge가 응답 A를 B보다 선호할 확률을 $\sigma(a\,\Delta q+b\,\Delta\ell)$로 모형화하자.
 $\Delta q$는 내용 품질 차이, $\Delta\ell$은 토큰 수 차이이고 $a=1$, $b=0.005$라고 두자.
 이 값은 교육용 가정이다.
 
-| 비교 | $\Delta q$ | $\Delta\ell$ | 판정자의 선호 확률 | 길이 차이를 0으로 둔 확률 |
+| 비교 | $\Delta q$ | $\Delta\ell$ | judge의 선호 확률 | 길이 차이를 0으로 둔 확률 |
 |---|---|---|---|---|
 | 품질 같음, A가 100토큰 김 | 0 | +100 | $\sigma(0.5)=0.62$ | $\sigma(0)=0.50$ |
 | A가 조금 나쁘고 200토큰 김 | $-0.3$ | +200 | $\sigma(0.7)=0.67$ | $\sigma(-0.3)=0.43$ |
 
-두 번째 행에서 판정자는 내용이 더 나쁜 A를 67%로 선호하지만, 길이 효과를 빼면 43%로 뒤집힌다.
+두 번째 행에서 judge는 내용이 더 나쁜 A를 67%로 선호하지만, 길이 효과를 빼면 43%로 뒤집힌다.
 길이 보정은 이 마지막 열의 값을 추정하는 것이다.
 다만 이 예시에서는 품질 차이와 길이 계수를 우리가 알고 있지만,
 실제 길이 보정은 관측된 판정에 회귀 모형을 맞춘 뒤 길이 효과를 통제한 승률을 **추정**할 뿐 내용
@@ -186,12 +208,12 @@ $\Delta q$는 내용 품질 차이, $\Delta\ell$은 토큰 수 차이이고 $a=1
 여기의 길이 보정은 평가 승률에 회귀 보정을 적용하는 방법이다.
 적용하는 곳과 계산이 다르다.
 길이 보정은 길이라는 **알려진** 변수 하나를 통제할 뿐이고,
-판정자가 무엇을 더 선호하는지 모두 알 수는 없다.
+judge가 무엇을 더 선호하는지 모두 알 수는 없다.
 </Callout>
 
 ### 3-3. 사람의 선호 자체가 가진 편향
 
-판정자를 사람으로 바꾸면 문제가 사라질까.
+judge를 사람으로 바꾸면 문제가 사라질까.
 Sharma 등은 RLHF로 학습한 여러 assistant가 사용자의 믿음에 맞추는 응답,
 즉 아첨(sycophancy)을 일관되게 보이며,
 사람의 선호 데이터와 그것으로 학습한 preference model이 정확한 응답보다 설득력 있게 쓰인 아첨 응답을
@@ -216,7 +238,7 @@ Chatbot Arena는 익명의 두 모델에 같은 질문을 던지고 사용자가
 이제 정책 학습에 쓸 reward model을 고르는 문제로 돌아오자.
 고정된 응답쌍의 선호를 맞히는지, 문체가 달라도 내용을 구분하는지,
 그리고 그 점수로 실제 응답을 고르거나 정책을 학습했을 때 품질이 좋아지는지를 차례로 확인한다.
-마지막으로 판정을 직접 생성하는 reward model이 판정자의 약점을 줄이는지, 그 자체의 허점은 무엇인지 본다.
+마지막으로 판정을 직접 생성하는 reward model이 judge의 약점을 줄이는지, 그 자체의 허점은 무엇인지 본다.
 
 ### 4-1. 선호 정확도 벤치마크
 
@@ -285,7 +307,7 @@ PPO의 성능은 reward model의 초기 모델과 학습 프롬프트 등에도 
 
 ### 4-4. 판정을 생성하는 reward model
 
-MT-Bench의 수학 판정에서 보았듯이 판정자의 약점 중 하나는 추론 채점이다.
+MT-Bench의 수학 판정에서 보았듯이 judge의 약점 중 하나는 추론 채점이다.
 이를 겨냥한 한 방향은 "이 답이 맞는가?"에 대한 판정을 토큰 생성으로 학습하는 것이다.
 Zhang 등의 generative verifier(GenRM)는 문제와 풀이를 입력받아 "Yes" 또는 "No"를 예측하도록 학습하며,
 올바른 풀이를 생성하는 SFT도 함께 수행한다.[^genrm]
@@ -319,11 +341,11 @@ Zhao 등은 LLM이 응답을 참조 답과 비교해 맞는지 판정하게 하�
 학습이 무너지는 것을 보았다.[^master-key]
 응답 길이가 급격히 줄고 KL이 치솟았는데,
 정책이 풀이 대신 "Solution", "Thought process:" 같은 시작 문구만 내놓았고
-판정자(Qwen2.5-72B-Instruct)가 이를 정답으로 판정한 것이다.
+judge(Qwen2.5-72B-Instruct)가 이를 정답으로 판정한 것이다.
 
 이 논문은 이런 LLM 판정 보상도 RLVR(reinforcement learning with verifiable rewards)이라 부르지만,
-정답을 프로그램으로 확인하는 검증기와 달리 판정자가 LLM이라 같은 허점을 갖는다.
-이런 내용 없는 응답을 다섯 데이터셋에서 여러 판정자에 넣어 보니,
+정답을 프로그램으로 확인하는 검증기와 달리 judge가 LLM이라 같은 허점을 갖는다.
+이런 내용 없는 응답을 다섯 데이터셋에서 여러 judge에 넣어 보니,
 콜론 하나(":")만 내도 GPT-4o가 정답으로 잘못 판정하는 경우(false positive)가 데이터셋에 따라 상당했고,
 "Thought process:"는 LLaMA3-70B-Instruct와 Qwen2.5-72B-Instruct가 대부분 정답으로 판정했다(Table 1).
 저자들은 풀이의 첫 문장만 남긴 응답을 오답 예로 넣고,
@@ -347,3 +369,7 @@ Qwen2.5-7B-Instruct를 기반으로 별도의 판정 모델인 Master-RM을 학�
 [^rewardbench2]: Malik, S., et al. (2026). RewardBench 2: Advancing Reward Model Evaluation. *ICLR 2026*. [arXiv:2506.01937](https://arxiv.org/abs/2506.01937).
 [^genrm]: Zhang, L., Hosseini, A., Bansal, H., Kazemi, M., Kumar, A., & Agarwal, R. (2025). Generative Verifiers: Reward Modeling as Next-Token Prediction. *ICLR 2025*. [arXiv:2408.15240](https://arxiv.org/abs/2408.15240).
 [^master-key]: Zhao, Y., et al. (2025). One Token to Fool LLM-as-a-Judge. [arXiv:2507.08794v1](https://arxiv.org/abs/2507.08794v1).
+[^judgebench]: Tan, S., et al. (2025). JudgeBench: A Benchmark for Evaluating LLM-based Judges. *ICLR 2025*. [arXiv:2410.12784](https://arxiv.org/abs/2410.12784).
+[^reliability]: Norman, J. D., Rivera, M. U., & Hughes, D. A. (2026). Reliability without Validity: A Systematic, Large-Scale Evaluation of LLM-as-a-Judge Models Across Agreement, Consistency, and Bias. [arXiv:2606.19544](https://arxiv.org/abs/2606.19544).
+[^sage]: Feng, Y., Wang, S., Cheng, Z., Wan, Y., & Chen, D. (2025). Are We on the Right Way to Assessing LLM-as-a-Judge? [arXiv:2512.16041](https://arxiv.org/abs/2512.16041).
+[^arena-style]: Li, T., Angelopoulos, A., & Chiang, W.-L. (2024). Does style matter? Disentangling style and substance in Chatbot Arena. *LMSYS Org blog*. [링크](https://lmsys.org/blog/2024-08-28-style-control).
