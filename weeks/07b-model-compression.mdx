@@ -237,15 +237,15 @@ LLaMA-7B의 파라미터 20%를 지우고 회복하면 일곱 zero-shot 분류 �
 Men 등의 ShortGPT는 입력과 출력이 거의 같은 층,
 곧 표현을 별로 바꾸지 않는 층을 찾아 지워 파라미터 25%를 줄이고도 선다형 과제에서 성능의 약 90%를 유지했다.[^shortgpt]
 Gromov 등은 입력과 출력이 가장 비슷한 연속된 층들을 지우는 방식으로,
-Llama-2-70B에서 층의 절반 가까이 지울 때까지 MMLU·BoolQ 정확도가 크게 떨어지지 않다가 40–50% 근처에서 급격히 무너진다는 것을 보였다(Figure 1).[^gromov]
+Llama-2-70B에서 층의 절반 가까이 지울 때까지 MMLU(Massive Multitask Language Understanding)·BoolQ 정확도가 크게 떨어지지 않다가 40–50% 근처에서 급격히 무너진다는 것을 보였다(Figure 1).[^gromov]
 다만 ShortGPT 논문도 밝히듯, Llama-2-7B의 층 25%를 지우면 생성 작업인 GSM8K의 점수가 15.69에서 1.60으로 거의 0이 되었다(Table 3).
 선다형 문제의 정확도만으로 깊이 pruning의 품질을 판단하면 위험하다.
 
 ### 3-2. Pruning과 distillation의 결합
 
 지운 모델의 품질은 더 학습해서 되살린다.
-Xia 등의 Sheared-LLaMA는 LLaMA2-7B를 1.3B와 2.7B로 구조적으로 줄인 뒤 50B 토큰으로 사전학습을 이어 가,
-원래 7B의 학습 비용을 빼고 보면 비슷한 크기의 OpenLLaMA-3B-v2를 처음부터 학습한 계산의 약 3%로 그와 비슷한 품질을 얻었다고 보고했다(Figure 1).[^sheared]
+Xia 등의 Sheared-LLaMA는 LLaMA2-7B를 1.3B와 2.7B로 구조적으로 줄인 뒤 50B 토큰으로 사전학습을 이어 갔다.
+그중 2.7B 모델은 원래 7B의 학습 비용을 빼고 보면 비슷한 크기의 OpenLLaMA-3B-v2를 처음부터 학습한 계산의 약 3%로 그와 비슷한 품질을 얻었다고 보고했다(Figure 1).[^sheared]
 NVIDIA의 Minitron은 이 회복 학습을 원래 모델을 teacher로 삼는 distillation으로 하고,
 줄이기와 회복을 체계화했다.[^minitron]
 
@@ -257,7 +257,7 @@ Minitron은 Nemotron-4 15B의 너비(embedding 차원, head, FFN channel)를 줄
 원래 학습 데이터의 3% 미만으로 distillation해 품질을 되살렸다.
 모델마다 처음부터 학습할 때보다 학습 토큰이 최대 40배 적게 들었고,
 모델 계열 전체로는 계산을 1.8배 아꼈으며,
-처음부터 학습한 같은 크기의 Nemotron-3 8B보다 MMLU(Massive Multitask Language Understanding) 점수가 높았다(54.7 대 63.8, 상대 약 16.6%, Table 2).[^minitron]
+처음부터 학습한 같은 크기의 Nemotron-3 8B보다 MMLU 점수가 높았다(54.7 대 63.8, 상대 약 16.6%, Table 2).[^minitron]
 원논문은 실험에서 얻은 지침도 정리했다.
 이 규모(15B 이하)에서는 깊이보다 너비를 줄이는 편이 낫고,
 회복 학습은 일반 언어 모델링 loss 대신 teacher와의 logit KL(Kullback–Leibler) divergence만으로 하는 편이 낫다는 것이다.

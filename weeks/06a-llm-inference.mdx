@@ -288,7 +288,8 @@ Training engineering 노트에서 보았듯 BF16(bfloat16)은 원소당 2 bytes�
 줄이는 방법은 두 가지다.
 양자화(quantization)는 원소당 bytes를 줄인다.
 4비트 정수(INT4)로 두면 약 4 GB가 되고, 여기에 scale 같은 부가 정보가 더해진다.
-Pruning·low-rank 분해·distillation은 파라미터 수 자체를 줄인다.
+구조적 pruning, low-rank 분해, 더 작은 모델로의 distillation은 저장할 파라미터 수 자체를 줄인다.
+값을 0으로만 바꾸는 비구조적 pruning은 0을 생략하는 저장 형식을 써야 메모리가 준다.
 
 ### 4-2. KV cache
 

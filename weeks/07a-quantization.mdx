@@ -172,7 +172,7 @@ $\alpha=0.5$이면 $s_j=\sqrt{64}/\sqrt{0.25}=8/0.5=16$이다.
 두 쪽의 범위가 같아진다.
 이 channel 하나 때문에 activation의 per-token scale이 커지던 정도가 줄고,
 그 대가로 가중치 행 하나의 범위가 커진다.
-가중치는 원래 분포가 고르고 평평해서 범위가 이 정도 커져도 여전히 양자화하기 쉽다(원논문 §3, Figure 4).
+실제 양자화 오차는 다른 channel의 분포와 양자화 단위에도 달려 있다.
 </Callout>
 
 <Figure src="https://arxiv.org/html/2211.10438v7/aw-dist-long.png" alt="SmoothQuant 논문의 Figure 4. OPT-13B 한 층의 activation과 가중치 크기를 3차원으로 그린 네 그림이다. 첫째, 원래 activation은 몇몇 channel에서 값이 70에 이르는 빨간 벽처럼 솟아 있고 나머지는 2 이하로 낮다. 둘째, smoothing 후 activation은 모든 channel이 10 이하로 고르다. 셋째, 원래 가중치는 전체가 평평하다. 넷째, smoothing 후 가중치는 일부 입력 channel에 작은 봉우리가 생겼지만 여전히 낮다. 위쪽 화살표는 양자화의 어려움을 activation에서 가중치로 옮긴다는 뜻이다." caption="SmoothQuant 전후의 activation(왼쪽 두 그림)과 가중치(오른쪽 두 그림). Activation의 outlier channel이 평평해지는 대신 가중치에 작은 봉우리가 생긴다." source="Xiao et al. (2023), SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models, Figure 4 · arXiv:2211.10438v7 · CC BY 4.0 · 수정 없음" hero />

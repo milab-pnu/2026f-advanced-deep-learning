@@ -116,7 +116,7 @@ vLLM이 내보내는 선점 횟수를 함께 보면 공간 부족인지 가려�
 
 <Callout type="example">
 Roofline의 하한 모형으로 계산해 보자.
-Llama 3 8B(BF16)가 H100 SXM 한 대(989 TFLOP/s, 3.35 TB/s)에서 문맥 2,048토큰인 요청 64개를 decode하고 있다면 한 스텝은 약 9.9 ms다.
+Llama 3 8B를 BF16(bfloat16, 값당 2 bytes)으로 두고 H100 SXM 한 대(989 TFLOP/s, 3.35 TB/s)에서 문맥 2,048토큰인 요청 64개를 decode하고 있다면 한 스텝은 약 9.9 ms다.
 여기에 8,192토큰 프롬프트의 prefill이 같은 반복에 들어오면 계산량이 약 150 TFLOP(TFLOP은 floating-point operation $10^{12}$번)로 늘어,
 연산마다 하한을 구해 더하면 그 반복은 약 157 ms가 된다.
 토큰 8,256개를 처리하는 선형층이 약 133 TFLOP로 약 134 ms, prefill의 causal attention이 약 18 TFLOP로 약 18 ms를 차지하고(둘 다 compute-bound),
@@ -290,7 +290,7 @@ batch가 수십 개만 되어도 거의 모든 expert를 읽는다.
 </Callout>
 
 Gupta 등의 Lynx는 이를 실측으로 보였다(원논문 Figure 1(b)).[^lynx]
-H200에서 ShareGPT 요청으로 잰 Qwen3-30B-A3B의 p99 지연은 batch 1에서는 Qwen3-4B dense 모델과 비슷했지만,
+H200에서 ShareGPT 요청으로 잰 Qwen3-30B-A3B의 p99 decode 지연은 batch 1에서는 Qwen3-4B dense 모델과 비슷했지만,
 batch가 커지면서 Qwen3-32B dense 모델에 가까워졌다.
 거의 모든 expert를 읽게 된 뒤에는 batch를 더 키워도 읽는 가중치는 그대로이고 토큰당 계산은 작으므로,
 연산 쪽이 병목이 되기 전까지 처리량은 batch와 함께 늘어난다.

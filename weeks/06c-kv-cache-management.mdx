@@ -5,7 +5,7 @@ order: 2
 ---
 
 앞의 두 노트는 같은 결론에 닿았다.
-H100(80 GB) 한 대에 Llama 3 8B를 올리고 GPU 메모리의 92%를 쓰며 작업 공간으로 약 4 GB를 뺀다고 가정하면,
+H100(80 GB) 한 대에 Llama 3 8B를 올리고 GPU(graphics processing unit) 메모리의 92%를 쓰며 작업 공간으로 약 4 GB를 뺀다고 가정하면,
 가중치 16.1 GB를 올린 뒤 KV(key-value) cache에 약 53.5 GB가 남는다.
 KV를 BF16(bfloat16, 2 bytes)으로 저장하면 토큰당 128 KiB라서 8,192토큰 요청이 49개까지 들어간다고 계산했고,
 batch를 키워 처리량(throughput)을 올리는 일이 이 공간에서 먼저 막힌다는 것을 보았다.
@@ -80,7 +80,7 @@ page table로 둘을 잇는다.
 vLLM은 같은 생각으로 KV cache를 고정 크기 **블록**으로 나눈다.
 원논문의 비유대로 블록은 page, 토큰은 byte, 요청은 process에 해당한다.[^vllm]
 
-<Figure src="https://arxiv.org/html/2309.06180v1/logical-and-physical-block-table.svg" alt="vLLM 논문의 Figure 6. 요청 A의 프롬프트는 'Four score and seven years ago our', 출력은 'fathers', 'brought' 순이다. 왼쪽의 logical KV block은 블록마다 토큰 4칸이며 block 0에 Four score and seven, block 1에 years ago our fathers, block 2에 brought가 들어 있다. 가운데 block table은 logical block 0을 physical block 7에, block 1을 physical block 1에, block 2를 physical block 3에 대응시키고, 블록마다 채워진 칸 수(4, 3에서 4로, 1)를 기록한다. 오른쪽의 physical KV block은 GPU 메모리에서 7, 1, 3번 블록에 흩어져 있다. 동그라미 숫자 1, 2, 3은 prefill, 첫 decode, 둘째 decode 단계를 뜻한다." caption="Logical 블록과 physical 블록을 잇는 block table. 요청은 연속된 logical 블록을 보지만 실제 블록은 GPU(graphics processing unit) 메모리 어디에나 놓일 수 있다. 동그라미 숫자는 블록이 채워진 단계다." source="Kwon et al. (2023), Efficient Memory Management for Large Language Model Serving with PagedAttention, Figure 6 · CC BY 4.0 · 수정 없음" hero />
+<Figure src="https://arxiv.org/html/2309.06180v1/logical-and-physical-block-table.svg" alt="vLLM 논문의 Figure 6. 요청 A의 프롬프트는 'Four score and seven years ago our', 출력은 'fathers', 'brought' 순이다. 왼쪽의 logical KV block은 블록마다 토큰 4칸이며 block 0에 Four score and seven, block 1에 years ago our fathers, block 2에 brought가 들어 있다. 가운데 block table은 logical block 0을 physical block 7에, block 1을 physical block 1에, block 2를 physical block 3에 대응시키고, 블록마다 채워진 칸 수(4, 3에서 4로, 1)를 기록한다. 오른쪽의 physical KV block은 GPU 메모리에서 7, 1, 3번 블록에 흩어져 있다. 동그라미 숫자 1, 2, 3은 prefill, 첫 decode, 둘째 decode 단계를 뜻한다." caption="Logical 블록과 physical 블록을 잇는 block table. 요청은 연속된 logical 블록을 보지만 실제 블록은 GPU 메모리 어디에나 놓일 수 있다. 동그라미 숫자는 블록이 채워진 단계다." source="Kwon et al. (2023), Efficient Memory Management for Large Language Model Serving with PagedAttention, Figure 6 · CC BY 4.0 · 수정 없음" hero />
 
 [그림 출처](https://arxiv.org/html/2309.06180v1) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
@@ -238,7 +238,7 @@ Zhang 등의 H2O(Heavy-Hitter Oracle)는 각 행 최댓값의 1%보다 작은 �
 OPT 모델의 attention 행렬이 거의 모든 층에서 95% 넘게 희소하고,
 누적 attention 점수가 power law를 따라 소수의 토큰에 몰린다는 것을 관찰했다(원논문 Figure 2(a)(b)).[^h2o]
 그런 토큰을 heavy hitter라 부르고, 최근 토큰과 heavy hitter만 KV cache에 남기고 나머지를 지운다.
-생성 중에도 cache가 차면 스텝마다 점수가 가장 낮은 토큰을 하나씩 지운다.
+생성 중에도 cache가 차면 최근 토큰을 보호하면서, 나머지 가운데 누적 attention 점수가 가장 낮은 KV를 head마다 하나씩 지운다(원논문 §4, Appendix A).
 KV cache 예산을 프롬프트 길이의 20%로 잡아 heavy hitter와 최근 토큰에 반씩 나누고도,
 T4 GPU에서 CPU offloading이 필요한 OPT-30B의 처리량이 DeepSpeed·Accelerate보다 약 21–31배 높았다(원논문 Table 3–4의 값으로 계산).
 

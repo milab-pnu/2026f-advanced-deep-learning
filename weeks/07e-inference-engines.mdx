@@ -193,7 +193,8 @@ Goodput을 잴 때도 정의를 구분한다.
 
 <Callout type="example">
 기말 프로젝트에서 Llama 3.1 8B를 H100 한 대로 서빙하며 BF16과 FP8(8-bit floating point)을 비교한다고 하자.
-같은 엔진 버전과 설정으로 서버를 두 번 띄운다.
+같은 엔진 버전과 설정으로 서버를 두 번 띄우되,
+앞선 측정의 prefix cache가 결과에 섞이지 않게 두 서버 모두 `--no-enable-prefix-caching`으로 시작한다.
 FP8 서버는 미리 FP8로 양자화한 checkpoint를 불러오거나,
 BF16 checkpoint를 불러오면서 양자화한다(vLLM v0.31에서는 `--quantization fp8_per_tensor`).
 어느 방식인지와 엔진 버전, KV cache 정밀도와 batch 관련 설정을 결과와 함께 적고,
@@ -223,7 +224,7 @@ Roofline으로 보면 동시 요청이 적을 때는 가중치 읽기가 병목�
 동시 요청이 많아 행렬곱 연산이 병목이 되면 FP8 Tensor Core로 처리량이 높아질 수 있다.
 결과가 예측과 다르면 동시 요청 1의 TPOT로 MBU(model bandwidth utilization)를 계산해 대역폭 지붕에서 얼마나 떨어져 있는지 보고,
 그래도 원인이 보이지 않으면 엔진의 profiler로 실행 기록(trace)을 떠서 kernel 사이에 GPU가 노는 구간과 attention·행렬곱의 비중을 확인한다.[^vllm-profile]
-양자화와 speculative decoding처럼 여러 기법을 함께 켤 때는 이득이 곱해지지 않으므로,
+양자화와 speculative decoding처럼 여러 기법을 함께 켤 때는 개별 이득을 단순히 곱해 예측할 수 없으므로,
 각각 켠 경우와 함께 켠 경우를 같은 조건에서 따로 잰다.
 정확도는 같은 프롬프트에 대한 과제 점수로 따로 확인한다.
 </Callout>

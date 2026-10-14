@@ -200,7 +200,7 @@ EAGLE-3는 feature 예측이라는 제약을 버리고 토큰을 직접 예측�
 학습 중에 draft가 자기 출력을 다시 입력으로 받는 추론 상황을 흉내 내는 training-time test를 써서,
 학습 데이터를 늘릴수록 성능이 계속 오르게 했고 최대 6.5배(Vicuna-13B, HumanEval, temperature 0)를 보고했다(Table 1).[^eagle3]
 
-여기까지의 draft는 토큰마다 forward를 한 번씩 돌리므로, 추측이 길수록 drafting 시간도 늘어난다.
+EAGLE 계열은 추측의 깊이 방향으로 draft의 forward를 차례로 돌리므로, 추측이 길수록 drafting 시간도 늘어난다.
 이 순차 단계를 없애려고 추측 블록 전체를 forward 한 번에 내는 병렬 drafting이 나왔다.
 DFlash는 target의 feature를 조건으로 받는 가벼운 block diffusion 모델로 블록 안의 토큰을 한꺼번에 만든다.[^dflash]
 vLLM도 P-EAGLE, DFlash, DSpark 같은 병렬 drafting 방식을 지원한다.[^vllm-parallel]
@@ -309,7 +309,7 @@ Batch 192에서는 한 스텝에 $192\times5=960$개 위치를 계산하므로 �
 batch 192에서도 이득이 남는다.
 이 행의 speculative 스텝은 선형층 15.6 ms와 KV cache 읽기 15.4 ms를 더한 31.0 ms이고,
 개선 배수는 $2.773\times20.18/30.97\approx1.81$이다.
-Draft 비용을 빼고 계산했으므로 실제 개선 배수는 이보다 작다.
+같은 시간 모형에서 draft 비용까지 더하면 이 개선 배수는 낮아지고, 실제 개선 배수는 두 실행 경로의 효율에 따라 달라진다.
 </Callout>
 
 측정 결과도 같은 방향이다.

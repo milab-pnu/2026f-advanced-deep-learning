@@ -5,7 +5,7 @@ order: 3
 ---
 
 앞 주차의 예시에서 Llama 3 8B를 H100 한 대에서 batch 1, 문맥 2,048토큰으로 돌릴 때 TPOT(time per output token)가 8.0 ms라면,
-가중치와 KV(key-value) cache를 BF16으로 한 번씩 읽는 하한 4.9 ms의 약 1.6배이고,
+가중치와 KV(key-value) cache를 BF16(bfloat16)으로 한 번씩 읽는 하한 4.9 ms의 약 1.6배이고,
 MBU(model bandwidth utilization)는 61%라고 했다.
 MBU만으로는 남은 39%가 어디서 새는지 나눌 수 없다.
 읽어야 할 데이터의 양은 하한에 이미 들어 있으므로, 먼저 의심할 곳은 **그 계산을 GPU(graphics processing unit)에서 실행하는 방식**이다.
@@ -58,7 +58,7 @@ Prefill 쪽의 발전은 새 GPU의 연산 장치를 쉬지 않게 하는 방향
 FlashAttention-2는 H100에서 peak의 35%밖에 쓰지 못했는데,
 Shah 등의 FlashAttention-3는 데이터를 옮기는 warp와 계산하는 warp를 나누어 둘을 겹치고,
 한 warp 묶음이 softmax를 계산하는 동안 다른 묶음은 행렬곱을 하도록 둘을 겹쳐 FP16(16-bit floating point)에서 peak의 75%까지 올렸다.[^fa3]
-이 수치는 arXiv판 기준이고, NeurIPS 게재판 초록은 BF16(bfloat16)에서 85%를 보고한다.
+이 수치는 arXiv판 기준이고, NeurIPS 게재판 초록은 BF16에서 85%를 보고한다.
 이와 별도로 FP8(8-bit floating point) 연산도 지원한다.
 Blackwell GPU에서는 Tensor Core가 지수 함수 계산이나 shared memory 대역폭보다 훨씬 빨라져,
 FlashAttention-4는 softmax의 지수 계산 일부를 소프트웨어로 근사하는 등 행렬곱이 아닌 일을 줄이는 쪽으로 다시 설계했다.[^fa4]
@@ -267,7 +267,7 @@ vLLM은 기본 설정에서 처리할 토큰 수 1, 2, 4, 8, 16, 24, …에 맞�
 요청마다 query가 하나인 보통의 decode에서는 이 토큰 수가 곧 batch 크기다.
 기록한 가장 큰 크기를 넘으면 그래프 없이 실행한다.
 Attention은 요청마다 길이가 달라 그래프에 담기 어려우므로,
-v0.30.0의 기본 모드(`FULL_AND_PIECEWISE`)는 attention backend가 지원하면 요청마다 query 길이가 같은 decode batch(uniform decode)는 전체를 그래프 하나로,
+v0.31.0의 기본 모드(`FULL_AND_PIECEWISE`)는 attention backend가 지원하면 요청마다 query 길이가 같은 decode batch(uniform decode)는 전체를 그래프 하나로,
 나머지는 attention 사이의 구간만 그래프로 기록한다.[^vllm-cg]
 
 <Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.30.0/docs/assets/design/cuda_graphs/current_design.png" alt="vLLM 문서의 CUDA graph 설계 그림. 위쪽에서 모델은 torch.compile로 attention 사이의 submodule들로 쪼개지고(piecewise compilation), submodule마다 CUDA graph wrapper가 붙는다. 실행 시 요청 batch의 종류와 크기에 따라 세 가지 방식 가운데 하나를 고른다. PIECEWISE는 submodule 구간은 CUDA graph로, attention은 그래프 없이(eager) 번갈아 실행한다. FULL은 모델 전체를 CUDA graph 하나로 실행한다. NONE은 그래프 없이 모두 eager로 실행한다." caption="vLLM의 CUDA graph 실행 방식. Attention 사이의 구간만 그래프로 재생하는 PIECEWISE, 모델 전체를 재생하는 FULL, 그래프를 쓰지 않는 NONE 가운데 batch에 맞는 것을 고른다." source="vLLM Project, CUDA Graphs 설계 문서 그림(docs/assets/design/cuda_graphs/current_design.png, v0.30.0) · Apache License 2.0 · 수정 없음" />
@@ -336,7 +336,7 @@ attention kernel을 두 배 빠르게 해도 스텝은 7 ms가 되어 약 1.14�
 
 [^megablocks]: Gale, T., Narayanan, D., Young, C., & Zaharia, M. (2023). MegaBlocks: Efficient Sparse Training with Mixture-of-Experts. *MLSys 2023*. [arXiv:2211.15841](https://arxiv.org/abs/2211.15841).
 
-[^vllm-fusedmoe]: vLLM Project. (2026). fused_moe.py. *GitHub v0.30.0*. [github.com](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/model_executor/layers/fused_moe/fused_moe.py).
+[^vllm-fusedmoe]: vLLM Project. (2026). fused_moe.py. *GitHub v0.31.0*. [github.com](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/model_executor/layers/fused_moe/fused_moe.py).
 
 [^deepep]: Zhao, C., Zhou, S., Zhang, L., et al. (2025). DeepEP: an efficient expert-parallel communication library. *GitHub*. [github.com](https://github.com/deepseek-ai/DeepEP).
 
@@ -346,7 +346,7 @@ attention kernel을 두 배 빠르게 해도 스텝은 7 ms가 되어 약 1.14�
 
 [^cudagraph-pt]: Nguyen, V., Carilli, M., Eryilmaz, S. B., et al. (2021). Accelerating PyTorch with CUDA Graphs. *PyTorch Blog*. [pytorch.org](https://pytorch.org/blog/accelerating-pytorch-with-cuda-graphs/).
 
-[^vllm-cg]: vLLM Project. (2026). CUDA Graphs. *vLLM documentation v0.30.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.30.0/design/cuda_graphs/); [capture 크기 설정 소스](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/config/vllm.py).
+[^vllm-cg]: vLLM Project. (2026). CUDA Graphs. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/cuda_graphs/); [capture 크기 설정 소스](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/config/vllm.py).
 
 [^triton]: Tillet, P., Kung, H. T., & Cox, D. (2019). Triton: An Intermediate Language and Compiler for Tiled Neural Network Computations. *MAPL 2019*, 10–19. [doi:10.1145/3315508.3329973](https://doi.org/10.1145/3315508.3329973); [저자 PDF](https://www.eecs.harvard.edu/~htk/publication/2019-mapl-tillet-kung-cox.pdf).
 

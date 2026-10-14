@@ -135,7 +135,7 @@ $$
 
 ## 3. Transformer 연산의 위치
 
-이제 Llama 3 8B(32층, $d=4096$, FFN 폭 14,336, 어휘 약 128K, query head 32개, KV head 8개, head 차원 128)의 연산을 그림 위에 올려 보자.[^llama3]
+이제 Llama 3 8B(32층, $d=4096$, FFN(feed-forward network) 폭 14,336, 어휘 약 128K, query head 32개, KV head 8개, head 차원 128)의 연산을 그림 위에 올려 보자.[^llama3]
 모든 수치는 BF16(원소당 2 bytes)을 가정하고,
 bytes는 각 입력을 한 번 읽고 출력을 한 번 쓰는 최소량으로 센다.
 실제 kernel은 이보다 더 많이 옮길 수 있다.
@@ -146,7 +146,7 @@ bytes는 각 입력을 한 번 읽고 출력을 한 번 쓰는 최소량으로 �
 
 ### 3-1. 선형층
 
-문맥이 아주 길지 않으면 Transformer의 계산 대부분은 attention의 Q·K·V·출력 투영과 FFN(feed-forward network) 같은 선형층이다.
+문맥이 아주 길지 않으면 Transformer의 계산 대부분은 attention의 Q·K·V·출력 투영과 FFN 같은 선형층이다.
 한 번에 처리하는 토큰이 $b$개이고 가중치가 입력 $d$차원, 출력 $d'$차원의 $d\times d'$ 행렬이면,
 계산은 $2bdd'$ FLOPs이고 옮길 데이터는 가중치 $2dd'$ bytes와 입력·출력 activation $2b(d+d')$ bytes다.
 $d=d'=4096$인 투영이라면
@@ -335,7 +335,7 @@ Batch 1의 하한 4.9 ms에 비해 약 1.6배 느리다.
 
 MBU는 batch가 커져도 쓸 수 있다.
 분자의 KV cache bytes가 batch 안의 모든 요청을 더한 값이기 때문이다.
-Batch를 키워 연산 쪽이 병목에 가까워질수록 MBU는 내려가고 MFU가 더 맞는 지표가 된다.
+Batch를 키워 연산 쪽이 병목이 되면 MBU만으로는 효율을 판단하기 어려우므로 MFU를 함께 본다.
 두 지표를 함께 보면 시스템이 roofline의 어느 지붕 아래에 있는지,
 그 지붕에서 얼마나 떨어져 있는지 알 수 있다.
 
