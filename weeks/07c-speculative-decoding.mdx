@@ -4,8 +4,8 @@ week: 7
 order: 2
 ---
 
-6주차에서 decode 한 스텝의 비용을 계산했다.
-06b §3-1에서 보았듯 선형층의 arithmetic intensity는 함께 처리하는 토큰 수와 거의 같아서,
+앞 주차에서 decode 한 스텝의 비용을 계산했다.
+그때 보았듯 선형층의 arithmetic intensity는 함께 처리하는 토큰 수와 거의 같아서,
 요청 하나를 decode하는 스텝은 가중치 16 GB를 읽어 토큰 하나에만 쓴다.
 Llama 3 8B를 H100에서 돌리면 그 스텝의 하한은 약 4.9 ms이고, 계산 자체는 0.02 ms면 끝난다.
 남는 연산 능력은 batching으로 채울 수도 있지만, 요청이 하나뿐인 상황에서도 채울 방법이 있다.
@@ -20,14 +20,14 @@ Speculative decoding은 값싼 방법으로 다음 토큰들을 먼저 추측하
 §6이 검증 방법(greedy, speculative sampling, token tree)을 다룬다.
 §8의 Spec-Bench는 같은 조건에서 여러 방법을 비교하고,
 §9는 batch가 커질 때의 문제를 남은 과제로 꼽는다.
-이 노트의 §1은 서베이 §4·§6에, §2는 §5에 대응하고,
-§3의 multi-token prediction과 §4의 serving 조건은 서베이 이후의 흐름을 원논문으로 보충한다.
+이 노트는 서베이 §4·§6과 §5를 따라가고,
+multi-token prediction과 serving 조건은 서베이 이후의 흐름을 원논문으로 보충한다.
 
 ## 1. Draft와 검증
 
 ### 1-1. 한 번의 forward로 토큰 여러 개 검증하기
 
-출발점은 06b의 roofline이다.
+출발점은 roofline이다.
 요청 하나를 decode할 때 Llama 3 8B의 선형층은 intensity가 약 1이라 ridge point 295의 한참 왼쪽에 있다.
 같은 forward에 위치 5개를 넣어도 읽는 가중치는 그대로 16 GB이고 계산은 다섯 배인 0.1 ms 정도라,
 스텝 시간은 여전히 약 4.9 ms다.
@@ -117,7 +117,7 @@ Draft 한 번이 target 한 번의 $c$배 시간이 든다면 전체 시간의 �
 $(1-\alpha^{\gamma+1})/\bigl((1-\alpha)(\gamma c+1)\bigr)$이다(원논문 Theorem 3.8).
 $\alpha=0.7$, $\gamma=4$, $c=0.05$라면 $2.77/1.2\approx2.3$배다.
 이 식은 target이 $\gamma+1$개 위치를 계산하는 데 위치 하나와 같은 시간이 든다는 가정(원논문 §3.3)에 기대는데,
-§1-1에서 본 memory-bound decode가 그 가정을 뒷받침한다.[^leviathan]
+앞에서 본 memory-bound decode가 그 가정을 뒷받침한다.[^leviathan]
 
 실제로 Leviathan 등은 T5-XXL(11B)에 T5-small을 draft로 붙여 번역에서 2.6–3.4배,
 요약에서 2.3–3.1배 빨라졌다고 보고했다(Table 2, batch 1).
@@ -128,7 +128,7 @@ Chen 등은 Chinchilla 70B에 4B draft를 붙여 2–2.5배를 보고했다.[^le
 
 ### 2-1. 별도 draft 모델의 부담
 
-§1의 draft는 target보다 훨씬 작은 별도 모델이었다.
+지금까지 본 draft는 target보다 훨씬 작은 별도 모델이었다.
 이 방식에는 몇 가지 부담이 따른다.
 Draft와 target이 같은 tokenizer를 써야 하고,
 수락률 $\alpha$가 높으려면 draft의 분포가 target과 비슷해야 하므로 target을 바꿀 때마다 맞는 draft를 찾거나 새로 학습해야 한다.
@@ -154,11 +154,11 @@ Medusa는 이 나무 전체를 forward 한 번으로 검증하려고 **tree atte
 Target을 고정하고 head만 학습하는 Medusa-1은 2.2배 이상,
 target과 head를 함께 학습하는 Medusa-2는 2.3–2.8배 빨라졌다(카테고리별 최대 3.6배,
 주로 batch 1).[^medusa]
-Medusa-1은 target이 그대로이므로 §1-3의 규칙으로 검증하면 출력 분포도 그대로이고,
+Medusa-1은 target이 그대로이므로 분포를 보존하는 수락 규칙으로 검증하면 출력 분포도 그대로이고,
 Medusa-2는 target 자체가 함께 바뀐다.
 Medusa는 sampling 온도가 높을 때 수락률이 떨어지는 문제를 줄이려고 typical acceptance라는 완화된 규칙도 제안했다.
 이 규칙은 생성 품질을 비슷하게 유지하는 것을 목표로 하며,
-§1-3처럼 target 분포를 정확히 보존하지는 않는다.
+앞의 수락 규칙처럼 target 분포를 정확히 보존하지는 않는다.
 
 ### 2-3. EAGLE
 
@@ -203,7 +203,7 @@ Jacobi 반복으로 미래 위치 여러 개를 동시에 고쳐 나가며 그 �
 
 ### 3-1. 학습 목표로서의 multi-token prediction
 
-§2의 방법들은 다 만든 target에 추측 장치를 덧붙였다.
+지금까지의 방법들은 다 만든 target에 추측 장치를 덧붙였다.
 반대로 pre-training 단계에서부터 다음 토큰 여러 개를 예측하도록 학습할 수도 있다.
 Gloeckle 등은 공유된 trunk 위에 독립된 출력 head $n$개를 두고,
 위치마다 다음 토큰 $n$개를 함께 예측하는 <strong>multi-token prediction(MTP)</strong>을 학습 목표로 썼다.[^gloeckle]
@@ -252,15 +252,15 @@ MTP 쪽이 추가 학습 없이 draft를 얻는 대신, pre-training의 설계 �
 
 ### 4-1. 이득이 줄어드는 조건
 
-§1-4의 개선 배수는 target이 $\gamma+1$개 위치를 위치 하나와 같은 시간에 계산한다는 가정에 기댔다.
+앞에서 구한 개선 배수는 target이 $\gamma+1$개 위치를 위치 하나와 같은 시간에 계산한다는 가정에 기댔다.
 이 가정은 decode가 memory-bound일 때만 맞다.
-06b §4에서 batch를 키우면 선형층의 intensity가 오른다고 했는데,
+앞 주차에서 batch를 키우면 선형층의 intensity가 오른다고 했는데,
 speculative decoding은 요청마다 위치를 $\gamma+1$개로 늘리므로 한 스텝의 토큰 수가 $b(\gamma+1)$개가 된다.
 Batch가 크면 이 값이 ridge point를 넘어 스텝이 compute-bound가 되고,
 그때부터는 수락되지 않을 추측을 검증하는 계산이 실제 시간을 잡아먹는다.
 
 <Callout type="example">
-06b의 하한 모형으로 Llama 3 8B를 H100에서 돌린다고 하자.
+같은 하한 모형으로 Llama 3 8B를 H100에서 돌린다고 하자.
 $\gamma=4$로 요청마다 위치 5개를 검증하고, draft의 비용은 무시한다.
 
 | 문맥 | batch | 일반 decode 스텝 | speculative 스텝 | 개선 배수 ($\alpha=0.7$) | 개선 배수 ($\alpha=0.5$) |
@@ -273,7 +273,7 @@ $\gamma=4$로 요청마다 위치 5개를 검증하고, draft의 비용은 무�
 수락률이 0.5라면 얻는 토큰보다 늘어난 시간이 커서 오히려 느려진다.
 반면 문맥이 2,048토큰이면 batch 192에서도 KV cache를 읽는 시간이 스텝을 지배해,
 위치를 다섯 배로 늘려도 스텝 시간이 그대로다.
-Draft 비용을 무시했으므로 memory-bound인 행의 개선 배수는 §1-4의 기대 토큰 수와 같다.
+Draft 비용을 무시했으므로 memory-bound인 행의 개선 배수는 앞에서 구한 기대 토큰 수와 같다.
 </Callout>
 
 측정 결과도 같은 방향이다.
@@ -298,7 +298,7 @@ Liu 등의 TurboSpec은 speculative decoding을 단순히 덧붙이면 serving �
 vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-bound 상황에서 ITL(inter-token
 latency)을 줄이는 기능으로 설명한다.[^vllm-spec]
 
-측정할 때는 06a §3-1의 ITL과 TPOT 차이를 기억한다.
+측정할 때는 앞 주차에서 본 ITL과 TPOT 차이를 기억한다.
 한 번의 forward에서 토큰 여러 개가 함께 나오면 ITL은 도착 간격만 기록하고 TPOT는 그 시간을 토큰 수로 나누므로,
 speculative decoding의 효과는 TPOT로 보아야 일관되게 비교할 수 있다.
 출력이 바뀌지 않는다는 보장도 수학적으로는 정확하지만,

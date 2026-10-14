@@ -4,9 +4,9 @@ week: 7
 order: 1
 ---
 
-07a의 양자화는 파라미터 하나를 적은 bits로 저장했다.
+앞 노트의 양자화는 파라미터 하나를 적은 bits로 저장했다.
 이 노트는 **파라미터의 수 자체**를 줄이는 방법을 다룬다.
-06b §2-2의 하한 식으로 보면 파라미터를 줄이는 일은 읽을 bytes와 할 FLOPs를 함께 줄인다.
+앞 주차의 하한 식으로 보면 파라미터를 줄이는 일은 읽을 bytes와 할 FLOPs를 함께 줄인다.
 그래서 memory-bound인 decode와 compute-bound인 prefill이 모두 빨라지고,
 남는 GPU 메모리는 KV cache에 돌아간다.
 
@@ -19,8 +19,7 @@ Pruning으로 줄인 모델의 품질을 distillation으로 되살리는 것은 
 §4가 pruning을 비구조적(unstructured), 구조적(structured),
 반구조적(semi-structured) 방식으로 나누고, §5가 knowledge distillation을,
 §6이 low-rank factorization을 다룬다.
-이 노트의 §1–3은 서베이 §4에, §4는 §5에, §5는 §6에 대응한다.
-마지막 §6에서는 파라미터를 줄이는 다른 길인 MoE(mixture of experts)를 작은 dense 모델과 비교한다.
+마지막으로 파라미터를 줄이는 다른 길인 MoE(mixture of experts)를 작은 dense 모델과 비교한다.
 
 ## 1. Pruning의 출발
 
@@ -36,7 +35,7 @@ Frantar와 Alistarh는 OPT-175B에 magnitude pruning을 하면 sparsity 10%까�
 
 ### 1-2. One-shot pruning
 
-Frantar와 Alistarh의 SparseGPT는 07a §3-2의 GPTQ와 같은 생각을 pruning에 썼다.[^sparsegpt]
+Frantar와 Alistarh의 SparseGPT는 양자화의 GPTQ와 같은 생각을 pruning에 썼다.[^sparsegpt]
 층 하나에서 어떤 가중치를 지울지(mask)를 고르고,
 남은 가중치를 고쳐 층 출력 $WX$의 변화를 최소화한다.
 지운 가중치의 몫을 남은 가중치가 메우게 하는 것이다.
@@ -55,7 +54,7 @@ $$
 
 $\lVert X_j\rVert_2$는 보정 데이터의 모든 토큰에서 입력 channel $j$의 값을 모은 벡터의 크기다.
 출력마다(행마다) 점수가 낮은 가중치를 지우고, 남은 가중치는 그대로 둔다.
-이렇게 하는 까닭은 07a §2의 activation outlier에 있다.
+이렇게 하는 까닭은 양자화에서 본 activation outlier에 있다.
 큰 activation이 들어오는 channel의 가중치는 크기가 작아도 출력에 큰 영향을 준다.
 
 <Callout type="example">
@@ -201,7 +200,7 @@ NVIDIA는 Ampere GPU부터 하드웨어가 직접 가속할 수 있는 희소성
 연속된 원소 4개마다 0이 아닌 값을 정확히 2개만 두는 **2:4 sparsity**다.
 Sparse Tensor Core는 남은 값과 그 위치(원소마다 2 bits)만 읽어,
 dense 행렬곱의 두 배 연산 속도를 낸다.[^nvidia24]
-06b §1-1에서 H100의 사양표가 sparsity 기준으로 1,979 TFLOP/s를 적는다고 했던 그 값이다.
+앞 주차에서 H100의 사양표가 sparsity 기준으로 1,979 TFLOP/s를 적는다고 했던 그 값이다.
 
 2:4는 비구조적 pruning보다 제약이 강해 품질 손실이 크다.
 SparseGPT로 OPT-175B를 2:4로 지우면 perplexity가 8.35에서 8.74로 조금 늘었지만,
@@ -271,8 +270,8 @@ TensorRT-LLM에서 원래 8B보다 깊이를 줄인 모델은 2.7배, 너비를 
 
 ## 4. Distillation과 작은 모델
 
-5주차 Distillation §1에서 teacher의 확률 분포를 학생이 따라 하도록 학습하는 지식 증류를 보았다.
-5주차의 distillation이 추론 능력을 작은 모델에 옮기는 post-training의 도구였다면,
+Post-training을 다룰 때 teacher의 확률 분포를 학생이 따라 하도록 학습하는 지식 증류를 보았다.
+그때의 distillation이 추론 능력을 작은 모델에 옮기는 post-training의 도구였다면,
 여기서는 **작은 모델을 사전학습하는 방법**으로 쓰인다.
 정답 토큰 하나만 맞히는 대신 teacher가 다음 토큰들에 준 확률 전체를 목표로 삼으면,
 같은 토큰으로 더 많은 정보를 배운다.
@@ -281,11 +280,11 @@ Google의 Gemma 2는 2B와 9B 모델을 다음 토큰 예측 대신 큰 모델�
 2B 모델을 500B 토큰으로 학습한 비교 실험에서 세 벤치마크의 평균이 처음부터 학습하면 60.3, 7B
 모델로부터 distillation하면 67.7이었다(Table 6).
 학습 토큰은 이론적인 compute-optimal 양의 50배를 넘었다.
-Meta의 Llama 3.2 1B와 3B는 §3-2의 두 방법을 함께 썼다.
+Meta의 Llama 3.2 1B와 3B는 pruning과 distillation을 함께 썼다.
 Llama 3.1 8B를 구조적으로 한 번에 pruning하고,
 사전학습 단계에서 Llama 3.1 8B와 70B의 logit을 토큰별 목표로 넣어 distillation으로 성능을 되살렸다.[^llama32]
 
-06a §1-1에서 inference 수요가 크면 작은 모델을 오래 학습하는 편이 전체 비용에서 유리하다고 했다.
+앞 주차에서 inference 수요가 크면 작은 모델을 오래 학습하는 편이 전체 비용에서 유리하다고 했다.
 큰 모델을 한 번 학습해 두고 거기서 여러 크기의 작은 모델을 pruning과 distillation으로 뽑아내는 방식은,
 그 작은 모델들을 각각 처음부터 오래 학습하는 비용까지 줄인다.
 
@@ -303,7 +302,7 @@ $4096\times4096$ 행렬이라면 $r<2048$이고, $r=1024$로 두면 파라미터
 문제는 LLM의 가중치가 낮은 rank에 잘 들어맞지 않는다는 점이다.
 Yuan 등의 ASVD 실험에서 LLaMA-7B의 파라미터를 SVD로 5%만 줄여도 perplexity가 5.68에서 2,800으로 무너졌다(Table 1).[^asvd]
 가중치의 오차를 최소화하는 SVD가 층 출력의 오차를 최소화하지는 않기 때문이다.
-07a §2의 activation outlier가 있으면,
+양자화에서 본 activation outlier가 있으면,
 가중치에서 작아 보이는 오차도 큰 activation과 곱해져 출력에서 크게 드러난다.
 
 ### 5-2. Activation을 고려한 분해
@@ -322,12 +321,12 @@ Wang 등의 SVD-LLM은 activation을 whitening한 뒤 분해해,
 20% 압축에서도 perplexity가 원래보다 꽤 높다.
 Low-rank 구조는 다 학습한 가중치를 나중에 분해할 때보다,
 처음부터 그 구조로 학습할 때 더 잘 작동해 왔다.
-03b §5의 MLA는 key와 value를 저차원 latent로 압축하는 low-rank 구조를 처음부터 학습한 예로 볼 수 있다.
+앞에서 본 MLA는 key와 value를 저차원 latent로 압축하는 low-rank 구조를 처음부터 학습한 예로 볼 수 있다.
 
 ## 6. 작은 dense 모델과 MoE
 
 파라미터를 줄이는 대신 **토큰마다 쓰는 파라미터**만 줄이는 길도 있다.
-3주차 Mixture of Experts §2-4의 MoE는 전체 파라미터는 크게 두되 토큰마다 일부 expert만 계산한다.
+모델 구조를 다룰 때 본 MoE는 전체 파라미터는 크게 두되 토큰마다 일부 expert만 계산한다.
 OpenAI의 gpt-oss-120b는 전체 116.8B 파라미터 가운데 토큰마다 5.1B만 쓴다.[^gptoss]
 토큰당 FLOPs로는 5B급 dense 모델과 비슷하지만, inference의 비용은 그렇게 단순하지 않다.
 
@@ -351,11 +350,10 @@ Gupta 등의 Lynx는 이를 실측으로 보였다.[^lynx]
 Qwen3-30B-A3B의 decode 지연은 batch 1에서는 Qwen3-4B dense 모델과 비슷했지만,
 batch가 커지면서 Qwen3-32B dense 모델에 가까워졌다.
 Batch가 커져 거의 모든 expert를 읽게 된 뒤에는,
-06b의 roofline에서 보듯 batch를 더 키워도 읽는 가중치는 그대로이고 토큰당 계산은 작으므로,
+Roofline에서 보듯 batch를 더 키워도 읽는 가중치는 그대로이고 토큰당 계산은 작으므로,
 처리량은 batch와 함께 계속 늘어난다.
 정리하면 MoE는 메모리가 넉넉하고 batch를 크게 키울 수 있는 서빙에서 토큰당 계산이 적다는 장점을 살리고,
 메모리가 작거나 요청이 적은 환경에서는 같은 활성 파라미터의 작은 dense 모델이 더 다루기 쉽다.
-MoE를 여러 GPU에 나누어 서빙하는 방법은 06d §4-2에서 보았다.
 
 ## 7. 정리
 
@@ -374,7 +372,7 @@ Low-rank factorization은 학습된 가중치에 사후로 적용하면 activati
 MLA처럼 처음부터 low-rank 구조로 학습할 때 더 잘 작동했다.
 MoE는 토큰당 계산을 줄이지만 메모리는 전체 파라미터를 요구하고,
 batch가 커지면 decode에서 읽는 가중치가 전체에 가까워진다.
-어떤 방식이 나은지는 06b의 roofline처럼 배포 환경의 메모리와 batch 크기에 따라 다르다.
+어떤 방식이 나은지는 roofline으로 보듯 배포 환경의 메모리와 batch 크기에 따라 다르다.
 
 [^survey]: Zhu, X., Li, J., Liu, Y., Ma, C., & Wang, W. (2024). A Survey on Model Compression for Large Language Models. *Transactions of the Association for Computational Linguistics*, 12. [arXiv:2308.07633v4](https://arxiv.org/abs/2308.07633v4).
 
