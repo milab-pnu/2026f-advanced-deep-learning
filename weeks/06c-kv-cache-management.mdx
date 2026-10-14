@@ -16,7 +16,8 @@ batch를 키워 처리량을 올리는 일이 이 공간에서 먼저 막힌다�
 이 서베이는 모델 가중치나 구조를 바꾸지 않고 서빙 단계에서 KV cache를 다루는 방법만 범위로 삼아,
 실행 순서(temporal), 저장 위치(spatial), 표현과 보존(structural)의 세 축으로 나눈다.
 공간 할당과 prefix 재사용은 서베이 §5.2.1에,
-양자화는 §5.1.1, eviction은 §5.2.2, offloading은 §4.1에 대응한다.
+eviction은 §5.2.2, offloading은 §4.1에 대응한다.
+KV cache를 적은 bits로 저장하는 양자화(서베이 §5.1.1)는 가중치 양자화와 같은 scale과 묶음 단위의 원리를 따른다.
 같은 서베이도 범위에서 뺀 구조 변경,
 곧 GQA·MLA처럼 KV head나 표현 자체를 줄이는 방법은 Attention heads and KV cache 노트에서,
 sliding window처럼 참조 위치를 줄이는 방법은 Efficient attention 노트에서 다뤘다.
@@ -25,6 +26,7 @@ sliding window처럼 참조 위치를 줄이는 방법은 Efficient attention �
 공간을 미리 잡아 두는 방식의 낭비, 같은 prefix를 요청마다 다시 계산하고 저장하는 중복,
 그리고 낭비와 중복을 없애도 남는 길이에 비례하는 크기다.
 문제마다 동기가 달라 해법도 각각의 계보를 따른다.
+마지막으로 층마다 저장하는 상태가 다른 hybrid 모델에서 이 관리가 어떻게 달라지는지 본다.
 
 ## 1. 연속 공간 할당의 낭비
 
@@ -58,7 +60,7 @@ Llama 3 8B로 최대 8,192토큰을 허용하는 서비스에서,
 ### 1-2. 측정된 낭비
 
 Kwon 등은 이 낭비를 실제 서빙 실험에서 쟀다.
-Orca를 재현한 시스템에서 최대 길이만큼 미리 잡으면 KV cache 공간의 20.4%만 실제 토큰 상태를 담았다.
+연속 할당을 쓰는 기존 서빙 시스템을 재현해 보니, 최대 길이만큼 미리 잡으면 KV cache 공간의 20.4%만 실제 토큰 상태를 담았다.
 할당 크기를 2의 거듭제곱으로 맞추면 26.8%, 출력 길이를 미리 안다고 가정한 이상적인 경우(Oracle)에도 38.2%였다(Figure 2).[^vllm]
 Oracle에서도 internal fragmentation이 사라질 뿐 reserved와 external fragmentation이 남기 때문이다.
 Roofline 분석에서 KV cache 공간이 batch 크기의 상한이었으니, 이 낭비는 곧 처리량의 손실이다.
@@ -112,13 +114,13 @@ vLLM은 physical 블록마다 몇 개의 시퀀스가 가리키는지 reference 
 운영체제의 **copy-on-write**와 같은 방식이다(§4.4).[^vllm]
 
 공유로 줄어드는 메모리는 작업에 따라 다르다.
-OPT-13B 실험에서 parallel sampling은 6.1–9.8%(Alpaca)와 16.2–30.5%(ShareGPT),
-가지가 더 많이 공유되는 beam search는 37.6–55.2%와 44.3–66.3%의 메모리를 아꼈다(Figure 15).[^vllm]
+OPT-13B 실험에서 parallel sampling은 6.1–30.5%,
+가지가 더 많이 공유되는 beam search는 37.6–66.3%의 메모리를 아꼈다(Figure 15).[^vllm]
 
 ### 2-3. 결과와 선점
 
 이 설계를 구현한 것이 vLLM이다.
-원논문은 같은 지연 수준에서 FasterTransformer와 Orca보다 처리량이 2–4배 높았다고 보고했다.[^vllm]
+원논문은 같은 지연 수준에서 기존 시스템(FasterTransformer, Orca)보다 처리량이 2–4배 높았다고 보고했다.[^vllm]
 앞에서 20.4–38.2%였던 KV cache 공간의 실제 사용률은 96.3%로 올랐다(원논문 Figure 2).
 
 공간을 쓰는 만큼만 주면 새로운 문제가 생긴다.
@@ -188,15 +190,7 @@ vLLM과 달리 블록 경계와 상관없이 일치하는 토큰까지 재사용
 또 cache와 실행 중인 요청이 같은 메모리 공간을 나누어 쓰므로,
 cache를 위한 공간을 따로 떼어 둘 필요가 없다.[^sglang]
 
-재사용을 늘리려면 요청의 처리 순서도 바꿔야 한다.
-같은 prefix를 가진 요청들이 멀리 떨어져 처리되면 그 사이에 cache가 지워질 수 있다.
-SGLang은 대기 중인 요청을 cache와 일치하는 prefix가 긴 순서로 정렬해 먼저 처리하는 cache-aware scheduling을 제안했고,
-이 순서가 나무를 깊이 우선으로 훑는 것과 같아 오프라인에서는 최적임을 보였다(Theorem 3.1).
-다만 일치하는 prefix가 짧은 요청은 계속 밀려 굶을 수 있다.[^sglang]
-현재 SGLang은 이 정책을 선택 사항으로 두고 기본값은 도착 순서(FCFS, first come first served)다.[^sglang-args]
-
-SGLang 논문은 여러 작업에서 cache 적중률이 50–99%였고, 처리량이 최대 6.4배 높아졌다고 보고했다.
-Chatbot Arena에 배치했을 때 Vicuna-33B의 적중률은 74.1%였고 첫 토큰 지연은 평균 1.7배 줄었다(원논문 §6).[^sglang]
+SGLang 논문은 여러 작업에서 cache 적중률이 50–99%였고, 처리량이 최대 6.4배 높아졌다고 보고했다(원논문 §6).[^sglang]
 서버 내부 지표인 prefix cache 적중률이 바로 이 값이다.
 적중률이 높은 작업일수록 TTFT와 처리량이 함께 좋아진다.
 
@@ -215,45 +209,17 @@ SGLang은 토큰 단위의 나무로 일치하는 토큰까지 모두 재사용�
 Paging과 prefix 재사용으로 낭비와 중복을 없애도,
 남은 KV cache는 여전히 토큰 하나에 128 KiB씩 문맥 길이에 비례해 자란다.
 Roofline 분석에서 보았듯 긴 문맥의 decode는 이 KV cache를 읽는 시간이 스텝을 지배한다.
-서빙 단계에서 이 크기를 줄이는 방법은 세 갈래다.
-토큰 하나를 적은 bytes로 저장하거나(양자화), 저장할 토큰 수를 줄이거나(eviction),
-GPU 밖의 더 큰 저장소로 옮기는 것(offloading)이다.
+GPU 메모리에 둘 KV cache를 줄이는 방법은 토큰 하나를 적은 bytes로 저장하는 양자화 말고도 두 갈래가 있다.
+저장할 토큰 수를 줄이거나(eviction), GPU 밖의 더 큰 저장소로 옮기는 것(offloading)이다.
 
-### 4-1. 양자화
-
-가장 직접적인 방법은 KV cache 크기 식의 원소당 bytes $p$를 줄이는 것이다.
-vLLM은 KV cache를 FP8로 저장하는 옵션을 제공한다.
-텐서 전체 또는 attention head마다 scale을 두고,
-보정 데이터로 scale을 정하는 것을 권장한다.[^vllm-fp8]
-Llama 3 8B라면 토큰당 128 KiB가 64 KiB로 줄어, 앞의 53.5 GB에 약 816,000토큰이 들어간다.
-같은 메모리로 두 배의 batch를 받을 수 있고, 긴 문맥에서는 스텝마다 읽는 bytes도 거의 절반이 된다.
-
-더 낮은 비트로 가면 어떤 축으로 묶어 scale을 둘지가 중요해진다.
-Liu 등의 KIVI는 key와 value의 분포가 다르다는 데서 출발했다.[^kivi]
-Key에는 값이 유독 큰 channel이 몇 개 고정되어 나타나므로,
-같은 channel끼리 묶어(per-channel) scale을 두어야 그 큰 값이 다른 channel의 정밀도를 망치지 않는다.
-Value에는 그런 패턴이 없고,
-attention 출력은 토큰별 value의 가중합이므로 토큰끼리 묶는(per-token) 편이 오차가 작다.
-
-<Figure src="https://arxiv.org/html/2402.02750v2/quant_scheme.svg" alt="KIVI 논문의 양자화 단위 그림. 왼쪽은 per-token 양자화로, 토큰 수만큼의 길이를 가진 scale과 zero-point 벡터가 행렬 X 옆에 세로로 붙고 빨간 점선이 한 행(토큰 하나)을 묶는다. 오른쪽은 per-channel 양자화로, 차원 d만큼의 길이를 가진 scale과 zero-point 벡터가 행렬 위에 가로로 놓이고 빨간 점선이 한 열(channel 하나)을 묶는다." caption="Per-token과 per-channel 양자화. 같은 scale과 zero-point를 공유하는 범위가 행(토큰)인지 열(channel)인지가 다르다. KIVI는 key를 per-channel로, value를 per-token으로 양자화한다." source="Liu et al. (2024), KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache, 원논문 그림. CC BY 4.0. 원본 그대로 사용." />
-
-Key를 channel 단위로 묶으려면 여러 토큰이 모여야 하므로,
-KIVI는 가장 최근 토큰 128개까지는 원래 정밀도로 두고 32개씩 모일 때마다 2-bit로 양자화한다.
-이렇게 2-bit KV cache로 모델 가중치를 포함한 최대 메모리를 2.6배 줄였고,
-batch를 최대 4배 키워 처리량을 2.35–3.47배 높였다(Llama-2-7B, A100 한 대).[^kivi]
-서베이도 key는 channel 단위,
-value는 토큰 단위로 양자화하는 것이 흔한 관행이 되었다고 정리한다(§5.1.1).[^survey]
-
-### 4-2. Eviction
+### 4-1. Eviction
 
 토큰을 덜 저장하는 방법도 있다.
 생성 중에 모든 과거 토큰이 똑같이 중요하지는 않다는 관찰에서 출발한다.
 Zhang 등의 H2O는 OPT 모델의 attention 행렬이 거의 모든 층에서 95% 넘게 희소하고,
 누적 attention 점수가 power law를 따라 소수의 토큰에 몰린다는 것을 관찰했다.[^h2o]
 그런 토큰을 heavy hitter라 부르고, 최근 토큰과 heavy hitter만 KV cache에 남기고 나머지를 지운다.
-Heavy hitter를 20%만 남기고도 OPT-6.7B와 OPT-30B에서 DeepSpeed Zero-Inference, Hugging Face
-Accelerate, FlexGen보다 처리량이 각각 최대 29배,
-29배, 3배 높았다.
+Heavy hitter를 20%만 남기고도 OPT-6.7B와 OPT-30B에서 기존 inference 시스템보다 처리량이 최대 29배 높았다.
 
 Li 등의 SnapKV는 지울 토큰을 정하는 시점을 prefill로 옮겼다.[^snapkv]
 프롬프트의 마지막 부분(observation window)이 앞부분의 어느 위치에 attention하는지를 보면,
@@ -272,7 +238,7 @@ Normalization and attention sink 노트의 StreamingLLM도 같은 성격이어�
 Paging과 prefix caching은 결과를 바꾸지 않는다는 점에서 성격이 다르다.
 </Callout>
 
-### 4-3. Offloading과 계층 저장
+### 4-2. Offloading과 계층 저장
 
 마지막 갈래는 KV cache를 지우지 않고 GPU 밖으로 옮기는 것이다.
 GPU 메모리(HBM) 바깥에는 CPU 메모리(DRAM), SSD, 네트워크로 연결된 다른 서버의 메모리가 있다.
@@ -297,7 +263,38 @@ H100 사양표의 PCIe Gen5 대역폭 128 GB/s를 모두 쓴다면 약 2 ms, 그
 반대로 prefix가 짧거나 SSD나 네트워크처럼 더 느린 곳에 있다면 차이가 줄어, 재계산이 나을 수도 있다.
 </Callout>
 
-## 5. 정리
+## 5. Hybrid 모델의 cache
+
+지금까지는 모든 층이 full attention이라 토큰이 하나 늘 때마다 모든 층에 key·value가 한 칸씩 쌓이는 모델을 가정했다.
+앞 주차 hybrid 구조에서 본 모델들은 층마다 저장하는 상태가 다르다.
+
+| 층 종류 | 요청마다 저장하는 상태 | 크기 | 공간을 돌려줄 수 있는 때 |
+|---|---|---|---|
+| Full attention | 모든 과거 토큰의 key·value | 문맥 길이에 비례 | 요청이 끝날 때 |
+| Sliding window | 최근 $W$개 토큰의 key·value | $W$에서 멈춤 | Window 밖으로 밀려난 블록은 바로 |
+| Linear attention·SSM | 고정 크기의 상태 하나 | 문맥 길이와 무관 | 요청이 끝날 때 |
+
+Gemma 3처럼 local 층 다섯 개마다 global 층 하나를 두고 window를 1,024토큰으로 잡은 모델이라면,
+32K토큰 문맥에서 local 층 하나의 KV cache는 global 층 하나의 32분의 1이다.[^gemma3]
+층마다 같은 크기의 블록을 같은 속도로 쌓는다고 가정한 관리자는 이 차이를 살리지 못한다.
+
+vLLM의 hybrid KV cache 관리자는 같은 종류의 층을 묶어 group으로 두고,
+모든 group이 같은 크기의 page를 하나의 메모리 pool에서 나누어 쓰게 한다.[^vllm-hybrid]
+Sliding window 층은 window 밖으로 밀려난 블록을 바로 빈 블록 목록에 돌려준다.
+Mamba 같은 recurrent 층은 상태 하나가 attention 블록보다 클 수 있어,
+블록 크기를 그 상태가 들어갈 만큼 키워 같은 pool에 넣는다.
+
+Prefix caching의 조건도 층 종류마다 달라진다.
+Full attention 층은 prefix의 모든 블록이 cache에 있어야 하지만,
+sliding window 층은 prefix의 마지막 $W-1$개 토큰의 블록만 있으면 된다.
+Recurrent 층은 사정이 가장 까다롭다.
+상태가 지금까지의 모든 토큰을 하나로 압축한 값이라,
+cache에 남은 일부 토큰으로 중간 시점의 상태를 다시 만들 수 없다.
+그래서 vLLM은 블록 경계마다 recurrent 상태를 저장해 두고, 그 경계까지만 prefix를 재사용한다.[^vllm-hybrid]
+여러 층 종류의 조건을 동시에 만족하는 가장 긴 prefix만 재사용할 수 있으므로,
+같은 프롬프트라도 hybrid 모델의 prefix cache 적중은 full attention 모델보다 짧아질 수 있다.
+
+## 6. 정리
 
 KV cache 공간은 앞의 두 노트에서 batch 크기와 처리량의 상한이었다.
 이 노트는 그 공간을 서빙 단계에서 관리하는 세 가지 문제와 해법을 보았다.
@@ -306,12 +303,13 @@ KV cache 공간은 앞의 두 노트에서 batch 크기와 처리량의 상한�
 |---|---|---|
 | 최대 길이만큼 연속 공간을 미리 잡아 20–38%만 사용 | PagedAttention: 고정 크기 블록과 block table, 공유와 copy-on-write | 흩어진 블록을 읽는 kernel의 부담, 공간이 바닥날 때의 선점 |
 | 같은 prefix를 요청마다 다시 계산하고 저장 | Prefix caching: 블록 hash(vLLM) 또는 radix tree(SGLang), LRU eviction | 적중률이 작업과 처리 순서에 달림 |
-| 낭비가 없어도 문맥 길이에 비례하는 크기 | 양자화(FP8, KIVI), eviction(H2O, SnapKV), offloading(LMCache, Mooncake) | 양자화와 eviction은 품질 손실 가능, offloading은 전송 시간 |
+| 낭비가 없어도 문맥 길이에 비례하는 크기 | Eviction(H2O, SnapKV), offloading(LMCache, Mooncake) | Eviction은 품질 손실 가능, offloading은 전송 시간 |
 
 앞의 두 문제의 해법은 계산 결과를 바꾸지 않고 공간과 계산의 낭비만 없앤다.
-셋째 문제의 양자화와 eviction은 근사이므로 품질을 확인해야 하고,
+셋째 문제의 eviction은 근사이므로 품질을 확인해야 하고,
 offloading은 결과를 바꾸지 않는 대신 전송 시간을 치른다.
-모델 구조를 바꿔 KV cache 자체를 작게 만드는 GQA·MLA는 이 모든 방법과 함께 쓸 수 있다.
+모델 구조를 바꿔 KV cache 자체를 작게 만드는 GQA·MLA와 hybrid 구조는 이 방법들과 함께 쓰이며,
+hybrid 모델에서는 층 종류마다 블록을 돌려주는 시점과 prefix 재사용의 조건이 달라진다.
 
 공간을 쓰는 만큼만 주고 prefix를 재사용하면,
 이제 여러 요청을 어떤 순서로 묶어 실행할지가 성능을 좌우한다.
@@ -328,11 +326,9 @@ prefill과 decode를 한 batch에 섞을지를 정해야 한다.
 
 [^sglang]: Zheng, L., Yin, L., Xie, Z., et al. (2024). SGLang: Efficient Execution of Structured Language Model Programs. *NeurIPS 2024*. [arXiv:2312.07104](https://arxiv.org/abs/2312.07104).
 
-[^sglang-args]: SGLang Team. *Server Arguments*. [SGLang 문서](https://docs.sglang.io/docs/advanced_features/server_arguments).
+[^gemma3]: Gemma Team. (2025). Gemma 3 Technical Report. [arXiv:2503.19786](https://arxiv.org/abs/2503.19786).
 
-[^vllm-fp8]: vLLM Project. *Quantized KV Cache*. [vLLM 문서](https://docs.vllm.ai/en/latest/features/quantization/quantized_kvcache/).
-
-[^kivi]: Liu, Z., Yuan, J., Jin, H., et al. (2024). KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache. *ICML 2024*. [arXiv:2402.02750](https://arxiv.org/abs/2402.02750).
+[^vllm-hybrid]: vLLM Project. *Hybrid KV Cache Manager*. [vLLM 설계 문서](https://docs.vllm.ai/en/latest/design/hybrid_kv_cache_manager/).
 
 [^h2o]: Zhang, Z., Sheng, Y., Zhou, T., et al. (2023). H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. *NeurIPS 2023*. [arXiv:2306.14048](https://arxiv.org/abs/2306.14048).
 

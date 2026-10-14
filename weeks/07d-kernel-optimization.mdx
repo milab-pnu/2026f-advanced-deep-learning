@@ -7,8 +7,9 @@ order: 3
 앞 주차의 예시에서 Llama 3 8B를 H100 한 대에서 batch 1로 돌릴 때 TPOT가 8.0 ms라면,
 하한 4.9 ms의 약 1.6배이고 MBU는 61%라고 했다.
 남은 39%는 주로 계산이나 데이터의 양이 아니라 **그 계산을 GPU에서 실행하는 방식**에서 생긴다.
-Roofline이 점의 위치를 정한다면,
-kernel 최적화는 같은 위치의 점을 지붕에 얼마나 가깝게 올리느냐의 문제다.
+Kernel 최적화는 두 가지 일을 한다.
+Kernel fusion처럼 중간값의 HBM 왕복을 없애 실제로 옮기는 bytes를 줄이면 roofline 위의 점이 오른쪽으로 옮겨 가고,
+일을 SM에 고르게 나누거나 kernel 사이의 빈 시간을 없애면 같은 위치의 점이 지붕에 가까워진다.
 
 전체 지도는 Pan과 Li의 inference 시스템 서베이[^survey]로 잡는다.
 §3.1이 kernel을 다루며,
@@ -36,7 +37,7 @@ H100 SXM에는 SM이 132개 있고, SM마다 최대 228 KB의 shared memory(앞�
 Decode는 두 조건을 모두 어렵게 만든다.
 처리할 토큰이 적어 일이 잘게 나뉘지 않고, 한 스텝이 수 ms로 짧아 작은 비효율도 크게 드러난다.
 
-## 2. Decode의 attention kernel
+## 2. Attention kernel
 
 ### 2-1. FlashAttention의 병렬화
 
@@ -45,6 +46,14 @@ Decode는 두 조건을 모두 어렵게 만든다.
 일을 SM에 나누는 단위는 batch와 attention head였고,
 FlashAttention-2는 여기에 **query의 시퀀스 길이**를 더해 query 행 블록마다 thread block을 두었다.[^fa2]
 학습과 prefill에서는 query가 수천 개라 thread block이 넉넉하다.
+
+Prefill 쪽의 발전은 새 GPU의 연산 장치를 쉬지 않게 하는 방향으로 이어졌다.
+FlashAttention-2는 H100에서 peak의 35%밖에 쓰지 못했는데,
+Shah 등의 FlashAttention-3는 데이터를 옮기는 warp와 계산하는 warp를 나누어 둘을 겹치고,
+블록 단위의 행렬곱과 softmax를 번갈아 실행하며, FP8도 지원해 FP16에서 peak의 75%까지 올렸다.[^fa3]
+Blackwell GPU에서는 Tensor Core가 지수 함수 계산이나 shared memory 대역폭보다 훨씬 빨라져,
+FlashAttention-4는 softmax의 지수 계산 일부를 소프트웨어로 근사하는 등 행렬곱이 아닌 일을 줄이는 쪽으로 다시 설계했다.[^fa4]
+같은 알고리즘이라도 하드웨어 세대마다 병목이 옮겨 가 kernel을 다시 짜야 한다는 뜻이다.
 
 Decode에서는 요청마다 query가 하나뿐이다.
 Query 방향으로 나눌 것이 없으므로 병렬성은 batch × head만 남는다.
@@ -259,7 +268,7 @@ FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kern
 
 ## 5. 정리
 
-Kernel 최적화는 roofline이 정한 상한에 실제 성능을 가깝게 하는 일이다.
+Kernel 최적화는 fusion으로 옮기는 bytes를 줄이거나, 같은 일을 roofline이 정한 상한에 가깝게 실행하는 일이다.
 GPU는 일을 thread block으로 쪼개 SM들에 나누므로,
 kernel이 하드웨어를 다 쓰려면 일이 충분히 잘게 나뉘고 읽기와 계산이 겹쳐야 한다.
 Decode는 처리할 토큰이 적고 스텝이 짧아 이 조건을 맞추기 어렵다.
@@ -284,6 +293,10 @@ CUDA graph는 kernel 제출 비용을 한 번의 재생으로 줄이고,
 [^hopper]: NVIDIA. *NVIDIA Hopper Tuning Guide*. [CUDA 문서](https://docs.nvidia.com/cuda/hopper-tuning-guide/index.html).
 
 [^fa2]: Dao, T. (2024). FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning. *ICLR 2024*. [arXiv:2307.08691](https://arxiv.org/abs/2307.08691).
+
+[^fa3]: Shah, J., Bikshandi, G., Zhang, Y., Thakkar, V., Ramani, P., & Dao, T. (2024). FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision. *NeurIPS 2024*. [arXiv:2407.08608](https://arxiv.org/abs/2407.08608).
+
+[^fa4]: Zadouri, T., Hoehnerbach, M., Shah, J., Liu, T., Thakkar, V., & Dao, T. (2026). FlashAttention-4: Algorithm and Kernel Pipelining Co-Design for Asymmetric Hardware Scaling. [arXiv:2603.05451](https://arxiv.org/abs/2603.05451).
 
 [^flashdecoding]: Dao, T., Haziza, D., Massa, F., & Sizov, G. (2023). *Flash-Decoding for long-context inference*. Stanford CRFM Blog. [블로그](https://crfm.stanford.edu/2023/10/12/flashdecoding.html).
 

@@ -7,8 +7,9 @@ order: 1
 앞 노트의 양자화는 파라미터 하나를 적은 bits로 저장했다.
 이 노트는 **파라미터의 수 자체**를 줄이는 방법을 다룬다.
 앞 주차의 하한 식으로 보면 파라미터를 줄이는 일은 읽을 bytes와 할 FLOPs를 함께 줄인다.
-그래서 memory-bound인 decode와 compute-bound인 prefill이 모두 빨라지고,
-남는 GPU 메모리는 KV cache에 돌아간다.
+남은 가중치가 GPU의 kernel이 빠르게 처리할 수 있는 모양으로 남는다면,
+memory-bound인 decode와 compute-bound인 prefill이 모두 빨라지고 남는 GPU 메모리는 KV cache에 돌아간다.
+그 조건이 생각보다 까다롭다는 것이 이 노트의 한 줄기다.
 
 방법은 세 갈래다.
 학습된 모델에서 덜 중요한 가중치를 지우는 pruning, 가중치 행렬을 작은 행렬의 곱으로 바꾸는 low-rank
@@ -19,7 +20,6 @@ Pruning으로 줄인 모델의 품질을 distillation으로 되살리는 것은 
 §4가 pruning을 비구조적(unstructured), 구조적(structured),
 반구조적(semi-structured) 방식으로 나누고, §5가 knowledge distillation을,
 §6이 low-rank factorization을 다룬다.
-마지막으로 파라미터를 줄이는 다른 길인 MoE(mixture of experts)를 작은 dense 모델과 비교한다.
 
 ## 1. Pruning의 출발
 
@@ -221,6 +221,8 @@ memory-bound인 작은 batch의 decode에서는 연산 속도보다 읽는 bytes
 속도를 확실히 얻는 방법은 **구조 단위**로 지우는 것이다.
 Attention head, FFN의 중간 channel, hidden 차원, 층 전체를 통째로 없애면,
 남은 모델은 그저 더 작은 dense 모델이라 일반 kernel로 바로 빨라진다.
+다만 남은 head 수와 차원이 GQA의 head 묶음이나 kernel이 잘 처리하는 크기에 맞아야 하고,
+서빙 엔진이 그 구성을 불러올 수 있어야 한다.
 대신 지우는 단위가 커서 품질 손실이 크고,
 서베이의 정리대로 대개 미세조정으로 회복해야 한다(§4.2).[^survey]
 
@@ -297,6 +299,8 @@ $V\in\mathbb{R}^{r\times n}$의 곱으로 근사하면,
 파라미터와 행렬곱의 FLOPs가 $dn$에서 $(d+n)r$로 바뀐다.
 이득을 보려면 $r<dn/(d+n)$이어야 한다.
 $4096\times4096$ 행렬이라면 $r<2048$이고, $r=1024$로 두면 파라미터가 절반이 된다.
+다만 행렬곱 하나가 $XU$와 $(XU)V$ 두 번으로 바뀌어 중간 결과를 한 번 더 쓰고 읽고 kernel도 하나 늘어나므로,
+FLOPs가 절반이 되어도 실제 지연은 그만큼 줄지 않을 수 있다.
 가장 좋은 rank-$r$ 근사는 SVD(singular value decomposition)로 큰 특이값 $r$개만 남겨 얻는다.
 
 문제는 LLM의 가중치가 낮은 rank에 잘 들어맞지 않는다는 점이다.
@@ -323,39 +327,7 @@ Low-rank 구조는 다 학습한 가중치를 나중에 분해할 때보다,
 처음부터 그 구조로 학습할 때 더 잘 작동해 왔다.
 앞에서 본 MLA는 key와 value를 저차원 latent로 압축하는 low-rank 구조를 처음부터 학습한 예로 볼 수 있다.
 
-## 6. 작은 dense 모델과 MoE
-
-파라미터를 줄이는 대신 **토큰마다 쓰는 파라미터**만 줄이는 길도 있다.
-모델 구조를 다룰 때 본 MoE는 전체 파라미터는 크게 두되 토큰마다 일부 expert만 계산한다.
-OpenAI의 gpt-oss-120b는 전체 116.8B 파라미터 가운데 토큰마다 5.1B만 쓴다.[^gptoss]
-토큰당 FLOPs로는 5B급 dense 모델과 비슷하지만, inference의 비용은 그렇게 단순하지 않다.
-
-모든 expert를 메모리에 올려 두어야 하므로 메모리 요구량은 전체 파라미터를 따른다.
-Decode 스텝에서 읽는 가중치는 그 스텝의 batch가 **하나라도 고른 expert 전부**다.
-각 토큰이 $E$개 expert 중 $K$개를 고르게 고른다고 가정하면,
-토큰 $t$개가 활성화하는 expert 수의 기댓값은 다음과 같다.[^moesd]
-
-$$
-N(t)=E\left(1-\left(\frac{E-K}{E}\right)^{t}\right)
-$$
-
-<Callout type="example">
-층마다 expert 128개 가운데 8개를 고르는 모델(Qwen3-30B-A3B의 구성)이라면,[^qwen3] batch 1에서는 expert 8개만 읽는다.
-토큰이 8개면 약 52개, 32개면 약 112개, 64개면 약 126개로,
-batch가 수십 개만 되어도 거의 모든 expert를 읽는다.
-그때 스텝마다 읽는 가중치는 활성 파라미터가 아니라 전체 파라미터에 가까워진다.
-</Callout>
-
-Gupta 등의 Lynx는 이를 실측으로 보였다.[^lynx]
-Qwen3-30B-A3B의 decode 지연은 batch 1에서는 Qwen3-4B dense 모델과 비슷했지만,
-batch가 커지면서 Qwen3-32B dense 모델에 가까워졌다.
-Batch가 커져 거의 모든 expert를 읽게 된 뒤에는,
-Roofline에서 보듯 batch를 더 키워도 읽는 가중치는 그대로이고 토큰당 계산은 작으므로,
-처리량은 batch와 함께 계속 늘어난다.
-정리하면 MoE는 메모리가 넉넉하고 batch를 크게 키울 수 있는 서빙에서 토큰당 계산이 적다는 장점을 살리고,
-메모리가 작거나 요청이 적은 환경에서는 같은 활성 파라미터의 작은 dense 모델이 더 다루기 쉽다.
-
-## 7. 정리
+## 6. 정리
 
 파라미터를 줄이면 bytes와 FLOPs가 함께 준다.
 LLM 규모에서는 재학습 없이 지워야 하므로, SparseGPT는 남은 가중치를 고쳐 층 출력을 보존했고,
@@ -370,9 +342,8 @@ Minitron, Llama 3.2, Gemma 2가 보여 주듯 큰 모델을 pruning하고 distil
 
 Low-rank factorization은 학습된 가중치에 사후로 적용하면 activation을 고려해도 압축률이 아직 높지 않고,
 MLA처럼 처음부터 low-rank 구조로 학습할 때 더 잘 작동했다.
-MoE는 토큰당 계산을 줄이지만 메모리는 전체 파라미터를 요구하고,
-batch가 커지면 decode에서 읽는 가중치가 전체에 가까워진다.
-어떤 방식이 나은지는 roofline으로 보듯 배포 환경의 메모리와 batch 크기에 따라 다르다.
+어느 방법이든 파라미터 수가 준 만큼 빨라진다고 기대하지 말고,
+남은 가중치의 모양이 엔진의 kernel에서 실제로 빨라지는지와 생성 작업의 품질을 함께 잰다.
 
 [^survey]: Zhu, X., Li, J., Liu, Y., Ma, C., & Wang, W. (2024). A Survey on Model Compression for Large Language Models. *Transactions of the Association for Computational Linguistics*, 12. [arXiv:2308.07633v4](https://arxiv.org/abs/2308.07633v4).
 
@@ -404,10 +375,3 @@ batch가 커지면 decode에서 읽는 가중치가 전체에 가까워진다.
 
 [^svdllm]: Wang, X., Zheng, Y., Wan, Z., & Zhang, M. (2025). SVD-LLM: Truncation-aware Singular Value Decomposition for Large Language Model Compression. *ICLR 2025*. [arXiv:2403.07378](https://arxiv.org/abs/2403.07378).
 
-[^gptoss]: OpenAI. (2025). *gpt-oss-120b & gpt-oss-20b Model Card*. [arXiv:2508.10925](https://arxiv.org/abs/2508.10925).
-
-[^moesd]: Huang, Z., Zhu, L., Zhan, Z., et al. (2025). MoESD: Unveil Speculative Decoding's Potential for Accelerating Sparse MoE. *NeurIPS 2025*. [arXiv:2505.19645](https://arxiv.org/abs/2505.19645).
-
-[^qwen3]: Qwen Team. (2025). *Qwen3 Technical Report*. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
-
-[^lynx]: Gupta, V., Ju, J. H., Sinha, K., et al. (2024). Lynx: Enabling Efficient MoE Inference through Dynamic Batch-Aware Expert Selection. [arXiv:2411.08982](https://arxiv.org/abs/2411.08982).
