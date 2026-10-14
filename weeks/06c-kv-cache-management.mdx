@@ -40,7 +40,9 @@ KV cache는 생성이 진행되면서 토큰 하나에 한 칸씩 자란다.
 그러려면 요청마다 **최대 길이만큼의 연속 공간**을 미리 잡아야 했다.
 Kwon 등은 이런 방식에서 생기는 낭비를 세 가지로 나누었다.[^vllm]
 
-<Figure src="https://arxiv.org/html/2309.06180v1/baseline-memory-management.svg" alt="vLLM 논문의 Figure 3. 한 줄로 이어진 KV cache 공간에 요청 A와 요청 B가 나란히 놓여 있다. 요청 A는 프롬프트 'Four score and seven years ago our' 7칸, 생성한 'fathers' 1칸, 이번 단계에서 처리하는 'brought' 1칸, 앞으로 생성할 'forth'와 종료 토큰 2칸(reserved), 끝까지 쓰이지 않을 2,038칸(internal fragmentation)을 차지한다. 두 요청 사이의 빈칸 두 개는 external fragmentation이다. 요청 B는 최대 512칸 가운데 프롬프트 'You only live' 3칸, 이번 단계의 'once' 1칸, 종료 토큰 1칸(reserved), 끝까지 쓰이지 않을 507칸(internal fragmentation)을 차지한다." caption="최대 길이만큼 연속 공간을 미리 잡을 때의 세 가지 낭비. Reserved는 나중에 쓰이지만 지금은 다른 요청이 쓸 수 없는 칸, internal fragmentation은 끝까지 쓰이지 않는 칸, external fragmentation은 요청 사이에 남은 칸이다. 요청 A의 칸 수는 원그림대로 더하면 2,049칸이라 최대 길이 2,048과 하나 어긋난다." source="Kwon et al. (2023), Efficient Memory Management for Large Language Model Serving with PagedAttention, Figure 3. CC BY 4.0. 원본 그대로 사용." hero />
+<Figure src="https://arxiv.org/html/2309.06180v1/baseline-memory-management.svg" alt="vLLM 논문의 Figure 3. 한 줄로 이어진 KV cache 공간에 요청 A와 요청 B가 나란히 놓여 있다. 요청 A는 프롬프트 'Four score and seven years ago our' 7칸, 생성한 'fathers' 1칸, 이번 단계에서 처리하는 'brought' 1칸, 앞으로 생성할 'forth'와 종료 토큰 2칸(reserved), 끝까지 쓰이지 않을 2,038칸(internal fragmentation)을 차지한다. 두 요청 사이의 빈칸 두 개는 external fragmentation이다. 요청 B는 최대 512칸 가운데 프롬프트 'You only live' 3칸, 이번 단계의 'once' 1칸, 종료 토큰 1칸(reserved), 끝까지 쓰이지 않을 507칸(internal fragmentation)을 차지한다." caption="최대 길이만큼 연속 공간을 미리 잡을 때의 세 가지 낭비. Reserved는 나중에 쓰이지만 지금은 다른 요청이 쓸 수 없는 칸, internal fragmentation은 끝까지 쓰이지 않는 칸, external fragmentation은 요청 사이에 남은 칸이다. 요청 A의 칸 수는 원그림대로 더하면 2,049칸이라 최대 길이 2,048과 하나 어긋난다." source="Kwon et al. (2023), Efficient Memory Management for Large Language Model Serving with PagedAttention, Figure 3 · CC BY 4.0 · 수정 없음" hero />
+
+[그림 출처](https://arxiv.org/html/2309.06180v1) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 - **Reserved**: 앞으로 생성할 토큰을 위해 잡아 둔 칸이다.
   결국 쓰이지만, 쓰이기 전까지는 다른 요청이 쓸 수 없다.
@@ -77,7 +79,9 @@ page table로 둘을 잇는다.
 vLLM은 같은 생각으로 KV cache를 고정 크기 **블록**으로 나눈다.
 원논문의 비유대로 블록은 page, 토큰은 byte, 요청은 process에 해당한다.[^vllm]
 
-<Figure src="https://arxiv.org/html/2309.06180v1/logical-and-physical-block-table.svg" alt="vLLM 논문의 Figure 6. 요청 A의 프롬프트는 'Four score and seven years ago our', 출력은 'fathers', 'brought' 순이다. 왼쪽의 logical KV block은 블록마다 토큰 4칸이며 block 0에 Four score and seven, block 1에 years ago our fathers, block 2에 brought가 들어 있다. 가운데 block table은 logical block 0을 physical block 7에, block 1을 physical block 1에, block 2를 physical block 3에 대응시키고, 블록마다 채워진 칸 수(4, 3에서 4로, 1)를 기록한다. 오른쪽의 physical KV block은 GPU 메모리에서 7, 1, 3번 블록에 흩어져 있다. 동그라미 숫자 1, 2, 3은 prefill, 첫 decode, 둘째 decode 단계를 뜻한다." caption="Logical 블록과 physical 블록을 잇는 block table. 요청은 연속된 logical 블록을 보지만 실제 블록은 GPU(graphics processing unit) 메모리 어디에나 놓일 수 있다. 동그라미 숫자는 블록이 채워진 단계다." source="Kwon et al. (2023), Efficient Memory Management for Large Language Model Serving with PagedAttention, Figure 6. CC BY 4.0. 원본 그대로 사용." hero />
+<Figure src="https://arxiv.org/html/2309.06180v1/logical-and-physical-block-table.svg" alt="vLLM 논문의 Figure 6. 요청 A의 프롬프트는 'Four score and seven years ago our', 출력은 'fathers', 'brought' 순이다. 왼쪽의 logical KV block은 블록마다 토큰 4칸이며 block 0에 Four score and seven, block 1에 years ago our fathers, block 2에 brought가 들어 있다. 가운데 block table은 logical block 0을 physical block 7에, block 1을 physical block 1에, block 2를 physical block 3에 대응시키고, 블록마다 채워진 칸 수(4, 3에서 4로, 1)를 기록한다. 오른쪽의 physical KV block은 GPU 메모리에서 7, 1, 3번 블록에 흩어져 있다. 동그라미 숫자 1, 2, 3은 prefill, 첫 decode, 둘째 decode 단계를 뜻한다." caption="Logical 블록과 physical 블록을 잇는 block table. 요청은 연속된 logical 블록을 보지만 실제 블록은 GPU(graphics processing unit) 메모리 어디에나 놓일 수 있다. 동그라미 숫자는 블록이 채워진 단계다." source="Kwon et al. (2023), Efficient Memory Management for Large Language Model Serving with PagedAttention, Figure 6 · CC BY 4.0 · 수정 없음" hero />
+
+[그림 출처](https://arxiv.org/html/2309.06180v1) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 요청마다 logical 블록이 순서대로 이어지고,
 block table은 logical 블록마다 그 내용을 담은 physical 블록 번호와 채워진 칸 수를 기록한다.
@@ -189,7 +193,7 @@ SGLang의 RadixAttention은 cache를 **radix tree**로 관리한다.[^sglang]
 vLLM과 달리 블록 경계와 상관없이 일치하는 토큰까지 재사용한다.
 현재 SGLang은 page를 여러 토큰으로 키울 수도 있고, 그때는 page 경계까지만 재사용한다.[^sglang-radix]
 
-<Figure src="https://raw.githubusercontent.com/lm-sys/lm-sys.github.io/main/public/images/blog/sglang/radix_attn.jpg" alt="RadixAttention의 radix tree가 아홉 단계에 걸쳐 바뀌는 그림. (1) 빈 나무에서 시작해 (2) 'You are a helpful assistant. User: Hello! Assistant: Hi!' 대화가 하나의 가지로 들어간다. (3) 같은 대화에 'User: Solve this problem...'이 이어 붙는다. (4) 새 대화 'User: What can you do?'가 오자 시스템 프롬프트 부분에서 가지가 갈라진다. (5) 메모리가 모자라 가장 오래 쓰이지 않은 잎이 evicted 표시와 함께 지워진다. (6)–(7) few-shot 예시 'Question 1... Answer 3:'으로 시작하는 요청들이 들어와 공통 예시를 공유하며 세 갈래로 나뉜다. (8)–(9) 다시 메모리가 모자라 잎 노드들이 지워지고, 같은 질문에 여러 답을 sampling한 가지들이 공통 부분을 공유한다. 초록 노드는 새로 추가된 노드, 파란 노드는 이번 요청이 재사용한 노드다." caption="RadixAttention이 요청을 처리하며 radix tree를 키우고 지우는 과정. 공통 prefix는 하나의 노드로 공유되고, 메모리가 모자라면 가장 오래 쓰이지 않은 잎부터 지운다." source="Zheng et al. (2024), LMSYS 블로그 Fast and Expressive LLM Inference with RadixAttention and SGLang(SGLang 논문 Figure 3과 같은 그림). © 2023 LMSYS Org, LMSYS 블로그 저장소 MIT License. 원본 그대로 사용." hero />
+<Figure src="https://raw.githubusercontent.com/lm-sys/lm-sys.github.io/main/public/images/blog/sglang/radix_attn.jpg" alt="RadixAttention의 radix tree가 아홉 단계에 걸쳐 바뀌는 그림. (1) 빈 나무에서 시작해 (2) 'You are a helpful assistant. User: Hello! Assistant: Hi!' 대화가 하나의 가지로 들어간다. (3) 같은 대화에 'User: Solve this problem...'이 이어 붙는다. (4) 새 대화 'User: What can you do?'가 오자 시스템 프롬프트 부분에서 가지가 갈라진다. (5) 메모리가 모자라 가장 오래 쓰이지 않은 잎이 evicted 표시와 함께 지워진다. (6)–(7) few-shot 예시 'Question 1... Answer 3:'으로 시작하는 요청들이 들어와 공통 예시를 공유하며 세 갈래로 나뉜다. (8)–(9) 다시 메모리가 모자라 잎 노드들이 지워지고, 같은 질문에 여러 답을 sampling한 가지들이 공통 부분을 공유한다. 초록 노드는 새로 추가된 노드, 파란 노드는 이번 요청이 재사용한 노드다." caption="RadixAttention이 요청을 처리하며 radix tree를 키우고 지우는 과정. 공통 prefix는 하나의 노드로 공유되고, 메모리가 모자라면 가장 오래 쓰이지 않은 잎부터 지운다." source="Zheng et al. (2024), LMSYS 블로그 Fast and Expressive LLM Inference with RadixAttention and SGLang(SGLang 논문 Figure 3과 같은 그림). © 2023 LMSYS Org, LMSYS 블로그 저장소 MIT License · 수정 없음" hero />
 
 메모리가 모자라면 **가장 오래 쓰이지 않은 잎**부터 지운다.
 잎부터 지우면 여러 요청이 공유하는 조상 노드는 남아 계속 재사용된다.
@@ -341,17 +345,17 @@ prefill과 decode를 한 batch에 섞을지를 정해야 한다.
 
 [^vllm]: Kwon, W., Li, Z., Zhuang, S., et al. (2023). Efficient Memory Management for Large Language Model Serving with PagedAttention. *SOSP 2023*. [arXiv:2309.06180](https://arxiv.org/abs/2309.06180).
 
-[^vllm-opt]: vLLM Project. (2026). *Optimization and Tuning*. [vLLM 문서](https://docs.vllm.ai/en/latest/configuration/optimization/).
+[^vllm-opt]: vLLM Project. (2026). Optimization and Tuning. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/configuration/optimization/).
 
-[^vllm-apc]: vLLM Project. (2026). *Automatic Prefix Caching*. [vLLM 설계 문서](https://docs.vllm.ai/en/latest/design/prefix_caching/).
+[^vllm-apc]: vLLM Project. (2026). Automatic Prefix Caching. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/prefix_caching/).
 
 [^sglang]: Zheng, L., Yin, L., Xie, Z., et al. (2024). SGLang: Efficient Execution of Structured Language Model Programs. *NeurIPS 2024*. [arXiv:2312.07104](https://arxiv.org/abs/2312.07104).
 
-[^sglang-radix]: SGLang Project. (2026). *radix_cache.py*. [GitHub 소스, commit 010776e](https://github.com/sgl-project/sglang/blob/010776e94f31a94106fdeeb723fcdd951cb6c4ee/python/sglang/srt/mem_cache/radix_cache.py).
+[^sglang-radix]: SGLang Project. (2026). radix_cache.py. *GitHub*. [github.com](https://github.com/sgl-project/sglang/blob/010776e94f31a94106fdeeb723fcdd951cb6c4ee/python/sglang/srt/mem_cache/radix_cache.py).
 
 [^gemma3]: Gemma Team. (2025). Gemma 3 Technical Report. [arXiv:2503.19786](https://arxiv.org/abs/2503.19786).
 
-[^vllm-hybrid]: vLLM Project. (2026). *Hybrid KV Cache Manager*. [vLLM 설계 문서](https://docs.vllm.ai/en/latest/design/hybrid_kv_cache_manager/).
+[^vllm-hybrid]: vLLM Project. (2026). Hybrid KV Cache Manager. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/hybrid_kv_cache_manager/).
 
 [^h2o]: Zhang, Z., Sheng, Y., Zhou, T., et al. (2023). H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. *NeurIPS 2023*. [arXiv:2306.14048](https://arxiv.org/abs/2306.14048).
 
@@ -361,4 +365,4 @@ prefill과 decode를 한 batch에 섞을지를 정해야 한다.
 
 [^mooncake]: Qin, R., Li, Z., He, W., Zhang, M., Wu, Y., Zheng, W., & Xu, X. (2025). Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving. [arXiv:2407.00079v4](https://arxiv.org/abs/2407.00079v4).
 
-[^hopper]: Andersch, M., Palmer, G., Krashinsky, R., Stam, N., Mehta, V., Brito, G., & Ramaswamy, S. (2022). *NVIDIA Hopper Architecture In-Depth*. NVIDIA Technical Blog. [블로그](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/).
+[^hopper]: Andersch, M., Palmer, G., Krashinsky, R., Stam, N., Mehta, V., Brito, G., & Ramaswamy, S. (2022). NVIDIA Hopper Architecture In-Depth. *NVIDIA Technical Blog*. [developer.nvidia.com](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/).

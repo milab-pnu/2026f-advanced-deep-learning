@@ -257,7 +257,7 @@ Attention은 요청마다 길이가 달라 그래프에 담기 어려우므로,
 v0.30.0의 기본 모드(`FULL_AND_PIECEWISE`)는 attention backend가 지원하면 decode만 있는 batch는 전체를 그래프 하나로,
 나머지는 attention 사이의 구간만 그래프로 기록한다.[^vllm-cg]
 
-<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.30.0/docs/assets/design/cuda_graphs/current_design.png" alt="vLLM 문서의 CUDA graph 설계 그림. 위쪽에서 모델은 torch.compile로 attention 사이의 submodule들로 쪼개지고(piecewise compilation), submodule마다 CUDA graph wrapper가 붙는다. 실행 시 요청 batch의 종류와 크기에 따라 세 가지 방식 가운데 하나를 고른다. PIECEWISE는 submodule 구간은 CUDA graph로, attention은 그래프 없이(eager) 번갈아 실행한다. FULL은 모델 전체를 CUDA graph 하나로 실행한다. NONE은 그래프 없이 모두 eager로 실행한다." caption="vLLM의 CUDA graph 실행 방식. Attention 사이의 구간만 그래프로 재생하는 PIECEWISE, 모델 전체를 재생하는 FULL, 그래프를 쓰지 않는 NONE 가운데 batch에 맞는 것을 고른다." source="vLLM Project, CUDA Graphs 설계 문서 그림(docs/assets/design/cuda_graphs/current_design.png, v0.30.0). Apache License 2.0. 원본 그대로 사용." />
+<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.30.0/docs/assets/design/cuda_graphs/current_design.png" alt="vLLM 문서의 CUDA graph 설계 그림. 위쪽에서 모델은 torch.compile로 attention 사이의 submodule들로 쪼개지고(piecewise compilation), submodule마다 CUDA graph wrapper가 붙는다. 실행 시 요청 batch의 종류와 크기에 따라 세 가지 방식 가운데 하나를 고른다. PIECEWISE는 submodule 구간은 CUDA graph로, attention은 그래프 없이(eager) 번갈아 실행한다. FULL은 모델 전체를 CUDA graph 하나로 실행한다. NONE은 그래프 없이 모두 eager로 실행한다." caption="vLLM의 CUDA graph 실행 방식. Attention 사이의 구간만 그래프로 재생하는 PIECEWISE, 모델 전체를 재생하는 FULL, 그래프를 쓰지 않는 NONE 가운데 batch에 맞는 것을 고른다." source="vLLM Project, CUDA Graphs 설계 문서 그림(docs/assets/design/cuda_graphs/current_design.png, v0.30.0) · Apache License 2.0 · 수정 없음" />
 
 ### 4-2. 컴파일러
 
@@ -296,7 +296,7 @@ Marlin의 이득이 batch에 따라 줄어들듯, 같은 kernel이라도 어떤 
 
 [^survey]: Pan, J., & Li, G. (2025). A Survey of LLM Inference Systems. [arXiv:2506.21901](https://arxiv.org/abs/2506.21901).
 
-[^hopper]: Andersch, M., Palmer, G., Krashinsky, R., Stam, N., Mehta, V., Brito, G., & Ramaswamy, S. (2022). *NVIDIA Hopper Architecture In-Depth*. NVIDIA Technical Blog. [블로그](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/).
+[^hopper]: Andersch, M., Palmer, G., Krashinsky, R., Stam, N., Mehta, V., Brito, G., & Ramaswamy, S. (2022). NVIDIA Hopper Architecture In-Depth. *NVIDIA Technical Blog*. [developer.nvidia.com](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/).
 
 [^fa2]: Dao, T. (2024). FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning. *ICLR 2024*. [arXiv:2307.08691](https://arxiv.org/abs/2307.08691).
 
@@ -304,9 +304,9 @@ Marlin의 이득이 batch에 따라 줄어들듯, 같은 kernel이라도 어떤 
 
 [^fa4]: Zadouri, T., Hoehnerbach, M., Shah, J., Liu, T., Thakkar, V., & Dao, T. (2026). FlashAttention-4: Algorithm and Kernel Pipelining Co-Design for Asymmetric Hardware Scaling. [arXiv:2603.05451](https://arxiv.org/abs/2603.05451).
 
-[^flashdecoding]: Dao, T., Haziza, D., Massa, F., & Sizov, G. (2023). *Flash-Decoding for long-context inference*. Stanford CRFM Blog. [블로그](https://crfm.stanford.edu/2023/10/12/flashdecoding.html).
+[^flashdecoding]: Dao, T., Haziza, D., Massa, F., & Sizov, G. (2023). Flash-Decoding for long-context inference. *Stanford CRFM Blog*. [crfm.stanford.edu](https://crfm.stanford.edu/2023/10/12/flashdecoding.html).
 
-[^vllm-pa]: vLLM Project. *vLLM Paged Attention*. [vLLM 설계 문서](https://docs.vllm.ai/en/latest/design/paged_attention/); [attention kernel 소스(v0.5.0)](https://github.com/vllm-project/vllm/blob/v0.5.0/vllm/attention/ops/paged_attn.py).
+[^vllm-pa]: vLLM Project. (2026). vLLM Paged Attention. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/paged_attention/); [attention kernel 소스(v0.5.0)](https://github.com/vllm-project/vllm/blob/v0.5.0/vllm/attention/ops/paged_attn.py).
 
 [^vllm]: Kwon, W., Li, Z., Zhuang, S., et al. (2023). Efficient Memory Management for Large Language Model Serving with PagedAttention. *SOSP 2023*. [arXiv:2309.06180](https://arxiv.org/abs/2309.06180).
 
@@ -318,17 +318,17 @@ Marlin의 이득이 batch에 따라 줄어들듯, 같은 kernel이라도 어떤 
 
 [^megablocks]: Gale, T., Narayanan, D., Young, C., & Zaharia, M. (2023). MegaBlocks: Efficient Sparse Training with Mixture-of-Experts. *MLSys 2023*. [arXiv:2211.15841](https://arxiv.org/abs/2211.15841).
 
-[^vllm-fusedmoe]: vLLM Project. *fused_moe.py* (v0.30.0). [소스](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/model_executor/layers/fused_moe/fused_moe.py).
+[^vllm-fusedmoe]: vLLM Project. (2026). fused_moe.py. *GitHub v0.30.0*. [github.com](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/model_executor/layers/fused_moe/fused_moe.py).
 
-[^deepep]: DeepSeek-AI. *DeepEP*. [GitHub](https://github.com/deepseek-ai/DeepEP).
+[^deepep]: DeepSeek-AI. DeepEP. *GitHub*. [github.com](https://github.com/deepseek-ai/DeepEP).
 
-[^cudagraph-nv]: Gray, A. (2019). *Getting Started with CUDA Graphs*. NVIDIA Technical Blog. [블로그](https://developer.nvidia.com/blog/cuda-graphs/).
+[^cudagraph-nv]: Gray, A. (2019). Getting Started with CUDA Graphs. *NVIDIA Technical Blog*. [developer.nvidia.com](https://developer.nvidia.com/blog/cuda-graphs/).
 
-[^vllm-v1]: vLLM Team. (2025). *vLLM V1: A Major Upgrade to vLLM's Core Architecture*. [vLLM Blog](https://vllm.ai/blog/2025-01-27-v1-alpha-release).
+[^vllm-v1]: vLLM Team. (2025). vLLM V1: A Major Upgrade to vLLM's Core Architecture. *vLLM Blog*. [vllm.ai](https://vllm.ai/blog/2025-01-27-v1-alpha-release).
 
-[^cudagraph-pt]: Nguyen, V., Carilli, M., Eryilmaz, S. B., et al. (2021). *Accelerating PyTorch with CUDA Graphs*. PyTorch Blog. [블로그](https://pytorch.org/blog/accelerating-pytorch-with-cuda-graphs/).
+[^cudagraph-pt]: Nguyen, V., Carilli, M., Eryilmaz, S. B., et al. (2021). Accelerating PyTorch with CUDA Graphs. *PyTorch Blog*. [pytorch.org](https://pytorch.org/blog/accelerating-pytorch-with-cuda-graphs/).
 
-[^vllm-cg]: vLLM Project. *CUDA Graphs* (v0.30.0). [vLLM 설계 문서](https://docs.vllm.ai/en/v0.30.0/design/cuda_graphs/); [capture 크기 설정 소스](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/config/vllm.py).
+[^vllm-cg]: vLLM Project. (2026). CUDA Graphs. *vLLM documentation v0.30.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.30.0/design/cuda_graphs/); [capture 크기 설정 소스](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/config/vllm.py).
 
 [^triton]: Tillet, P., Kung, H. T., & Cox, D. (2019). Triton: An Intermediate Language and Compiler for Tiled Neural Network Computations. *MAPL 2019*, 10–19. [doi:10.1145/3315508.3329973](https://doi.org/10.1145/3315508.3329973).
 

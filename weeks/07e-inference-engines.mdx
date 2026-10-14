@@ -44,7 +44,7 @@ vLLM은 PagedAttention 논문과 함께 공개된 엔진이다.
 2025년의 V1 구조 개편은 코드 단순화, 최적화 통합과 함께 **CPU overhead를 거의 없애는 것**을 주요 목표로 삼았다.
 GPU 실행 시간이 스텝당 수 ms로 짧아지자 그 사이의 CPU 작업이 드러났기 때문이다.[^vllm-v1]
 
-<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.30.0/docs/assets/design/arch_overview/v1_process_architecture_tp4.png" alt="vLLM V1의 프로세스 구조(GPU 4대, TP=4). 왼쪽의 API Server가 HTTP 요청을 받아 입력 처리, 토큰화, 스트리밍을 맡고, ZMQ로 가운데의 Engine Core와 양방향으로 통신한다. Engine Core는 scheduler와 KV cache 관리자를 맡는다. Engine Core에서 오른쪽의 GPU Worker 0–3 네 개로 화살표가 나가며, 각 worker는 GPU 하나에서 모델 실행(forward)을 맡는다. 아래에 프로세스가 모두 6개(API Server 1, Engine Core 1, GPU Worker 4)라고 적혀 있다." caption="vLLM V1의 프로세스 구조. 토큰화와 스트리밍(API Server), scheduling과 KV cache 관리(Engine Core), 모델 실행(GPU Worker)이 서로 다른 프로세스에서 돈다." source="vLLM Project, Architecture Overview 문서 그림(docs/assets/design/arch_overview/v1_process_architecture_tp4.png, v0.30.0). Apache License 2.0. 원본 그대로 사용." />
+<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.30.0/docs/assets/design/arch_overview/v1_process_architecture_tp4.png" alt="vLLM V1의 프로세스 구조(GPU 4대, TP=4). 왼쪽의 API Server가 HTTP 요청을 받아 입력 처리, 토큰화, 스트리밍을 맡고, ZMQ로 가운데의 Engine Core와 양방향으로 통신한다. Engine Core는 scheduler와 KV cache 관리자를 맡는다. Engine Core에서 오른쪽의 GPU Worker 0–3 네 개로 화살표가 나가며, 각 worker는 GPU 하나에서 모델 실행(forward)을 맡는다. 아래에 프로세스가 모두 6개(API Server 1, Engine Core 1, GPU Worker 4)라고 적혀 있다." caption="vLLM V1의 프로세스 구조. 토큰화와 스트리밍(API Server), scheduling과 KV cache 관리(Engine Core), 모델 실행(GPU Worker)이 서로 다른 프로세스에서 돈다." source="vLLM Project, Architecture Overview 문서 그림(docs/assets/design/arch_overview/v1_process_architecture_tp4.png, v0.30.0) · Apache License 2.0 · 수정 없음" />
 
 V1의 주요 설계는 다음과 같다.[^vllm-v1][^vllm-arch]
 
@@ -251,42 +251,42 @@ Inference는 학습이 끝난 뒤 모델을 쓰는 단계이지만,
 
 [^survey]: Park, S., Jeon, S., Lee, C., Jeon, S., Kim, B.-S., & Lee, J. (2025). A Survey on Inference Engines for Large Language Models: Perspectives on Optimization and Efficiency. [arXiv:2505.01658](https://arxiv.org/abs/2505.01658).
 
-[^vllm-v1]: vLLM Team. (2025). *vLLM V1: A Major Upgrade to vLLM's Core Architecture*. [vLLM Blog](https://blog.vllm.ai/2025/01/27/v1-alpha-release.html).
+[^vllm-v1]: vLLM Team. (2025). vLLM V1: A Major Upgrade to vLLM's Core Architecture. *vLLM Blog*. [vllm.ai](https://vllm.ai/blog/2025-01-27-v1-alpha-release).
 
-[^vllm-arch]: vLLM Project. *Architecture Overview*. [vLLM 설계 문서](https://docs.vllm.ai/en/latest/design/arch_overview.html).
+[^vllm-arch]: vLLM Project. (2026). Architecture Overview. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/arch_overview.html).
 
-[^vllm-args]: vLLM Project. *Engine Arguments*. [vLLM 문서](https://docs.vllm.ai/en/latest/configuration/engine_args/).
+[^vllm-args]: vLLM Project. (2026). Engine Arguments. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/configuration/engine_args/).
 
-[^vllm-opt]: vLLM Project. *Optimization and Tuning*. [vLLM 문서](https://docs.vllm.ai/en/latest/configuration/optimization/).
+[^vllm-opt]: vLLM Project. (2026). Optimization and Tuning. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/configuration/optimization/).
 
 [^sglang]: Zheng, L., Yin, L., Xie, Z., et al. (2024). SGLang: Efficient Execution of Structured Language Model Programs. *NeurIPS 2024*. [arXiv:2312.07104](https://arxiv.org/abs/2312.07104).
 
-[^sglang-v04]: The SGLang Team. (2024). *SGLang v0.4: Zero-Overhead Batch Scheduler, Cache-Aware Load Balancer, Faster Structured Outputs*. LMSYS Blog. [블로그](https://lmsys.org/blog/2024-12-04-sglang-v0-4/).
+[^sglang-v04]: The SGLang Team. (2024). SGLang v0.4: Zero-Overhead Batch Scheduler, Cache-Aware Load Balancer, Faster Structured Outputs. *LMSYS Blog*. [lmsys.org](https://lmsys.org/blog/2024-12-04-sglang-v0-4/).
 
-[^sglang-args]: SGLang Team. *Server Arguments*. [SGLang 문서](https://docs.sglang.io/docs/advanced_features/server_arguments).
+[^sglang-args]: SGLang Team. Server Arguments. *SGLang documentation*. [docs.sglang.io](https://docs.sglang.io/docs/advanced_features/server_arguments).
 
-[^sglang-tune]: SGLang Team. *Hyperparameter Tuning*. [SGLang 문서 소스](https://github.com/sgl-project/sglang/blob/main/docs/docs/advanced_features/hyperparameter_tuning.mdx).
+[^sglang-tune]: SGLang Team. Hyperparameter Tuning. *GitHub*. [github.com](https://github.com/sgl-project/sglang/blob/main/docs/docs/advanced_features/hyperparameter_tuning.mdx).
 
-[^trtllm]: NVIDIA. *TensorRT-LLM*. [GitHub](https://github.com/NVIDIA/TensorRT-LLM).
+[^trtllm]: NVIDIA. TensorRT-LLM. *GitHub*. [github.com](https://github.com/NVIDIA/TensorRT-LLM).
 
-[^llamacpp]: ggml-org. *llama.cpp*. [GitHub](https://github.com/ggml-org/llama.cpp).
+[^llamacpp]: ggml-org. llama.cpp. *GitHub*. [github.com](https://github.com/ggml-org/llama.cpp).
 
-[^lmdeploy]: InternLM. *LMDeploy*. [GitHub](https://github.com/InternLM/lmdeploy).
+[^lmdeploy]: InternLM. LMDeploy. *GitHub*. [github.com](https://github.com/InternLM/lmdeploy).
 
-[^tgi]: Hugging Face. *text-generation-inference*. [GitHub](https://github.com/huggingface/text-generation-inference).
+[^tgi]: Hugging Face. text-generation-inference. *GitHub*. [github.com](https://github.com/huggingface/text-generation-inference).
 
-[^sglang-bench]: SGLang Team. *Bench Serving Guide*. [SGLang 문서 소스](https://github.com/sgl-project/sglang/blob/main/docs/docs/developer_guide/bench_serving.mdx).
+[^sglang-bench]: SGLang Team. Bench Serving Guide. *GitHub*. [github.com](https://github.com/sgl-project/sglang/blob/main/docs/docs/developer_guide/bench_serving.mdx).
 
-[^nvidia-bench]: Nguyen, V., Gao, W., Apsey, E., et al. (2025). *LLM Inference Benchmarking: Fundamental Concepts*. NVIDIA Technical Blog. [블로그](https://developer.nvidia.com/blog/llm-benchmarking-fundamental-concepts/).
+[^nvidia-bench]: Nguyen, V., Gao, W., Apsey, E., et al. (2025). LLM Inference Benchmarking: Fundamental Concepts. *NVIDIA Technical Blog*. [developer.nvidia.com](https://developer.nvidia.com/blog/llm-benchmarking-fundamental-concepts/).
 
-[^vllm-fp8w8a8]: vLLM Project. *FP8 W8A8*. [vLLM 문서](https://docs.vllm.ai/en/latest/features/quantization/llm_compressor/fp8/).
+[^vllm-fp8w8a8]: vLLM Project. (2026). FP8 W8A8. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/features/quantization/llm_compressor/fp8/).
 
-[^vllm-bench]: vLLM Project. *vllm bench serve*. [vLLM 문서](https://docs.vllm.ai/en/latest/cli/bench/serve.html).
+[^vllm-bench]: vLLM Project. (2026). vllm bench serve. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/cli/bench/serve.html).
 
-[^vllm-bench-src]: vLLM Project. *vllm.benchmarks.serve*. [vLLM API 문서](https://docs.vllm.ai/en/latest/api/vllm/benchmarks/serve/).
+[^vllm-bench-src]: vLLM Project. (2026). vllm.benchmarks.serve. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/api/vllm/benchmarks/serve/).
 
-[^vllm-metrics]: vLLM Project. *Metrics*. [vLLM 설계 문서](https://docs.vllm.ai/en/latest/design/metrics/).
+[^vllm-metrics]: vLLM Project. (2026). Metrics. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/metrics/).
 
-[^vllm-profile]: vLLM Project. *Profiling vLLM*. [vLLM 문서](https://docs.vllm.ai/en/latest/contributing/profiling/).
+[^vllm-profile]: vLLM Project. (2026). Profiling vLLM. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/contributing/profiling/).
 
-[^vllm-sweep]: vLLM Project. *Parameter Sweeps*. [vLLM 문서](https://docs.vllm.ai/en/latest/benchmarking/sweeps.html).
+[^vllm-sweep]: vLLM Project. (2026). Parameter Sweeps. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/benchmarking/sweeps.html).
