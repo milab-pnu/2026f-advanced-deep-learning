@@ -4,7 +4,7 @@ week: 6
 order: 1
 ---
 
-06a §2-2에서 prefill은 계산이, decode는 가중치를 읽는 시간이 병목이라고 했다.
+앞 노트에서 prefill은 계산이, decode는 가중치를 읽는 시간이 병목이라고 했다.
 이 노트는 그 말을 숫자로 바꾼다.
 연산 하나가 GPU(graphics processing unit)의 계산 능력과 메모리 대역폭 가운데 어느 쪽에 막히는지는
 계산량과 옮겨야 할 바이트의 비율로 정해지고,
@@ -16,15 +16,15 @@ order: 1
 Llama-2-7B를 A6000 GPU에서 층별로 분석해 prefill의 층들은 arithmetic intensity가 114–1,215로 대부분 계산 한계에,
 decode의 층들은 0.25–1.75로 모두 메모리 한계에 놓인다고 보고한다(Table 1).
 이 노트는 같은 분석을 Llama 3 8B와 H100으로 다시 해 보고,
-그 결과로 06a의 지표(TTFT, TPOT, 처리량)의 하한을 계산한다.
+그 결과로 TTFT, TPOT, 처리량의 하한을 계산한다.
 서베이 §3–6은 모델 압축, 빠른 decoding 알고리즘, 컴파일러·시스템, 하드웨어 최적화를 정리하며,
-7주차 노트들의 지도가 된다.
+다음 주 노트들의 지도가 된다.
 
 ## 1. 연산 속도와 메모리 대역폭
 
 ### 1-1. GPU의 두 가지 한계
 
-2주차 Training engineering §2-4에서 FlashAttention을 볼 때 GPU 메모리를 두 층으로 나누었다.
+Training engineering 노트에서 FlashAttention을 볼 때 GPU 메모리를 두 층으로 나누었다.
 칩 바깥의 크고 느린 HBM(high-bandwidth memory)과,
 연산 장치 곁의 작고 빠른 SRAM(static random-access memory)이다.
 가중치와 KV cache는 HBM에 있고, 계산하려면 매번 연산 장치 쪽으로 읽어 와야 한다.
@@ -32,7 +32,7 @@ decode의 층들은 0.25–1.75로 모두 메모리 한계에 놓인다고 보�
 
 - **최대 연산 속도**(peak FLOP/s): 초당 할 수 있는 곱셈·덧셈 수의 상한이다.
   H100 SXM의 BF16 Tensor Core는 sparsity를 쓰지 않는 dense 기준 약 989
-  TFLOP/s다.[^h100]<Sidenote>NVIDIA의 사양표는 2:4 sparsity를 썼을 때의 값 1,979 TFLOP/s를 적는다. Dense 연산은 그 절반이다. 2:4 sparsity는 7주차 pruning 노트에서 다룬다.</Sidenote>
+  TFLOP/s다.[^h100]<Sidenote>NVIDIA의 사양표는 2:4 sparsity를 썼을 때의 값 1,979 TFLOP/s를 적는다. Dense 연산은 그 절반이다.</Sidenote>
 - **메모리 대역폭**(memory bandwidth): 초당 HBM에서 읽고 쓸 수 있는 바이트 수의 상한이다.
   H100 SXM은 3.35 TB/s다.[^h100]
 
@@ -70,7 +70,7 @@ $$
 Intensity가 낮으면 대역폭이 데이터를 대 주는 속도만큼만 계산할 수 있어 성능이 $I$에 비례하고,
 intensity가 높으면 연산 장치가 상한이 된다.
 가로축과 세로축을 모두 로그로 그리면 비스듬한 지붕과 평평한 지붕이 만나는 모양이 되어 roofline이라 부른다.
-두 지붕이 만나는 점이 **ridge point**이고, 그 intensity가 §1-1의 비 295 FLOP/byte다.
+두 지붕이 만나는 점이 **ridge point**이고, 그 intensity가 앞에서 구한 비 295 FLOP/byte다.
 Ridge point보다 왼쪽에 있는 연산은 **memory-bound**, 오른쪽에 있는 연산은 **compute-bound**다.
 
 <figure>
@@ -109,7 +109,7 @@ Ridge point보다 왼쪽에 있는 연산은 **memory-bound**, 오른쪽에 있�
   <circle cx="466" cy="60" r="5" fill="#0f172a"/>
   <text x="466" y="80" font-size="11" text-anchor="middle" fill="#0f172a">prefill 2,048토큰</text>
 </svg>
-<figcaption>H100 SXM의 BF16 roofline 위에 Llama 3 8B의 연산을 올린 그림. 점의 위치는 §3–4에서 계산한 intensity이고, 모두 지붕 위에 그린 이상적인 상한이다. Williams 등의 roofline 정의와 NVIDIA 사양으로 직접 구성했다.</figcaption>
+<figcaption>H100 SXM의 BF16 roofline 위에 Llama 3 8B의 연산을 올린 그림. 점의 위치는 아래에서 계산한 intensity이고, 모두 지붕 위에 그린 이상적인 상한이다. Williams 등의 roofline 정의와 NVIDIA 사양으로 직접 구성했다.</figcaption>
 </figure>
 
 ### 2-2. 시간의 하한
@@ -152,7 +152,7 @@ $b=1$이면 약 1, $b=16$이면 약 16, $b=256$이면 228이고,
 $b=2048$이면 1,024로 ridge point를 크게 넘는다.
 
 Decode 한 스텝은 요청마다 토큰 하나만 넣으므로 batch에 요청이 $b$개 있으면 선형층의 토큰 수도 $b$다.
-요청 하나만 처리할 때 intensity가 약 1이라는 것이 06a에서 말한 "가중치를 읽는 시간이 병목"의 정체다.
+요청 하나만 처리할 때 intensity가 약 1이라는 것이 앞 노트에서 말한 "가중치를 읽는 시간이 병목"의 정체다.
 Prefill은 프롬프트 길이 $n$만큼의 토큰을 한 번에 넣으므로 $n$이 수백을 넘으면 ridge point에 가까워지거나 넘어선다.
 
 ### 3-2. Decode의 attention
@@ -161,12 +161,12 @@ Attention은 사정이 다르다.
 선형층의 가중치는 batch 안의 모든 요청이 공유하지만, KV cache는 요청마다 따로 있다.
 요청을 많이 묶어도 각 요청의 새 query는 **자기 KV cache만** 읽는다.
 그래서 batch를 키워도 attention의 intensity는 오르지 않는다.
-03b §2-2에서 Shazeer의 점근 분석으로 본 두 항,
+Attention heads and KV cache 노트에서 Shazeer의 점근 분석으로 본 두 항,
 곧 batch를 키우면 줄어드는 가중치 항과 줄지 않는 K/V 항이 여기서 숫자로 드러난다.[^mqa]
 
 요청 하나, 층 하나에서 문맥 길이가 $s$일 때를 계산해 보자.
 Query head 하나는 key $s$개와 내적하고($2sd_{\text{head}}$ FLOPs) value $s$개를 가중합한다($2sd_{\text{head}}$ FLOPs).
-03b §4-1의 GQA(grouped-query attention)에서는 query head $g=n_q/n_{kv}$개가 KV head 하나를 함께 쓰므로,
+GQA(grouped-query attention)에서는 query head $g=n_q/n_{kv}$개가 KV head 하나를 함께 쓰므로,
 KV head 하나를 읽는 동안 $4gsd_{\text{head}}$ FLOPs를 한다.
 읽는 데이터는 그 KV head의 key와 value, $2\cdot s\cdot d_{\text{head}}\cdot2$ bytes다.
 
@@ -179,30 +179,30 @@ decode attention의 intensity는 4다.
 그림에서 속이 빈 점이다.
 이 연산은 batch를 아무리 키워도 그 자리에 머문다.
 
-이 식은 3주차의 KV head 공유를 다른 눈으로 보여 준다.
+이 식은 Attention heads and KV cache 노트의 KV head 공유를 다른 눈으로 보여 준다.
 MHA(multi-head attention)는 $g=1$, MQA(multi-query attention)는 $g=n_q$다.
 Head를 공유하면 캐시가 줄 뿐 아니라,
 한 번 읽은 key·value를 여러 query head가 재사용해 decode attention의 intensity가 올라간다.
-03b §5-2의 MLA(multi-head latent attention)를 흡수 방식으로 계산하면 이 효과가 더 크다.
+MLA(multi-head latent attention)를 흡수 방식으로 계산하면 이 효과가 더 크다.
 DeepSeek-V3 설정에서 캐시된 토큰 하나는 576개 원소, 1,152 bytes이고,
 head 128개가 모두 이 latent로 점수를 계산하고(576차원) 가중합을 한다(512차원).[^dsv3]
 캐시된 토큰 하나에 $2\cdot128\cdot(576+512)\approx2.8\times10^5$ FLOPs이므로 intensity는 약 240으로,
 ridge point 가까이 간다.
-03b §5-5에서 흡수가 캐시와 읽는 양을 줄이는 대신 head당 계산을 늘린다고 했는데,
+MLA를 볼 때 흡수가 캐시와 읽는 양을 줄이는 대신 head당 계산을 늘린다고 했는데,
 memory-bound인 decode에서는 그 늘어난 계산이 놀던 연산 장치를 채우는 셈이다.
 
 다만 이 intensity는 head 수에 비례한다.
 Head가 256개라면 약 480으로 ridge point를 넘어 decode attention이 계산에 막힌다.
 문맥이 길어지면 attention이 스텝 전체에서 차지하는 몫도 커지므로,
 MLA 모델에서는 head 수가 곧 추론 FLOPs의 문제가 된다.
-03b §5-5의 Kimi K2가 head를 128개에서 64개로 줄인 근거도 128K 문맥에서의 추론 FLOPs였다.
+Kimi K2가 head를 128개에서 64개로 줄인 근거도 128K 문맥에서의 추론 FLOPs였다.
 
 ### 3-3. Prefill
 
 Prefill에서는 선형층과 attention 모두 intensity가 높다.
-선형층은 §3-1처럼 토큰 $n$개에 가중치를 재사용하고,
+선형층은 decode에서 본 것처럼 토큰 $n$개에 가중치를 재사용하고,
 attention도 query $n$개가 같은 key·value 블록을 재사용한다.
-2주차의 FlashAttention이 SRAM 안에서 블록을 재사용하는 방식이 이 재사용을 실제로 끌어낸다.
+FlashAttention이 SRAM 안에서 블록을 재사용하는 방식이 이 재사용을 실제로 끌어낸다.
 
 <Callout type="example">
 2,048토큰 프롬프트 하나를 prefill한다고 하자.
@@ -219,8 +219,8 @@ head마다 점수와 가중합에 약 $2n^2d_{\text{head}}$ FLOPs씩,
 
 ### 4-1. Batch 크기에 따른 decode 스텝
 
-06a §3-2에서 요청을 묶으면 처리량이 오르고 TPOT가 늘어난다고 했다.
-§2-2의 하한으로 그 크기를 계산해 보자.
+앞 노트에서 요청을 묶으면 처리량이 오르고 TPOT가 늘어난다고 했다.
+시간의 하한으로 그 크기를 계산해 보자.
 모든 요청의 문맥이 2,048토큰이라고 가정한다.
 요청 하나의 KV cache는 $2048\times128\ \text{KiB}\approx0.27$ GB다.
 
@@ -236,7 +236,7 @@ head마다 점수와 가중합에 약 $2n^2d_{\text{head}}$ FLOPs씩,
 
 Batch를 1에서 192로 늘리면 스텝 시간은 약 4배 늘지만 처리량은 약 46배 는다.
 가중치 16 GB를 한 번 읽어 192개 요청에 나누어 쓰기 때문이다.
-06a §3-2에서 말한 지연과 처리량의 맞교환이 이 표의 마지막 두 열이다.
+앞 노트에서 말한 지연과 처리량의 맞교환이 이 표의 마지막 두 열이다.
 
 그런데 표의 모든 행이 memory-bound다.
 Batch 192에서도 전체 intensity는 49로 ridge point 295에 한참 못 미친다.
@@ -244,12 +244,12 @@ Batch 192에서도 전체 intensity는 49로 ridge point 295에 한참 못 미�
 KV cache를 읽는 데이터가 batch에 비례해 함께 늘었기 때문이다.
 Batch 192에서 읽는 67.6 GB 가운데 51.5 GB가 KV cache다.
 Batch를 키울수록 스텝에서 읽는 데이터의 대부분이 가중치에서 KV cache로 넘어가고,
-§3-2에서 본 것처럼 그 부분의 intensity는 4에 묶여 있다.
+앞에서 본 것처럼 그 부분의 intensity는 4에 묶여 있다.
 
 ### 4-2. KV cache 용량의 벽
 
 표가 192에서 멈춘 데는 이유가 있다.
-06a §4-3의 가정에서 H100 한 대에 KV cache용으로 남는 공간은 약 53.5 GB였다.
+앞 노트의 가정에서 H100 한 대에 KV cache용으로 남는 공간은 약 53.5 GB였다.
 요청당 0.27 GB이면 약 199개가 상한이다.
 선형층을 ridge point까지 끌어올리려면 요청 약 295개를 묶어야 하는데, 그 전에 메모리가 바닥난다.
 
@@ -268,17 +268,16 @@ Batch를 키울수록 스텝에서 읽는 데이터의 대부분이 가중치에
 요청마다 8,192토큰이면 KV cache가 요청당 1.07 GB라 49개, 32,768토큰이면 12개에서 멈춘다.
 그때 스텝마다 읽는 데이터의 대부분은 KV cache다.
 그래서 긴 문맥의 decode에서는 가중치보다 KV cache의 bytes를 줄이는 기법이 처리량을 직접 늘린다.
-이 계산이 06c의 동기이고, 3주차의 GQA·MLA가 서빙에서 중요한 이유다.
+이 계산이 KV cache 관리의 동기이고, GQA·MLA가 서빙에서 중요한 이유다.
 
 ## 5. 하드웨어 효율 지표
 
-§2-2의 하한은 이상적인 값이다.
-실제 시스템이 그 하한에 얼마나 가까운지를 재는 지표가 둘 있다.
-06a §3에서 미뤄 둔 MFU와 MBU다.
+시간의 하한은 이상적인 값이다.
+실제 시스템이 그 하한에 얼마나 가까운지를 재는 지표가 MFU와 MBU다.
 
 ### 5-1. MFU
 
-<strong>MFU(model FLOPs utilization)</strong>는 2주차 Training engineering §6-1에서 학습에 쓴 지표다.
+<strong>MFU(model FLOPs utilization)</strong>는 학습에서 쓴 지표다.
 모델이 이론적으로 필요로 하는 FLOP/s를 하드웨어의 최대 FLOP/s로 나눈 값이다.
 학습에서는 토큰당 $6N$을 썼지만 inference는 forward만 하므로 토큰당 $2N$이다.
 
@@ -294,7 +293,7 @@ Attention의 FLOPs를 넣지 않은 근사다.
 ### 5-2. MBU
 
 Decode는 memory-bound이므로 MFU가 낮을 수밖에 없다.
-§4-1 표의 batch 1에서는 하한을 그대로 달성해도 MFU가 0.3%다.
+앞의 batch 표에서 batch 1이면 하한을 그대로 달성해도 MFU가 0.3%다.
 이때 효율은 대역폭을 얼마나 썼는지로 보아야 한다.
 Databricks의 Agarwal 등은 이를 <strong>MBU(model bandwidth utilization)</strong>로 정의했다.[^mbu]
 
@@ -311,10 +310,9 @@ peak가 2 TB/s인 장비에서 MBU는 50%라는 예를 든다.
 Llama 3 8B를 H100 한 대에서 batch 1, 문맥 2,048토큰으로 돌렸더니 TPOT가 8.0 ms였다고 하자.
 한 스텝에 읽어야 하는 데이터는 16.33 GB이므로 달성 대역폭은
 $16.33\ \text{GB}/8.0\ \text{ms}\approx2.04$ TB/s, MBU는 $2.04/3.35\approx61\%$다.
-§4-1의 하한 4.9 ms에 비해 약 1.6배 느리다.
+batch 1의 하한 4.9 ms에 비해 약 1.6배 느리다.
 남은 39%는 kernel이 대역폭을 다 쓰지 못하거나, 작은 kernel을 여러 번 띄우는 비용,
 층 사이의 동기화 등에서 생긴다.
-이 틈을 줄이는 방법은 7주차 kernel 노트에서 다룬다.
 </Callout>
 
 MBU는 batch가 커져도 쓸 수 있다.
@@ -325,21 +323,21 @@ Batch를 키우다 연산 쪽이 병목이 되면 MBU는 내려가고 MFU가 올
 
 ## 6. Roofline 위의 최적화 기법
 
-§2-2의 식은 6·7주차 기법을 한 줄로 분류해 준다.
+시간의 하한 식은 이번 주와 다음 주의 기법을 한 줄로 분류해 준다.
 각 기법은 한 스텝의 FLOPs와 bytes 가운데 어느 항을 줄이거나,
 같은 bytes로 더 많은 일을 하게 해 점을 오른쪽으로 옮긴다.
 
 | 기법 | Roofline에서의 효과 | 다루는 곳 |
 |---|---|---|
-| Batching | 가중치 bytes를 여러 요청에 나누어 선형층의 점을 오른쪽으로 | 06d |
-| GQA·MLA | Decode attention의 bytes를 줄이고 intensity를 $g$ 또는 그 이상으로 | 3주차 03b |
-| KV cache 관리·양자화 | KV cache bytes를 줄여 같은 메모리에 더 큰 batch | 06c |
-| 가중치 양자화 | 가중치 bytes를 줄여 memory-bound 스텝을 직접 단축. 저정밀 연산은 peak도 높임 | 7주차 |
-| Pruning·distillation | 파라미터 수를 줄여 FLOPs와 bytes를 함께 감소 | 7주차 |
-| Speculative decoding | 가중치를 한 번 읽어 토큰 여러 개를 검증해 decode의 점을 오른쪽으로 | 7주차 |
-| Kernel 최적화 | 점의 위치는 그대로 두고 실제 성능을 지붕에 가깝게 | 7주차 |
+| Batching | 가중치 bytes를 여러 요청에 나누어 선형층의 점을 오른쪽으로 | Batching and scheduling |
+| GQA·MLA | Decode attention의 bytes를 줄이고 intensity를 $g$ 또는 그 이상으로 | Attention heads and KV cache |
+| KV cache 관리·양자화 | KV cache bytes를 줄여 같은 메모리에 더 큰 batch | KV cache management |
+| 가중치 양자화 | 가중치 bytes를 줄여 memory-bound 스텝을 직접 단축. 저정밀 연산은 peak도 높임 | Quantization |
+| Pruning·distillation | 파라미터 수를 줄여 FLOPs와 bytes를 함께 감소 | Pruning, low-rank, distillation |
+| Speculative decoding | 가중치를 한 번 읽어 토큰 여러 개를 검증해 decode의 점을 오른쪽으로 | Speculative decoding and multi-token prediction |
+| Kernel 최적화 | 점의 위치는 그대로 두고 실제 성능을 지붕에 가깝게 | Kernel optimization |
 
-예를 들어 계산은 BF16으로 두고 가중치만 INT4로 저장하면 §4-1의 batch 1 스텝에서 읽을 가중치가 16
+예를 들어 계산은 BF16으로 두고 가중치만 INT4로 저장하면 batch 1 스텝에서 읽을 가중치가 16
 GB에서 약 4 GB로 줄어 하한이 약 1.3 ms로 내려간다.
 같은 방식이 compute-bound인 prefill에는 효과가 작다.
 계산량은 그대로이기 때문이다.
