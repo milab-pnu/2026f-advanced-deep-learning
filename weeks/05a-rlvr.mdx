@@ -4,7 +4,6 @@ week: 5
 order: 0
 ---
 
-import helffGap from "./assets/week04-helff-hacking-gap.png";
 import vero from "./assets/week05-vero.png";
 
 앞 주차의 RLHF(reinforcement learning from human feedback)와 DPO(direct preference optimization)는 사람이나 모델이 선호하는 응답을 학습 신호로 썼다.
@@ -213,13 +212,10 @@ DeepSeek-R1은 이 문제를 네 단계 파이프라인으로 풀었다.
 | 3. Rejection sampling과 SFT | 2단계 모델의 응답 중 정답이고 언어가 섞이지 않은 것만 남긴 추론 데이터 약 60만 건과 일반 task 데이터 약 20만 건으로 base model을 다시 SFT | 추론 능력을 일반 task와 합침 |
 | 4. 모든 task RL | 추론 task는 검증 보상, 일반 task는 reward model의 선호 보상으로 RL | 사람의 선호와 안전성 |
 
-## 5. 검증기의 실패와 독립 평가
+## 5. 검증기의 실패
 
-검증기의 판정이 정답 여부와 일치하면 검증 통과율이 곧 정답률이라고 했다.
-이 조건은 두 군데서 깨진다.
-검증기가 정답을 알아보지 못할 때와, 검증기가 확인하는 조건이 task의 성공을 다 담지 못할 때다.
-검증기가 정확해도 학습 문제의 정답률이 처음 보는 문제로 일반화되는지는 별개의 조건이므로,
-마지막에 독립 평가로 따로 확인한다.
+검증 보상의 문제는 두 군데서 생긴다.
+검증기가 응답에서 답을 제대로 읽어 내지 못해 정답을 알아보지 못할 때와, 검증기가 확인하는 조건이 task의 성공을 다 담지 못할 때다.
 
 ### 5-1. 답 추출과 동치 판정
 
@@ -230,7 +226,7 @@ Hugging Face의 Math-Verify는 LaTeX와 일반 표기를 파싱하고 SymPy를 �
 정책은 검증기가 알아보는 형식으로 답을 쓰는 법을 함께 배우게 되기 쉽다.
 
 <Callout type="example">
-**검증기의 판정 세 가지.** 교육용으로 `\boxed{}` 안의 내용만 답으로 추출하고 수치 동치를 판정하는 단순한 검증기를 가정한다(위의 Math-Verify는 더 넓은 형식을 다룬다).
+`\boxed{}` 안의 내용만 답으로 추출하고 수치 동치를 판정하는 단순한 검증기를 가정한다(위의 Math-Verify는 더 넓은 형식을 다룬다).
 정답이 $\frac{1}{2}$인 문제에 대한 응답 세 개를 보자.
 
 | 응답의 마지막 줄 | 추출된 답 | 판정 | 보상 |
@@ -248,72 +244,15 @@ Hugging Face의 Math-Verify는 LaTeX와 일반 표기를 파싱하고 SymPy를 �
 ### 5-2. 성공 조건의 빈틈
 
 프로그램이 정해진 조건을 정확히 검사해도 그 조건이 task의 성공을 다 담지 못할 수 있다.
-이때도 학습된 보상의 과최적화처럼 학습 점수와 실제 목표가 갈라진다.
+그러면 학습 점수와 실제 목표가 갈라진다.
 R1-Zero의 언어 섞임도 보상에 가독성 조건이 빠져 생긴 일이었다.
 
-Tülu 3는 지시 따르기 평가 IFEval과 같은 꼴의 검증 가능한 지시로 RLVR을 돌렸을 때,
-KL이 큰 실행에서 검증기가 확인하는 형식 조건은 만족하되 의미 있는 내용이 없는 응답을 만드는 over-optimization을 관찰했다.[^tulu3]
+Tülu 3는 지시 따르기(instruction following) 평가 IFEval과 같은 꼴의 검증 가능한 지시로 RLVR을 돌렸을 때,
+검증기가 확인하는 형식 조건은 만족하되 의미 있는 내용이 없는 응답을 만드는 over-optimization을 관찰했다.[^tulu3]
 이를 단순화한 가상의 예로, "300단어 이하로 쓰라"는 조건은 아무 말이나 300단어 이하로 써도 통과한다.
 
-검증기가 프로그램이 아니라 앞에서 본 생성형 검증기여도 같은 일이 생긴다.
-Zhao 등은 응답과 참조 답의 일치 여부를 LLM으로 채점하고 그 점수로 정책을 학습했다.[^master-key]
-학습 중 응답 길이가 급격히 줄고 KL이 치솟았다.
-정책이 풀이 대신 "Solution", "Thought process:" 같은 시작 문구만 내놓았고 LLM judge가 이를 정답으로 판정했기 때문이다.
-GPT-4o를 포함한 여러 LLM judge가 이런 시작 문구 하나에 속았다.
-저자들은 풀이의 첫 문장만 남긴 응답을 오답 예로 넣어 판정 모델 Master-RM을 따로 학습했고,
-시험한 문구에서는 오판이 거의 사라졌다.
-다만 새로운 허점까지 모두 막았는지는 확인되지 않았다.
-
-Helff 등은 2026년에 더 미묘한 사례를 보고했다.[^helff]
-Task는 예시에서 규칙을 귀납하는 것이다.
-기차와 칸의 속성(칸의 색 등)과 각 기차가 동쪽·서쪽 중 어디로 가는지가 주어지면,
-모델은 "빨간 칸을 단 기차는 동쪽으로 간다" 같은 논리 규칙을 써야 한다.
-검증기는 그 규칙이 주어진 사례의 라벨을 모두 맞히는지 확인한다.
-그런데 "train0은 동쪽, train1은 서쪽"처럼 사례마다 라벨을 나열해도 이 확인은 통과한다.
-저자들은 기차와 칸의 이름만 바꾼,
-논리적으로 동형인 task에 같은 출력을 적용해 보는 방법(isomorphic perturbation testing)으로 이 지름길을 가려냈다.
-진짜 규칙은 이름이 바뀌어도 통과하지만, 이름에 매인 나열은 실패한다.
-
-그다음 검증기만 바꾼 통제 실험을 했다.
-Allen AI의 Olmo-3-7B-Think-DPO에서 출발해 Olmo 3의 RLVR 설정으로 약 500 스텝을 학습하되,
-한쪽은 원래 검증기로, 다른 쪽은 이름을 바꾼 task에서도 통과해야 하는 검증기로 보상을 줬다.
-원래 검증기로 학습한 쪽은 약 250 스텝부터 두 검증기의 보상이 갈라져,
-500 스텝 뒤에는 약 3.5점(최대 10점) 차이가 났다.
-동형 검증기로 학습한 쪽은 그 차이가 끝까지 거의 0이었다.
-
-<Figure src={helffGap.src} alt="두 개의 학습 곡선. 가로축은 학습 스텝(0에서 500), 세로축은 보상(3에서 8)이다. 왼쪽은 원래 검증기로 학습한 경우로, 빨간 선(원래 검증기의 보상)과 초록 선(이름을 바꾼 task에서 잰 보상)이 250 스텝 근처까지 겹쳐 약 3에서 5.4 사이를 오르내리다가, 그 뒤 빨간 선은 8.2까지 오르고 초록 선은 4.5 근처에 머문다. 두 선 사이가 분홍색으로 칠해져 있다. 오른쪽은 동형 검증기로 학습한 경우로, 두 선이 끝까지 겹친 채 3에서 5.5 사이를 오르내린다." caption="같은 모델을 두 검증기로 RLVR 학습한 결과. 빨간 선은 원래 검증기(라벨 확인)의 보상, 초록 선은 이름을 바꾼 task에서 잰 보상이고, 색칠한 영역이 둘의 차이(hacking gap)다. 왼쪽은 원래 검증기로, 오른쪽은 동형 검증기로 학습했다. 왼쪽에서는 학습된 보상의 과최적화처럼 원래 검증기의 점수만 계속 올라 두 평가의 차이가 커진다." source="Helff et al. (2026), LLMs Gaming Verifiers, Figure 3에서 그래프와 부분 캡션 영역만 잘라 냄. arXiv:2604.15149v1 · CC BY 4.0" />
-
-[라이선스](https://creativecommons.org/licenses/by/4.0/)
-
-저자들은 RLVR로 학습했다고 추정한 상용 모델에서도 같은 지름길을 관찰했다.
-
-이 사례에서는 이름을 바꾼 평가로 허점을 찾고, 빠져 있던 성공 조건(규칙이어야 한다)을 검증기에 넣은 뒤,
-다시 학습해 차이가 사라졌는지 확인했다.
-앞 주차에서 본 RM-Bench가 문체를 바꾼 응답을 따로 평가해 원래 평가가 놓친 편향을 드러낸 것도 같은 논리다.
-
-### 5-3. 독립 평가
-
-검증기가 완벽해도 학습 문제에서 잰 검증 통과율만으로는 일반화를 알 수 없다.
-RLVR의 학습 문제와 정답은 그 자체로 학습 데이터이므로,
-평가 문제가 pre-training·SFT·RL 데이터에 섞여 있거나 정답이 프롬프트에 노출되면 검증 통과가 일반화를 입증하지 못한다.
-
-점수가 오른 원인은 이와 별개로 따져야 한다.
-최적화가 출발 모델이 이미 가진 행동을 증폭했을 수 있고,
-Qwen2.5-Math-7B에서는 정답과 무관한 무작위 보상으로도 수학 점수가 오른 사례가 보고되었다.[^spurious]
-원인을 가리려면 출발 모델이나 보상 조건을 바꾼 대조 실험이 필요하다.
-
-일반화 성능을 평가하려면 자기 프로젝트에서도 문제를 세 묶음으로 나눈다.
-
-- **학습 문제.** 검증기가 보상을 매기는 문제다.
-- **개발 문제.** Checkpoint와 설정을 고르는 데 쓴다.
-- **평가 문제.** 마지막에 한 번만 쓰고, 그 결과를 보고 설정을 다시 고치지 않는다.
-
-Tülu 3도 평가 벤치마크를 모델 개발 중에 보는 개발용과 최종 평가 전까지 점수를 보지 않는 미관측(unseen)용으로 나누고,
-학습 데이터에서 평가 문제와 겹치는 것을 걸러 냈다.[^tulu3]
-학습 중에는 학습 보상만 보지 말고 개발 문제의 독립 채점 정답률과 답 추출 실패율을 함께 기록하며,
-검증을 통과한 응답 일부를 직접 읽어 본다.
-학습 보상만 오르고 독립 채점 정답률이 따라오지 않으면 학습 문제에 대한 과적합이나 분포 차이를 검증기 오류와 구분해 본다.
-통과한 응답이 성공 조건을 어기고 있다면 검증기의 빈틈을 의심한다.
+이런 빈틈은 학습 점수만 보아서는 드러나지 않는다.
+검증을 통과한 응답을 직접 읽어 빠진 성공 조건을 찾고, 그 조건을 검증기에 넣어 다시 학습한 뒤 학습 점수와 실제 목표의 차이가 줄었는지 확인한다.
 
 [^survey]: Zhang, K., et al. (2025). A Survey of Reinforcement Learning for Large Reasoning Models. [arXiv:2509.08827v3](https://arxiv.org/abs/2509.08827v3).
 [^deepseekmath]: Shao, Z., et al. (2024). DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models. [arXiv:2402.03300](https://arxiv.org/abs/2402.03300).
@@ -323,7 +262,5 @@ Tülu 3도 평가 벤치마크를 모델 개발 중에 보는 개발용과 최�
 [^prm]: Lightman, H., et al. (2024). Let's Verify Step by Step. *ICLR 2024*. [arXiv:2305.20050](https://arxiv.org/abs/2305.20050).
 [^qwen3]: Qwen Team. (2025). Qwen3 Technical Report. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
 [^master-key]: Zhao, Y., et al. (2025). One Token to Fool LLM-as-a-Judge. [arXiv:2507.08794v1](https://arxiv.org/abs/2507.08794v1).
-[^helff]: Helff, L., et al. (2026). LLMs Gaming Verifiers: RLVR can Lead to Reward Hacking. *LLM Reasoning Workshop @ ICLR 2026*. [arXiv:2604.15149v1](https://arxiv.org/abs/2604.15149v1).
-[^spurious]: Shao, R., et al. (2025). Spurious Rewards: Rethinking Training Signals in RLVR. [arXiv:2506.10947v2](https://arxiv.org/abs/2506.10947v2).
 [^rar]: Gunjal, A., et al. (2025). Rubrics as Rewards: Reinforcement Learning Beyond Verifiable Domains. [arXiv:2507.17746v2](https://arxiv.org/abs/2507.17746v2).
 [^vero]: Sarch, G., et al. (2026). Vero: An Open RL Recipe for General Visual Reasoning. [arXiv:2604.04917v3](https://arxiv.org/abs/2604.04917v3).
