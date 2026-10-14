@@ -168,7 +168,7 @@ decode에는 읽는 바이트를 줄이거나 한 번 읽은 가중치를 여러
   TPOT의 정의에 따라 $\text{TTFT}+(m-1)\cdot\text{TPOT}$와 같다.
 
 <figure>
-<svg viewBox="0 0 600 230" role="img" aria-label="요청 하나의 시간축. 왼쪽 끝에서 요청을 보내면 prefill 막대가 이어지고, 그 끝에서 첫 출력 토큰이 나온다. 요청을 보낸 시점부터 첫 토큰까지가 TTFT다. 이후 decode 구간에 출력 토큰이 일정한 간격으로 하나씩 표시되고, 이웃한 두 토큰 사이의 간격이 ITL이다. 요청을 보낸 시점부터 마지막 토큰까지가 E2E latency이고, TPOT는 E2E latency에서 TTFT를 뺀 시간을 첫 토큰을 제외한 출력 토큰 수로 나눈 값이다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 600 230" role="img" aria-label="요청 하나의 시간축. 왼쪽 끝에서 요청을 보내면 prefill 막대가 이어지고, 그 끝에서 첫 출력 토큰이 나온다. 요청을 보낸 시점부터 첫 토큰까지가 TTFT다. 이후 decode 구간에 출력 토큰이 일정한 간격으로 하나씩 표시되고, 이웃한 두 토큰 사이의 간격이 ITL이다. 요청을 보낸 시점부터 마지막 토큰까지가 E2E latency이고, TPOT는 E2E latency에서 TTFT를 뺀 시간을 첫 토큰을 제외한 출력 토큰 수로 나눈 값이다. 예시 값은 첫 토큰 0.25초, 200번째 토큰 6.22초, TPOT 30 ms다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <text x="300" y="22" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">요청 하나의 시간축과 지연 지표</text>
   <line x1="40" y1="120" x2="570" y2="120" stroke="#0f172a"/>
   <text x="575" y="124" font-size="11" fill="#64748b">시간</text>
@@ -185,12 +185,12 @@ decode에는 읽는 바이트를 줄이거나 한 번 읽은 가중치를 여러
   <rect x="416" y="112" width="8" height="16" fill="#0f172a"/>
   <rect x="466" y="112" width="8" height="16" fill="#0f172a"/>
   <rect x="516" y="112" width="8" height="16" fill="#0f172a"/>
-  <text x="170" y="144" font-size="11" text-anchor="middle" fill="#0f172a">토큰 1</text>
-  <text x="520" y="144" font-size="11" text-anchor="middle" fill="#0f172a">토큰 m</text>
+  <text x="170" y="144" font-size="11" text-anchor="middle" fill="#0f172a">토큰 1 (0.25초)</text>
+  <text x="520" y="144" font-size="11" text-anchor="middle" fill="#0f172a">토큰 200 (6.22초)</text>
   <line x1="40" y1="160" x2="170" y2="160" stroke="#0f172a"/>
   <line x1="40" y1="155" x2="40" y2="165" stroke="#0f172a"/>
   <line x1="170" y1="155" x2="170" y2="165" stroke="#0f172a"/>
-  <text x="105" y="178" font-size="12" text-anchor="middle" fill="#0f172a">TTFT</text>
+  <text x="105" y="178" font-size="12" text-anchor="middle" fill="#0f172a">TTFT 0.25초</text>
   <line x1="320" y1="160" x2="370" y2="160" stroke="#0f172a"/>
   <line x1="320" y1="155" x2="320" y2="165" stroke="#0f172a"/>
   <line x1="370" y1="155" x2="370" y2="165" stroke="#0f172a"/>
@@ -198,9 +198,9 @@ decode에는 읽는 바이트를 줄이거나 한 번 읽은 가중치를 여러
   <line x1="40" y1="198" x2="520" y2="198" stroke="#94a3b8"/>
   <line x1="40" y1="193" x2="40" y2="203" stroke="#94a3b8"/>
   <line x1="520" y1="193" x2="520" y2="203" stroke="#94a3b8"/>
-  <text x="280" y="216" font-size="12" text-anchor="middle" fill="#64748b">E2E latency · TPOT = (E2E − TTFT) / (m − 1)</text>
+  <text x="280" y="216" font-size="12" text-anchor="middle" fill="#64748b">E2E latency 6.22초 · TPOT = (6.22 − 0.25) / 199 = 30 ms</text>
 </svg>
-<figcaption>요청 하나의 지연 지표. 토큰 하나를 하나의 막대로 그렸고, TTFT에 들어가는 대기·네트워크 시간은 생략했다. vLLM 벤치마크 문서의 정의를 바탕으로 직접 구성했다.</figcaption>
+<figcaption>요청 하나의 지연 지표. 0.25초에 첫 토큰, 6.22초에 200번째 토큰이 도착한 요청을 축척 없이 그렸다. 토큰 하나가 막대 하나이고 가운데 토큰은 생략했으며, TTFT에 들어가는 대기·네트워크 시간도 생략했다. vLLM 벤치마크 문서의 정의를 바탕으로 직접 구성했다.</figcaption>
 </figure>
 
 <Callout type="example">
@@ -282,7 +282,10 @@ Training engineering 노트에서 보았듯 BF16(bfloat16)은 원소당 2 bytes�
 학습과 달리 gradient와 optimizer state가 없으므로 이 16.1 GB가 모델 상태의 전부다.
 
 이 값은 요청 수나 문맥 길이와 상관없이 고정이다.
-줄이는 방법은 원소당 bytes를 줄이는 것(양자화, 4비트 정수(INT4)면 약 4 GB에 scale 등의 부가 정보가 더해진다)과 파라미터 수를 줄이는 것(압축) 두 가지다.
+줄이는 방법은 두 가지다.
+양자화는 원소당 bytes를 줄인다.
+4비트 정수(INT4)로 두면 약 4 GB가 되고, 여기에 scale 같은 부가 정보가 더해진다.
+압축은 파라미터 수 자체를 줄인다.
 
 ### 4-2. KV cache
 
