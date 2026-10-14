@@ -96,7 +96,7 @@ GPTQ, AWQ(activation-aware weight quantization), SmoothQuant 같은 방법은 �
 
 양자화를 inference에 쓰는 방식은 크게 둘이다.
 하나는 **가중치만** 낮은 bits로 저장하고,
-계산할 때 kernel 안에서 FP16(16-bit 부동소수점)이나 BF16으로 되돌려 16-bit 행렬곱을 하는 weight-only 양자화다.
+계산할 때 GPU(graphics processing unit) kernel 안에서 FP16(16-bit 부동소수점)이나 BF16으로 되돌려 16-bit 행렬곱을 하는 weight-only 양자화다.
 가중치 4-bit, activation 16-bit라는 뜻에서 W4A16처럼 부른다.
 다른 하나는 가중치와 **activation을 모두** 낮은 bits로 바꿔 INT8(8-bit 정수)이나 FP8(8-bit 부동소수점) 행렬곱을 직접 하는 weight-activation 양자화로,
 W8A8처럼 부른다.
@@ -179,7 +179,7 @@ $\alpha=0.5$이면 $s_j=\sqrt{64}/\sqrt{0.25}=8/0.5=16$이다.
 
 이렇게 모든 선형층의 행렬곱을 INT8로 하면서도 정확도를 유지했고,
 FasterTransformer 구현에서 최대 1.56배 빨라지고 메모리를 약 2배 줄였으며,
-OPT-175B를 GPU(graphics processing unit) 8대 대신 4대로 비슷하거나 더 짧은 지연에 돌렸다(원논문 §5.3, Figure 9).[^smoothquant]
+OPT-175B를 GPU 8대 대신 4대로 비슷하거나 더 짧은 지연에 돌렸다(원논문 §5.3, Figure 9).[^smoothquant]
 원논문의 PyTorch 구현 비교에서는 LLM.int8()이 대부분의 경우 FP16보다 느렸다(Figure 8).
 
 ### 2-3. 직교 회전
@@ -462,7 +462,7 @@ roofline으로 병목을 먼저 확인하고 실제 작업으로 품질을 잰�
 
 [^b200]: NVIDIA. NVIDIA DGX B200. *NVIDIA 제품 사양*. [nvidia.com](https://www.nvidia.com/en-us/data-center/dgx-b200/).
 
-[^gptoss]: OpenAI. (2025). *gpt-oss-120b & gpt-oss-20b Model Card*. [arXiv:2508.10925](https://arxiv.org/abs/2508.10925).
+[^gptoss]: OpenAI. (2025). gpt-oss-120b & gpt-oss-20b Model Card. [arXiv:2508.10925](https://arxiv.org/abs/2508.10925).
 
 [^vllm-fp8]: vLLM Project. (2026). Quantized KV Cache. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/features/quantization/quantized_kvcache/).
 
