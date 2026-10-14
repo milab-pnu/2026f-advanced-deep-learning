@@ -6,19 +6,19 @@ order: 1
 
 앞 노트의 양자화는 파라미터 하나를 적은 bits로 저장했다.
 이 노트는 **파라미터의 수 자체**를 줄이는 방법을 다룬다.
-앞 주차의 하한 식으로 보면 파라미터를 줄이는 일은 읽을 bytes와 할 FLOPs를 함께 줄인다.
-남은 가중치가 GPU의 kernel이 빠르게 처리할 수 있는 모양으로 남는다면,
-memory-bound인 decode와 compute-bound인 prefill이 모두 빨라지고 남는 GPU 메모리는 KV cache에 돌아간다.
-그 조건이 생각보다 까다롭다는 것이 이 노트의 한 줄기다.
+앞 주차의 하한 식으로 보면 파라미터를 줄이는 일은 읽을 가중치의 bytes와 할 FLOPs(floating-point operations)를 함께 줄인다.
+남은 가중치가 GPU(graphics processing unit)의 kernel이 빠르게 처리할 수 있는 모양으로 남는다면,
+memory-bound인 decode에서는 가중치를 읽는 시간이, compute-bound인 prefill에서는 연산 시간이 줄고,
+남는 GPU 메모리는 KV(key-value) cache에 돌아간다.
+그런데 지운 결과가 이 모양을 갖추기는 생각보다 어렵다.
 
 방법은 세 갈래다.
-학습된 모델에서 덜 중요한 가중치를 지우는 pruning, 가중치 행렬을 작은 행렬의 곱으로 바꾸는 low-rank factorization, 작은 모델을 처음부터 큰 모델의 출력으로 학습하는 distillation이다.
+학습된 모델에서 덜 중요한 가중치를 지우는 pruning, 가중치 행렬을 작은 행렬의 곱으로 바꾸는 low-rank factorization, 큰 모델(teacher)의 출력 분포를 목표로 작은 모델을 학습하는 distillation이다.
 실제로는 이 셋이 섞인다.
 Pruning으로 줄인 모델의 품질을 distillation으로 되살리는 것은 최근 작은 모델을 만들 때 널리 쓰이는 방법이 되었다.
-전체 지도는 Zhu 등의 LLM 압축 서베이[^survey]로 잡는다.
-§4가 pruning을 비구조적(unstructured), 구조적(structured),
-반구조적(semi-structured) 방식으로 나누고, §5가 knowledge distillation을,
-§6이 low-rank factorization을 다룬다.
+Zhu 등의 LLM(large language model) 압축 서베이[^survey]는 §4에서 pruning을 비구조적(unstructured), 구조적(structured),
+반구조적(semi-structured) 방식으로 나누고, §5에서 knowledge distillation을,
+§6에서 low-rank factorization을 다룬다.
 
 ## 1. Pruning의 출발
 
@@ -41,7 +41,7 @@ GPTQ의 Cholesky 분해와 묶음 갱신을 그대로 써서,
 OPT-175B와 BLOOM-176B를 4.5시간 안에 sparsity 60%까지 지우고도 perplexity가 거의 늘지 않았다.
 OPT-175B를 50% 지웠을 때 WikiText2 perplexity는 dense 8.35에 대해 8.21이었고,
 같은 50%를 magnitude pruning으로 지우면 43,000이었다(Table 1).
-원논문은 큰 모델일수록 더 많이 지울 수 있다는 점도 함께 보였다.
+원논문은 OPT 계열에서 큰 모델일수록 더 많이 지울 수 있다는 점도 함께 보였다.
 
 Sun 등의 Wanda는 가중치를 고치는 단계마저 없앴다.[^wanda]
 가중치 $W_{ij}$의 중요도를 크기만이 아니라 **그 가중치에 들어오는 입력의 크기**와 함께 본다.
@@ -75,7 +75,7 @@ LLaMA-7B를 50% 지웠을 때 perplexity는 dense 5.68, magnitude 17.29, SparseG
 0을 건너뛰려면 위치 정보를 따로 저장하고 불규칙한 메모리 접근을 감당하는 특수한 kernel이 필요하다.
 서베이도 비구조적 pruning이 모델을 불규칙하게 만들어,
 inference를 가속하려면 별도의 처리나 소프트웨어 최적화가 필요하다고 정리한다(§4.1).[^survey]
-SparseGPT 논문은 CPU용 희소 연산 엔진에서는 sparsity 40–60%로 1.57–2.16배를 얻었지만,[^sparsegpt]
+SparseGPT 논문은 CPU(central processing unit)용 희소 연산 엔진에서 OPT-2.7B를 sparsity 40–60%로 지워 1.57–2.16배를 얻었지만(Appendix E),[^sparsegpt]
 GPU에서 같은 이득을 내기는 어렵다.
 
 <figure>
@@ -195,75 +195,82 @@ GPU에서 같은 이득을 내기는 어렵다.
 ### 2-2. 2:4 semi-structured sparsity
 
 NVIDIA는 Ampere GPU부터 하드웨어가 직접 가속할 수 있는 희소성 패턴을 정했다.
-연속된 원소 4개마다 0이 아닌 값을 정확히 2개만 두는 **2:4 sparsity**다.
+연속된 원소 4개마다 적어도 2개를 0으로 두는 **2:4 sparsity**다.
 Sparse Tensor Core는 남은 값과 그 위치(원소마다 2 bits)만 읽어,
-dense 행렬곱의 두 배 연산 속도를 낸다.[^nvidia24]
-앞 주차에서 H100의 사양표가 sparsity 기준으로 1,979 TFLOP/s를 적는다고 했던 그 값이다.
+dense 행렬곱보다 최대 두 배의 연산 속도를 낸다.[^nvidia24]
+앞 주차에서 H100 SXM의 사양표가 16-bit 연산을 sparsity 기준으로 1,979 TFLOP/s라 적는다고 했던 그 값이다.[^h100]
 
 2:4는 비구조적 pruning보다 제약이 강해 품질 손실이 크다.
 SparseGPT로 OPT-175B를 2:4로 지우면 perplexity가 8.35에서 8.74로 조금 늘었지만,
 OPT-2.7B에서는 12.47에서 17.18로 크게 늘었다(Table 1).[^sparsegpt]
 속도 이득도 사양표의 두 배에 못 미친다.
-Wanda 논문에서 2:4 LLaMA-7B의 전체 생성 속도는 1.24배였고,[^wanda] 마스크를 학습하는 MaskLLM은 2:4 LLaMA-2 7B의 perplexity를 다른 방법들의 10 이상에서 6.72(dense 5.12)로 낮추면서,
-TensorRT-LLM에서 1.36–1.41배의 속도를 보고했다.[^maskllm]
+Wanda 논문에서 2:4 LLaMA-7B는 전체 지연 기준으로 1.24배 빨라지는 데 그쳤다(312→251 ms, §4.3).[^wanda]
+마스크를 학습하는 MaskLLM은 2:4 LLaMA-2 7B의 perplexity를 다른 방법들의 10 이상에서 6.72(dense 5.12)로 낮추었고(Table 1),
+A6000·batch 1의 TensorRT-LLM에서 7B는 1.36–1.41배, 13B는 1.50–1.57배의 속도를 보고했다(Table 16).[^maskllm]
 사양표에 못 미치는 까닭은 두 가지다.
 행렬곱 외의 연산은 그대로이고,
 memory-bound인 작은 batch의 decode에서는 연산 속도보다 읽는 bytes가 시간을 정하는데,
-2:4는 위치 정보를 함께 저장하므로 FP16 가중치의 bytes를 절반이 아니라 약 44%만 줄인다.[^nvidia24]
+2:4는 위치 정보를 함께 저장하므로 FP16(16-bit floating point) 가중치의 bytes를 절반이 아니라 약 44%만 줄인다.[^nvidia24]
 
 ## 3. Structured pruning
 
-### 3-1. 구조 단위로 지우기
+### 3-1. 너비와 깊이
 
-속도를 확실히 얻는 방법은 **구조 단위**로 지우는 것이다.
-Attention head, FFN의 중간 channel, hidden 차원, 층 전체를 통째로 없애면,
-남은 모델은 그저 더 작은 dense 모델이라 일반 kernel로 바로 빨라진다.
-다만 남은 head 수와 차원이 GQA의 head 묶음이나 kernel이 잘 처리하는 크기에 맞아야 하고,
+특수한 kernel 없이 속도를 얻는 방법은 **구조 단위**로 지우는 것이다.
+Attention head, FFN(feed-forward network)의 중간 channel, hidden 차원, 층 전체를 통째로 없애면,
+남은 모델은 그저 더 작은 dense 모델이라 일반 kernel로 빨라진다.
+다만 남은 head 수와 차원이 GQA(grouped-query attention)의 head 묶음이나 kernel이 잘 처리하는 크기에 맞아야 하고,
 서빙 엔진이 그 구성을 불러올 수 있어야 한다.
 대신 지우는 단위가 커서 품질 손실이 크고,
 서베이의 정리대로 대개 미세조정으로 회복해야 한다(§4.2).[^survey]
 
 구조 단위로 지울 때는 함께 지워야 하는 가중치를 묶어야 한다.
-Attention head 하나를 지우면 그 head의 Q·K·V 투영 열과 출력 투영의 행이 함께 사라지고,
-FFN의 중간 channel 하나를 지우면 위 투영의 열과 아래 투영의 행이 함께 사라진다.
+층 출력을 $WX$로 쓰면 가중치의 행이 출력, 열이 입력에 대응한다.
+Attention head 하나를 지우면 그 head의 Q 투영 행과 출력 투영의 열이 함께 사라지고,
+K·V 투영은 GQA에서 그 K·V를 공유하는 query head 묶음을 통째로 지울 때 함께 사라진다.
+Llama처럼 gate가 있는 FFN에서 중간 channel 하나를 지우면 gate·up 투영의 행과 down 투영의 열이 함께 사라진다.
 Ma 등의 LLM-Pruner는 이런 의존 관계를 자동으로 찾아 묶고,
 gradient로 묶음의 중요도를 추정해 지운 뒤 LoRA(low-rank adaptation)로 회복했다.
-파라미터 20%를 지우고도 원래 성능의 94.97%를 유지했다.[^llmpruner]
+LLaMA-7B의 파라미터 20%를 지우고 회복하면 일곱 zero-shot 분류 과제의 평균 정확도가 원래의 94.97%였다(Table 1).[^llmpruner]
 
 층 전체를 지우는 깊이 방향 pruning도 있다.
 Men 등의 ShortGPT는 입력과 출력이 거의 같은 층,
-곧 표현을 별로 바꾸지 않는 층을 찾아 지워 파라미터 25%를 줄이고도 성능의 약 90%를 유지했다.[^shortgpt]
-Gromov 등은 Llama-2-70B에서 층의 절반 가까이 지울 때까지 질의응답 성능이 크게 떨어지지 않다가 40–50% 근처에서 급격히 무너진다는 것을 보였다.[^gromov]
-다만 ShortGPT 논문도 밝히듯, 층의 25%를 지우면 요약 같은 생성 작업의 점수는 거의 0으로 떨어졌다.
+곧 표현을 별로 바꾸지 않는 층을 찾아 지워 파라미터 25%를 줄이고도 선다형 과제에서 성능의 약 90%를 유지했다.[^shortgpt]
+Gromov 등은 입력과 출력이 가장 비슷한 연속된 층들을 지우는 방식으로,
+Llama-2-70B에서 층의 절반 가까이 지울 때까지 질의응답 성능이 크게 떨어지지 않다가 40–50% 근처에서 급격히 무너진다는 것을 보였다(Figure 1).[^gromov]
+다만 ShortGPT 논문도 밝히듯, Llama-2-7B의 층 25%를 지우면 생성 작업인 GSM8K의 점수가 15.69에서 1.60으로 거의 0이 되었다(Table 3).
 선다형 문제의 정확도만으로 깊이 pruning의 품질을 판단하면 위험하다.
 
 ### 3-2. Pruning과 distillation의 결합
 
 지운 모델의 품질은 더 학습해서 되살린다.
 Xia 등의 Sheared-LLaMA는 LLaMA2-7B를 1.3B와 2.7B로 구조적으로 줄인 뒤 50B 토큰으로 사전학습을 이어 가,
-같은 크기를 처음부터 학습하는 계산의 3%로 비슷한 품질을 얻었다.[^sheared]
+원래 7B의 학습 비용을 빼고 보면 같은 크기를 처음부터 학습하는 계산의 3%로 비슷한 품질을 얻었다고 보고했다.[^sheared]
 NVIDIA의 Minitron은 이 회복 학습을 원래 모델을 teacher로 삼는 distillation으로 하고,
 줄이기와 회복을 체계화했다.[^minitron]
 
-<Figure src="https://arxiv.org/html/2407.14679v2/minitron_overview2.png" alt="Minitron의 Figure 2. 1단계는 학습된 LLM으로, embedding, Transformer block(layer norm, attention, layer norm, MLP), 마지막 층으로 이루어져 있다. 2단계는 embedding 차원(Emb1–4), attention head(Head1–4), MLP channel(CH1–4)마다 중요도를 추정한다. 3단계는 그 중요도로 순위를 매기고, 4단계는 순위가 낮은 것을 잘라 Emb4·Emb2, Head3·Head1·Head4, CH1·CH4만 남긴다. 5단계는 원래 모델에서 잘라 낸 모델로 distillation해 품질을 되살린다. 가운데의 초록 화살표는 이 과정을 반복한다는 뜻이다." caption="Minitron의 pruning과 distillation 과정. 차원·head·channel의 중요도를 추정해 순위가 낮은 것을 잘라 내고, 원래 모델을 teacher로 distillation하는 과정을 반복한다." source="Muralidharan et al. (2024), Compact Language Models via Pruning and Knowledge Distillation, Figure 2. CC BY 4.0. 원본 그대로 사용." hero />
+<Figure src="https://arxiv.org/html/2407.14679v2/minitron_overview2.png" alt="Minitron의 Figure 2. 1단계는 학습된 LLM으로, embedding, Transformer block(layer norm, attention, layer norm, MLP), 마지막 층으로 이루어져 있다. 2단계는 embedding 차원(Emb1–4), attention head(Head1–4), MLP channel(CH1–4)마다 중요도를 추정한다. 3단계는 그 중요도로 순위를 매기고, 4단계는 순위가 낮은 것을 잘라 Emb4·Emb2, Head3·Head1·Head4, CH1·CH4만 남긴다. 5단계는 원래 모델에서 잘라 낸 모델로 distillation해 품질을 되살린다. 가운데의 초록 화살표는 이 과정을 반복한다는 뜻이다." caption="Minitron의 pruning과 distillation 과정. 차원·head·channel의 중요도를 추정해 순위가 낮은 것을 잘라 내고, 원래 모델을 teacher로 distillation하는 과정을 반복한다." source="Muralidharan et al. (2024), Compact Language Models via Pruning and Knowledge Distillation, Figure 2 · arXiv:2407.14679v2 · CC BY 4.0 · 수정 없음" hero />
 
-Minitron은 Nemotron-4 15B에서 너비(embedding 차원, head, MLP channel)와 깊이를 줄여 8B와 4B 모델을 만들고,
+Minitron은 Nemotron-4 15B의 너비(embedding 차원, head, FFN channel)를 줄여 8B와 4B 모델을 만들고(층 수는 32 그대로, Table 5),
 원래 학습 데이터의 3% 미만으로 distillation해 품질을 되살렸다.
 모델마다 처음부터 학습할 때보다 학습 토큰이 최대 40배 적게 들었고,
 모델 계열 전체로는 계산을 1.8배 아꼈으며,
-처음부터 학습한 같은 크기의 모델보다 MMLU 점수가 최대 16% 높았다.[^minitron]
+처음부터 학습한 같은 크기의 모델보다 MMLU(Massive Multitask Language Understanding) 점수가 상대적으로 최대 16% 높았다(8B에서 54.7 대 63.8, Table 2).[^minitron]
 원논문은 실험에서 얻은 지침도 정리했다.
 이 규모(15B 이하)에서는 깊이보다 너비를 줄이는 편이 낫고,
-회복 학습은 일반 언어 모델링 loss 대신 teacher와의 KL divergence만으로 하는 편이 낫다는 것이다.
-다만 너비 pruning이 낫다는 결과는 회복 학습을 한 뒤의 이야기이고,
-지운 직후의 상태로 비교하면 그렇지 않았다(Table 1).
+회복 학습은 일반 언어 모델링 loss 대신 teacher와의 logit KL(Kullback–Leibler) divergence만으로 하는 편이 낫다는 것이다.
+깊이를 많이 줄였다면 중간 층의 표현을 맞추는 loss도 더한다.
+지운 직후의 손실로 후보를 고르면 안 된다는 것도 보였다.
+Head와 FFN channel만 지운 모델은 지운 직후에는 embedding 차원까지 지운 모델보다 나았지만, 짧은 재학습 뒤에는 순서가 뒤집혔다(Table 1).
 
-후속 보고서는 같은 방법으로 Llama 3.1 8B를 4B로 줄였다.[^minitron-practice]
-원래 학습 데이터에 접근할 수 없을 때는 distillation 데이터로 teacher를 먼저 조금 미세조정하는 teacher correction을 더했고,
-94B 토큰으로 회복 학습을 마쳤다.
-TensorRT-LLM에서 원래 8B보다 깊이를 줄인 모델은 2.7배, 너비를 줄인 모델은 1.8배 빨랐다.
-깊이 pruning은 순차로 계산할 층 수 자체를 줄이므로 속도 이득이 크고,
-너비 pruning은 품질이 더 좋다는 맞교환이다.
+후속 보고서는 같은 방법으로 Llama 3.1 8B를 약 4.5B 크기의 두 모델로 줄였다.[^minitron-practice]
+하나는 층을 32개에서 16개로 줄였고, 다른 하나는 hidden 차원과 FFN channel을 줄였다.
+원래 학습 데이터에 접근할 수 없어서 distillation 데이터로 teacher를 약 100B 토큰 미세조정하는 teacher correction을 먼저 했고,
+학생은 따로 94B 토큰으로 회복 학습했다.
+H100에서 TensorRT-LLM과 FP8(8-bit floating point)로 잰 처리량(requests/s)은 원래 8B보다 깊이를 줄인 모델이 2.7배, 너비를 줄인 모델이 1.8배 높았다(Figure 10).
+8B는 batch 32, 4B는 batch 64로 잰 값이라 작아진 모델이 더 큰 batch를 담는 이득도 들어 있다.
+깊이 pruning은 순차로 계산할 층 수 자체를 줄여 속도 이득이 크고,
+너비 pruning은 MMLU가 60.5로 깊이 쪽의 58.7보다 높아 품질이 낫다는 맞교환이다.
 
 ## 4. Distillation과 작은 모델
 
@@ -273,9 +280,10 @@ Post-training을 다룰 때 teacher의 확률 분포를 학생이 따라 하도�
 정답 토큰 하나만 맞히는 대신 teacher가 다음 토큰들에 준 확률 전체를 목표로 삼으면,
 같은 토큰으로 더 많은 정보를 배운다.
 
-Google의 Gemma 2는 2B와 9B 모델을 다음 토큰 예측 대신 큰 모델의 확률을 목표로 하는 distillation으로 사전학습했다.[^gemma2]
+Google의 Gemma 2는 2B와 9B 모델을 이렇게 사전학습했다.[^gemma2]
+다음 토큰을 예측한다는 점은 그대로이고 목표 분포만 바뀐다.
 2B 모델을 500B 토큰으로 학습한 비교 실험에서 세 벤치마크의 평균이 처음부터 학습하면 60.3, 7B 모델로부터 distillation하면 67.7이었다(Table 6).
-학습 토큰은 이론적인 compute-optimal 양의 50배를 넘었다.
+실제 2B와 9B 모델은 2T와 8T 토큰으로 학습해, 이론적인 compute-optimal 양의 50배를 넘겼다(원논문 §1).
 Meta의 Llama 3.2 1B와 3B는 pruning과 distillation을 함께 썼다.
 Llama 3.1 8B를 구조적으로 한 번에 pruning하고,
 사전학습 단계에서 Llama 3.1 8B와 70B의 logit을 토큰별 목표로 넣어 distillation으로 성능을 되살렸다.[^llama32]
@@ -286,16 +294,16 @@ Llama 3.1 8B를 구조적으로 한 번에 pruning하고,
 
 ## 5. Low-rank factorization
 
-### 5-1. 행렬을 작은 행렬의 곱으로
+### 5-1. SVD 근사
 
 $d\times n$ 가중치 행렬 $W$를 rank $r$의 두 행렬 $U\in\mathbb{R}^{d\times r}$,
 $V\in\mathbb{R}^{r\times n}$의 곱으로 근사하면,
-파라미터와 행렬곱의 FLOPs가 $dn$에서 $(d+n)r$로 바뀐다.
+파라미터 수는 $dn$에서 $(d+n)r$로, 토큰 하나를 처리하는 행렬곱 FLOPs는 $2dn$에서 $2(d+n)r$로 바뀐다.
 이득을 보려면 $r<dn/(d+n)$이어야 한다.
 $4096\times4096$ 행렬이라면 $r<2048$이고, $r=1024$로 두면 파라미터가 절반이 된다.
-다만 행렬곱 하나가 $XU$와 $(XU)V$ 두 번으로 바뀌어 중간 결과를 한 번 더 쓰고 읽고 kernel도 하나 늘어나므로,
+다만 층 출력 $WX$를 구하는 행렬곱 하나가 $VX$와 $U(VX)$ 두 번으로 바뀌어 중간 결과를 한 번 더 쓰고 읽고 kernel도 하나 늘어나므로,
 FLOPs가 절반이 되어도 실제 지연은 그만큼 줄지 않을 수 있다.
-가장 좋은 rank-$r$ 근사는 SVD(singular value decomposition)로 큰 특이값 $r$개만 남겨 얻는다.
+가중치 오차(Frobenius norm)가 가장 작은 rank-$r$ 근사는 SVD(singular value decomposition)로 큰 특이값 $r$개만 남겨 얻는다.
 
 문제는 LLM의 가중치가 낮은 rank에 잘 들어맞지 않는다는 점이다.
 Yuan 등의 ASVD 실험에서 LLaMA-7B의 파라미터를 SVD로 5%만 줄여도 perplexity가 5.68에서 2,800으로 무너졌다(Table 1).[^asvd]
@@ -311,35 +319,36 @@ ASVD는 activation의 크기로 만든 대각 행렬 $S$를 가중치에 곱한 
 큰 activation이 들어오는 방향을 우선 보존한다.
 층마다 민감도가 달라서 rank도 층마다 다르게 정한다.
 그 결과 LLaMA-7B의 파라미터를 5%, 10%, 15% 줄였을 때 perplexity가 5.78, 6.09, 6.80으로 유지되었다.[^asvd]
-Wang 등의 SVD-LLM은 activation을 whitening한 뒤 분해해,
-작은 특이값을 잘라 내는 것이 층 출력의 오차를 최소화하도록 만들었다.
-20%를 줄인 LLaMA-2-7B의 perplexity가 SVD 18,192, ASVD 10.10에 비해 7.73이었다(원래 5.47).[^svdllm]
+Wang 등의 SVD-LLM은 calibration 입력의 방향별 크기와 상관을 고르게 맞추는 whitening 변환을 가중치에 넣고 분해해,
+작은 특이값을 잘라 낸 만큼이 곧 층 출력의 오차가 되도록 만들었다.
+20%를 줄인 LLaMA-2-7B의 perplexity는 원래 5.47, SVD 18,192, ASVD 10.10이었고,
+SVD-LLM은 whitening만으로 8.50, 분해한 두 행렬을 LoRA로 하나씩 미세조정하면 7.73이었다(Table 2).[^svdllm]
 
-그래도 가중치 low-rank는 아직 압축률이 높지 않다.
+그래도 학습된 가중치를 사후에 분해하는 방식은 아직 압축률이 높지 않다.
 20% 압축에서도 perplexity가 원래보다 꽤 높다.
-Low-rank 구조는 다 학습한 가중치를 나중에 분해할 때보다,
-처음부터 그 구조로 학습할 때 더 잘 작동해 왔다.
-앞에서 본 MLA는 key와 value를 저차원 latent로 압축하는 low-rank 구조를 처음부터 학습한 예로 볼 수 있다.
+Low-rank 구조를 처음부터 모델에 넣고 학습하는 길도 있다.
+앞에서 본 MLA(multi-head latent attention)는 key와 value를 저차원 latent로 압축하는 low-rank 구조를 처음부터 학습한 예다.
 
 ## 6. 정리
 
-파라미터를 줄이면 bytes와 FLOPs가 함께 준다.
-LLM 규모에서는 재학습 없이 지워야 하므로, SparseGPT는 남은 가중치를 고쳐 층 출력을 보존했고,
+파라미터를 줄이면 가중치의 bytes와 FLOPs가 함께 준다.
+LLM 규모에서는 지운 뒤의 재학습이 비싸서 one-shot pruning이 나왔다.
+SparseGPT는 남은 가중치를 고쳐 층 출력을 보존했고,
 Wanda는 가중치와 입력의 크기를 함께 보는 점수로 가중치 수정 없이 비슷한 품질을 얻었다.
 
 그러나 비구조적으로 흩어진 0은 GPU에서 속도로 이어지기 어렵다.
-2:4 sparsity는 하드웨어가 가속하는 대신 품질 손실이 크고, 실측 속도도 1.2–1.4배에 그쳤다.
-구조 단위로 head, channel, 층을 지우면 작은 dense 모델이 되어 확실히 빨라지지만 품질 손실이 커서,
+2:4 sparsity는 하드웨어가 가속하는 대신 품질 손실이 크고, 앞의 7B·13B 실측에서 전체 속도는 1.2–1.6배였다.
+구조 단위로 head, channel, 층을 지우면 작은 dense 모델이 되어 일반 kernel로 빨라지지만 품질 손실이 커서,
 추가 학습, 특히 원래 모델로부터의 distillation으로 회복한다.
 Minitron, Llama 3.2, Gemma 2가 보여 주듯 큰 모델을 pruning하고 distillation으로 되살리는 방식,
 그리고 처음부터 distillation으로 사전학습하는 방식이 작은 모델을 만드는 데 널리 쓰인다.
 
 Low-rank factorization은 학습된 가중치에 사후로 적용하면 activation을 고려해도 압축률이 아직 높지 않고,
-MLA처럼 처음부터 low-rank 구조로 학습할 때 더 잘 작동했다.
+MLA처럼 처음부터 low-rank 구조를 넣어 학습하는 방식이 따로 있다.
 어느 방법이든 파라미터 수가 준 만큼 빨라진다고 기대하지 말고,
 남은 가중치의 모양이 엔진의 kernel에서 실제로 빨라지는지와 생성 작업의 품질을 함께 잰다.
 
-[^survey]: Zhu, X., Li, J., Liu, Y., Ma, C., & Wang, W. (2024). A Survey on Model Compression for Large Language Models. *Transactions of the Association for Computational Linguistics*, 12. [arXiv:2308.07633v4](https://arxiv.org/abs/2308.07633v4).
+[^survey]: Zhu, X., Li, J., Liu, Y., Ma, C., & Wang, W. (2024). A Survey on Model Compression for Large Language Models. *Transactions of the Association for Computational Linguistics*, 12, 1556–1577. [arXiv:2308.07633v4](https://arxiv.org/abs/2308.07633v4).
 
 [^sparsegpt]: Frantar, E., & Alistarh, D. (2023). SparseGPT: Massive Language Models Can Be Accurately Pruned in One-Shot. *ICML 2023*. [arXiv:2301.00774](https://arxiv.org/abs/2301.00774).
 
@@ -347,11 +356,13 @@ MLA처럼 처음부터 low-rank 구조로 학습할 때 더 잘 작동했다.
 
 [^nvidia24]: Mishra, A., Albericio Latorre, J., Pool, J., et al. (2021). Accelerating Sparse Deep Neural Networks. [arXiv:2104.08378](https://arxiv.org/abs/2104.08378).
 
+[^h100]: NVIDIA. *NVIDIA H100 Tensor Core GPU*. [제품 사양](https://www.nvidia.com/en-us/data-center/h100/).
+
 [^maskllm]: Fang, G., Yin, H., Muralidharan, S., et al. (2024). MaskLLM: Learnable Semi-Structured Sparsity for Large Language Models. *NeurIPS 2024*. [arXiv:2409.17481](https://arxiv.org/abs/2409.17481).
 
 [^llmpruner]: Ma, X., Fang, G., & Wang, X. (2023). LLM-Pruner: On the Structural Pruning of Large Language Models. *NeurIPS 2023*. [arXiv:2305.11627](https://arxiv.org/abs/2305.11627).
 
-[^shortgpt]: Men, X., Xu, M., Zhang, Q., et al. (2025). ShortGPT: Layers in Large Language Models are More Redundant Than You Expect. *Findings of ACL 2025*. [arXiv:2403.03853](https://arxiv.org/abs/2403.03853).
+[^shortgpt]: Men, X., Xu, M., Zhang, Q., et al. (2025). ShortGPT: Layers in Large Language Models are More Redundant Than You Expect. *Findings of ACL 2025*, 20192–20204. [ACL Anthology](https://aclanthology.org/2025.findings-acl.1035/).
 
 [^gromov]: Gromov, A., Tirumala, K., Shapourian, H., Glorioso, P., & Roberts, D. A. (2025). The Unreasonable Ineffectiveness of the Deeper Layers. *ICLR 2025*. [arXiv:2403.17887](https://arxiv.org/abs/2403.17887).
 
