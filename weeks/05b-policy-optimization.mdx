@@ -4,18 +4,9 @@ week: 5
 order: 1
 ---
 
-앞의 RLVR(reinforcement learning with verifiable rewards) 노트가 그린 학습 절차에서 "보상으로 정책을 갱신한다"는 한 줄을 이 노트가 풀어 본다.
-앞 주차 RLHF(reinforcement learning from human feedback)에서 본 PPO(proximal policy optimization)는 value model로 advantage를 추정했다.
-검증 가능한 보상으로 긴 추론을 학습할 때는 사정이 다르다.
+RLHF(reinforcement learning from human feedback)에서 본 PPO(proximal policy optimization)는 value model로 advantage를 추정했다.
+검증 보상으로 긴 추론을 학습하는 RLVR(reinforcement learning with verifiable rewards)에서는 사정이 다르다.[^survey]
 응답이 수천 토큰이고 보상은 끝에 한 번뿐이며, 같은 문제의 응답을 여러 개 뽑는 것이 자연스럽다.
-이 노트는 그 조건에서 PPO의 부품을 하나씩 떼어 내고 바꾼 계보를 따라간다.
-출발점은 value model을 같은 문제의 다른 응답으로 대신하는 RLOO(REINFORCE leave-one-out)와 GRPO(group relative policy optimization)다.
-GRPO의 목적함수가 만드는 세 가지 문제(길이·난이도 편향, 탐색의 붕괴, 토큰 단위 비율의 잡음)에서 해법이 세 갈래로 나뉘고,
-정규화의 범위를 배치 전체로 넓힌 갈래가 따로 있다.
-끝에서는 실제 recipe의 조합과, 학습 중에 이 문제들을 가려내는 지표를 정리한다.
-
-전체 지도는 RLVR 노트와 같은 Zhang 등의 서베이[^survey]로 잡는다.
-이 노트는 학습 시스템이 만드는 off-policy 문제보다 정책 갱신식 자체에 집중한다.
 
 ## 1. Value model 없는 정책 갱신
 
@@ -274,9 +265,7 @@ GSPO에서는 응답 하나가 통째로 살거나 잘린다.
 토큰별 계수는 한 응답 안에서는 같지만 응답 길이에 따라 달라진다.
 Clipping에 걸리지 않을 때 응답 $o_i$의 토큰 하나가 받는 gradient 계수는 공통 계수 $1/G$를 생략하면 $s_i\hat A_i/\lvert o_i\rvert$이므로
 응답 길이로 나누는 GRPO의 길이 가중은 남는다.
-비율의 정의가 다르니 clipping 폭도 다르다.
-GSPO 논문의 실험은 하한 쪽 폭과 상한 쪽 폭으로 GRPO에 0.2와 0.27(확률비 구간 $[0.8,1.27]$)을, GSPO에 $3\times10^{-4}$와 $4\times10^{-4}$를 썼고,
-두 방법의 clipping 폭이 대개 자릿수부터 다르다고 밝힌다.[^gspo]
+비율의 정의가 다르니 clipping 폭도 달라서, 두 방법의 clipping 폭은 대개 자릿수부터 다르다.[^gspo]
 
 <Callout type="example">
 **세 토큰 응답의 clipping.** Advantage가 양수인 응답에서 세 토큰의 비율이 갱신 중에 $\rho=(1.5,\ 1.0,\ 0.9)$가 되었다고 하자(교육용 가정).
