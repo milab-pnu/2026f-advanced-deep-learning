@@ -36,7 +36,7 @@ value 예측이 부정확하면 그 예측을 기준으로 계산한 advantage�
 Ahmadian 등은 이 설정이 사실상 bandit 문제에 가깝다고 지적했다.
 보상이 응답 전체에 한 번 오므로 응답 하나를 행동 하나로 보면 상태 전이가 없고,
 강한 사전학습 모델에서 출발하므로 policy gradient의 분산이 걱정만큼 크지 않다는 것이다.
-그래서 value model·clipping·GAE(generalized advantage estimation) 없이 REINFORCE에 간단한 baseline만
+그래서 value model과 clipping 없이 REINFORCE에 간단한 baseline만
 붙인 RLOO(REINFORCE leave-one-out)가 요약과 대화 과제에서 PPO를 앞섰다고 보고했다.[^rloo]
 Baseline은 같은 프롬프트에서 뽑은 $k$개 응답 중 자기를 뺀 나머지 $k-1$개의 보상 평균이다.
 
@@ -47,6 +47,7 @@ DeepSeekMath의 GRPO는 같은 발상을 PPO의 틀 안에서 구현했다.[^dee
 정책 파라미터를 $\theta$로 쓴다(04b의 $x$, $y$에 해당한다).
 프롬프트 $q$마다 옛 정책 $\pi_{\theta_{\mathrm{old}}}$에서 응답 $G$개 $\{o_1,\dots,o_G\}$를 뽑고,
 각 응답의 보상 $r_i$를 그룹 안에서 정규화해 advantage로 쓴다.
+이 노트의 계산 예시는 표준편차의 분모를 $G$로 두며,
 구현에서는 0으로 나누기를 피하는 작은 상수를 분모에 더한다.
 
 $$

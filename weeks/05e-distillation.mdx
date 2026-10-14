@@ -82,14 +82,15 @@ Kim과 Rush는 2016년 신경망 기계번역에서 KD(knowledge distillation)�
 위의 분류 증류를 토큰마다 반복하는 셈이고, teacher의 확률 분포(soft probability)에 접근할 수 있어야 한다.
 <strong>Sequence-level KD</strong>(SeqKD)는 문장 전체에 대한 teacher의 분포를 맞추려 한다.
 가능한 문장이 지수적으로 많아 그대로는 계산할 수 없으므로,
-그 분포를 가장 확률이 높은 문장 하나로 근사하고 그 문장을 teacher의 빔 서치(beam search) 출력으로 찾는다.
+그 분포를 가장 확률이 높은 문장 하나로 근사하고, 그 문장을 teacher의 빔 서치(beam search)로 근사해 찾는다.
 결국 학습 데이터의 입력마다 teacher가 번역문을 생성하고, 학생은 그 번역문을 정답처럼 보통의 cross-entropy로 학습한다.
 영어→독일어 번역에서 SeqKD는 word-level KD보다 좋았고, 둘을 함께 쓰면 더 좋아졌다(Table 1).
 Teacher의 분포 없이 생성한 텍스트만 있으면 되는 이 방식이 다음 절에서 볼 응답 기반 증류의 원형이다.
 
 ### 1-2. 응답 기반 증류
 
-LLM에서 가장 널리 쓰인 방식은 SeqKD를 그대로 옮긴 것이다.
+LLM에서 가장 널리 쓰인 방식은 teacher가 만든 시퀀스를 정답처럼 학습한다는 SeqKD의 발상을 이어받았다.
+다만 빔 서치 출력 하나 대신 표집하고 정답으로 거른 응답을 쓰는 경우가 많다.
 Teacher가 응답을 생성하고, 학생이 그 응답으로 04a §1의 SFT(supervised fine-tuning)를 한다.
 04a §2-3의 Self-Instruct와 Alpaca가 이 방식이었고, DeepSeek-R1은 이것을 추론 모델에 적용했다.
 데이터는 05a §4-2의 3단계에서 만든 약 80만 건(추론 약 60만 건, 일반 약 20만 건)이다.
@@ -272,7 +273,7 @@ teacher가 학생보다 나은 점은 자기 영역에서 RL을 더 받았다는
 Teacher들은 서로 독립적으로, 병렬로 만들 수 있고,
 학생은 가중치 평균이 아니라 정책 공간에서 영역별로 다른 teacher를 따른다.
 Qwen3-30B-A3B 실험에서 MOPD의 학생은 세 영역 모두에서 출발점과 teacher 사이 격차의 91–95%를 메웠고,
-영역을 섞어 RL하거나 차례로 RL한 경우, teacher 응답을 SFT한 경우, teacher 가중치를 병합한 경우보다 높았다(원논문 Table 2).
+세 영역의 정규화 점수를 평균한 비교에서 영역을 섞어 RL하거나 차례로 RL한 경우, teacher 응답을 SFT한 경우, teacher 가중치를 병합한 경우보다 높았다(원논문 Table 2).
 혼합 RL보다 적은 학습 샘플로 teacher 수준에 도달했는데(전문 teacher를 만드는 비용은 뺀 비교다),
 저자들은 이를 토큰마다 오는 조밀한 신호가 궤적당 한 번 오는 보상보다 표본 효율이 높기 때문이라고 설명한다.[^mopd]
 

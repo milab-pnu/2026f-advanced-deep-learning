@@ -58,8 +58,10 @@ optimization)의 value model을 없앤 GRPO(group relative policy optimization)�
 보상 쪽에서는 Allen AI의 Tülu 3가 SFT와 DPO(direct preference optimization) 뒤의 마지막 단계로,
 정답을 검증할 수 있는 프롬프트에서 검증 통과 시에만 보상을 주는 단계를 두고 이를 RLVR이라고 이름 붙였다.[^tulu3]
 Tülu 3의 목적은 chat model의 마지막 다듬기였다.
+이보다 앞선 2024년 9월에는 OpenAI의 o1이 대규모 RL로 긴 사고 과정을 학습한 추론 모델을 내놓았지만,
+학습 방법과 보상은 공개하지 않았다(05c §1-2).
 2025년 1월의 DeepSeek-R1-Zero가 GRPO와 검증 보상을 base model에서 직접,
-훨씬 큰 규모로 결합하면서 다른 목적이 드러났다.
+훨씬 큰 규모로 결합하고 방법을 공개하면서 이 계보의 목적이 바뀌었다.
 **긴 추론 행동을 RL로 만들어 내는 것**이다.[^r1]
 
 GRPO의 직관은 04b §3-1의 baseline에서 이어진다.
