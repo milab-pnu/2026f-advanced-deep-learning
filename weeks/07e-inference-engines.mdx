@@ -213,6 +213,8 @@ vllm bench serve --model meta-llama/Llama-3.1-8B-Instruct \
 `--ignore-eos`는 종료 토큰(EOS, end of sequence)이 나와도 정해진 길이까지 생성하게 해 두 서버의 출력 길이를 맞추고,
 `--num-warmups`는 측정 전에 warmup 요청을 보낸다(기본값 0).
 `e2el`은 요청 하나의 전체 지연(end-to-end latency)이다.
+이 random 입력은 길이를 통제한 비교용이므로,
+prefix 재사용이나 draft 수락처럼 내용에 좌우되는 효과는 대표 프롬프트와 실제 입출력 길이 분포로 다시 잰다.
 `--max-concurrency`를 1, 4, 16, 64, 256으로 바꿔 가며 반복하고,
 가로축에 동시 요청 수로 나눈 처리량(output token throughput ÷ 동시 요청 수),
 세로축에 GPU 한 대의 output token throughput을 두어 두 정밀도의 곡선을 겹쳐 그린다.

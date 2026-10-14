@@ -202,7 +202,8 @@ EAGLE-3는 feature 예측이라는 제약을 버리고 토큰을 직접 예측�
 
 EAGLE 계열은 추측의 깊이 방향으로 draft의 forward를 차례로 돌리므로, 추측이 길수록 drafting 시간도 늘어난다.
 이 순차 단계를 없애려고 추측 블록 전체를 forward 한 번에 내는 병렬 drafting이 나왔다.
-DFlash는 target의 feature를 조건으로 받는 가벼운 block diffusion 모델로 블록 안의 토큰을 한꺼번에 만든다.[^dflash]
+DFlash는 target의 feature를 조건으로 받는 가벼운 block diffusion 모델로,
+블록 안의 비어 있는 여러 위치를 한 번에 예측해 토큰을 한꺼번에 만든다.[^dflash]
 vLLM도 P-EAGLE, DFlash, DSpark 같은 병렬 drafting 방식을 지원한다.[^vllm-parallel]
 
 ### 2-4. 학습 없는 draft
