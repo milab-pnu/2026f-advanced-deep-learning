@@ -125,7 +125,7 @@ GRPO를 쓰면 value model도 없어진다.
 | 수학 (정답이 수식·수치) | 응답에서 최종 답을 추출해 정답과 동치인지 판정 | 답 추출 실패, $\frac{1}{2}$와 0.5 같은 표기 차이, 여러 답이 가능한 문제 |
 | 코드 | 생성한 코드를 실행해 테스트 케이스 통과 여부 확인 | 테스트가 덮지 못하는 오류, 실행 환경, 시간 제한 |
 | 정밀한 지시 따르기 | "300단어 이하", "쉼표 금지" 같은 조건을 프로그램으로 확인 | 조건은 맞지만 내용이 없는 응답(§5-2) |
-| 일반 대화 | 정답을 결정적으로 판정하는 검증기를 만들기 어려워 LLM(large language model) 판정자나 reward model을 쓴다 | 04d의 모든 문제 |
+| 일반 대화 | 정답을 결정적으로 판정하는 검증기를 만들기 어려워 LLM(large language model) 판정자나 reward model을 쓴다 | 04d §4의 편향, 내용 없는 응답의 통과(§5-2) |
 
 수학의 동치 판정은 보기보다 어렵다.
 Hugging Face의 Math-Verify는 LaTeX와 일반 표기를 파싱해 수치·기호(SymPy)·집합·구간·행렬의 동치를 판정하는 라이브러리로,
@@ -321,6 +321,17 @@ KL이 큰 실행에서 검증기가 확인하는 형식 조건은 만족하되 �
 over-optimization을 관찰했다(원논문 Appendix B.4).[^tulu3]
 이를 단순화한 가상의 예로, "300단어 이하로 쓰라"는 조건은 아무 말이나 300단어 이하로 써도 통과한다.
 
+검증기가 프로그램이 아니라 LLM 판정자여도 같은 일이 생긴다.
+정답을 규칙으로 판정하기 어려운 문제에서는 LLM이 응답을 참조 답과 비교해 맞는지 판정하게 하기도 한다.
+Zhao 등은 이 판정을 보상으로 학습하다가 학습이 무너지는 것을 보았다.[^master-key]
+응답 길이가 급격히 줄고 KL이 치솟았는데,
+정책이 풀이 대신 "Solution", "Thought process:" 같은 시작 문구만 내놓았고 판정자(Qwen2.5-72B-Instruct)가 이를 정답으로 판정했기 때문이다.
+이런 문구를 여러 판정자에 넣어 보니 콜론 하나(":")만 내도 GPT-4o가 정답으로 잘못 판정하는 경우가 있었고,
+"Thought process:"는 LLaMA3-70B-Instruct와 Qwen2.5-72B-Instruct가 대부분 정답으로 판정했다(Table 1).
+저자들은 풀이의 첫 문장만 남긴 응답을 오답 예로 넣어 Qwen2.5-7B-Instruct 기반의 판정 모델 Master-RM을 따로 학습했다.
+이 오답 예는 평가에 쓴 문구와 겹치지 않게 만들었는데도 Master-RM은 평가한 문구에서 오판이 거의 없었다.
+다만 시험한 문구에 대한 결과이며, 새로운 허점까지 모두 막았다는 증거는 아니다.
+
 Helff 등은 2026년에 더 미묘한 사례를 보고했다.[^helff]
 과제는 예시에서 규칙을 귀납하는 것이다.
 기차와 칸의 속성(칸의 색 등)과 각 기차가 동쪽·서쪽 중 어디로 가는지가 주어지면,
@@ -370,4 +381,5 @@ RM-Bench가 문체 조건을 평가에 넣은 것과 같은 논리다.
 [^qwen3]: Qwen Team. (2025). *Qwen3 Technical Report*. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
 [^olmo3]: Team Olmo. (2025). *Olmo 3*. [arXiv:2512.13961v2](https://arxiv.org/abs/2512.13961v2).
 [^spurious]: Shao, R., et al. (2025). *Spurious Rewards: Rethinking Training Signals in RLVR*. [arXiv:2506.10947v2](https://arxiv.org/abs/2506.10947v2).
+[^master-key]: Zhao, Y., et al. (2025). *One Token to Fool LLM-as-a-Judge*. [arXiv:2507.08794v1](https://arxiv.org/abs/2507.08794v1).
 [^helff]: Helff, L., et al. (2026). *LLMs Gaming Verifiers: RLVR can Lead to Reward Hacking*. LLM Reasoning Workshop @ ICLR 2026. [arXiv:2604.15149v1](https://arxiv.org/abs/2604.15149v1).

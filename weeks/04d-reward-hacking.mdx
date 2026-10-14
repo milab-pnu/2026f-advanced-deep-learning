@@ -221,7 +221,7 @@ judge를 사람으로 바꾸면 편향이 사라질까.
 학습된 많은 LLM이 사용자의 믿음에 맞춰 답하는 경향, 즉 아첨(sycophancy)을 일관되게 보인다는 것을 확인했다.[^sycophancy]
 원인의 일부는 사람의 선호 데이터에 있었다.
 사람과 이 데이터로 학습한 preference model은 때로 정확한 응답보다 설득력 있게 쓰인 아첨 응답을 더 좋아했다.
-사람의 선호는 정답의 대리 지표로서 한계가 있다는 뜻이다.
+사람의 선호는 **정답의 대리 지표로서 한계가 있다**는 뜻이다.
 
 그래서 사람 평가도 설계가 필요하다.
 Chatbot Arena는 익명의 두 모델에 사용자가 투표하는 방식이고, 수십만 건의 투표에 Bradley–Terry 모형을 맞춰 순위를 만든다.[^arena]
@@ -229,55 +229,6 @@ Chatbot Arena는 익명의 두 모델에 사용자가 투표하는 방식이고,
 사용자가 주로 LLM에 관심이 많은 사람들이고 질문이 주로 자신들의 채팅 화면에서
 나와 실제 서비스의 쓰임과 다를 수 있다는 점을 한계로 들었다.
 투표하는 사람의 선호가 설득력 있는 문체나 자기 믿음에 맞는 응답에 끌리는 문제도 앞에서 본 것처럼 그대로 남는다.
-
-### 4-3. 판정을 생성하는 reward model
-
-MT-Bench의 수학 판정에서 보았듯이 judge의 약점 중 하나는 추론 채점이다.
-이를 겨냥한 한 방향은 "이 답이 맞는가?"에 대한 판정을 토큰 생성으로 학습하는 것이다.
-Zhang 등의 generative verifier(GenRM)는 문제와 풀이를 입력받아 "Yes" 또는 "No"를 예측하도록 학습하며,
-올바른 풀이를 생성하는 SFT도 함께 수행한다.[^genrm]
-최종적으로 응답을 고르는 데 쓰는 값은 여전히 스칼라 점수이고,
-여기서는 "Yes" 토큰의 확률 $P(\text{Yes})$다.
-
-GenRM-CoT는 판정 전에 검증 근거를 CoT(chain of thought)로 생성한다.
-이 능력도 같은 next-token 손실로 학습한다.
-문제와 풀이 뒤에 검증 근거와 최종 "Yes"/"No"를 이어 붙인 텍스트로 SFT하는 것이다.
-GSM8K 실험에서는 이 근거를 LLM으로 합성했다.
-문제·풀이와 함께 참조 풀이를 보여 주고 단계별로 검증하게 한 뒤, 최종 판정이 맞은 근거만 남겼다.
-참조 풀이는 학습 데이터를 만들 때만 쓰고 검증기의 입력에는 넣지 않으므로,
-검증기는 참조 풀이 없이 판정하는 법을 배운다.[^genrm]
-
-사용할 때는 같은 풀이에 대해 근거를 여러 번 생성하고,
-각 근거를 조건으로 계산한 $P(\text{Yes})$를 평균해 점수로 쓴다(§3.3).
-예를 들어 세 근거 뒤의 확률이 0.9, 0.8, 0.1이라면 점수는 0.6이다(교육용 가정).
-한 번의 판정 대신 여러 검증 결과를 합쳐 풀이를 고르는 것이다.
-
-Gemini 1.0 Pro가 만든 GSM8K 풀이 후보 중 하나를 고를 때,
-Gemma 2 9B로 학습한 GenRM-CoT를 쓰면 정답률이 검증 없이 풀이를 쓸 때보다 크게 올랐다(Figure 1).
-분류형 검증기와의 차이는 학습하지 않은 더 어려운 수학 과제로 옮겼을 때 두드러졌다.
-GSM8K로만 학습한 검증기를 MMLU의 수학 과목에 그대로 써서 후보 중 하나를 고르게 하면,
-GenRM-CoT가 모든 과목에서 분류형보다 높았고 어려운 과목일수록 격차가 커졌다(Table 1).
-이것은 후보를 고르는 성능의 결과이고, RL의 보상으로 썼을 때 해킹에 강하다는 직접 증거는 아니다.
-다만 후보마다 검증 근거를 여러 개 생성해야 해서 계산량이 크게 늘어난다.
-
-판정을 생성하는 모델도 LLM이므로 앞에서 본 편향에서 자유롭다고 가정할 근거는 없고,
-실제로 더 단순한 허점이 보고되었다.
-Zhao 등은 LLM이 응답을 참조 답과 비교해 맞는지 판정하게 하고 그 판정을 보상으로 쓰다가,
-학습이 무너지는 것을 보았다.[^master-key]
-응답 길이가 급격히 줄고 KL이 치솟았는데,
-정책이 풀이 대신 "Solution", "Thought process:" 같은 시작 문구만 내놓았고
-judge(Qwen2.5-72B-Instruct)가 이를 정답으로 판정한 것이다.
-
-이 논문은 이런 LLM 판정 보상도 RLVR(reinforcement learning with verifiable rewards)이라 부르지만,
-정답을 프로그램으로 확인하는 검증기와 달리 judge가 LLM이라 같은 허점을 갖는다.
-이런 내용 없는 응답을 다섯 데이터셋에서 여러 judge에 넣어 보니,
-콜론 하나(":")만 내도 GPT-4o가 정답으로 잘못 판정하는 경우(false positive)가 데이터셋에 따라 상당했고,
-"Thought process:"는 LLaMA3-70B-Instruct와 Qwen2.5-72B-Instruct가 대부분 정답으로 판정했다(Table 1).
-저자들은 풀이의 첫 문장만 남긴 응답을 오답 예로 넣고,
-Qwen2.5-7B-Instruct를 기반으로 별도의 판정 모델인 Master-RM을 학습했다.
-이 오답 예는 평가에 쓴 문구와 겹치지 않게 만들었는데도 Master-RM은 평가한 문구에서 오판이 거의 없었다.
-특정 문구를 외웠다기보다 내용 없는 시작 문구는 오답이라는 경향을 일반화한 것으로 볼 수 있다.
-다만 이것은 시험한 문구에 대한 결과이며, 새로운 허점까지 모두 막았다는 증거는 아니다.
 
 [^survey]: Wang, X., et al. (2026). Reward Hacking in the Era of Large Models: Mechanisms, Emergent Misalignment, Challenges. [arXiv:2604.13602v1](https://arxiv.org/abs/2604.13602v1).
 [^goodhart]: Manheim, D., & Garrabrant, S. (2018). Categorizing Variants of Goodhart's Law. [arXiv:1803.04585](https://arxiv.org/abs/1803.04585).
@@ -293,8 +244,6 @@ Qwen2.5-7B-Instruct를 기반으로 별도의 판정 모델인 Master-RM을 학�
 [^rmbench]: Liu, Y., et al. (2025). RM-Bench: Benchmarking Reward Models of Language Models with Subtlety and Style. *ICLR 2025*. [arXiv:2410.16184](https://arxiv.org/abs/2410.16184).
 [^wen]: Wen, X., et al. (2025). Rethinking Reward Model Evaluation: Are We Barking up the Wrong Tree? *ICLR 2025*. [arXiv:2410.05584](https://arxiv.org/abs/2410.05584).
 [^rewardbench2]: Malik, S., et al. (2026). RewardBench 2: Advancing Reward Model Evaluation. *ICLR 2026*. [arXiv:2506.01937](https://arxiv.org/abs/2506.01937).
-[^genrm]: Zhang, L., Hosseini, A., Bansal, H., Kazemi, M., Kumar, A., & Agarwal, R. (2025). Generative Verifiers: Reward Modeling as Next-Token Prediction. *ICLR 2025*. [arXiv:2408.15240](https://arxiv.org/abs/2408.15240).
-[^master-key]: Zhao, Y., et al. (2025). One Token to Fool LLM-as-a-Judge. [arXiv:2507.08794v1](https://arxiv.org/abs/2507.08794v1).
 [^judgebench]: Tan, S., et al. (2025). JudgeBench: A Benchmark for Evaluating LLM-based Judges. *ICLR 2025*. [arXiv:2410.12784](https://arxiv.org/abs/2410.12784).
 [^reliability]: Norman, J. D., Rivera, M. U., & Hughes, D. A. (2026). Reliability without Validity: A Systematic, Large-Scale Evaluation of LLM-as-a-Judge Models Across Agreement, Consistency, and Bias. [arXiv:2606.19544](https://arxiv.org/abs/2606.19544).
 [^sage]: Feng, Y., Wang, S., Cheng, Z., Wan, Y., & Chen, D. (2025). Are We on the Right Way to Assessing LLM-as-a-Judge? [arXiv:2512.16041](https://arxiv.org/abs/2512.16041).
