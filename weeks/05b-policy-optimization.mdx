@@ -62,7 +62,7 @@ $$
 $$
 
 $\rho_{i,t}=\pi_\theta(o_{i,t}\mid q,o_{i,<t})/\pi_{\theta_{\mathrm{old}}}(o_{i,t}\mid q,o_{i,<t})$는 앞 주차 PPO에서 본 토큰 확률비다.
-KL 항은 RLHF의 PPO처럼 보상에 섞지 않고 목적함수에 직접 더하며,
+KL 항은 앞 주차 RLHF의 PPO와 달리 보상에 섞지 않고 목적함수에 직접 더하며,
 토큰마다 $\frac{\pi_{\mathrm{ref}}}{\pi_\theta}-\log\frac{\pi_{\mathrm{ref}}}{\pi_\theta}-1$로 추정한다.
 이 값은 표본마다 0 이상이다.[^deepseekmath]
 Value model이 없으므로 PPO의 구성에서 critic(value model)이 빠진다.

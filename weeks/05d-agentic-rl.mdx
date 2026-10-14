@@ -31,7 +31,7 @@ Toolformer는 도구 호출 텍스트를 자기 지도 방식으로 학습했다
 대표되는 지금까지의 post-training RL을,
 응답 전체를 행동 하나로 묶은 **퇴화한 MDP**로 형식화한다.[^survey]
 상태는 프롬프트 하나이고, 그 행동 뒤에 종료 상태로 한 번 전이하며,
-보상은 한 번 온다(PPO처럼 토큰을 행동으로 보면 토큰 단위 MDP가 되지만 환경의 개입은 없다).
+보상은 한 번 온다(앞 주차 RLHF에서처럼 토큰을 행동으로 보면 토큰 단위 MDP가 되지만 환경의 개입은 없다).
 서베이는 agentic RL을 부분 관측 MDP(partially observable MDP, POMDP)로 모델링한다.
 환경에는 정책이 다 볼 수 없는 상태(파일 시스템, 검색 엔진의 색인, 사용자의 의도)가 있고,
 정책이 행동(텍스트, 도구 호출)을 내면 환경이 관측(검색 결과, 실행 출력, 사용자 답)을 돌려준다.
@@ -143,7 +143,7 @@ LLM이 ReAct 같은 형식으로 과제를 한 번 수행하면 평가자가 그
 반성은 그 과제의 다음 시도에만 쓰이므로 새 과제에서는 다시 실패하고 다시 반성해야 하고,
 기억도 문맥 길이에 묶여 원논문은 최근 반성을 1개에서 3개까지만 남겼다.
 환경의 피드백으로 나아지는 효과를 모델에 남기려면 그 피드백으로 가중치를 학습해야 한다.
-뒤에서 다루는 RL이 그 일을 맡는다.
+RL이 그 일을 맡는다.
 
 ### 2-3. Toolformer의 자기 지도 학습
 
@@ -344,7 +344,7 @@ MacDiarmid 등의 실험에서 정책이 해킹을 배우기 시작한 시점에
 환경이 개입하는 만큼 단일 응답 벤치마크보다 변동 요인이 많다.
 논문이나 자기 실험의 agent 점수를 비교할 때는 이 설정들이 같은지부터 확인해야 한다.
 
-## 4. 정리와 다음 노트
+## 4. 정리
 
 상호작용 학습의 계보는 환경의 피드백을 반성으로 적어 문맥에 남기던 단계(Reflexion)에서 그 피드백으로 가중치를 학습하는 단계(RL)로 옮겨 왔다.
 이 노트의 내용을 학습 루프 하나에 놓아 보면, 정책 갱신 식은 PPO·GRPO의 policy gradient 그대로이고 바뀌는 것은 그 주변이다.
@@ -357,9 +357,6 @@ MacDiarmid 등의 실험에서 정책이 해킹을 배우기 시작한 시점에
 서베이 §3의 나머지 능력 중 기억과 자기 개선은 Reflexion에서 프롬프팅 수준으로만 보았고, 계획과 함께 이 노트에서 더 다루지 않는다.
 서베이 §4의 과제 중 GUI(graphical user interface)와
 체화 agent(embodied agent)는 이 노트의 범위 밖이다.
-
-RL로 만든 이런 능력을 다른 모델에 어떻게 옮기는가가 다음 노트 distillation의 질문이다.
-다음 노트는 그 답을 앞 주차에서 DPO와 PPO를 비교하며 본 on-policy 관점에서 찾는다.
 
 [^survey]: Zhang, G., et al. (2026). *The Landscape of Agentic Reinforcement Learning for LLMs: A Survey*. Transactions on Machine Learning Research. [arXiv:2509.02547v5](https://arxiv.org/abs/2509.02547v5).
 [^searchr1]: Jin, B., et al. (2025). *Search-R1: Training LLMs to Reason and Leverage Search Engines with Reinforcement Learning*. COLM 2025. [arXiv:2503.09516v5](https://arxiv.org/abs/2503.09516v5).

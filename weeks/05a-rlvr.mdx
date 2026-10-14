@@ -14,7 +14,6 @@ Reward model은 그 판정을 근사했고 reward hacking에서는 근사가 어
 2025년 초 DeepSeek-R1-Zero가 사고 과정을 담은 응답으로 SFT(supervised fine-tuning)를 하지 않고 이
 보상만으로 base model에서 긴 추론을 이끌어 내면서 추론 모델 post-training의 중심이 되었다.
 이 노트는 보상의 출처를 바꾼 계보를 따라간다.
-정책 최적화, long CoT, agentic RL, distillation, RL systems 같은 이 주의 나머지 주제는 모두 이 보상 위에 선다.
 
 전체 지도는 Zhang 등이 2025년에 정리한 추론 모델을 위한 강화학습 서베이[^survey]로 잡는다.
 서베이 §3.1의 보상 설계(검증 가능한 보상, 생성형 보상, 밀집 보상, 비지도 보상, 보상 조형)와
@@ -185,7 +184,7 @@ PRM이 reward hacking을 부르면 다시 학습해야 해서 파이프라인이
 R1 계열의 보상(정확성·형식·언어 일관성,
 4단계의 reward model)은 모두 응답 단위로 주어지며 단계별 정오를 PRM으로 보상하지 않는다.
 R1-Zero에서는 풀이 과정을 담은 응답을 SFT 데이터로 주지 않았는데도 긴 사고 과정이 RL의 결과로 나타났고,
-R1은 뒤에서 보듯 cold start와 rejection sampling SFT로 그렇게 만든 풀이를 다시 학습한다.
+R1은 cold start와 rejection sampling SFT로 그렇게 만든 풀이를 다시 학습한다.
 Outcome과 process 중 어느 쪽이 나은가는 서베이 §4.5가 열린 문제로 정리하며,
 이 노트는 outcome 보상으로 무엇이 가능했는지를 본다.
 
@@ -202,7 +201,7 @@ Olmo 3 Think의 RLVR은 수학·코드·지시 따르기에 일반 대화까지 
 검증기가 없는 과제에는 학습된 보상과 그 문제가 그대로 남는다.
 
 이 자리에서 RLVR은 이미 쓸 만한 모델을 다듬는 도구였다.
-다음 절의 DeepSeek-R1-Zero는 같은 보상을 base model에 직접, 훨씬 큰 규모로 적용하면 무엇이 일어나는지를 보여 주었다.
+DeepSeek-R1-Zero는 같은 보상을 base model에 직접, 훨씬 큰 규모로 적용하면 무엇이 일어나는지를 보여 주었다.
 
 ## 4. DeepSeek-R1과 RL-Zero
 
@@ -229,8 +228,7 @@ RL은 그렇게 생성할 수 있게 된 후보 중 좋은 것을 골라 강화�
 그래도 R1-Zero의 결과가 주목받은 이유는 분명하다.
 앞 주차에는 SFT를 RL 전에 긴 사고 과정을 쓰는 행동을 익히게 하는 cold start로 소개했는데,
 R1-Zero는 그 SFT 없이도 base model이 구조 지시와 검증 가능한 보상만으로 긴 추론에 도달함을 보였다.
-무엇이 어떻게 달라졌는지,
-즉 길이의 증가와 반성·검증 행동이 정말 능력의 증가인지는 long CoT에서 따로 다룬다.
+다만 길이의 증가와 반성·검증 행동이 그대로 능력의 증가라고 볼 수 있는지는 따로 따져야 한다.
 
 ### 4-2. R1-Zero의 문제와 R1의 네 단계
 

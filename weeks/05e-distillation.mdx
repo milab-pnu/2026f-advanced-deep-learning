@@ -86,7 +86,7 @@ Kim과 Rush는 2016년 신경망 기계번역에서 KD(knowledge distillation)�
 결국 학습 데이터의 입력마다 teacher가 번역문을 생성하고, 학생은 그 번역문을 정답처럼 보통의 cross-entropy로 학습한다.
 영어→독일어 번역에서 SeqKD는 word-level KD보다 좋았고, 둘을 함께 쓰면 더 좋아졌다(Table 1).
 이 방식은 teacher의 분포 없이 생성한 텍스트만 있으면 된다.
-다음 절에서 볼 응답 기반 증류는 이 방식을 원형으로 삼는다.
+응답 기반 증류는 이 방식을 원형으로 삼는다.
 
 ### 1-2. 응답 기반 증류
 
@@ -119,7 +119,7 @@ Ross 등의 DAgger는 학습자가 실제로 방문한 상태에서 expert의 �
 expert의 상태에서만 배울 때보다 오류의 누적이 크게 완화됨을 보였다.[^dagger]
 LLM에 옮기면 expert는 teacher, 상태는 지금까지의 prefix이므로, 학생이 만든 prefix에서 teacher의 감독을 받자는 뜻이 된다.
 다만 이 이론은 teacher가 학생의 어떤 prefix에서도 좋은 다음 토큰을 알려 준다는 가정에 기대며,
-뒤에서 보듯 LLM에서는 이 가정이 깨질 수 있다.
+LLM에서는 이 가정이 깨질 수 있다.
 
 **감독에 담긴 정보**에도 한계가 있다.
 응답 SFT도 매 토큰에 손실을 주므로 신호가 오는 빈도는 낮지 않다.
@@ -154,7 +154,7 @@ Agarwal 등의 GKD(generalized knowledge distillation)는 앞의 두 축을 한 
 표집 과정을 통해 역전파하지는 않으며, 손실은 토큰마다 두 분포 사이의 divergence다.
 학생이 만든 문맥이므로 teacher의 문맥만 학습하는 데서 오는 분포 불일치가 줄고,
 토큰마다 정답 토큰 하나가 아니라 teacher의 분포 전체를 받는다.
-PPO·RLVR의 outcome 보상 RL과 비교하면 응답 끝에 한 번 오는 스칼라 보상 대신 매 토큰에 분포 전체의 신호가 온다.
+앞서 본 응답 단위 outcome 보상 RL과 비교하면 응답 끝에 한 번 오는 스칼라 보상 대신 매 토큰에 분포 전체의 신호가 온다.
 
 위치마다 두 분포를 비교하려면 전제가 하나 있다.
 Teacher와 학생이 같은 tokenizer를 써서 같은 토큰 ID가 같은 문자열을 가리켜야 한다.
@@ -198,7 +198,7 @@ $$
 로 reverse KL에 음수를 붙인 값이 된다.
 토큰 하나의 값은 고정한 이 문맥에서 평균을 추정하는 표본이라 잡음이 크지만 계산이 싸다.
 이 평균을 학습에 쓰려면 토큰을 고른 확률이 파라미터에 따라 달라진다는 점도 반영해야 한다.
-다음 절에서는 advantage를 고정하고 확률비를 미분하는 방식으로 그 효과를 계산한다.
+그 효과는 advantage를 고정하고 확률비를 미분하는 방식으로 계산한다.
 </Callout>
 
 ### 2-2. 추론 모델에서의 적용
@@ -380,7 +380,6 @@ Long CoT는 그 학습이 만든 행동과 추론 시 계산의 활용을,
 Agentic RL은 그 학습을 환경이 개입하는 궤적으로 확장한 경우를 다뤘다.
 각 방법의 점수는 reward hacking에서 본 독립 평가 원칙과 long CoT의 계산 예산·pass@$k$ 구분으로 읽어야 한다.
 표의 방법 중 RLHF, online DPO, RLVR, on-policy distillation은 모두 학습 중에 현재 모델이 응답을 생성해야 한다.
-그 생성이 학습 시간과 정확성에 무엇을 요구하는지가 RL systems 노트의 주제다.
 
 [^survey]: Song, M., & Zheng, M. (2026). *A Survey of On-Policy Distillation for Large Language Models*. [arXiv:2604.00626v4](https://arxiv.org/abs/2604.00626v4).
 [^hinton]: Hinton, G., Vinyals, O., & Dean, J. (2015). *Distilling the Knowledge in a Neural Network*. NIPS 2014 Deep Learning Workshop. [arXiv:1503.02531](https://arxiv.org/abs/1503.02531).
