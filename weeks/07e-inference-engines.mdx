@@ -197,7 +197,8 @@ BF16 checkpoint를 불러오면서 양자화한다(vLLM v0.31에서는 `--quanti
 
 ```bash
 vllm bench serve --model meta-llama/Llama-3.1-8B-Instruct \
-  --dataset-name random --random-input-len 1024 --random-output-len 256 --ignore-eos \
+  --dataset-name random --random-input-len 1024 --random-output-len 256 \
+  --ignore-eos \
   --num-prompts 1000 --max-concurrency 64 \
   --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,99 \
   --goodput ttft:1000 tpot:50
