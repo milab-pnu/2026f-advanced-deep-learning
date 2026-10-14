@@ -20,8 +20,7 @@ order: 0
 
 이번 두 주의 노트는 다음 순서로 이어진다.
 이 노트에서 비용이 어디서 생기고 무엇으로 재는지 정한 뒤, 그 비용의 한계를 하드웨어 수치로 계산하고,
-시스템 쪽(KV cache 공간과 요청 스케줄)과 모델·계산 쪽(바이트 수, 순차 스텝 수,
-kernel)을 차례로 줄인다.
+시스템 쪽(KV cache 공간과 요청 스케줄)과 모델·계산 쪽(바이트 수, 순차 스텝 수, kernel)을 차례로 줄인다.
 
 | 주차 | 노트 | 줄이려는 비용 |
 |---|---|---|
@@ -40,8 +39,7 @@ KV cache의 구조와 MQA·GQA·MLA는 Attention heads and KV cache 노트에서
 FlashAttention의 블록 계산은 Training engineering 노트에서,
 MoE(mixture of experts)의 routing은 Mixture of Experts 노트에서 보았다.
 이번 두 주는 그 결과를 비용의 관점에서 다시 읽는다.
-기준 모델은 지금까지 써 온 **Llama 3 8B**($L=32$, query head 32개, KV(key-value) head 8개,
-$d_{\text{head}}=128$, $d=4096$)다.[^llama3]
+기준 모델은 지금까지 써 온 **Llama 3 8B**($L=32$, query head 32개, KV(key-value) head 8개, $d_{\text{head}}=128$, $d=4096$)다.[^llama3]
 
 ## 1. Inference 비용이 커지는 이유
 
@@ -50,8 +48,7 @@ $d_{\text{head}}=128$, $d=4096$)다.[^llama3]
 Scaling 노트의 Chinchilla는 **학습 계산 예산**이 정해졌을 때 loss를 가장 낮추는 모델 크기와 토큰 수를 찾았다.
 이 기준에는 학습이 끝난 뒤 그 모델을 얼마나 쓸지가 들어 있지 않다.
 Sardana 등은 이 기준에 inference 비용을 더했다.[^sardana]
-파라미터 $N$개인 모델을 $D_{\text{tr}}$ 토큰으로 학습하는 데 약 $6ND_{\text{tr}}$ FLOPs, 학습 뒤
-모두 $D_{\text{inf}}$ 토큰을 처리하는 데 약 $2ND_{\text{inf}}$ FLOPs가 든다고 보고,
+파라미터 $N$개인 모델을 $D_{\text{tr}}$ 토큰으로 학습하는 데 약 $6ND_{\text{tr}}$ FLOPs, 학습 뒤 모두 $D_{\text{inf}}$ 토큰을 처리하는 데 약 $2ND_{\text{inf}}$ FLOPs가 든다고 보고,
 둘의 합을 최소화하는 배분을 다시 구한 것이다.
 토큰 하나의 forward가 파라미터마다 곱셈 하나와 덧셈 하나, 약 2 FLOP을 쓰고,
 학습은 backward까지 더해 그 세 배가 든다는 근사다.
@@ -59,8 +56,7 @@ Sardana 등은 이 기준에 inference 비용을 더했다.[^sardana]
 <Callout type="example">
 두 식이 같아지는 지점은 $6ND_{\text{tr}}=2ND_{\text{inf}}$, 곧 $D_{\text{inf}}=3D_{\text{tr}}$이다.
 $N$이 약분되므로 모델 크기와 상관없이,
-**학습 토큰 수의 세 배를 처리하면 inference 계산이 학습 계산을 넘어선다.** 약 15T 토큰으로 학습한
-Llama 3 8B라면 약 45T 토큰이다.[^llama3]
+**학습 토큰 수의 세 배를 처리하면 inference 계산이 학습 계산을 넘어선다.** 약 15T 토큰으로 학습한 Llama 3 8B라면 약 45T 토큰이다.[^llama3]
 하루 10억 토큰을 처리하는 서비스는 45,000일이 걸리지만, 하루 1,000억 토큰을 처리하는 서비스는 450일,
 1조 토큰이면 45일이다.
 이 근사는 attention 계산을 빼고 FLOPs로만 비교한 것이다.
@@ -69,8 +65,7 @@ GPU 시간으로 따지면 역전이 더 일찍 온다.
 </Callout>
 
 Sardana 등은 이 비용을 넣으면,
-약 10억 건 이상의 요청을 예상하는 경우 Chinchilla 최적보다 **작은 모델을 더 오래 학습**하는 편이
-전체 비용에서 유리하다고 결론지었다.[^sardana]
+약 10억 건 이상의 요청을 예상하는 경우 Chinchilla 최적보다 **작은 모델을 더 오래 학습**하는 편이 전체 비용에서 유리하다고 결론지었다.[^sardana]
 Llama 3도 같은 선택을 했다.
 405B 모델은 학습 예산에 대해 거의 compute-optimal한 크기로 정했지만,
 더 작은 모델은 "compute-optimal보다 훨씬 오래" 학습했고,
@@ -113,8 +108,7 @@ GPU(graphics processing unit)는 큰 행렬곱을 한꺼번에 처리할 때 효
 
 ### 2-1. 두 단계의 역할
 
-Attention heads and KV cache 노트에서 보았듯 causal attention에서는 과거 위치의 key와 value가
-새 토큰이 붙어도 바뀌지 않는다.
+Attention heads and KV cache 노트에서 보았듯 causal attention에서는 과거 위치의 key와 value가 새 토큰이 붙어도 바뀌지 않는다.
 그래서 한 번 계산한 key·value를 저장해 두는 KV cache를 쓰고,
 생성 요청은 성격이 다른 두 단계로 나뉜다.[^survey]
 
@@ -269,8 +263,7 @@ vLLM 같은 서빙 엔진은 다음 값을 노출한다.[^vllm-metrics]
 
 예를 들어 TTFT의 꼬리가 길어졌는데 KV cache 사용률이 1 근처이고 대기 요청이 쌓여 있다면,
 계산이 느린 것이 아니라 KV cache 공간이 모자라 새 요청이 들어가지 못하는 상황일 가능성이 크다.
-GPU가 하드웨어 성능의 몇 %를 쓰고 있는지를 재는 MFU(model FLOPs utilization)와 MBU(model bandwidth
-utilization)는 roofline이 필요하므로 다음 노트에서 정의한다.
+GPU가 하드웨어 성능의 몇 %를 쓰고 있는지를 재는 MFU(model FLOPs utilization)와 MBU(model bandwidth utilization)는 roofline이 필요하므로 다음 노트에서 정의한다.
 
 ## 4. 메모리 예산
 
@@ -286,8 +279,7 @@ Llama 3 8B의 파라미터 약 8.03B개를 BF16으로 두면 약 16.1 GB다.
 학습과 달리 gradient와 optimizer state가 없으므로 이 16.1 GB가 모델 상태의 전부다.
 
 이 값은 요청 수나 문맥 길이와 상관없이 고정이다.
-줄이는 방법은 원소당 bytes를 줄이는 것(양자화,
-INT4면 약 4 GB에 scale 등의 부가 정보가 더해진다)과 파라미터 수를 줄이는 것(압축) 두 가지다.
+줄이는 방법은 원소당 bytes를 줄이는 것(양자화, INT4면 약 4 GB에 scale 등의 부가 정보가 더해진다)과 파라미터 수를 줄이는 것(압축) 두 가지다.
 
 ### 4-2. KV cache
 
@@ -311,8 +303,7 @@ KiB(kibibyte)는 $2^{10}$ bytes, GiB는 $2^{30}$ bytes다.
 | 131,072토큰 요청 1개 | 16 GiB | 16.1 GB |
 | 8,192토큰 요청 32개 | 32 GiB | 16.1 GB |
 
-Llama 3가 지원하는 최대 문맥인 128K(131,072)토큰을 채운 요청 하나만으로도 KV cache가 가중치만큼
-커지고,[^llama3] 요청을 많이 묶으면 가중치를 쉽게 넘어선다.
+Llama 3가 지원하는 최대 문맥인 128K(131,072)토큰을 채운 요청 하나만으로도 KV cache가 가중치만큼 커지고,[^llama3] 요청을 많이 묶으면 가중치를 쉽게 넘어선다.
 Llama 3 8B가 query head 32개를 모두 쓰는 MHA(multi-head attention)였다면 토큰당 512 KiB로 이 표의 네 배가 되었을 것이다.
 KV head를 8개로 줄인 GQA(grouped-query attention)가 KV cache를 4분의 1로 줄인 셈이다.
 

@@ -57,8 +57,7 @@ Batch의 구성이 스텝마다 바뀌므로 이를 **continuous batching**이�
 이렇게 하려면 길이와 진행 상태가 다른 요청들을 한 번의 forward로 처리할 수 있어야 한다.
 새로 들어온 요청은 프롬프트 전체를 prefill해야 하고, 기존 요청은 토큰 하나를 decode한다.
 Orca는 이를 **selective batching**으로 풀었다.
-선형층,
-LayerNorm, 덧셈처럼 토큰마다 독립인 연산은 batch 안의 모든 토큰을 요청 구분 없이 한 줄로 이어 붙여 큰 행렬 하나로 계산한다.
+선형층, LayerNorm, 덧셈처럼 토큰마다 독립인 연산은 batch 안의 모든 토큰을 요청 구분 없이 한 줄로 이어 붙여 큰 행렬 하나로 계산한다.
 반면 attention은 같은 요청의 토큰끼리만 계산해야 하므로 요청별로 나누어 처리한 뒤 다시 합친다.[^orca]
 Roofline 분석에서 본 선형층과 attention의 구분과 같다.
 가중치를 공유하는 선형층은 묶을수록 intensity가 오르고,
@@ -127,8 +126,7 @@ Decode만 하는 batch에 prefill 하나를 더하자 decode 반복의 지연이
 <Figure src="https://arxiv.org/html/2401.09670v3/prefill-decoding-interference.svg" alt="DistServe 논문의 Figure 2. 두 그래프 모두 가로축은 batch 크기, 세로축은 지연(ms)이다. 주황색 선은 decode만 하는 batch, 파란 선은 decode batch에 prefill 하나를 더한 경우다. 왼쪽(입력 128토큰)에서는 파란 선이 주황 선보다 몇 ms 위에 있다. 오른쪽(입력 1,024토큰)에서는 주황 선이 10–40 ms인 데 비해 파란 선은 120–150 ms로, prefill 하나가 decode 반복을 여러 배 느리게 한다. 두 그래프에 decoding slowdown과 prefill slowdown이 화살표로 표시되어 있다." caption="Decode batch에 prefill 하나를 더했을 때의 지연. 프롬프트가 길수록(오른쪽) decode 반복이 크게 느려지고, prefill도 decode와 섞여 느려진다." source="Zhong et al. (2024), DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving, Figure 2. CC BY-SA 4.0. 원본 그대로 사용." />
 
 Agrawal 등은 이 문제를 scheduler의 선택으로 정리했다.[^sarathi-serve]
-대기 중인 prefill을 먼저 넣는 prefill 우선 정책(vLLM 초기판,
-Orca)은 batch를 빨리 채워 처리량이 높지만 decode 요청의 토큰 간격이 튄다.
+대기 중인 prefill을 먼저 넣는 prefill 우선 정책(vLLM 초기판, Orca)은 batch를 빨리 채워 처리량이 높지만 decode 요청의 토큰 간격이 튄다.
 진행 중인 decode를 먼저 끝내는 decode 우선 정책은 토큰 간격이 고르지만 새 요청의 TTFT가 길어지고 batch가 작아 처리량이 낮다.
 둘 다 처리량과 지연 가운데 하나를 내준다.
 
@@ -219,8 +217,7 @@ TTFT와 ITL을 따로 조정하고 ITL의 꼬리를 줄이는 데 목적이 있�
 
 ### 4-1. 복제본, tensor parallelism, pipeline parallelism
 
-GPU가 여러 대일 때 가장 단순한 방법은 모델을 GPU마다 통째로 올린 복제본(replica)을 여러 개 띄우고
-요청을 나누어 보내는 것이다(data parallelism).
+GPU가 여러 대일 때 가장 단순한 방법은 모델을 GPU마다 통째로 올린 복제본(replica)을 여러 개 띄우고 요청을 나누어 보내는 것이다(data parallelism).
 복제본 사이에는 통신이 없어 처리량이 GPU 수에 거의 비례해 늘지만,
 요청 하나의 지연은 GPU 한 대일 때와 같고 모델이 GPU 한 대에 들어가야 한다.
 
@@ -323,8 +320,7 @@ Disaggregation은 두 단계를 다른 GPU에 두어 간섭을 없애고 단계�
 KV cache를 옮기는 비용을 치른다.
 
 여러 GPU에서는 통신 없는 복제본이 처리량을, TP가 요청 하나의 지연을 맡고, PP는 느린 연결을 넘을 때 쓴다.
-MoE는 batch가 수십 개만 되어도 거의 모든 expert를 읽고, 그다음에는 expert마다 batch가 작아지는 문제가 남아
-큰 규모의 expert parallelism과 disaggregation을 함께 쓴다.
+MoE는 batch가 수십 개만 되어도 거의 모든 expert를 읽고, 그다음에는 expert마다 batch가 작아지는 문제가 남아 큰 규모의 expert parallelism과 disaggregation을 함께 쓴다.
 이번 주는 여기까지 inference의 비용 구조와 그 비용을 시스템 쪽에서 줄이는 방법을 다루었다.
 다음 주는 모델과 계산 쪽에서, 곧 bytes와 파라미터 수, 순차 스텝 수,
 kernel의 실행 시간을 줄이는 방법을 다룬다.

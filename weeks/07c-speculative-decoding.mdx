@@ -124,8 +124,7 @@ $$
 
 $\alpha=0.7$, $\gamma=4$라면 $(1-0.7^5)/0.3\approx2.77$개, $\alpha=0.5$라면 1.94개다.
 여기에 draft를 $\gamma$번 돌리는 비용이 붙는다.
-Draft 한 번이 target 한 번의 $c$배 시간이 든다면 전체 시간의 개선 배수는
-$(1-\alpha^{\gamma+1})/\bigl((1-\alpha)(\gamma c+1)\bigr)$이다(원논문 Theorem 3.8).
+Draft 한 번이 target 한 번의 $c$배 시간이 든다면 전체 시간의 개선 배수는 $(1-\alpha^{\gamma+1})/\bigl((1-\alpha)(\gamma c+1)\bigr)$이다(원논문 Theorem 3.8).
 $\alpha=0.7$, $\gamma=4$, $c=0.05$라면 $2.77/1.2\approx2.3$배다.
 이 식은 target이 $\gamma+1$개 위치를 계산하는 데 위치 하나와 같은 시간이 든다는 가정(원논문 §3.3)에 기대는데,
 앞에서 본 memory-bound decode가 그 가정을 뒷받침한다.[^leviathan]
@@ -163,8 +162,7 @@ Medusa는 이 나무 전체를 forward 한 번으로 검증하려고 **tree atte
 <Figure src="https://arxiv.org/html/2401.10774v3/tree_attention.png" alt="Medusa의 Figure 2. 왼쪽은 후보 나무다. Root에서 head 1의 후보 두 개(It, I)가 나오고, 각각에서 head 2의 후보 세 개(is, 따옴표, the)가 이어져 후보 경로가 모두 6개다. 오른쪽은 8×8 attention mask로, 행은 query, 열은 key다. 각 후보 토큰은 자기 자신과 나무에서의 조상에만 체크 표시가 있어, 예를 들어 It 아래의 is는 It과 자기 자신만 본다." caption="Tree attention. Head 1의 상위 2개와 head 2의 상위 3개로 만든 후보 6개 경로를 한 번에 검증한다. Mask는 각 토큰이 나무에서 자기 조상만 보게 한다." source="Cai et al. (2024), Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads, Figure 2. CC BY 4.0. 원본 그대로 사용." hero />
 
 Target을 고정하고 head만 학습하는 Medusa-1은 2.2배 이상,
-target과 head를 함께 학습하는 Medusa-2는 2.3–2.8배 빨라졌다(카테고리별 최대 3.6배,
-주로 batch 1).[^medusa]
+target과 head를 함께 학습하는 Medusa-2는 2.3–2.8배 빨라졌다(카테고리별 최대 3.6배, 주로 batch 1).[^medusa]
 Medusa-1은 target이 그대로이므로 분포를 보존하는 수락 규칙으로 검증하면 출력 분포도 그대로이고,
 Medusa-2는 target 자체가 함께 바뀐다.
 Medusa는 sampling 온도가 높을 때 수락률이 떨어지는 문제를 줄이려고 typical acceptance라는 완화된 규칙도 제안했다.
@@ -223,8 +221,7 @@ Gloeckle 등은 공유된 trunk 위에 독립된 출력 head $n$개를 두고,
 
 이 목표는 모델 크기에 따라 효과가 달랐다.
 작은 모델에서는 기준보다 나빴지만 큰 모델에서는 좋아져,
-13B 모델은 같은 조건의 next-token 모델보다 HumanEval에서 12%, MBPP에서 17% 더 많은 문제를
-풀었다(원논문 §3.1, Figure 3).[^gloeckle]
+13B 모델은 같은 조건의 next-token 모델보다 HumanEval에서 12%, MBPP에서 17% 더 많은 문제를 풀었다(원논문 §3.1, Figure 3).[^gloeckle]
 추론 때는 추가 head를 버리고 일반 모델처럼 쓸 수도 있고,
 추가 head를 draft로 써서 self-speculative decoding을 할 수도 있다.
 4-token 7B 모델은 코드에서 추측 3개 중 평균 2.5개가 수락되어 3.0배,
@@ -238,15 +235,13 @@ DeepSeek-V3는 추가 토큰을 **순서대로** 예측해 각 깊이에서 인�
 $k$번째 MTP 모듈은 앞 깊이의 표현과 실제 다음 토큰의 embedding을 이어 붙여 투영하고,
 Transformer 층 하나를 거쳐 한 칸 더 뒤의 토큰을 예측한다.
 Embedding과 출력 head는 본체와 공유한다(보고서 §2.2, Eq. (21)–(23)).
-보고서는 이 구조가 EAGLE과 비슷하지만 EAGLE의 주목적이 speculative decoding인 반면 자신들은 학습
-성능을 높이려고 MTP를 쓴다고 밝힌다.
+보고서는 이 구조가 EAGLE과 비슷하지만 EAGLE의 주목적이 speculative decoding인 반면 자신들은 학습 성능을 높이려고 MTP를 쓴다고 밝힌다.
 
 실제 학습에서는 깊이 $D=1$, 곧 한 칸 뒤의 토큰 하나만 더 예측했다(보고서 §4.2).
 추론 때는 MTP 모듈을 버려도 본체가 그대로 동작하고, 남겨 두면 speculative decoding의 draft가 된다.
 그렇게 썼을 때 두 번째 토큰의 수락률은 주제에 따라 85–90%였고,
 초당 생성 토큰 수는 1.8배가 되었다(보고서 §5.4.3).[^dsv3]
-이후 MiMo와 GLM-4.5 등도 MTP 층을 두어 추론 가속에 쓰며,[^mimo][^glm45] vLLM은 이런 모델의 MTP 층을
-draft로 쓰는 방식을 지원한다.[^vllm-spec]
+이후 MiMo와 GLM-4.5 등도 MTP 층을 두어 추론 가속에 쓰며,[^mimo][^glm45] vLLM은 이런 모델의 MTP 층을 draft로 쓰는 방식을 지원한다.[^vllm-spec]
 
 <Callout type="note">
 EAGLE 계열의 draft와 DeepSeek-V3의 MTP 모듈은 모양이 비슷하다.
@@ -291,14 +286,12 @@ batch 192에서도 이득이 남는다.
 측정 결과도 같은 방향이다.
 EAGLE은 LLaMA2-Chat 70B에서 batch 1의 3.01배가 batch 4에서 2.40배로 줄었다(Table 7).[^eagle]
 EAGLE-3 논문이 SGLang 팀의 측정으로 실은 결과에서는,
-H100에서 LLaMA-3.1-8B를 돌릴 때 EAGLE이 batch 24에서 처리량을 0.93배로 오히려 낮춘 반면 EAGLE-3는
-batch 64에서도 1.38배를 유지했다(Table 3).[^eagle3]
+H100에서 LLaMA-3.1-8B를 돌릴 때 EAGLE이 batch 24에서 처리량을 0.93배로 오히려 낮춘 반면 EAGLE-3는 batch 64에서도 1.38배를 유지했다(Table 3).[^eagle3]
 vLLM 팀은 Llama 3 70B에서 요청률이 낮을 때 n-gram 방식으로 최대 2.8배를 얻었지만,
 요청률이 높을 때는 1.4–1.8배 느려졌다고 보고했다.[^vllm-blog]
 
 예시의 2,048토큰 행이 보여 주듯 긴 문맥에서는 이득이 덜 줄어든다.
-Sadhukhan 등의 MagicDec은 KV cache 읽기가 스텝을 지배하는 긴 문맥에서는 target이 $\gamma+1$개 위치를
-검증하는 시간이 위치 하나를 처리하는 시간과 거의 같게 유지된다는 점을 짚었다.
+Sadhukhan 등의 MagicDec은 KV cache 읽기가 스텝을 지배하는 긴 문맥에서는 target이 $\gamma+1$개 위치를 검증하는 시간이 위치 하나를 처리하는 시간과 거의 같게 유지된다는 점을 짚었다.
 LLaMA-3.1-8B에서는 문맥이 약 4,000토큰보다 짧으면 batch가 커질수록 이득이 줄지만,
 그보다 길면 오히려 batch가 커질수록 이득이 커졌다(Figure 2(c)).[^magicdec]
 
@@ -307,8 +300,7 @@ LLaMA-3.1-8B에서는 문맥이 약 4,000토큰보다 짧으면 batch가 커질�
 그래서 serving에서는 부하에 맞춰 speculative decoding의 사용 여부와 추측 길이를 조절하는 방법이 나왔다.
 Liu 등의 TurboSpec은 speculative decoding을 단순히 덧붙이면 serving 성능이 오히려 나빠질 수 있다고 지적하고,
 시스템의 goodput을 보며 추측 길이를 실행 중에 바꾸는 제어 방식을 제안했다.[^turbospec]
-vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-bound 상황에서 ITL(inter-token
-latency)을 줄이는 기능으로 설명한다.[^vllm-spec]
+vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-bound 상황에서 ITL(inter-token latency)을 줄이는 기능으로 설명한다.[^vllm-spec]
 
 측정할 때는 앞 주차에서 본 ITL과 TPOT 차이를 기억한다.
 한 번의 forward에서 토큰 여러 개가 함께 나오면 ITL은 도착 간격만 기록하고 TPOT는 그 시간을 토큰 수로 나누므로,

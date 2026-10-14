@@ -127,8 +127,7 @@ Query 하나의 점수가 $[1,2,3,0]$, value가 $[10,20,30,40]$이고 정답 출
 Flash-Decoding은 두 조각을 동시에 계산한다.
 조각 1($[1,2]$)은 최댓값 2, 지수 합 $e^{-1}+1\approx1.368$, 부분 출력 약 17.31을,
 조각 2($[3,0]$)는 최댓값 3, 지수 합 $1+e^{-3}\approx1.050$, 부분 출력 약 30.47을 각자 낸다.
-Reduce는 두 조각의 지수 합을 공통 최댓값 3에 맞춘 $1.368\times e^{2-3}\approx0.503$과 $1.050$을
-비중으로 써서 $(0.503\times17.31+1.050\times30.47)/1.553\approx26.21$을 얻는다.
+Reduce는 두 조각의 지수 합을 공통 최댓값 3에 맞춘 $1.368\times e^{2-3}\approx0.503$과 $1.050$을 비중으로 써서 $(0.503\times17.31+1.050\times30.47)/1.553\approx26.21$을 얻는다.
 정답과 같다.
 순서대로 갱신하든 따로 계산해 합치든 결과가 같으므로, 조각을 나누어 병렬로 계산할 수 있다.
 </Callout>
@@ -143,8 +142,7 @@ A100의 미시 벤치마크에서는 attention 자체가 FlashAttention보다 �
 Batch × head만으로 이미 SM이 꽉 찬다면 쪼갤 이유가 없다.
 vLLM의 초기 PagedAttention kernel이 이 선택을 그대로 보여 준다.
 시퀀스를 512토큰 단위로 나누어 계산하고 reduce kernel로 합치는 V2와 나누지 않는 V1이 있었는데,
-최대 길이가 8,192토큰 이하이면서 시퀀스가 512토큰 조각 하나에 들어가거나 `num_seqs × num_heads`가
-512를 넘어 thread block이 이미 충분할 때는 V1을 골랐다.[^vllm-pa]
+최대 길이가 8,192토큰 이하이면서 시퀀스가 512토큰 조각 하나에 들어가거나 `num_seqs × num_heads`가 512를 넘어 thread block이 이미 충분할 때는 V1을 골랐다.[^vllm-pa]
 
 ### 2-3. 흩어진 KV cache와 FlashInfer
 
@@ -165,8 +163,7 @@ Kernel은 흩어진 블록을 GPU 메모리에서 shared memory의 연속된 공
 
 FlashInfer는 Flash-Decoding의 부분 결과 합치기도 일반화했다.
 Query 하나에 대한 (부분 출력, log-sum-exp) 쌍을 attention state라 부르고,
-두 state를 합치는 연산이 결합법칙과 교환법칙을 만족하므로 행렬곱의 덧셈처럼 어떤 순서로든 나누어
-계산하고 합칠 수 있다고 정리한다.[^flashinfer]
+두 state를 합치는 연산이 결합법칙과 교환법칙을 만족하므로 행렬곱의 덧셈처럼 어떤 순서로든 나누어 계산하고 합칠 수 있다고 정리한다.[^flashinfer]
 그 위에서 요청마다 다른 KV 길이를 SM들에 고르게 나누는 계획을 CPU에서 미리 세우고(plan),
 GPU kernel은 그 계획대로 실행한다(run).
 같은 계획을 모든 층에서 재사용하고,
@@ -185,8 +182,7 @@ Decode의 선형층은 batch가 작으면 행렬과 벡터의 곱에 가깝다.
 이때 kernel의 목표는 연산이 아니라 **가중치를 대역폭의 한계 속도로 흘려 읽는 것**이다.
 큰 행렬곱에 맞춰 조율한 kernel을 그대로 쓰면,
 한쪽 차원이 아주 작은 이 납작한 행렬곱에서는 대역폭을 다 쓰지 못한다.
-Hong 등의 FlashDecoding++는 decode의 행렬곱이 batch 1에서는 행렬-벡터 곱이 되는 납작한 모양이라는
-점에 맞춰 kernel을 따로 최적화했다.[^fdpp]
+Hong 등의 FlashDecoding++는 decode의 행렬곱이 batch 1에서는 행렬-벡터 곱이 되는 납작한 모양이라는 점에 맞춰 kernel을 따로 최적화했다.[^fdpp]
 
 ### 3-2. 양자화 가중치의 kernel
 
@@ -260,9 +256,7 @@ A100에서 180개 넘는 모델의 inference를 기하평균 2.27배 빠르게 �
 앞서 본 kernel fusion을 사람이 일일이 하지 않아도 컴파일러가 찾아 준다.
 
 Inference 엔진은 둘을 섞어 쓴다.
-vLLM은 attention 사이의 토큰별 연산을 `torch.compile`로 묶어 fusion하고 그 구간을 CUDA
-graph로 기록하며,[^vllm-cg] attention은 FlashAttention이나 FlashInfer처럼 직접 최적화한 kernel을
-쓴다.
+vLLM은 attention 사이의 토큰별 연산을 `torch.compile`로 묶어 fusion하고 그 구간을 CUDA graph로 기록하며,[^vllm-cg] attention은 FlashAttention이나 FlashInfer처럼 직접 최적화한 kernel을 쓴다.
 FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kernel만큼 빠르지 않아 CUDA 코드를 생성한다고 밝힌다.[^flashinfer]
 성능이 가장 중요한 몇 개의 kernel은 손으로, 나머지는 컴파일러로 처리하는 분업이다.
 
