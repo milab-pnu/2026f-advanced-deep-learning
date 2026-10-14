@@ -6,7 +6,7 @@ order: 0
 
 import helffGap from "./assets/week04-helff-hacking-gap.png";
 
-4주차에서 본 RLHF와 DPO의 학습 신호는 사람 또는 모델의 선호 판정에서 왔다.
+앞 주차에서 본 RLHF와 DPO의 학습 신호는 사람 또는 모델의 선호 판정에서 왔다.
 Reward model은 그 판정을 근사했고 reward hacking에서는 근사가 어떻게 틀리는지 보았다.
 수학 문제와 코드처럼 정답이 있는 과제에서는 다른 길이 있다.
 응답을 사람이나 모델이 평가하는 대신 **프로그램으로 검증**하고 결과를 보상으로 쓰면 된다.
@@ -14,7 +14,7 @@ Reward model은 그 판정을 근사했고 reward hacking에서는 근사가 어
 2025년 초 DeepSeek-R1-Zero가 사고 과정을 담은 응답으로 SFT(supervised fine-tuning)를 하지 않고 이
 보상만으로 base model에서 긴 추론을 이끌어 내면서 추론 모델 post-training의 중심이 되었다.
 이 노트는 보상의 출처를 바꾼 계보를 따라간다.
-정책 최적화, long CoT, agentic RL, distillation, RL systems 같은 5주차의 나머지 주제는 모두 이 보상 위에 선다.
+정책 최적화, long CoT, agentic RL, distillation, RL systems 같은 이 주의 나머지 주제는 모두 이 보상 위에 선다.
 
 전체 지도는 Zhang 등이 2025년에 정리한 추론 모델을 위한 강화학습 서베이[^survey]로 잡는다.
 서베이 §3.1의 보상 설계(검증 가능한 보상, 생성형 보상, 밀집 보상, 비지도 보상, 보상 조형)와
@@ -251,7 +251,7 @@ DeepSeek-R1은 이 문제를 네 단계 파이프라인으로 풀었다.[^r1]
 Cold start를 평가할 때는 풀이를 담은 응답의 validation loss뿐 아니라 다음 RL이 안정적으로 출발하는지도 봐야 한다.
 이 recipe에서 SFT의 역할은 읽기 좋은 추론의 출발점을 만드는 것이다.
 1단계는 SFT, 4단계의 reward model 보상은 RLHF다.
-4주차의 요소가 검증 가능한 보상을 축으로 다시 배열된 것이다.
+앞 주차의 요소가 검증 가능한 보상을 축으로 다시 배열된 것이다.
 Qwen3 flagship 모델의 네 단계(long-CoT cold start, reasoning RL, thinking mode fusion, general RL)와
 Olmo 3 Think의 SFT, DPO, RLVR(일반 대화는 RLVR 단계에 함께 섞인다)도 사고 과정을 담은 응답의 학습과
 검증 보상을 결합하면서 일반 과제의 성능을 함께 유지한다는 점을 공유한다.

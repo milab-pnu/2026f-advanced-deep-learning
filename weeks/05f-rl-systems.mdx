@@ -12,7 +12,7 @@ order: 5
 또 생성을 맡는 inference engine과 학습 커널이 같은 가중치로 다른 확률을 계산한다.
 이 노트는 RLVR(reinforcement learning with verifiable rewards) 학습의 시간이 어디에 쓰이는지에서 출발해,
 그 시간을 줄이려는 시스템 설계가 어떤 순서로 발전했고 그 과정에서 통계적 정확성과 처리량이 어떻게 충돌하는지를 따라간다.
-2주차 Training engineering 노트가 학습 한 스텝의 병렬화를 다뤘다면,
+Training engineering 노트가 학습 한 스텝의 병렬화를 다뤘다면,
 이 노트는 그 스텝 앞에 붙는 생성 단계가 만드는 문제를 다룬다.
 Inference engine 내부(KV(key-value) cache 관리, batching, 커널)는 다음 주에 보고,
 여기서는 그것을 RL(reinforcement learning) 학습에 어떻게 끼워 넣는지만 본다.
@@ -256,7 +256,7 @@ Qi 등은 학습과 생성 모두를 가수부가 10비트인 FP16(16-bit floati
 빠르게 수렴했다고 보고했다.[^fp16]
 진단 실험에서는 모델이 풀 수 있는 문제만 모아 학습 정확도가 끝까지 오르는지 보았는데,
 여기서도 BF16의 GRPO와 토큰 단위 TIS는 도중에 무너졌고 FP16은 끝까지 올랐다(원논문 §4, Figure 3).[^fp16]
-2주차에서 본 BF16의 장점은 FP32(32-bit floating point)와 같은 지수 범위였다.
+Training engineering 노트에서 본 BF16의 장점은 FP32(32-bit floating point)와 같은 지수 범위였다.
 Qi 등은 값의 범위가 pre-training에서 이미 자리 잡은 RL fine-tuning에서는 그 범위보다 BF16이 잃은 정밀도가 더 문제가 된다고 본다.
 생성·학습 일치라는 새 조건이 붙으면 정밀도 선택이 달라질 수 있다.
 
