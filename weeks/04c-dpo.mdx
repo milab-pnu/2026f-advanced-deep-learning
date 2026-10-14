@@ -499,6 +499,29 @@ displacement는 특정 응답에 부여하는 확률의 변화를 뜻한다.
 비선호 응답의 확률이 더 큰 비율로 내려가면,
 선호 응답의 확률이 내려가면서도 두 응답의 점수 차이는 커지고 DPO 손실은 줄어들 수 있다.[^razin]
 
+이 성질은 §3-2에서 구분한 응답 생성 모델 C와 D를 고를 때도 드러난다.
+DPO는 선호 응답 자체보다 두 응답의 차이를 학습하므로,
+선호 응답이 학습할 정책 A보다 나을 필요는 없다.
+Geng 등은 이를 **delta learning** 가설로 정리했다.
+두 응답이 모두 A보다 약해도, 선호 응답이 비선호 응답보다 나은 방향이 있으면 A는 그 차이를 배워 개선될 수 있다는 것이다.[^delta]
+
+저자들은 A보다 약한 모델들이 만든 선호쌍으로 같은 모델을 SFT와 DPO로 각각 학습해 비교했다.
+선호 응답만 따라 쓰도록 SFT하면 약한 응답을 모방하게 되어 성능이 떨어졌지만,
+같은 선호쌍으로 DPO를 하면 성능이 올랐다.
+이어서 Tülu 3의 DPO 단계에서 데이터 만드는 방식만 바꾸었다.
+Tülu 3는 학습 모델보다 큰 모델들로 응답을 생성하고 GPT-4o로 판정해 선호쌍을 만든다.
+Geng 등은 A와 비슷하거나 더 작은 모델로 선호 응답을, 그보다 더 작은 모델로 비선호 응답을 생성했고,
+별도 판정 없이 모델 크기만으로 어느 쪽이 선호 응답인지 정했다.
+이렇게 강한 모델 없이 만든 데이터로도 원래 Tülu 3 데이터와 비슷한 성능을 얻었다.[^delta]
+
+반대로 두 응답이 모두 A보다 훨씬 강하면 차이가 있어도 성능이 떨어질 수 있다.
+같은 논문에서 A보다 훨씬 큰 두 모델의 응답으로 선호쌍을 만들었을 때는 DPO 뒤 성능이 오히려 떨어졌고,
+학습 중 선호 응답과 비선호 응답의 log 확률이 함께 내려갔다.
+저자들은 Razin 등의 likelihood displacement를 인용하며,
+비선호 응답도 A가 지금 생성하는 응답보다 좋은 경우 이렇게 확률이 함께 내려가면
+좋은 행동을 억누르도록 학습될 수 있다는 가설을 제시한다.
+어떤 성질의 차이가 학습에 도움이 되는지는 아직 열린 질문으로 남아 있다.[^delta]
+
 ### 4-3. 선호 판정의 편향
 
 DPO는 별도 reward model을 학습하지 않지만 보상의 출처인 **선호 판정**은 그대로 남아 있다.
@@ -552,4 +575,5 @@ OAIF(online AI feedback)는 이 과정을 매 학습 반복마다 수행한다.[
 [^orpo]: Hong, J., Lee, N., & Thorne, J. (2024). ORPO: Monolithic Preference Optimization without Reference Model. *EMNLP 2024*. [arXiv:2403.07691](https://arxiv.org/abs/2403.07691).
 [^rafailov-scaling]: Rafailov, R., et al. (2024). Scaling Laws for Reward Model Overoptimization in Direct Alignment Algorithms. *NeurIPS 2024*. [arXiv:2406.02900](https://arxiv.org/abs/2406.02900).
 [^razin]: Razin, N., et al. (2025). Unintentional Unalignment: Likelihood Displacement in Direct Preference Optimization. *ICLR 2025*. [arXiv:2410.08847](https://arxiv.org/abs/2410.08847).
+[^delta]: Geng, S., et al. (2025). The Delta Learning Hypothesis: Preference Tuning on Weak Data can Yield Strong Gains. *COLM 2025*. [arXiv:2507.06187](https://arxiv.org/abs/2507.06187).
 [^oaif]: Guo, S., et al. (2024). Direct Language Model Alignment from Online AI Feedback. [arXiv:2402.04792](https://arxiv.org/abs/2402.04792).
