@@ -397,7 +397,7 @@ PPO는 두 정책의 토큰 확률을 비교하고,
 같은 학습 신호로 지나치게 갱신하는 것을 clipping으로 억제한다.[^ppo]
 PPO는 on-policy 계열이지만, 배치 재사용 중에는 생성 정책과 학습 정책이 같지 않다.
 
-§3-1에서는 advantage로 가중한 log 확률을 최대화했다.
+REINFORCE에서는 advantage로 가중한 log 확률을 최대화했다.
 PPO는 배치를 재사용하기 위해 log 확률 대신 생성 당시와 현재 정책의 **확률비**를 사용한다.
 이 확률비를 advantage와 곱하고 clipping을 적용한 갱신용 목적함수가 $J^{\mathrm{PPO}}$다.
 이것도 기대 보상 자체가 아니라, 정책을 갱신하기 위한 대리 목적함수(surrogate objective)다.
