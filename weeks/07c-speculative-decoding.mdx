@@ -44,8 +44,9 @@ Speculative decoding은 이 순서를 둘로 나눈다.
 ### 1-2. Greedy 검증
 
 가장 단순한 경우는 target이 greedy decoding을 할 때다.
-Draft가 "the cat sat on"의 다음으로 `the mat .`를 추측했다고 하자($\gamma=3$).
-Target은 입력 "the cat sat on the mat ."을 한 번에 처리해 네 위치의 출력을 낸다.
+지금까지 "the cat sat on"이 확정되었고, KV cache에는 `sat`까지 들어 있으며 직전에 고른 `on`이 다음 입력이라고 하자.
+Draft가 그 뒤로 `the mat .`를 추측했다면($\gamma=3$),
+target은 `on the mat .` 네 토큰을 한 번에 입력해 네 위치의 출력을 낸다.
 
 | 위치 | 입력까지의 문맥 | draft의 추측 | target의 argmax | 판정 |
 |---|---|---|---|---|
@@ -62,9 +63,9 @@ Target은 입력 "the cat sat on the mat ."을 한 번에 처리해 네 위치�
 결과는 target 혼자 greedy decoding한 것과 같다.
 위치 4처럼 버린 계산과 draft의 비용이 대가다.
 
-검증하는 forward는 네 위치의 key·value를 모두 KV cache에 써 넣는다.
-그래서 판정이 끝나면 받아들인 위치까지만 남기고 나머지 칸을 버린다.
-위 예라면 `the`와 `mat` 위치의 key·value는 남기고, 거부된 `.`과 그 뒤 위치의 칸은 지운다.
+검증하는 forward는 입력한 네 토큰의 key·value를 모두 KV cache에 써 넣는다.
+그래서 판정이 끝나면 확정된 토큰의 칸까지만 남기고 나머지를 버린다.
+위 예라면 `on`, `the`, `mat`의 key·value는 남기고, 거부된 `.`의 칸만 지운다.
 교체된 `and`는 아직 KV cache에 없으므로 다음 forward의 첫 입력이 되고,
 draft도 자기 cache를 같은 지점으로 되돌린 뒤 `and`부터 다시 추측한다.
 Paged KV cache에서는 블록 안의 쓰인 칸 수를 줄이는 것으로 끝나 비용이 거의 없다.
