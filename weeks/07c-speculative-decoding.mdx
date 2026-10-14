@@ -21,7 +21,7 @@ Speculative decoding은 값싼 방법으로 다음 토큰들을 먼저 추측하
 §8의 Spec-Bench는 같은 조건에서 여러 방법을 비교하고,
 §9는 batch가 커질 때의 문제를 남은 과제로 꼽는다.
 이 노트는 서베이 §4·§6과 §5를 따라가고,
-multi-token prediction과 serving 조건은 서베이 이후의 흐름을 원논문으로 보충한다.
+multi-token prediction과 serving 조건은 원논문으로 보충한다.
 
 ## 1. Draft와 검증
 
@@ -68,7 +68,7 @@ target은 `on the mat .` 네 토큰을 한 번에 입력해 네 위치의 출력
 위 예라면 `on`, `the`, `mat`의 key·value는 남기고, 거부된 `.`의 칸만 지운다.
 교체된 `and`는 아직 KV cache에 없으므로 다음 forward의 첫 입력이 되고,
 draft도 자기 cache를 같은 지점으로 되돌린 뒤 `and`부터 다시 추측한다.
-Paged KV cache라면 데이터를 옮기지 않고 블록에 기록된 토큰 수만 되돌리면 된다.
+Paged KV cache라면 데이터를 옮기지 않고 요청의 유효 길이 같은 메타데이터만 되돌리면 된다.
 다만 앞 주차의 hybrid 모델처럼 recurrent 상태를 쓰는 층은 상태 하나에 모든 위치가 섞여 있어 칸을 지우는 식으로 되돌릴 수 없다.
 이런 층은 검증한 위치마다 중간 상태를 보관해 두었다가 받아들인 위치의 상태를 고르는 식의 별도 처리가 필요하다.
 
@@ -125,6 +125,7 @@ $$
 $$
 
 $\alpha=0.7$, $\gamma=4$라면 $(1-0.7^5)/0.3\approx2.77$개, $\alpha=0.5$라면 1.94개다.
+$\alpha$가 1이면 추측이 모두 수락되어 $\gamma+1$개가 된다.
 여기에 draft를 $\gamma$번 돌리는 비용이 붙는다.
 Draft 한 번이 target 한 번의 $c$배 시간이 든다면 전체 시간의 개선 배수는 $(1-\alpha^{\gamma+1})/\bigl((1-\alpha)(\gamma c+1)\bigr)$이다(원논문 Theorem 3.8).
 $\alpha=0.7$, $\gamma=4$, $c=0.05$라면 $2.77/1.2\approx2.3$배다.
@@ -183,18 +184,26 @@ Li 등의 EAGLE은 draft도 한 칸씩 autoregressive하게 진행하되,
 토큰이 아니라 target의 **LM head 직전 feature**, 곧 마지막 층이 내놓은 hidden state를 예측한다.[^eagle]
 Feature는 토큰보다 다음 값을 예측하기 쉽다는 관찰에서 출발했다.
 다만 sampling 결과에 따라 다음 feature가 갈라지는 불확실성이 있어서,
-EAGLE은 한 칸 앞의 토큰까지 함께 입력해 그 갈래를 정해 준다.
+EAGLE은 이미 고른 한 칸 앞의 토큰까지 함께 입력해 그 갈래를 정해 준다.
+예를 들어 feature $f_1, f_2$와 토큰 $t_2, t_3$을 받아 $f_3$을 예측하고,
+이를 target의 LM head에 넣어 다음 토큰 $t_4$를 뽑는다(원논문 §3.1).
 Embedding과 LM head는 target의 것을 그대로 쓰고 FC(fully connected) 층과 decoder 층 하나만 학습하므로,
 추가로 학습하는 파라미터는 7B target에서 0.24B, 70B target에서 0.99B다.
 초록은 LLaMA2-Chat 70B에서 2.7–3.5배 빨라졌다고 보고한다.[^eagle]
 
-EAGLE-2는 고정된 나무 모양을 손봤다.
+EAGLE도 후보를 나무로 펼쳐 한 번에 검증하지만 나무 모양은 모든 문맥에서 같았고(원논문 Appendix A.1),
+EAGLE-2는 이 점을 손봤다.
 Draft의 confidence가 실제 수락률과 잘 맞는다는 점을 이용해 문맥에 따라 나무를 동적으로 키우며,
 arXiv 판 초록은 세 모델 계열과 여섯 과제에서 3.05–4.26배를 보고했다.[^eagle2]
 EAGLE-3는 feature 예측이라는 제약을 버리고 토큰을 직접 예측하며,
 마지막 층만이 아니라 낮은 층·중간 층·높은 층의 feature를 합친다.
 학습 중에 draft가 자기 출력을 다시 입력으로 받는 추론 상황을 흉내 내는 training-time test를 써서,
 학습 데이터를 늘릴수록 성능이 계속 오르게 했고 최대 6.5배(Vicuna-13B, HumanEval, temperature 0)를 보고했다(Table 1).[^eagle3]
+
+여기까지의 draft는 토큰마다 forward를 한 번씩 돌리므로, 추측이 길수록 drafting 시간도 늘어난다.
+이 순차 단계를 없애려고 추측 블록 전체를 forward 한 번에 내는 병렬 drafting이 나왔다.
+DFlash는 target의 feature를 조건으로 받는 가벼운 block diffusion 모델로 블록 안의 토큰을 한꺼번에 만든다.[^dflash]
+vLLM도 P-EAGLE, DFlash, DSpark 같은 병렬 drafting 방식을 지원한다.[^vllm-parallel]
 
 ### 2-4. 학습 없는 draft
 
@@ -207,13 +216,16 @@ Spec-Bench의 Vicuna-7B, batch 1, greedy 설정에서,
 이 방식은 입력과 출력이 많이 겹치는 요약에서 약 2.4배를 냈다(서베이 §8.2, Figure 5).[^survey]
 
 Fu 등의 lookahead decoding은 프롬프트 대신 모델 자신의 병렬 추측에서 n-gram을 모은다.[^lookahead]
-Jacobi 반복으로 미래 위치 여러 개를 동시에 고쳐 나가며 그 궤적에서 n-gram을 만들어 pool에 쌓고,
+Jacobi 반복은 미래 위치 여러 개에 임시 토큰을 넣어 두고,
+forward 한 번으로 모든 위치를 앞 위치의 임시 토큰에 조건화해 동시에 고쳐 쓰기를 반복한다.
+그대로는 맞는 토큰이 엉뚱한 위치에 나오기 쉬워 단계가 잘 줄지 않으므로,
+lookahead decoding은 이 반복의 궤적에서 n-gram을 모아 pool에 쌓고,
 같은 forward 안에서 pool의 후보를 검증한다.
 보조 모델이나 데이터 저장소 없이 LLaMA-2-Chat 7B의 MT-bench에서 최대 1.8배를 보고했다(원논문 §5.2, Figure 6).
 
 두 갈래를 정리하면,
 학습된 self-drafting(Medusa, EAGLE)은 추가 학습을 대가로 일반 대화에서도 높은 수락률을 얻는다.
-학습 없는 방식은 준비 비용이 없고, 그 가운데 prompt lookup은 입력과 출력이 겹치는 작업에서 수락률이 특히 높다.
+학습 없는 방식은 추가 모델 학습이 필요 없고, 그 가운데 prompt lookup은 입력과 출력이 겹치는 작업에서 수락률이 특히 높다.
 
 ## 3. Multi-token prediction
 
@@ -221,8 +233,9 @@ Jacobi 반복으로 미래 위치 여러 개를 동시에 고쳐 나가며 그 �
 
 지금까지의 방법들은 다 만든 target에 추측 장치를 덧붙였다.
 반대로 pre-training 단계에서부터 다음 토큰 여러 개를 예측하도록 학습할 수도 있다.
-Gloeckle 등은 공유된 trunk 위에 독립된 출력 head $n$개를 두고,
+Gloeckle 등은 공유된 trunk 위에 Transformer 층으로 된 독립 head $n$개를 두고(unembedding은 공유),
 위치마다 다음 토큰 $n$개를 함께 예측하는 <strong>multi-token prediction(MTP)</strong>을 학습 목표로 썼다.[^gloeckle]
+위치 $t$에서 head $i$는 $t+i$번째 정답 토큰의 cross-entropy를 내고, 이 $n$개 손실을 더해 trunk와 head를 함께 학습한다.
 
 <Figure src="https://arxiv.org/html/2404.19737v1/img/main_fig_col.png" alt="Gloeckle 등의 Figure 1. 위 그림은 입력 토큰 1–4가 공유 trunk를 지나 head 4개로 갈라지고, 위치마다 다음 토큰 네 개(예: 입력 1에서 토큰 2, 3, 4, 5)를 예측하는 구조다. 첫 head 외의 예측은 추론 때 버리거나 속도를 최대 3배 높이는 데 쓴다고 적혀 있다. 아래 그림은 모델 크기별 MBPP pass@1 변화로, 0.3B와 0.6B에서는 4-token 예측이 기준보다 낮고, 1.3B부터 높아져 13B에서는 기준 26.0에 4.5점을 더한다." caption="Multi-token prediction의 구조(위)와 모델 크기에 따른 MBPP 성능 변화(아래). 이 코드 학습 실험에서는 작은 모델에서 손해이고 큰 모델에서 이득이었다." source="Gloeckle et al. (2024), Better & Faster Large Language Models via Multi-token Prediction, Figure 1 · CC BY 4.0 · 수정 없음" />
 
@@ -230,7 +243,7 @@ Gloeckle 등은 공유된 trunk 위에 독립된 출력 head $n$개를 두고,
 
 이 목표는 모델 크기에 따라 효과가 달랐다.
 코드로 학습한 이 실험에서 작은 모델은 기준보다 나빴지만 큰 모델에서는 좋아져,
-13B 모델은 같은 조건의 next-token 모델보다 HumanEval에서 12%, MBPP에서 17% 더 많은 문제를 풀었다(원논문 §3.1, Figure 3).[^gloeckle]
+13B 모델은 같은 조건의 next-token 모델보다 Python 코드 생성 벤치마크인 HumanEval에서 12%, MBPP에서 17% 더 많은 문제를 풀었다(원논문 §3.1, Figure 3).[^gloeckle]
 추론 때는 추가 head를 버리고 일반 모델처럼 쓸 수도 있고,
 추가 head를 draft로 써서 self-speculative decoding을 할 수도 있다.
 4-token 7B 모델은 코드에서 추측 3개 중 평균 2.5개가 수락되어 3.0배,
@@ -259,9 +272,11 @@ EAGLE 계열의 draft와 DeepSeek-V3의 MTP 모듈은 모양이 비슷하다.
 둘 다 target의 표현과 다음 토큰의 embedding을 받아 작은 Transformer 층으로 한 칸 뒤를 예측하고,
 embedding과 출력 head를 target과 공유한다.
 차이는 학습 시점과 목표에 있다.
-EAGLE은 다 만든 target을 고정하고 draft만 따로 학습하며, 토큰 예측 손실에 feature 회귀 손실을 더한다.
-MTP는 pre-training 동안 본체와 함께 토큰 예측 손실로 학습한다.
-MTP 쪽이 추가 학습 없이 draft를 얻는 대신, pre-training의 설계 단계에서 정해 두어야 한다.
+EAGLE은 다 만든 target을 고정하고 draft만 따로 학습한다.
+초기 EAGLE은 토큰 예측 손실에 feature 회귀 손실을 더했고, EAGLE-3는 feature 회귀 손실을 뺐다.
+DeepSeek-V3의 MTP는 pre-training 동안 본체와 함께 토큰 예측 손실로 학습하므로,
+별도 draft 학습 없이 그 모듈을 draft로 쓸 수 있다.
+MiMo처럼 pre-training 뒤 MTP 층을 복제해 따로 미세 조정하는 경우도 있다.[^mimo]
 </Callout>
 
 ## 4. Batch 크기와 이득
@@ -292,18 +307,22 @@ Batch 192에서는 한 스텝에 $192\times5=960$개 위치를 계산하므로 �
 수락률이 0.5라면 얻는 토큰보다 늘어난 시간이 커서 오히려 느려진다.
 문맥이 2,048토큰이면 KV cache를 읽는 15.4 ms가 위치 수와 상관없이 그대로 남아 스텝이 1.5배만 길어지므로,
 batch 192에서도 이득이 남는다.
+이 행의 speculative 스텝은 선형층 15.6 ms와 KV cache 읽기 15.4 ms를 더한 31.0 ms이고,
+개선 배수는 $2.773\times20.18/30.97\approx1.81$이다.
+Draft 비용을 빼고 계산했으므로 실제 개선 배수는 이보다 작다.
 </Callout>
 
 측정 결과도 같은 방향이다.
 EAGLE은 LLaMA2-Chat 70B에서 batch 1의 3.01배가 batch 4에서 2.40배로 줄었다(Table 7).[^eagle]
 EAGLE-3 논문이 SGLang 팀의 측정으로 실은 결과에서는,
-H100에서 LLaMA-3.1-8B를 돌릴 때 EAGLE이 batch 24에서 처리량(throughput)을 0.93배로 오히려 낮춘 반면 EAGLE-3는 batch 64에서도 1.38배를 유지했다(Table 3).[^eagle3]
+H100 한 대와 SGLang v0.4.4에서 LLaMA-3.1-8B-Instruct로 MT-bench를 돌릴 때 EAGLE이 batch 24에서 처리량(throughput)을 0.93배로 오히려 낮춘 반면 EAGLE-3는 batch 64에서도 1.38배를 유지했다(Table 3).[^eagle3]
 vLLM 팀은 H100 4대에서 Llama 3 70B를 돌려, 요약 데이터(CNN/DailyMail)에서 요청률이 낮을 때 n-gram 방식으로 최대 2.8배를 얻었지만,
 같은 데이터에서 요청률이 높을 때는 1.8배 느려졌다고 보고했다.[^vllm-blog]
 
 예시의 2,048토큰 행이 보여 주듯 긴 문맥에서는 이득이 덜 줄어든다.
 Sadhukhan 등의 MagicDec은 KV cache 읽기가 스텝을 지배하는 긴 문맥에서는 target이 $\gamma+1$개 위치를 검증하는 시간이 위치 하나를 처리하는 시간과 거의 같게 유지된다는 점을 짚었다.
-A100 8대에서 LLaMA-3.1-8B를 $\gamma=3$, draft KV budget 512로 둔 이론 분석에서는,
+A100 8대에서 LLaMA-3.1-8B를 $\gamma=3$으로 두고,
+draft가 KV cache를 512토큰만 쓰게 해 drafting 비용을 낮춘 설정(draft KV budget 512)의 이론 분석에서는,
 문맥이 약 4,000토큰보다 짧으면 batch가 커질수록 이득이 줄지만 그보다 길면 오히려 커진다고 예측했다(Figure 2(c)).[^magicdec]
 
 ### 4-2. Serving에서의 선택
@@ -356,6 +375,10 @@ batch가 커져 스텝이 compute-bound가 되면 거부될 추측의 계산이 
 [^eagle2]: Li, Y., Wei, F., Zhang, C., & Zhang, H. (2024). EAGLE-2: Faster Inference of Language Models with Dynamic Draft Trees. *EMNLP 2024*, 7421–7432. [arXiv:2406.16858v2](https://arxiv.org/abs/2406.16858v2).
 
 [^eagle3]: Li, Y., Wei, F., Zhang, C., & Zhang, H. (2025). EAGLE-3: Scaling up Inference Acceleration of Large Language Models via Training-Time Test. *NeurIPS 2025*. [arXiv:2503.01840](https://arxiv.org/abs/2503.01840).
+
+[^dflash]: Chen, J., Liang, Y., & Liu, Z. (2026). DFlash: Block Diffusion for Flash Speculative Decoding. *ICML 2026*. [arXiv:2602.06036](https://arxiv.org/abs/2602.06036).
+
+[^vllm-parallel]: Marques, A., Flynn, M., Zhao, H., Chitty Venkata, K. T., & Ukachi, C. (2026). Parallel All the Way Down: Beyond Single-Token Generation with Speculative Decoding. *vLLM Blog*. [vllm.ai](https://vllm.ai/blog/2026-07-28-speculators-parallel-drafting).
 
 [^pld]: Saxena, A. (2023). Prompt Lookup Decoding. *GitHub*. [github.com](https://github.com/apoorvumang/prompt-lookup-decoding).
 
