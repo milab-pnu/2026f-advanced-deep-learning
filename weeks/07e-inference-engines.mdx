@@ -7,7 +7,7 @@ order: 4
 앞 주차와 이번 주에 본 기법은 따로따로 쓰이는 일이 드물다.
 요청 하나가 서버에 들어오면 scheduler가 batch에 넣고,
 KV(key-value) cache 관리자가 블록을 내주고 prefix cache를 찾고,
-kernel이 양자화(quantization)한 가중치로 계산하고, 경우에 따라 draft가 다음 토큰을 추측한다.
+kernel이 필요하면 양자화(quantization)한 가중치로 계산하고, 경우에 따라 draft가 다음 토큰을 추측한다.
 이 모두를 한 프로그램 안에서 맞물려 돌리는 것이 **inference engine**이다.
 이 노트는 대표적인 공개 엔진인 vLLM과 SGLang이 앞의 기법들을 어떻게 묶는지 보고,
 엔진의 성능을 재는 절차로 inference 주제를 마무리한다.
@@ -29,11 +29,12 @@ vLLM과 SGLang, 그 밖의 엔진은 서베이 §4의 해당 절을 따르고, �
 3. **KV cache 관리자**가 요청에 블록을 배정·해제하고, 일치하는 prefix의 블록을 찾아 재사용한다.
 4. **Model runner**가 batch의 입력 텐서를 준비하고,
    attention·선형층 kernel과 CUDA graph로 모델을 한 번 실행한다.
-5. **Sampler**가 마지막 위치의 logits로 다음 토큰을 고르고,
-   speculative decoding이라면 추측을 검증한다.
+5. **Sampler**가 일반 decode에서는 마지막 위치의 logits로 다음 토큰을 고르고,
+   speculative decoding에서는 추측한 토큰 위치들의 logits로 각 토큰의 승인 여부를 정한다.
 
-앞 주차 roofline에서 계산한 Llama 3 8B의 decode 한 스텝 하한은 BF16(bfloat16) 가중치와 KV cache, H100 SXM, batch 1, 문맥 2,048토큰에서 약 4.9 ms였다.
-이 짧은 시간 안에 1–3의 작업과 입력 텐서 준비 같은 CPU(central processing unit) 쪽 작업까지 끝내야 GPU(graphics processing unit)가 놀지 않는다.
+앞 주차 roofline의 단순화한 모형에서 Llama 3 8B의 decode 한 스텝 하한은 BF16(bfloat16) 가중치와 KV cache, H100 SXM, batch 1, 문맥 2,048토큰에서 약 4.9 ms였다.
+실제 GPU(graphics processing unit) 실행도 이렇게 수 ms에 끝나므로,
+다음 스텝의 scheduling과 입력 텐서 준비 같은 CPU(central processing unit) 쪽 작업이 늦어지면 GPU에 빈 구간이 생긴다.
 최근 엔진 설계의 상당 부분이 이 CPU 쪽 시간을 GPU 실행과 겹치는 데 쓰이는 이유다.
 
 ## 2. vLLM
@@ -81,7 +82,7 @@ vLLM의 설정 인자는 앞에서 본 개념과 거의 일대일로 대응한�
 | `--speculative-config` | 없음 | Draft 방식(EAGLE, n-gram, MTP(multi-token prediction) 등)과 추측 길이 |
 | `--enforce-eager` | False | `torch.compile`과 CUDA graph를 끄고 실행 |
 
-`--max-num-seqs`의 기본값은 GPU의 메모리 크기에 따라,
+`--max-num-seqs`의 기본값은 GPU의 종류와 메모리 크기, `--performance-mode`에 따라,
 `--max-num-batched-tokens`의 기본값은 그에 더해 서버로 띄우는지 Python에서 직접 부르는지에 따라 달라진다.
 실험 결과를 보고할 때는 기본값에 기대지 말고 실제 값을 함께 적는다.
 
@@ -103,7 +104,7 @@ SGLang은 LLM(large language model)을 여러 번 부르는 프로그램,
 출력이 JSON(JavaScript Object Notation) 스키마를 따라야 한다면,
 생성 도중 스키마가 허용하는 토큰만 고르도록 매 스텝 마스크를 씌운다.
 SGLang 논문은 스키마 같은 형식을 정규식(regular expression)으로 나타내고 이를 유한 상태 기계(finite state machine, FSM)로 바꾼 뒤,
-다음에 올 수 있는 문자열이 하나뿐인 구간을 한 단계로 압축했다.[^sglang]
+다음에 올 수 있는 문자열이 하나뿐인 구간을 한 단계로 압축했다(원논문 §4, Figure 4).[^sglang]
 예를 들어 `{"name": "` 같은 고정된 부분은 토큰을 하나씩 decode하지 않고 forward 한 번에 여러 토큰을 함께 처리하고,
 사람 이름처럼 모델이 정해야 하는 부분에서만 한 토큰씩 decode한다.
 고정된 부분도 KV cache는 계산해야 하지만 순차 decode 스텝 수가 그만큼 줄어든다.
@@ -111,9 +112,11 @@ SGLang 논문은 스키마 같은 형식을 정규식(regular expression)으로 
 이후 버전은 vLLM V1과 같은 문제를 다른 방식으로 풀었다.
 SGLang 팀은 최적화하지 않은 엔진이 시간의 절반까지를 CPU 작업에 쓸 수 있다고 보고,
 scheduler가 **한 batch 앞서** 다음 batch의 준비를 하게 해 CPU 작업을 GPU 실행과 겹쳤다.[^sglang-v04]
+다음 batch의 입력 토큰은 아직 GPU에서 계산 중이므로 자리표시 토큰(future token)으로 metadata를 먼저 만들고,
+실제 값과의 순서는 CUDA event로 맞춘다.
 여러 엔진 인스턴스 앞에서 요청을 나눌 때 각 인스턴스의 radix tree를 고려해 prefix가 맞는 곳으로 보내는 cache-aware load balancer,
 DeepSeek 계열의 MLA(multi-head latent attention)를 위한 data parallel attention도 더했다.
-같은 글은 긴 공통 prefix를 가진 요청 묶음이 여럿인 workload에서 load balancer가 cache 적중률을 3.8배 높여 처리량을 최대 1.9배 늘렸다고 보고했다.
+같은 글의 성능 표는 크기가 같은 긴 공통 prefix 그룹이 여럿인 workload에서 load balancer가 v0.3보다 cache 적중률을 3.8배 높여 처리량을 최대 1.9배 늘렸다고 보고했다.
 
 ### 3-2. 설정과 튜닝
 
@@ -121,13 +124,15 @@ SGLang의 설정도 같은 개념에 대응한다.[^sglang-args]
 `--mem-fraction-static`은 가중치와 KV cache pool에 줄 GPU 메모리 비율,
 `--chunked-prefill-size`는 chunked prefill의 조각 크기(-1이면 끔),
 `--max-running-requests`는 동시 요청 수의 상한,
-`--schedule-policy`는 요청의 실행 순서(기본 `fcfs`, cache와 일치하는 prefix가 긴 순서인 `lpm` 등),
+`--schedule-policy`는 요청의 실행 순서,
 `--tp-size`는 TP의 GPU 수,
 `--attention-backend`는 attention kernel(FlashInfer, FlashAttention, Triton 등),
 `--speculative-algorithm`은 speculative decoding의 draft 방식이다.
+실행 순서의 기본값은 도착한 순서대로인 `fcfs`(first come, first served)이고,
+`lpm`(longest prefix match)을 고르면 cache와 일치하는 prefix가 긴 요청부터 처리한다.
 
 SGLang의 튜닝 문서는 offline batch inference에서 처리량을 높이려면 **batch를 크게 만드는 것이 가장 중요하다**고 요약한다.[^sglang-tune]
-Roofline이 말하는 것과 같다.
+작은 batch에서는 가중치 읽기가 병목이라는 roofline 분석과 같은 결론이다.
 문서는 서버 로그의 KV cache 사용률이 0.9를 넘으면 메모리를 잘 쓰고 있다고 보고,
 대기 요청이 쌓였는데도 0.9 아래에 머물면 서버가 새 요청을 너무 보수적으로 받아들이는 것이라고 본다.
 메모리가 모자라면 prefill에서는 조각 크기를, decode에서는 동시 요청 수를 줄이라고 권한다.
@@ -191,7 +196,7 @@ Goodput을 잴 때도 정의를 구분한다.
 같은 엔진 버전과 설정으로 서버를 두 번 띄운다.
 FP8 서버는 미리 FP8로 양자화한 checkpoint를 불러오거나,
 BF16 checkpoint를 불러오면서 양자화한다(vLLM v0.31에서는 `--quantization fp8_per_tensor`).
-어느 방식인지와 엔진 버전을 결과와 함께 적고,
+어느 방식인지와 엔진 버전, KV cache 정밀도와 batch 관련 설정을 결과와 함께 적고,
 미리 양자화한 checkpoint라면 아래 `--model`도 그 이름으로 바꾼다.
 두 서버에 각각 다음처럼 부하를 건다.
 
@@ -199,35 +204,40 @@ BF16 checkpoint를 불러오면서 양자화한다(vLLM v0.31에서는 `--quanti
 vllm bench serve --model meta-llama/Llama-3.1-8B-Instruct \
   --dataset-name random --random-input-len 1024 --random-output-len 256 \
   --ignore-eos \
-  --num-prompts 1000 --max-concurrency 64 \
+  --num-prompts 1000 --max-concurrency 64 --num-warmups 10 \
   --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,99 \
   --goodput ttft:1000 tpot:50
 ```
 
-`--ignore-eos`는 종료 토큰이 나와도 정해진 길이까지 생성하게 해 두 서버의 출력 길이를 맞춘다.
+`--ignore-eos`는 종료 토큰(EOS, end of sequence)이 나와도 정해진 길이까지 생성하게 해 두 서버의 출력 길이를 맞추고,
+`--num-warmups`는 측정 전에 warmup 요청을 보낸다(기본값 0).
+`e2el`은 요청 하나의 전체 지연(end-to-end latency)이다.
 `--max-concurrency`를 1, 4, 16, 64, 256으로 바꿔 가며 반복하고,
-가로축에 사용자 한 명이 받는 초당 토큰 수(output token throughput을 동시 요청 수로 나눈 값),
+가로축에 동시 요청 수로 나눈 처리량(output token throughput ÷ 동시 요청 수),
 세로축에 GPU 한 대의 output token throughput을 두어 두 정밀도의 곡선을 겹쳐 그린다.
 동시 요청 64에서 초당 6,400토큰이 나왔다면 그 점은 (100, 6,400)이다(교육용 수치).
+가로축 값에는 TTFT와 대기 시간이 섞여 있어 1/TPOT와 다르므로, decode 중에 사용자가 느끼는 속도는 TPOT로 따로 본다.
 
 Roofline으로 보면 동시 요청이 적을 때는 가중치 읽기가 병목이라 FP8이 TPOT를 줄일 것으로 기대한다.
 다만 불러오면서 양자화하는 방식은 activation의 scale을 매 forward마다 구하므로 지연 개선이 제한된다.[^vllm-fp8w8a8]
 동시 요청이 많아 행렬곱 연산이 병목이 되면 FP8 Tensor Core로 처리량이 높아질 수 있다.
 결과가 예측과 다르면 동시 요청 1의 TPOT로 MBU(model bandwidth utilization)를 계산해 대역폭 지붕에서 얼마나 떨어져 있는지 보고,
 그래도 원인이 보이지 않으면 엔진의 profiler로 실행 기록(trace)을 떠서 kernel 사이에 GPU가 노는 구간과 attention·행렬곱의 비중을 확인한다.[^vllm-profile]
+양자화와 speculative decoding처럼 여러 기법을 함께 켤 때는 이득이 곱해지지 않으므로,
+각각 켠 경우와 함께 켠 경우를 같은 조건에서 따로 잰다.
 정확도는 같은 프롬프트에 대한 과제 점수로 따로 확인한다.
 </Callout>
 
 vLLM은 이런 반복을 자동화하는 `vllm bench sweep`도 제공한다.
 서버 설정의 조합마다 측정을 돌리고, 부하 수준을 바꿔 지연과 처리량의 맞교환을 찾으며,
-위와 같은 정의의 사용자당 처리량과 GPU당 처리량으로 Pareto 곡선을 그린다.[^vllm-sweep]
+위와 같은 정의의 동시 요청당 처리량과 GPU당 처리량으로 Pareto 곡선을 그린다.[^vllm-sweep]
 결과를 보고할 때는 곡선과 함께 측정 조건 전체를 적어,
 다른 사람이 같은 조건에서 다시 잴 수 있게 한다.
 
 ## 6. 두 주의 정리
 
-두 주의 내용을 한 표로 모으면 다음과 같다.
-각 기법은 roofline에서 한 스텝의 bytes나 FLOPs(floating-point operations), 순차 스텝 수를 줄이는지,
+두 주에서 본 주요 기법을 엔진 설정과 연결하면 다음과 같다.
+각 기법은 roofline에서 한 스텝의 bytes나 FLOPs(floating-point operations), 순차 스텝 수, 대기와 간섭을 줄이는지,
 같은 계산의 실행 효율을 높이는지로 자리가 정해진다.
 엔진에서는 많은 기법을 설정 하나로 켜고 끄지만, 모델 구조나 배포 구성을 바꿔야 하는 기법도 있다.
 
@@ -251,7 +261,7 @@ Inference는 학습이 끝난 뒤 모델을 쓰는 단계이지만,
 그래서 두 주 동안 반복한 순서, 곧 roofline으로 병목을 계산하고, 그 병목을 줄이는 기법을 고르고,
 같은 조건에서 곡선으로 재는 순서가 이 주제의 핵심이다.
 
-[^survey]: Park, S., Jeon, S., Lee, C., Jeon, S., Kim, B.-S., & Lee, J. (2025). A Survey on Inference Engines for Large Language Models: Perspectives on Optimization and Efficiency. [arXiv:2505.01658](https://arxiv.org/abs/2505.01658).
+[^survey]: Park, S., Jeon, S., Lee, C., Jeon, S., Kim, B.-S., & Lee, J. (2025). A Survey on Inference Engines for Large Language Models: Perspectives on Optimization and Efficiency. [arXiv:2505.01658v2](https://arxiv.org/abs/2505.01658v2).
 
 [^vllm-v1]: vLLM Team. (2025). vLLM V1: A Major Upgrade to vLLM's Core Architecture. *vLLM Blog*. [vllm.ai](https://vllm.ai/blog/2025-01-27-v1-alpha-release).
 
