@@ -107,7 +107,7 @@ DeepSeek-R1-Zero는 두 가지 규칙 보상을 같은 가중치로 더했다.
 3. 검증기가 응답마다 보상을 매긴다.
 4. 보상(과 KL 벌점)으로 policy gradient를 계산해 정책을 갱신하고 1로 돌아간다.
 
-Reward model이 없으므로 04b §3-4의 네 모델 중 reward model이 프로그램으로 바뀌고,
+Reward model이 없으므로 04b §3-3의 네 모델 중 reward model이 프로그램으로 바뀌고,
 GRPO를 쓰면 value model도 없어진다.
 그 갱신식과 04b의 PPO와의 차이, 정책 사이의 거리를 보정하는 방법은 05b에서,
 2단계의 생성 비용과 비동기 설계는 05d에서 다룬다.

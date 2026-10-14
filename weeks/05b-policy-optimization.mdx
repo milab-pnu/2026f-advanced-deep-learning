@@ -31,7 +31,7 @@ PPO는 그것을 value model $V(x,y_{<t})$로 추정했다.
 비용은 크기와 공유 여부에 달렸다).
 둘째,
 보상이 응답 끝에 한 번만 주어지는 긴 응답에서 토큰마다 "앞으로 받을 보상의 기대값"을 정확히 배우기는 어렵고,
-04b §3-1의 GAE처럼 부정확한 value로 bootstrapping하면 advantage에 편향이 들어간다.
+value 예측이 부정확하면 그 예측을 기준으로 계산한 advantage에도 오차가 들어간다.
 
 Ahmadian 등은 이 설정이 사실상 bandit 문제에 가깝다고 지적했다.
 보상이 응답 전체에 한 번 오므로 응답 하나를 행동 하나로 보면 상태 전이가 없고,
@@ -61,13 +61,13 @@ $$
 \mathcal{J}_{\mathrm{GRPO}}(\theta)=\mathbb{E}\Bigg[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{\lvert o_i\rvert}\sum_{t=1}^{\lvert o_i\rvert}\Big(\min\big(\rho_{i,t}\hat A_i,\ \operatorname{clip}(\rho_{i,t},1-\varepsilon,1+\varepsilon)\hat A_i\big)-\beta\,\mathbb{D}_{\mathrm{KL}}[\pi_\theta\,\|\,\pi_{\mathrm{ref}}]\Big)\Bigg]
 $$
 
-$\rho_{i,t}=\pi_\theta(o_{i,t}\mid q,o_{i,<t})/\pi_{\theta_{\mathrm{old}}}(o_{i,t}\mid q,o_{i,<t})$는 04b §3-3의 토큰 확률비다.
+$\rho_{i,t}=\pi_\theta(o_{i,t}\mid q,o_{i,<t})/\pi_{\theta_{\mathrm{old}}}(o_{i,t}\mid q,o_{i,<t})$는 04b §3-4의 토큰 확률비다.
 KL 항은 04b처럼 보상에 섞지 않고 목적함수에 직접 더하며,
 토큰마다 $\frac{\pi_{\mathrm{ref}}}{\pi_\theta}-\log\frac{\pi_{\mathrm{ref}}}{\pi_\theta}-1$로 추정한다.
 이 값은 표본마다 0 이상이다.
 고정한 prefix에서 토큰을 현재 정책 $\pi_\theta$로 뽑아 평균하면 reverse KL과 같지만,
 여기처럼 옛 정책 표본을 재사용할 때 그 평균까지 불편 추정량인 것은 아니다.[^deepseekmath]
-Value model이 없으므로 04b §3-4의 구성에서 critic(value model)이 빠진다.
+Value model이 없으므로 04b §3-3의 구성에서 critic(value model)이 빠진다.
 
 <Callout type="example">
 **응답 네 개의 GRPO advantage.** 한 문제에 대한 응답 네 개의 보상이 $[1,0,1,0]$이라고 하자.
@@ -211,7 +211,7 @@ overlong punishment 41, token-level loss 42, dynamic sampling 50이 되었다(�
 
 Clipping의 역할을 다시 생각한 변형도 있다.
 PPO의 clipping은 advantage가 양수일 때 확률비가 상한을 넘거나 음수일 때 하한 아래로 내려간 토큰의
-gradient를 0으로 만든다(04b §3-3).
+gradient를 0으로 만든다(04b §3-4).
 MiniMax-M1의 CISPO(clipped IS-weight policy optimization, IS는 importance sampling)는 그 대신
 확률비를 잘라 stop-gradient로 고정한 가중치로 쓰고,
 목적함수를
@@ -220,7 +220,7 @@ $\operatorname{sg}[\operatorname{clip}(\rho_{i,t})]\,\hat A_i\log\pi_\theta(o_{i
 "However"나 "Wait"처럼 확률은 낮지만 추론의 분기를 만드는 토큰이 clipping에 걸려 학습에서 빠지는 것을 막기 위해서다.
 원논문은 가중치의 하한은 두지 않고 상한만 조정했으며,
 Qwen2.5-32B base의 통제 실험에서 DAPO와 같은 AIME 2024 성능에 절반의 스텝으로 도달했다고 보고했다(원논문 Figure 2).[^cispo]
-04b §3-3의 예시로 말하면,
+교육용 가정으로,
 확률이 1.3배로 오른 토큰에 advantage가 양수일 때 PPO는 gradient를 0으로 만들지만,
 CISPO는 상한을 PPO와 같은 1.2로 두었다고 가정하면 가중치 1.2를 곱한 gradient로 계속 밀어 준다.
 
