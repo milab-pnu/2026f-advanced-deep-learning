@@ -19,17 +19,17 @@ QK-Norm, attention sink는 이 노트에서 원논문으로 보완한다.
 위치 이름의 LN은 LayerNorm(layer normalization)에서 왔지만,
 RMSNorm을 써도 Pre-LN·Post-LN이라 부른다.
 
-| 축 | 질문 | 선택지 예 | 절 |
-|---|---|---|---|
-| 연산 종류 | 벡터를 어떻게 정규화하는가 | LayerNorm, RMSNorm | §1 |
-| Residual 대비 위치 | 덧셈 경로의 어디에 두는가 | Post-LN, Pre-LN, Peri-LN(sandwich) | §2 |
-| 적용 대상 | 무엇을 정규화하는가 | 블록 입력·출력(§2), attention 내부 query와 key(§3) | §2–3 |
+| 축 | 질문 | 선택지 예 |
+|---|---|---|
+| 연산 종류 | 벡터를 어떻게 정규화하는가 | LayerNorm, RMSNorm |
+| Residual 대비 위치 | 덧셈 경로의 어디에 두는가 | Post-LN, Pre-LN, Peri-LN(sandwich) |
+| 적용 대상 | 무엇을 정규화하는가 | 블록 입력·출력, attention 내부 query와 key |
 
-세 절의 발전 동기도 각각 다르다.
-§1은 LayerNorm의 연산 부담에서 RMSNorm으로 이어진다.
-§2는 Post-LN의 초기 기울기 문제에서 Pre-LN으로,
+세 축의 발전 동기도 각각 다르다.
+연산 종류는 LayerNorm의 연산 부담에서 RMSNorm으로 이어진다.
+위치는 Post-LN의 초기 기울기 문제에서 Pre-LN으로,
 다시 residual 값의 누적 문제에서 입력·출력 양쪽 정규화와 출력만 정규화하는 두 배치로 갈라진다.
-§3은 logit 증폭이라는 같은 문제에 QK-Norm과 soft-capping이 서로 다른 위치에서 대응한다.
+Attention 내부에서는 logit 증폭이라는 같은 문제에 QK-Norm과 soft-capping이 서로 다른 위치에서 대응한다.
 Soft-capping은 정규화 연산은 아니지만 비교할 대안으로 함께 다룬다.
 
 본문에서는 각 선택을 쓰는 모델을 그 기법의 예로 든다.
@@ -37,16 +37,16 @@ Soft-capping은 정규화 연산은 아니지만 비교할 대안으로 함께 �
 [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/)에서 모델별 블록
 구성도를 확인하면 된다.[^gallery]
 
-§4의 attention sink는 정규화 기법이 아니라, 특정 위치에 attention weight가 몰리는 현상이다.
+마지막에 다루는 attention sink는 정규화 기법이 아니라, 특정 위치에 attention weight가 몰리는 현상이다.
 그래도 이 노트에서 함께 다루는 데는 이유가 있다.
-§3과 같은 softmax 식에서 출발하고, 원인 가설 하나가 §2의 정규화 위치와 이어진다.
+QK-Norm과 같은 softmax 식에서 출발하고, 원인 가설 하나가 정규화 위치와 이어진다.
 대응책 가운데 gated attention은 Qwen3-Next 같은 최근 모델에도 들어갔다.
 
 ## 1. LayerNorm과 RMSNorm
 
 ### 1-1. LayerNorm의 두 단계
 
-1주차 Transformer 노트 §3-4에서 본 LayerNorm은 토큰 벡터 하나의 $d$개 성분에 대해 평균과 표준편차를 구한다.[^layernorm]
+Transformer 구조 노트에서 본 LayerNorm은 토큰 벡터 하나의 $d$개 성분에 대해 평균과 표준편차를 구한다.[^layernorm]
 Batch 축을 쓰지 않으므로 batch 크기나 시퀀스 길이와 무관하다.
 
 $$
@@ -97,7 +97,7 @@ ViT-22B는 query·key·value(QKV) 투영의 bias를 없애고 모든 LayerNorm�
 품질 저하 없이 가속기 활용률을 3% 높였다고 보고한다(두 변경의 효과를 따로 나누지는 않았다).[^vit22b]
 OLMo 2는 비모수(nonparametric) LayerNorm과 RMSNorm 사이에 차이가 없었다는 ablation을 보고했다.
 다만 두 연산은 학습되는 gain의 유무도 달라 중심화의 효과만 분리한 비교는 아니다.[^olmo2]
-02a §2-2의 기준 모델 Llama 3 8B도 RMSNorm을 쓴다.
+앞 주차의 기준 모델 Llama 3 8B도 RMSNorm을 쓴다.
 
 ### 1-3. 네 성분 벡터의 비교
 
@@ -127,7 +127,7 @@ RMSNorm을 쓴다는 것은 셋째 행의 차이,
 
 ## 2. Residual 대비 정규화 위치
 
-§1이 "무엇으로 정규화하는가"였다면 이 절은 "어디에 두는가"다.
+앞 절이 "무엇으로 정규화하는가"였다면 이 절은 "어디에 두는가"다.
 두 축은 독립이다.
 GPT-2는 Pre-LN 위치에 LayerNorm을, Llama는 같은 위치에 RMSNorm을 쓴다.[^llamaimpl]
 
@@ -151,7 +151,7 @@ Sub-layer 입력(A), sub-layer 출력(B), 덧셈 뒤의 residual 경로 위(C)�
 | 출력 정규화 | 없음 | 정규화 | 없음 | OLMo 2 |
 
 표의 처음 세 행은 Peri-LN 논문의 분류이고,
-마지막 행과 모델 예시는 §2-4의 보고서·구현을 함께 대조한 것이다.
+마지막 행과 모델 예시는 뒤에서 볼 보고서·구현을 함께 대조한 것이다.
 Peri-LN 논문은 OLMo 계열도 같은 전략으로 묶지만,
 OLMo 2 보고서와 구현에는 sub-layer 입력 정규화(A)가 없어 이 표에서는 출력 정규화로 구분했다.[^olmo2][^hfimpl]
 
@@ -172,7 +172,7 @@ $$
 Post-LN은 residual 경로 자체를 매번 정규화한다.
 Pre-LN과 Peri-LN은 residual 경로를 정규화하지 않고 그대로 더해 나가며,
 마지막 블록 뒤에 최종 정규화를 한 번 둔다.
-02a §2-2의 Llama 3 8B 구조도에 있던 "최종 RMSNorm"이 이것이다.
+Llama 3 8B 구조도에 있던 "최종 RMSNorm"이 이것이다.
 
 ### 2-2. Post-LN의 기울기와 warmup
 
@@ -200,7 +200,7 @@ LayerNorm의 Jacobian 크기는 입력에서 평균을 뺀 벡터 $y=x-\mu\mathb
 $\sqrt{d}/\lVert y\rVert$다(부록 D의 유도).
 Lemma 3 본문은 분모를 $\lVert x\rVert$로 적지만, 부록 D는 평균을 뺀 $y$로 계산한다.
 모든 성분에 같은 값을 더하는 이동은 $y$를 바꾸지 않으므로,
-§1-3의 셋째 행에서 LayerNorm 출력이 그대로였듯 Jacobian에도 영향이 없다.
+앞의 네 성분 벡터 비교 셋째 행에서 LayerNorm 출력이 그대로였듯 Jacobian에도 영향이 없다.
 초기화 시점에는 성분의 평균이 0 근처라 $\lVert y\rVert$와 $\lVert x\rVert$를 같은 규모로 볼 수 있다.
 Post-LN은 residual 경로를 매 층 정규화하므로 정규화에 들어가는 벡터의 노름이 층 수와 무관하고,
 마지막 층의 기울기 상한도 $L$과 무관하다.
@@ -228,7 +228,7 @@ pre-training에서 Pre-LN을 warmup 없이 학습했고,
 Xiong 등의 결과는 **초기화 시점의 기울기 분석과 원논문의 실험 설정**에서 warmup을 없앨 수 있음을 보인 것이다.
 "Pre-LN이면 warmup이 필요 없다"로 일반화하면 안 된다.
 대형 Pre-LN 모델들도 흔히 warmup을 쓴다.
-02c §4-1에서 본 DeepSeek-V3는 Pre-LN 배치의 RMSNorm을 쓰면서도 처음 2K step 동안 learning rate를
+앞 주차에서 본 DeepSeek-V3는 Pre-LN 배치의 RMSNorm을 쓰면서도 처음 2K step 동안 learning rate를
 0에서 $2.2\times10^{-4}$까지 선형으로 올린다.[^deepseekv3]
 Warmup을 쓸지는 정규화 위치 하나로 정해지지 않는다.
 </Callout>
@@ -240,7 +240,7 @@ Pre-LN은 residual 경로를 정규화하지 않는다.
 여기서 두 가지 문제가 보고되었다.
 
 첫째,
-**hidden state의 크기가 층을 따라 커진다.** §2-2의 Lemma 2는 초기화 시점의 선형 증가를 설명했다.
+**hidden state의 크기가 층을 따라 커진다.** 앞에서 본 Lemma 2는 초기화 시점의 선형 증가를 설명했다.
 Peri-LN 논문은 학습이 진행되면 Pre-LN의 hidden state 분산이 지수적으로 커질 수 있고,
 sub-layer가 한 번 큰 값을 내면 그 값이 residual 경로를 따라 끝까지 남는다고 관찰했다.[^peri]
 
@@ -302,13 +302,12 @@ OLMo 2가 이 배치를 쓰고, QK-Norm과 함께 적용해 gradient spike를 �
 
 세 배치 모두 "sub-layer 출력을 정규화해 residual 경로에 더해지는 크기를 묶는다"는 공통점이 있다.
 입력 정규화를 함께 두느냐, embedding 정규화를 두느냐가 다르다.
-이렇게 residual stream에 더해지는 출력의 크기를 조절하는 일이 attention sink와 어떻게 이어질 수 있는지는 §4-2에서 다룬다.
 
 </Details>
 
 ## 3. QK-Norm과 logit soft-capping
 
-§2의 정규화는 블록 단위 입력·출력의 크기를 다루었다.
+앞의 정규화 배치는 블록 단위 입력·출력의 크기를 다루었다.
 그 안쪽의 attention에서는 또 다른 크기가 폭주할 수 있다.
 Softmax에 들어가는 attention logit $q\cdot k/\sqrt{d_h}$다.
 
@@ -340,7 +339,7 @@ QK-Norm은 attention logit을 계산하기 전에 query와 key에 정규화를 �
 Henry 등은 저자원 기계 번역에서 softmax 포화를 줄이려고 query와 key를 head 차원에서 L2 정규화하고,
 $\sqrt{d_h}$ 대신 학습되는 scale을 곱하는 QKNorm을 제안했다.[^qknorm]
 대형 모델의 학습 안정화에 쓰이는 지금의 형태는 L2 정규화 대신 LayerNorm 계열 연산을 쓴다.
-ViT-22B는 논문에서 LayerNorm으로 표기하지만 §1-2에서 본 것처럼 bias와 중심화를 뺀 형태를
+ViT-22B는 논문에서 LayerNorm으로 표기하지만 앞에서 본 것처럼 bias와 중심화를 뺀 형태를
 썼고,[^vit22b] 최근 LLM은 주로 RMSNorm을 쓴다.
 
 $$
@@ -382,19 +381,19 @@ Gemma 2는 self-attention logit에 $c=50$, 최종 출력 logit에 $c=30$을 썼�
 | $c=50$ 적용 후 | 9.87 | 26.85 | 38.08 | 48.20 | 49.97 |
 
 10은 거의 그대로이고 100과 200은 둘 다 50 가까이에 머문다.
-상한이 50이면 §3-1 예시와 같은 one-hot 분포는 여전히 가능하다.
+상한이 50이면 앞의 예시와 같은 one-hot 분포는 여전히 가능하다.
 Soft-capping은 분포를 평평하게 만드는 장치라기보다 logit이 무한히 커지는 것을 막는 장치다.
 
 두 갈래 사이를 옮겨 간 모델 계열도 있다.
 Gemma 2는 위처럼 soft-capping을 썼지만, Gemma 3는 이를 QK-Norm으로 교체했다.[^gemma3]
-보고서는 교체 이유를 실험으로 보이지 않고, §3-1에서 본 ViT-22B와 Wortsman 등의 연구,
+보고서는 교체 이유를 실험으로 보이지 않고, 앞에서 본 ViT-22B와 Wortsman 등의 연구,
 그리고 Chameleon에서 착안했다고만 적는다.
 결과값을 누르는 대신 재료의 크기를 묶는 쪽으로 옮겨 간 셈이지만,
 같은 조건에서 두 방법을 비교한 결과는 아니다.
 
 ## 4. Attention sink
 
-§3은 attention logit의 전체 규모가 커지는 문제였다.
+QK-Norm과 soft-capping은 attention logit의 전체 규모가 커지는 문제를 다루었다.
 이 절의 attention sink는 **특정 토큰 위치에 attention weight가 집중되는 현상**이다.
 학습이 발산하지 않은 정상 모델에서도 관측된다.
 관측된 사실, 원인에 대한 가설, 대응 방법을 구분해 읽어야 한다.
@@ -462,7 +461,7 @@ value 투영 뒤에 gate를 둔 설정(G2)은 massive activation을 크게 줄�
 저자들은 이를 근거로 massive activation이 attention sink의 전제 조건은 아니라고 해석했다.[^gated]
 인과 관계는 아직 정리되지 않았다.
 
-**정규화 위치와의 연결.** 이 논의는 §2의 정규화 위치로 이어질 수 있다.
+**정규화 위치와의 연결.** 이 논의는 앞의 정규화 위치로 이어질 수 있다.
 Peri-LN 논문은 Pre-LN이 sub-layer 출력을 정규화하지 않고 residual 경로에 더하므로 hidden state가 크게 자라는 것을 허용하고,
 그 결과 massive activation이 생길 수 있으며 이 값이 고정된 bias처럼 작동해 모델의 초점을 특정
 토큰으로 좁힐 수 있다고 적는다.[^peri]
@@ -496,7 +495,7 @@ StreamingLLM은 처음 몇 토큰(보통 4개)의 KV와 최근 토큰의 KV를 �
 이때 위치 정보는 원문 위치가 아니라 cache 안의 위치로 다시 매긴다.
 원문 위치 0, 1, 2, 3과 6, 7, 8이 cache에 있으면 이를 0부터 6까지의 연속 위치로 두고 다음 토큰을 7로 놓는다.
 RoPE는 회전을 적용하기 전의 key를 cache에 두었다가 매 step 이 위치로 다시 회전한다.
-03a §5-2에서 본 것처럼 학습 길이 밖의 위치가 attention에 나타나지 않게 하는 조치다.
+Positional encoding 노트에서 본 것처럼 학습 길이 밖의 위치가 attention에 나타나지 않게 하는 조치다.
 원논문은 Llama-2, MPT, Falcon, Pythia로 400만 토큰까지 안정적으로 언어 모델링했다고 보고한다.
 
 <Figure src="https://arxiv.org/html/2309.17453v4/scheme.png" alt="네 가지 attention 방식 비교. (a) Dense attention은 모든 T개 토큰을 cache에 두어 O(T²) 비용이고 긴 텍스트에서 perplexity가 5641이다. (b) Window attention은 최근 L개 토큰만 남겨 O(TL)이지만 첫 토큰이 밀려나면 perplexity가 5158로 무너진다. (c) Re-computation을 쓰는 sliding window는 perplexity 5.43이지만 토큰마다 cache를 다시 계산해 O(TL²)다. (d) StreamingLLM은 attention sink인 처음 몇 토큰과 최근 L개 토큰을 유지해 O(TL) 비용으로 perplexity 5.40을 얻는다." caption="StreamingLLM과 기존 방식의 비교. (d)의 노란 칸이 보존하는 초기 토큰(attention sink)이다. PPL(perplexity)은 Llama-2-13B로 PG19 시험 집합의 첫 책(65K 토큰)을 평가한 값이다." source="Xiao et al. · Efficient Streaming Language Models with Attention Sinks, Figure 1 · CC BY 4.0 · 수정 없음" />
@@ -505,7 +504,6 @@ RoPE는 회전을 적용하기 전의 key를 cache에 두었다가 매 step 이 
 
 StreamingLLM은 문맥 길이를 늘리는 방법이 아니다.
 밀려난 중간 토큰의 정보는 여전히 볼 수 없고, 긴 생성에서 분포가 무너지지 않게 할 뿐이다.
-KV cache 관리 전반은 6주차에서 다룬다.
 
 **학습 시 전용 sink.** Sink가 필요하다면 처음부터 그 자리를 따로 마련할 수 있다.
 
@@ -531,7 +529,7 @@ $$
 Y'=Y\otimes\sigma(XW_\theta)
 $$
 
-$\otimes$는 03d §3-1의 GLU 식에서처럼 원소별(elementwise) 곱이다(원논문은 $\odot$로 적는다).
+$\otimes$는 FFN activations 노트의 GLU 식에서처럼 원소별(elementwise) 곱이다(원논문은 $\odot$로 적는다).
 $Y$는 head별 attention 출력, $X$는 pre-normalization을 거친 블록 입력,
 $W_\theta$는 gate의 파라미터다.
 Gate가 0에 가까우면 head 출력이 줄어들므로,
@@ -549,10 +547,9 @@ attention 출력에 그 절반의 sigmoid를 곱한다.
 
 <Callout type="note">
 여기의 gate는 **softmax attention의 출력**에 곱하는 gate다.
-03c §4-3의 Gated DeltaNet에서 gate는 linear attention의 **recurrent 상태**를 얼마나 잊을지 정한다.
+Efficient attention 노트의 Gated DeltaNet에서 gate는 linear attention의 **recurrent 상태**를 얼마나 잊을지 정한다.
 둘 다 0과 1 사이의 계수를 곱하지만 적용 대상과 목적이 다르다.
-Qwen3-Next는 두 종류를 한 모델에서 함께 쓰며,
-Gated DeltaNet 층과 Gated Attention 층을 섞는 구성은 03c §6-2에서 다룬다.
+Qwen3-Next는 두 종류를 한 모델에서 함께 쓴다.
 </Callout>
 
 Sink를 어떻게 다루든, 이미 sink에 의존하도록 학습된 모델에서 그 장치를 빼는 것은 별개 문제다.

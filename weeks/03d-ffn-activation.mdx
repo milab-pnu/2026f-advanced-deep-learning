@@ -18,9 +18,9 @@ Llama 3 8B의 FFN은 활성화 쪽에서 두 가지 점이 다르다.
 뒤의 것은 gate를 별도 투영으로 만드는 **구조**를 바꾼다.
 이 노트는 두 축이 SwiGLU에서 만난 뒤의 비용 문제까지 따라간다.
 행렬이 셋으로 늘며 증가한 비용을 중간 차원(폭)의 축소로 맞추고,
-그 출발 폭에 모델별 배율과 배수 올림을 적용하는 과정이 §4다.
+그 출발 폭에 모델별 배율과 배수 올림을 적용한다.
 Llama 3 8B의 실제 폭 14336을 예로 계산한다.
-§3-3에서는 활성화 계보와 별개로 일어난 변화인 bias 제거도 함께 짚는다.
+활성화 계보와 별개로 일어난 변화인 bias 제거도 함께 짚는다.
 여기서 다루는 선택이 다른 최근 모델에서 어떻게 조합되는지는 Sebastian Raschka의
 [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/)에서 모델별
 구성도로 확인할 수 있다.[^gallery]
@@ -67,7 +67,7 @@ Llama 3 8B의 실제 폭 14336을 예로 계산한다.
 
 ## 1. FFN의 역할
 
-1주차 Transformer 노트 §3-3의 FFN을 다시 쓰면 다음과 같다.
+Transformer 구조 노트의 FFN을 다시 쓰면 다음과 같다.
 토큰 벡터 하나를 행벡터 $x\in\mathbb{R}^{1\times d}$로 둔다.
 
 $$
@@ -76,7 +76,7 @@ $$
 
 원래 Transformer는 $d_{\text{ff}}=4d$로 두어 벡터를 네 배 넓혔다가 다시 좁힌다.[^aiayn]
 같은 가중치를 모든 위치에 따로 적용하므로 FFN은 위치 사이의 정보를 섞지 않는다.
-02a §2-3의 표현대로 attention이 위치 사이의 정보를 섞고,
+앞 주차의 표현대로 attention이 위치 사이의 정보를 섞고,
 FFN은 그 결과를 토큰마다 비선형
 변환한다.<Sidenote>FFN의 두 행렬을 key-value memory로 읽는 해석도 있다. $W_1$의 각 열이 입력 패턴을 감지하는 key, $W_2$의 대응하는 행이 출력에 더할 value 역할을 한다는 관찰이다.[^geva]</Sidenote>
 
@@ -106,7 +106,6 @@ FFN이 전체의 약 70%, embedding을 뺀 블록 파라미터의 약 81%다.
 행렬 곱의 연산량도 토큰 하나당 가중치마다 곱셈과 덧셈이 한 번씩 일어나므로 파라미터 수에
 비례한다(시퀀스 길이에 따라 늘어나는 attention score 계산은 따로다).
 FFN 설계의 작은 선택이 모델 전체의 크기와 연산량에 직접 반영되는 이유다.
-표의 FFN이 행렬 세 개로 계산된 까닭은 §3에서, 14336이라는 값은 §4에서 다룬다.
 
 ## 2. ReLU, GELU, SiLU
 
@@ -147,7 +146,7 @@ Sigmoid나 tanh에 비해 깊은 망을 학습시키기 쉬웠던 이유로 흔�
 세 성질이 곧 결함인 것은 아니다.
 정확한 0 출력은 희소한 표현을 만들고,
 Maas 등은 이것이 분류기의 입력 특징으로는 이로울 수 있다고 보았다.[^maas]
-§3-2에서 보듯 ReLU를 제곱한 형태를 쓰는 최근 LLM도 있다.
+뒤에서 보듯 ReLU를 제곱한 형태를 쓰는 최근 LLM도 있다.
 아래의 발전은 이 성질들을 다르게 절충한 선택으로 읽는 편이 정확하다.
 </Callout>
 
@@ -354,7 +353,7 @@ GLU에서는 같은 gate 아래에서도 $v$에 따라 은닉값이 달라지고
 ### 3-2. SwiGLU와 GeGLU
 
 GLU의 $\sigma$는 다른 함수로 바꿀 수 있다.
-Shazeer는 gate 자리에 §2의 함수를 넣은 변형 SwiGLU와 GeGLU(GELU-gated linear unit)를 Transformer FFN에 적용했다.[^glu]
+Shazeer는 gate 자리에 앞의 활성화 함수를 넣은 변형 SwiGLU와 GeGLU(GELU-gated linear unit)를 Transformer FFN에 적용했다.[^glu]
 모두 bias 없이 행렬 세 개 $W, V, W_2$를 쓴다.
 
 $$
@@ -366,7 +365,7 @@ ReGLU(ReLU-gated linear unit)는 $\max(0,\cdot)$, bilinear는 항등 함수를 �
 GLU라는 같은 구조에서 gate 함수만 달리 고른 **병렬 변형**이다.
 축 1에서 고른 모양이 축 2의 gate 자리에 들어가는 합류 지점이 여기다.
 실제 모델에서도 SwiGLU만 쓰이지는 않는다.
-Gemma 3의 공식 PyTorch 구현은 GeGLU를 쓰며, gate 투영에 §2-2의 tanh 근사 GELU를 적용한다.[^gemma3]
+Gemma 3의 공식 PyTorch 구현은 GeGLU를 쓰며, gate 투영에 앞에서 본 tanh 근사 GELU를 적용한다.[^gemma3]
 
 앞의 예제에서 $\sigma(u)$를 $\operatorname{SiLU}(u)=u\,\sigma(u)$로 바꾸면 토큰 A에서 SiLU를 적용한
 gate 투영값은 $(1.762,\,-0.269)$,
@@ -374,7 +373,7 @@ gate 투영값은 $(1.762,\,-0.269)$,
 SwiGLU의 "gate"는 0과 1 사이에 갇히지 않고 음수도 될 수 있다.
 은닉값은 $u$의 부호와 크기, $\sigma(u)$, $v$ 세 요소의 곱이다.
 
-§2 끝에서 본 Shazeer의 T5 base 실험은 GLU 계열의 중간 폭을 3072에서 2048로 줄여 파라미터·연산량을 맞췄다(§4-1).
+앞에서 본 Shazeer의 T5 base 실험은 GLU 계열의 중간 폭을 3072에서 2048로 줄여 파라미터·연산량을 맞췄다.
 그중 524,288 step의 결과(원논문 Table 1)를 정리하면 다음과 같다.
 
 | FFN | 구조 | Log-perplexity |
@@ -458,15 +457,15 @@ gate 투영을 따로 두는지는 설명하지 않았다.[^nemotron]
 
 ### 3-3. Bias 제거
 
-§3-2의 SwiGLU 식과 Llama 3 구현에 bias가 없다는 점도 원래 FFN과 다르다.
-§1의 원래 FFN에는 $b_1, b_2$가 있었지만,
+앞의 SwiGLU 식과 Llama 3 구현에 bias가 없다는 점도 원래 FFN과 다르다.
+원래 FFN에는 $b_1, b_2$가 있었지만,
 Shazeer의 비교는 T5 코드베이스를 따라 bias 없는 FFN을 썼다.[^glu]
 PaLM은 dense 층과 layer norm 어디에도 bias를 쓰지 않았고,
 그렇게 하면 큰 모델의 학습 안정성이 높아졌다고 보고했다.[^palm]
 Llama 3 공식 구현의 `w1`, `w2`, `w3`도 모두 `bias=False`다.
 
 절약되는 파라미터는 작다.
-Llama 3 8B의 FFN 한 층에 bias를 붙이면 중간 폭 14336(§4-2)과 $d=4096$에서 $14336\cdot2+4096=32{,}768$개로,
+Llama 3 8B의 FFN 한 층에 bias를 붙이면 중간 폭 14336과 $d=4096$에서 $14336\cdot2+4096=32{,}768$개로,
 층당 FFN 파라미터 1억 7,616만 개의 0.02%에 못 미친다.
 따라서 bias 제거를 파라미터 절약으로 설명하기는 어렵고,
 공식 자료가 드는 이유는 PaLM의 학습 안정성 관찰 정도다.
@@ -475,7 +474,7 @@ Llama 3 8B의 FFN 한 층에 bias를 붙이면 중간 폭 14336(§4-2)과 $d=409
 ## 4. 같은 파라미터 예산의 FFN 폭
 
 행렬이 셋이 되면 같은 중간 폭에서 파라미터와 행렬 곱 연산량이 1.5배가 된다.
-§2 끝의 비교처럼 구조의 효과를 따지려면 예산을 맞춰야 하고,
+앞의 T5 base 비교처럼 구조의 효과를 따지려면 예산을 맞춰야 하고,
 실제 모델에서도 중간 폭을 새로 정해야 한다.
 
 ### 4-1. 8d/3 규칙

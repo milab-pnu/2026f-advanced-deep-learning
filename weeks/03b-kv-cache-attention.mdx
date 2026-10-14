@@ -20,9 +20,7 @@ KV cache 관리 기법을 정리한 Li 등의 서베이[^kvsurvey]는 §II-B에�
 §V-B1에서 attention 구조를 바꾼 MLA를 다룬다(절 번호는 arXiv v3 HTML판 기준이며,
 같은 판의 PDF에서는 2.2, 5.1.1, 5.2.1이다).
 이 노트는 그 세 범위를 원논문 수준으로 풀어 쓴다.
-같은 서베이가 다루는 다른 절감 중 sliding window처럼 참조 위치 자체를 줄이는 방법은 Efficient attention 노트의 별도 계보이고,
-서빙 시스템은 6주차,
-KV cache 양자화는 6주차 KV cache management 노트 §4-1, 가중치 양자화는 7주차에서 다룬다.
+같은 서베이가 다루는 다른 절감 중 sliding window처럼 참조 위치 자체를 줄이는 방법은 동기가 다른 별도 계보다.
 
 최근 모델이 이 가운데 어떤 방식을 어떤 head 구성으로 쓰는지는 Sebastian Raschka의
 [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/)에서 모델별로
@@ -32,11 +30,10 @@ KV cache 양자화는 6주차 KV cache management 노트 §4-1, 가중치 양자
 
 ### 1-1. Decode 단계에서 재사용되는 key와 value
 
-2주차 Decoder-only LLM 노트 §3-3에서 본 것처럼,
+앞 주차에서 본 것처럼,
 생성은 마지막 위치의 출력으로 다음 토큰을 고르고 그 토큰을 입력 뒤에 붙이는 반복이다.
 프롬프트 전체를 한 번에 처리하는 첫 단계를 **prefill**,
 이후 토큰을 하나씩 만드는 단계를 **decode**라고 부른다.
-두 단계의 비용 차이와 서빙 방식은 6주차에서 다루고,
 여기서는 decode 한 스텝에서 무엇이 재사용되는지만 본다.
 층 하나, head $i$ 하나만 보면 위치 $t$의 attention 출력은 다음과 같다.
 
@@ -61,9 +58,9 @@ Query는 사정이 다르다.
 **새 토큰의 Q·K·V만 계산하고, 새 K/V를 캐시 뒤에 붙인 뒤, 새 Q로 캐시 전체를 읽는다.**[^kvsurvey]
 Llama 3 공식 구현도 RoPE(rotary position embedding)를 적용한 key를 캐시 텐서 `cache_k`에 쓰고,
 지금까지의 구간 전체를 읽어 attention을 계산한다.[^llama-impl]
-Positional encoding 노트 §4-1에서 보았듯 회전 각도는 그 key의 위치만으로 정해지므로,
+RoPE에서 보았듯 회전 각도는 그 key의 위치만으로 정해지므로,
 회전된 key를 그대로 저장해도 된다.
-이 성질은 §5에서 다시 문제가 된다.
+이 성질은 MLA에서 다시 문제가 된다.
 
 ### 1-2. 캐시 텐서의 모양과 원소 수
 
@@ -96,7 +93,6 @@ $$
 
 $L$은 층 수, $n_{kv}$는 K/V head 수다.
 바이트 수는 이 값에 원소당 크기를 곱하면 되며,
-batch·문맥 길이·정밀도에 따른 전체 메모리 계산은 6주차에서 한다.
 이 노트는 원소 수만 비교한다.
 
 ## 2. Multi-head attention의 캐시 비용
@@ -117,7 +113,6 @@ Llama 3 8B의 값($L=32$, query head 32개, K/V head 8개, $d_h=128$)으로 계�
 | Llama 3 8B 실제 설정 (GQA) | 8 | 65,536 |
 
 문맥 4,096 토큰이면 MHA 가정의 캐시는 약 10억 7천만 원소, 실제 설정은 그 4분의 1이다.
-이 차이를 만드는 GQA는 §4에서 설명한다.
 
 ### 2-2. 메모리 용량과 대역폭
 
@@ -139,7 +134,7 @@ Shazeer는 이 관찰을 decode 전체에 대한 점근 분석으로 정리했�
 하나는 가중치를 읽는 비용으로, batch를 키우면 여러 시퀀스가 같은 가중치를 나눠 쓰므로 줄어든다.
 다른 하나는 매 스텝 K/V를 다시 읽는 비용인데,
 시퀀스마다 캐시가 따로 있어 batch를 키워도 줄지 않는다.
-이 둘째 항을 줄이는 방법으로 Shazeer는 시퀀스 길이를 제한하거나 참조 위치를 줄이는 방식(Efficient attention 노트의 계보)과 별개로,
+이 둘째 항을 줄이는 방법으로 Shazeer는 시퀀스 길이를 제한하거나 참조 위치를 줄이는 방식과 별개로,
 **모든 head가 K/V 하나를 나눠 쓰는**, 즉 K/V에서 head 축을 없애는 방식을 제안했다.
 
 <Details summary="심화: Shazeer의 점근 분석과 그 가정">
@@ -181,7 +176,7 @@ $$
 모든 head가 같은 $k_j, v_j$를 읽지만 query가 서로 달라 attention 가중치는 head마다 다르다.
 토큰당 캐시는 $2Ld_h$로, MHA보다 $n_h$배 작다.
 Llama 3 8B 형태라면 $2\cdot32\cdot128=8{,}192$개 원소로 MHA 가정의 32분의 1이다.
-§2-2의 점근 분석에서 K/V를 다시 읽는 항도 $n_h$배 줄어든다.
+앞의 점근 분석에서 K/V를 다시 읽는 항도 $n_h$배 줄어든다.
 
 실험에서도 차이가 컸다.
 같은 번역 과제에서 입력·출력 길이 128, batch 1,024로 greedy decoding을 했을 때 decoder 한 스텝(배치
@@ -225,7 +220,7 @@ K/V head를 하나로 고정하는 MQA는 규모가 커질수록 더 공격적�
 ### 4-1. Query head의 그룹화
 
 GQA는 query head를 $n_{kv}$개 그룹으로 나누고 그룹마다 K/V head 하나를 둔다.[^gqa]
-원논문은 그룹 수를 $G$로 쓰지만, 이 노트에서는 §1-2의 기호를 이어 K/V head 수 $n_{kv}$로 쓴다.
+원논문은 그룹 수를 $G$로 쓰지만, 이 노트에서는 앞의 기호를 이어 K/V head 수 $n_{kv}$로 쓴다.
 $n_{kv}=1$이면 MQA, $n_{kv}=n_h$이면 MHA이므로 두 방식 사이를 잇는 일반화다.
 토큰당 캐시는 $2Ln_{kv}d_h$이다.
 Llama 3는 8B·70B·405B 모두 K/V head를 8개로 두며,
@@ -270,7 +265,7 @@ Attention 연산은 세 경우 모두 query head 4개가 key 3개와 점수를 �
 </Callout>
 
 Llama 3 8B는 query head 32개를 K/V head 8개에 나눠 그룹 크기가 4다.
-§2-2의 계산에 대입하면 층 하나가 읽는 K/V는 $2048t$개 원소로 줄고, 곱셈-덧셈은 $8192t$번 그대로다.
+앞의 계산에 대입하면 층 하나가 읽는 K/V는 $2048t$개 원소로 줄고, 곱셈-덧셈은 $8192t$번 그대로다.
 읽은 원소 하나당 계산이 약 4번으로 늘어난 셈이다.
 다만 공식 참조 구현은 `repeat_kv`로 K/V를 query head 수만큼 복사한 뒤 계산하므로,[^llama-impl] 읽는
 양의 절감이 실제 실행 시간에 얼마나 반영되는지는 attention kernel의 구현에 달려 있다.
@@ -334,7 +329,7 @@ DeepSeek-V2가 제안한 MLA는 key와 value를 하나의 저차원 latent 벡�
 층의 입력 $h_t\in\mathbb{R}^d$에서 다음을 계산한다.
 이 절의 식은 원논문처럼 열벡터에 행렬을 왼쪽에서 곱하고,
 위첨자 $C$는 압축된 latent에서 복원한(compressed) 성분을 뜻한다.
-RoPE를 담당하는 성분 $R$은 §5-4에서 따로 더한다.
+RoPE를 담당하는 성분 $R$은 뒤에서 따로 더한다.
 
 $$
 c_t^{KV}=W^{DKV}h_t\in\mathbb{R}^{d_c}
@@ -452,7 +447,7 @@ $$
 $$
 
 이제 $q_{t,i}^C$와 $W_i^{UK}$ 사이에 **위치 쌍에 따라 달라지는** 회전 $R_{j-t}$가 끼어 있다.
-§5-2처럼 query를 latent 공간으로 옮기면 $\tilde q=W_i^{UK\top}R_{j-t}^{\top}q_{t,i}^C$가 되는데,
+행렬 흡수처럼 query를 latent 공간으로 옮기면 $\tilde q=W_i^{UK\top}R_{j-t}^{\top}q_{t,i}^C$가 되는데,
 이 벡터는 캐시된 위치 $j$마다 달라진다.
 Query 하나를 만들어 모든 $j$에 재사용할 수 없고,
 $W_i^{UK}$를 query 쪽 행렬에 미리 합쳐 둘 수도 없다.
@@ -463,7 +458,7 @@ $d_c=1$, $d_h=2$이고 $W^{UK}=[1,0]^\top$이라면 회전 전 key는 $[c_j,0]$�
 위치 $j$의 회전을 적용하면 key는 $c_j[\cos j\theta,\sin j\theta]$가 된다.
 회전된 query와 내적한 점수는 $c_j$에 $\cos((j-t)\theta)$와 $\sin((j-t)\theta)$가 섞인 계수를 곱한 형태다.
 이 계수가 위치 $j$마다 달라지므로 "query에 한 번 곱해 둘 고정 행렬"이 존재하지 않는다.
-MHA에서는 회전된 key를 그대로 캐시하면 됐지만(§1-1),
+MHA에서는 회전된 key를 그대로 캐시하면 됐지만,
 MLA는 회전 전 latent를 캐시하므로 이 문제가 생긴다.
 
 ### 5-4. Decoupled RoPE key
@@ -479,7 +474,7 @@ $$
 q_{t,i}^R=\operatorname{RoPE}(W_i^{QR}c_t^Q)\in\mathbb{R}^{d_h^R},\qquad k_j^R=\operatorname{RoPE}(W^{KR}h_j)\in\mathbb{R}^{d_h^R}
 $$
 
-$c_t^Q$는 §5-1의 query latent다.
+$c_t^Q$는 앞에서 본 query latent다.
 Query의 RoPE 부분은 head마다 $W_i^{QR}$로 따로 만들고,
 key의 RoPE 부분은 입력 $h_j$에서 head 공통으로 하나만 만든다.
 
@@ -487,7 +482,7 @@ $$
 \text{score}_{ij}=\frac{q_{t,i}^{C\top}k_{j,i}^C+q_{t,i}^{R\top}k_j^R}{\sqrt{d_h+d_h^R}}
 $$
 
-첫째 항에는 회전이 없으므로 §5-2의 흡수를 그대로 쓸 수 있다.
+첫째 항에는 회전이 없으므로 행렬 흡수를 그대로 쓸 수 있다.
 위치 정보는 둘째 항이 전부 맡는다.
 RoPE key $k_j^R$는 모든 head가 공유하는 벡터 하나이고(MQA와 같은 방식),
 회전을 적용한 상태로 캐시한다.
@@ -499,7 +494,7 @@ $d_c=512$, $d_h^R=64$로 같은 값을 쓴다.[^dsv3]
 앞의 작은 예에 $d_h^R=2$를 더하면 캐시는 $3+2=5$개다.
 이때 복원된 key는 head마다 $4+2=6$차원,
 value는 4차원이므로 둘을 head별로 그대로 캐시하면 $2\cdot(6+4)=20$개가 된다.
-§5-1의 MHA 16개는 key와 value가 모두 4차원인 별도 비교 기준이다.
+앞의 MHA 16개는 key와 value가 모두 4차원인 별도 비교 기준이다.
 
 <figure>
 <svg viewBox="0 0 560 400" role="img" aria-label="MLA의 추론 경로. 위 상자는 층마다 토큰 j에 대해 캐시하는 두 벡터를 보여 준다. RoPE를 적용하지 않은 512차원 latent c_j와 RoPE를 적용한 64차원 key k_j^R이며, 둘 다 모든 head가 공유하고 합은 576개 원소다. 가운데 상자는 query head i의 점수 계산이다. 비RoPE query에 W^UK_i의 전치를 곱해 512차원 q-tilde_i로 옮긴 뒤 c_j와 내적하고, RoPE query q_i^R과 k_j^R의 64차원 내적을 따로 더해 루트 192로 나눈다. 아래 상자는 출력 계산이다. Softmax 가중치로 latent c_j를 먼저 가중합한 뒤 W^UV_i를 곱해 head 출력을 만든다. a_ij는 점수를 j에 대해 softmax한 가중치이며, head별 K와 V는 만들지 않는다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -569,7 +564,7 @@ BBH(BIG-Bench Hard)는 3-shot exact match, MMLU와 중국어 벤치마크인 C-E
 **연산량**도 따로 보아야 한다.
 DeepSeek-V3 추론 코드의 absorb 모드에서 캐시 텐서에는 head 축이 없고,
 query head 128개가 같은 latent와 RoPE key를 읽는다.[^dsv3-code]
-§5-2의 비교는 latent에서 K/V를 매번 복원하는 경우였지만, `naive` 모드는 이미 복원한 K/V를 캐시한다.
+행렬 흡수에서 한 비교는 latent에서 K/V를 매번 복원하는 경우였지만, `naive` 모드는 이미 복원한 K/V를 캐시한다.
 세 경로의 차이를 같은 차원으로 비교하면 다음과 같다.
 
 | 경로 | 저장하는 캐시 | Head 하나·캐시된 토큰 하나당 곱셈-덧셈 |
@@ -582,7 +577,7 @@ query head 128개가 같은 latent와 RoPE key를 읽는다.[^dsv3-code]
 새 query를 투영하고 head 출력을 복원하는 비용과 softmax는 제외했다.
 Latent 저장은 캐시를 줄이고, 흡수는 그 latent에서 과거 토큰마다 K/V를 복원하는 비용을 없앤다.
 대신 이미 복원된 K/V를 저장하는 `naive`와 비교하면 attention 내적과 가중합의 차원이 커진다.
-§3-1의 주의와 마찬가지로 KV cache의 크기와 attention 연산량은 별개의 축이다.
+MQA에서 짚은 것과 마찬가지로 KV cache의 크기와 attention 연산량은 별개의 축이다.
 
 그래서 MLA에서 query head 수는 캐시 크기가 아니라 연산량을 정하는 선택이 된다.
 Kimi K2는 DeepSeek-V3와 같은 512차원 latent와 64차원 RoPE key를 캐시하면서[^kimi-config] query head를 128개에서 64개로 줄였다.

@@ -16,23 +16,23 @@ IV-A–IV-B절에서 gating 함수와 expert 설계(shared expert 포함)를,
 V절에서 계산·통신·저장의 시스템 문제를 정리한다.
 
 이 노트의 계보는 **dense FFN → sparse MoE와 top-k routing**에서 출발해 두 갈래로 나뉜다.
-한 갈래는 routing이 낳은 expert 쏠림과 처리 용량 초과를 다루는 load balancing과 capacity(§3)이고,
+한 갈래는 routing이 낳은 expert 쏠림과 처리 용량 초과를 다루는 load balancing과 capacity이고,
 다른 갈래는 expert 하나가 여러 종류의 지식을 섞어 담거나 expert끼리 같은 지식을 중복해 배우는 문제를
-다루는 expert 구성의 설계(§4)다.
+다루는 expert 구성의 설계다.
 쏠림에 대한 보조 손실은 언어 모델링 학습을 방해할 수 있어 bias 기반 선택으로 이어진다.
 용량 초과에는 capacity와 token dropping으로 대응했지만,
 토큰 손실과 padding 낭비 때문에 가변 길이를 처리하는 dropless 구현도 나왔다.
 특화 쪽에서는 지식의 혼합을 줄이는 fine-grained expert와 중복을 줄이는 shared expert로 갈라진다.
-깊이 방향의 두 기법은 동기가 달라 §5에서 따로 다루며, 이 부분은 서베이 대신 원논문을 따른다.
+깊이 방향의 두 기법은 동기가 달라 마지막에 따로 다루며, 이 부분은 서베이 대신 원논문을 따른다.
 
 ## 1. Dense FFN의 확장 한계
 
-03d §1에서 계산했듯이,
+FFN activations 노트에서 계산했듯이,
 기준 모델 Llama 3 8B에서는 SwiGLU(Swish-gated linear unit) FFN이 전체 8.03B 파라미터의 약 70%를 차지한다.
 
 Dense 구조에서는 이 FFN 가중치를 **모든 토큰이 전부** 사용한다.
 FFN 폭을 두 배로 키우면 저장할 파라미터도 두 배, 토큰마다 곱해야 하는 행렬도 두 배가 된다.
-02d §1-1에서 본 근사 $C\approx6ND$도 같은 가정을 깔고 있다.
+앞 주차에서 본 근사 $C\approx6ND$도 같은 가정을 깔고 있다.
 파라미터 $N$을 늘리면 토큰당 계산 $6N$이 같이 늘어난다.
 
 그런데 파라미터 수와 토큰당 계산을 꼭 함께 늘려야 할까?
@@ -54,7 +54,7 @@ DeepSeek-V3, Qwen3, gpt-oss를 비롯한 최근 LLM의 전체 구성은 Sebastia
 MoE layer는 dense FFN 하나를 **expert** $E$개와 **router**(gating network) 하나로 바꾼다.
 Expert는 보통 dense FFN과 같은 구조의 FFN이다.
 폭은 설계에 따라 달라서 Mixtral은 기준 dense FFN과 같은 폭을 쓰고,
-§4의 fine-grained expert는 더 좁은 폭을 쓴다.
+뒤에서 볼 fine-grained expert는 더 좁은 폭을 쓴다.
 Router는 토큰 벡터 $x\in\mathbb{R}^d$를 expert별 점수로 바꾸는 선형층 $W_g\in\mathbb{R}^{d\times E}$다.
 각 토큰은 점수가 높은 $k$개 expert만 통과하고, layer의 출력은 선택된 expert 출력의 가중합이다.
 Attention·normalization·residual 경로는 dense 모델과 같다.
@@ -199,7 +199,7 @@ Embedding과 LM(language model) head는 각각 $32000\times4096$이다.
 **학습 계산량.** $C\approx6ND$의 $N$에는 dense 모델과 같은 관례로 입력 embedding과 LM head를 뺀 블록 파라미터를 넣되,
 MoE에서는 그중 **활성 파라미터**만 넣는다.
 Forward에서 토큰 하나가 거치는 행렬곱이 그만큼이기 때문이다(문맥 길이에 따라 늘어나는 attention
-score 계산은 02d §1-1과 같이 생략한다).
+score 계산은 dense 모델에서와 같이 생략한다).
 Mixtral의 블록 활성 파라미터는 $12.9-0.26\approx12.6$B이므로 토큰당 학습 계산은 약
 $6\times12.6\text{B}\approx7.6\times10^{10}$ FLOPs다.
 전체 블록 파라미터 46.4B를 넣으면 약 3.7배 과대 추정한다.
@@ -207,7 +207,7 @@ DeepSeek-V3에 같은 근사를 적용하면,
 보고된 활성 37B와 학습 토큰 14.8T로 $6\times37\text{B}\times14.8\text{T}\approx3.3\times10^{24}$
 FLOPs가 나온다(이 노트에서 계산한 근사치이며,
 37B는 embedding 포함 여부를 따로 밝히지 않은 값이다).[^dsv3]
-이 근사에는 router 계산, capacity를 맞추려고 채우는 padding(§3-4),
+이 근사에는 router 계산, capacity를 맞추려고 채우는 padding,
 장치 간 통신 시간이 들어가지 않는다.
 
 **메모리.** 계산은 활성 파라미터를 따라가지만 메모리는 전체 파라미터를 따라간다.
@@ -226,14 +226,13 @@ DeepSeek-V3는 37B/671B로 약 5.5%이고[^dsv3] gpt-oss-120b는 5.1B/116.8B로 
 그래서 MoE 모델을 비교할 때는 전체 파라미터 하나만 보지 말고 활성 파라미터와 expert 구성을 함께 보아야 한다.
 
 **통신.** Expert가 많으면 여러 GPU(graphics processing unit)에 나누어 둔다.
-이것이 02e §4-4에서 본 EP(expert parallelism)다.
+이것이 앞 주차에서 본 EP(expert parallelism)다.
 각 GPU는 자기 토큰을 선택된 expert가 있는 GPU로 보내고(dispatch),
 결과를 다시 받아 원래 순서로 합친다(combine).
 두 단계 모두 all-to-all 통신이다.
 DeepSeek-V3는 노드를 넘는 EP 때문에 계산과 통신의 비율이 약 1:1이 되었다고 보고했고,
 토큰 하나가 가는 노드를 최대 4개로 제한하는 routing 규칙을 두었다.[^dsv3]
 추론에서 batch가 작으면 토큰 몇 개를 위해 여러 expert의 가중치를 메모리에서 읽어야 하므로 효율이 떨어질 수 있다.
-추론 쪽 비용 분석은 6주차에서 다룬다.
 
 <Video src="https://www.youtube.com/watch?v=RcJ1YXHLv5o" caption="Stanford CS25 V4, Albert Jiang, Demystifying Mixtral of Experts (2024). Mixtral의 router와 expert 구성, routing 분석을 설명한다." />
 
@@ -242,8 +241,8 @@ DeepSeek-V3는 노드를 넘는 EP 때문에 계산과 통신의 비율이 약 1
 Top-k routing을 그대로 학습시키면 두 문제가 생긴다.
 하나는 **학습 중 expert 사용이 한쪽으로 쏠리는 문제**이고,
 다른 하나는 **한 batch 안에서 특정 expert에 배정된 토큰이 그 expert의 처리 용량을 넘는 문제**다.
-앞의 문제는 routing을 학습시키는 방식(§3-1–3-3)으로, 뒤의 문제는 expert별 capacity와 overflow 처리,
-또는 가변 길이 계산(§3-4)으로 다룬다.
+앞의 문제는 routing을 학습시키는 방식으로, 뒤의 문제는 expert별 capacity와 overflow 처리,
+또는 가변 길이 계산으로 다룬다.
 두 문제는 연결되어 있다.
 쏠림이 심하면 용량 초과도 잦아진다.
 다만 balancing이 잘 되어도 batch마다 우연한 불균형은 남으므로 이를 처리할 계산·메모리 설계가 따로 필요하다.
@@ -308,7 +307,7 @@ Top-k 모델에서는 $f_i$를 argmax 하나가 아니라 선택된 $k$개 배�
 이때 무엇으로 나누는지가 구현마다 다르다.
 Hugging Face Transformers의 Qwen3-MoE 구현은 배정 수를 토큰 수 $T$로 나누므로 $f_i$의 합이 $k$가 되고,
 균등 배정에서 손실 값도 1이 아니라 $k$다.[^qwen3-impl]
-DeepSeek-V3가 함께 쓰는 보조 손실(§3-3)은 배정 수를 $kT$로 나누고 expert 수를 곱해,
+DeepSeek-V3가 bias 방식과 함께 쓰는 보조 손실은 배정 수를 $kT$로 나누고 expert 수를 곱해,
 균등 배정에서 값이 1이 되도록 맞춘다.[^dsv3]
 그래서 같은 $\alpha$라도 구현에 따라 실제 손실의 세기가 다르고,
 논문의 계수를 옮겨 쓸 때는 정규화 관례를 함께 확인해야 한다.
@@ -452,7 +451,7 @@ router z-loss는 품질 저하 없이 안정화했다(Table 4).[^stmoe]
 
 ## 4. Fine-grained expert와 shared expert
 
-§2–3의 MoE는 "dense FFN과 같은 크기의 expert 몇 개 중 한두 개 선택"이었다.
+앞에서 본 MoE는 "dense FFN과 같은 크기의 expert 몇 개 중 한두 개 선택"이었다.
 DeepSeekMoE는 부하 균형과는 다른 문제,
 즉 각 expert가 얼마나 뚜렷하게 특화되는가에 주목해 이 구성에서 expert 수와 크기,
 항상 켜 두는 expert를 바꾸는 두 가지 선택을 제안했다.[^dsmoe]
@@ -480,7 +479,7 @@ expert 하나가 hidden dimension보다 좁다.[^dsv3][^qwen3-config]
 Expert가 작고 많아지면 router 계산과 토큰 배정 관리가 복잡해진다.
 활성 expert 수가 늘면 토큰 하나를 보낼 목적지도 늘 수 있는데,
 실제 통신량은 expert의 배치와 routing 제한에 따라 달라진다.
-DeepSeek-V3가 토큰당 목적지 노드를 4개로 제한한 것(§2-4)이 그 예다.[^dsv3]
+DeepSeek-V3가 토큰당 목적지 노드를 4개로 제한한 것이 그 예다.[^dsv3]
 
 ### 4-2. Shared expert
 
@@ -581,7 +580,7 @@ Early exit은 토큰이 어느 층에서 멈추면 그 뒤 층을 모두 건너�
 MoD에서는 앞쪽 블록을 건너뛴 토큰도 뒤쪽 블록에서 다시 계산될 수 있다.[^mod]
 
 MoD는 토큰별 선택 대신 블록이 상위 $k$개 토큰을 고르는 **expert-choice routing**을 쓴다.
-블록마다 처리할 토큰 수가 정확히 $k$로 고정되므로 §3의 load balancing 문제와 균형용 보조 손실이 필요 없다.
+블록마다 처리할 토큰 수가 정확히 $k$로 고정되므로 앞의 load balancing 문제와 균형용 보조 손실이 필요 없다.
 이 $k$가 MoD의 capacity다.
 논문에서 가장 좋았던 설정은 한 블록 걸러 하나씩 routing 블록을 두고 capacity를 12.5%로 둔 것이다.
 시퀀스 길이 2048에서 256개 토큰만 블록을 계산하고 1792개는 건너뛴다.
@@ -619,14 +618,14 @@ Middle-Cycle 방식은 첫 층과 마지막 층을 공유하지 않고 가운데
 
 가중치 공유는 파라미터를 줄이지만 계산을 줄이지는 않는다.
 모든 토큰이 여전히 같은 횟수만큼 반복한다.
-§5-1이 해결하려던 "균일한 계산" 문제가 그대로 남는다.
+MoD가 해결하려던 "균일한 계산" 문제가 그대로 남는다.
 
 ### 5-3. Mixture-of-Recursions
 
 Bae 등(2025)의 **Mixture-of-Recursions**(MoR)은 두 갈래를 합친다.
 가중치는 recursive Transformer처럼 공유하고,
 토큰마다 공유 블록을 몇 번 반복할지는 MoD처럼 router가 정한다.[^mor]
-02a §2-2의 곁주에서 "블록 가중치 공유와 토큰별 반복 횟수 선택을 결합한 변형"이라고 소개한 모델이다.
+Decoder-only LLM overview 노트의 곁주에서 "블록 가중치 공유와 토큰별 반복 횟수 선택을 결합한 변형"이라고 소개한 모델이다.
 Universal Transformer도 위치별로 반복을 멈추는 halting 장치를 두었지만,[^ut] MoR 논문은 기존의 동적
 반복 방식들이 별도 학습 절차나 배포 효율의 제약 때문에 실제로는 고정 횟수 반복으로 돌아가는 경우가
 많았다고 설명한다.[^mor]
@@ -636,11 +635,11 @@ Universal Transformer도 위치별로 반복을 멈추는 halting 장치를 두�
 이번 단계에서 선택된 토큰만 다음 단계의 후보가 된다.
 단계 $r$마다 남길 토큰 수 $k_r$을 미리 정해 두므로 balancing은 필요 없다.
 논문 설정에서 $k_r$은 전체 토큰의 $1,\,2/3,\,1/3$로 단계가 깊어질수록 줄어든다.
-다만 상위 $k_r$개를 고르려면 시퀀스 전체를 봐야 하므로 §5-1에서 본 non-causal 문제가 그대로 따라온다.
+다만 상위 $k_r$개를 고르려면 시퀀스 전체를 봐야 하므로 MoD에서 본 non-causal 문제가 그대로 따라온다.
 MoR도 추론용 보조 router나 보조 손실로 이를 우회하며, 논문의 비교에서는 보조 손실 쪽이 나았다.
 **Token-choice**에서는 첫 단계에서 토큰마다 반복 횟수를 한 번에 정한다.
 미래 토큰을 보지 않아 인과성 문제는 없지만,
-반복 횟수별 토큰 수가 고르지 않을 수 있어 §3의 balancing loss나 bias 방식이 필요하다.
+반복 횟수별 토큰 수가 고르지 않을 수 있어 앞의 balancing loss나 bias 방식이 필요하다.
 논문은 balancing loss 쪽이 더 안정적이었다고 보고한다.[^mor]
 
 **KV cache.** 반복 단계마다 계산하는 토큰이 달라지므로 KV(key-value) cache도 설계해야 한다.
