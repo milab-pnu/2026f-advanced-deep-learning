@@ -6,18 +6,18 @@ order: 0
 
 import helffGap from "./assets/week04-helff-hacking-gap.png";
 
-앞 주차에서 본 RLHF와 DPO의 학습 신호는 사람 또는 모델의 선호 판정에서 왔다.
+앞 주차에서 본 RLHF(reinforcement learning from human feedback)와 DPO(direct preference optimization)의 학습 신호는 사람 또는 모델의 선호 판정에서 왔다.
 Reward model은 그 판정을 근사했고 reward hacking에서는 근사가 어떻게 틀리는지 보았다.
 수학 문제와 코드처럼 정답이 있는 과제에서는 다른 길이 있다.
 응답을 사람이나 모델이 평가하는 대신 **프로그램으로 검증**하고 결과를 보상으로 쓰면 된다.
-이 방법이 <strong>RLVR(reinforcement learning with verifiable rewards)</strong>이고
-2025년 초 DeepSeek-R1-Zero가 사고 과정을 담은 응답으로 SFT(supervised fine-tuning)를 하지 않고 이
-보상만으로 base model에서 긴 추론을 이끌어 내면서 추론 모델 post-training의 중심이 되었다.
+이 방법이 <strong>RLVR(reinforcement learning with verifiable rewards)</strong>이다.
+2025년 초 DeepSeek-R1-Zero는 사고 과정을 담은 응답으로 SFT(supervised fine-tuning)를 하지 않고 이 보상만으로 base model에서 긴 추론을 이끌어 냈고,
+이후 공개된 추론 모델들의 post-training에는 RLVR 단계가 들어갔다.
 이 노트는 보상의 출처를 바꾼 계보를 따라간다.
 
 전체 지도는 Zhang 등이 2025년에 정리한 추론 모델을 위한 강화학습 서베이[^survey]로 잡는다.
-서베이 §3.1의 보상 설계(검증 가능한 보상, 생성형 보상, 밀집 보상, 비지도 보상, 보상 조형)와
-§4.5의 outcome 보상과 process 보상의 문제가 이 노트의 지도다.
+서베이 §3.1은 보상 설계를 검증 가능한 보상, 생성형 보상, 밀집 보상, 비지도 보상, 보상 조형으로 나누는데,
+이 노트는 그중 검증 가능한 보상과 생성형 판정을, §4.5에서는 outcome 보상과 process 보상의 문제를 다룬다.
 
 ## 1. 학습된 보상에서 검증된 보상으로
 
@@ -28,10 +28,9 @@ Reward model은 그 판정을 근사했고 reward hacking에서는 근사가 어
 Reward hacking에서 본 것처럼 이런 보상은 최적화될수록 실제 목표와 어긋날 수 있고 판정자는 길이와 말투에 끌린다.
 수학 문제의 풀이에서 이 문제는 특히 크다.
 틀린 풀이도 자신 있게 쓰면 선호될 수 있고,
-reward model이 풀이의 정오를 가리려면 각 단계의 추론을 따라가며 오류를 찾아낼 수 있어야 하는데 선호
-비교 학습이 그 능력을 보장하지는 않는다.
+reward model이 풀이의 정오를 가리려면 각 단계의 추론을 따라가며 오류를 찾아낼 수 있어야 하는데 선호 비교 학습이 그 능력을 보장하지는 않는다.
 
-정답이 있는 과제에서는 보상을 학습하지 않아도 된다.
+정답을 프로그램으로 확인할 수 있는 과제에서는 보상을 학습하지 않아도 된다.
 최종 답이 정답과 같은지, 코드가 테스트를 통과하는지를 프로그램이 확인하면 된다.
 이 보상은 사람의 선호 데이터가 필요 없다.
 정책이 학습된 보상 모델의 오차를 파고드는 over-optimization은 검증기의 판정이 정답 여부와 정확히 일치하는 한 생기지 않는다.
@@ -43,17 +42,15 @@ reward model이 풀이의 정오를 가리려면 각 단계의 추론을 따라�
 ### 1-2. 두 출발점
 
 이 계보에는 두 갈래의 선행 연구가 있다.
-알고리즘 쪽에서는 2024년 DeepSeek의 DeepSeekMath가 수학 특화 7B 모델의 RL에서 PPO(proximal policy
-optimization)의 value model을 없앤 GRPO(group relative policy optimization)를 제안했다.
+알고리즘 쪽에서는 2024년 DeepSeek의 DeepSeekMath가 수학 특화 7B 모델의 RL(reinforcement learning)에서 PPO(proximal policy optimization)의 value model을 없앤 GRPO(group relative policy optimization)를 제안했다.
 다만 그 보상은 검증기가 아니라 DeepSeekMath-Base 7B로 학습한 reward model이었다.[^deepseekmath]
-보상 쪽에서는 Allen AI의 Tülu 3가 SFT와 DPO(direct preference optimization) 뒤의 마지막 단계로,
+보상 쪽에서는 Allen AI의 Tülu 3가 SFT와 DPO 뒤의 마지막 단계로,
 정답을 검증할 수 있는 프롬프트에서 검증 통과 시에만 보상을 주는 단계를 두고 이를 RLVR이라고 이름 붙였다.[^tulu3]
 Tülu 3의 목적은 chat model의 마지막 다듬기였다.
-이보다 앞선 2024년 9월에는 OpenAI의 o1이 대규모 RL로 긴 사고 과정을 학습한 추론 모델을 내놓았지만,
-학습 방법과 보상은 공개하지 않았다.
-2025년 1월의 DeepSeek-R1-Zero가 GRPO와 검증 보상을 base model에서 직접,
-훨씬 큰 규모로 결합하고 방법을 공개하면서 이 계보의 목적이 바뀌었다.
-**긴 추론 행동을 RL로 만들어 내는 것**이다.[^r1]
+이보다 앞선 2024년 9월에는 OpenAI가 o1-preview를 공개하며 대규모 RL로 긴 사고 과정을 학습한 추론 모델을 내놓았지만,
+구체적인 학습 알고리즘과 보상은 공개하지 않았다.[^o1]
+2025년 1월의 DeepSeek-R1-Zero는 GRPO와 검증 보상을 base model에서 직접, 훨씬 큰 규모로 결합하고 방법을 공개했다.[^r1]
+이미 쓸 만한 모델을 다듬는 경로 옆에 **긴 추론 행동을 RL로 만들어 내는** 경로가 열린 것이다.
 
 GRPO의 직관은 앞 주차 PPO에서 본 baseline에서 이어진다.
 같은 문제에 대한 응답을 여러 개 뽑아 각 보상에서 그룹 평균을 빼면,
@@ -66,7 +63,7 @@ GRPO는 여기에 표준편차 정규화와 PPO의 clipping을 더한다.
 
 ### 2-1. 보상의 정의
 
-Tülu 3의 정의가 가장 단순하다.
+Tülu 3는 검증 통과 여부에 따라 두 값 중 하나를 보상으로 준다.
 프롬프트 $x$와 정답 정보가 주어졌을 때 응답 $y$의 보상은
 
 $$
@@ -77,12 +74,10 @@ $$
 판정이 정답 여부와 일치하면 기대 정확성 보상은 정답률의 $\alpha$배다.
 Tülu 3는 $\alpha=10$을 썼으며 RLHF와 같은 KL(Kullback–Leibler) 벌점을 더해 PPO로 최적화했다.[^tulu3]
 DeepSeek-R1-Zero는 두 가지 규칙 보상을 같은 가중치로 더했다.
-최종 답이 정답과 같은지를 보는 정확성 보상(수학은 지정 형식의 답을 대조,
-코드는 컴파일러와 테스트 케이스)과,
-사고 과정을 `<think>` 태그 안에 쓰는 형식을 지켰는지를 보는 형식 보상이다(원논문 §2.2).[^r1]
+하나는 최종 답이 정답과 같은지를 보는 정확성 보상으로, 수학은 지정 형식으로 쓴 답을 정답과 대조하고 코드는 컴파일러와 테스트 케이스로 확인한다.
+다른 하나는 사고 과정을 `<think>` 태그 안에 쓰는 형식을 지켰는지를 보는 형식 보상이다(원논문 §2.2).[^r1]
 신경망 reward model은 쓰지 않았는데
 저자들은 대규모 RL에서 reward model이 reward hacking에 취약하고 다시 학습하는 비용이 크기 때문이라고 밝혔다.[^r1]
-Reward hacking 문제가 설계 결정에 반영된 것이다.
 
 ### 2-2. 규칙 검증과 생성형 판정
 
@@ -94,7 +89,7 @@ Reward hacking 문제가 설계 결정에 반영된 것이다.
 | 코드 | 생성한 코드를 실행해 테스트 케이스 통과 여부 확인 | 테스트가 덮지 못하는 오류, 실행 환경, 시간 제한 |
 | 정밀한 지시 따르기 | "300단어 이하", "쉼표 금지" 같은 조건을 프로그램으로 확인 | 조건은 맞지만 내용이 없는 응답 |
 | 참조 답은 있지만 규칙으로 비교하기 어려운 답 | LLM(large language model) 판정자가 응답과 참조 답을 읽고 같은 답인지 판정 | 판정자의 오판과 공략 |
-| 하나의 정답으로 채점할 수 없는 응답 | 문제별 rubric의 항목을 judge가 평가하고 점수를 합침, 또는 reward model | 판정자의 편향, rubric이 담지 못한 성공 조건 |
+| 하나의 정답으로 채점할 수 없는 응답 | 문제별 rubric의 항목별 judge 점수를 합산하거나, reward model이 응답 전체에 점수를 부여 | 판정자의 편향, rubric이 담지 못한 성공 조건 |
 
 규칙으로 판정할 수 없는 경우는 두 갈래로 나뉜다.
 첫째는 참조 답이 있지만 문자열이나 기호로 비교하기 어려운 경우다.
@@ -106,25 +101,26 @@ Reward hacking 문제가 설계 결정에 반영된 것이다.
 
 둘째는 의료 상담 답변처럼 하나의 정답으로 채점할 수 없는 경우다.
 앞 주차 RLHF에서 본 rubric을 여기서 보상으로 쓸 수 있다.
-Gunjal 등의 Rubrics as Rewards는 참조 답을 참고해 LLM이 문제마다 중요도 가중치가 붙은 요구사항 항목을 만들고,
-LLM judge가 이 항목으로 응답을 채점한 점수를 보상으로 GRPO 학습을 했다(원논문 §2.2, §4.4).[^rar]
-점수를 프로그램이 합산하더라도 항목마다의 판정은 judge의 판단이므로,
-이 보상은 판정자의 편향을 그대로 물려받는다.
+Gunjal 등의 Rubrics as Rewards에서는 LLM이 참조 답을 참고해 문제마다 중요도 가중치가 붙은 요구사항 항목을 만들고(원논문 §3.2),
+LLM judge가 이 항목으로 응답을 채점한다(§2.2).
+저자들은 그 점수를 보상으로 정책을 GRPO로 학습했다(§4.2).[^rar]
+점수를 프로그램이 합산하더라도 항목마다의 판정은 judge의 판단이므로 판정자의 편향이 보상에 반영될 수 있다.
+예를 들어 judge가 길고 단정적인 답에 후하면 정책은 그런 답을 강화한다.
 
 두 방식은 RLVR을 잇는 다음 단계라기보다, 정답을 확인하는 방법이 과제마다 다르기 때문에 생긴 보상 설계의 갈래다.
 수학과 코드에서는 프로그램 검증기를 쓰고, 그것이 불가능한 과제에서 판정의 일부나 전부를 LLM에게 넘긴다.
-넘기는 몫이 클수록 학습된 판정자의 문제가 돌아온다.
+넘기는 몫이 클수록 학습된 판정자의 문제가 돌아올 여지도 커진다.
 
 ### 2-3. Outcome 보상과 process 보상
 
-보상은 출처(검증기인가 학습된 모델인가)와 별개로 **부여 단위**로도 나뉜다.
+보상은 출처(규칙 기반 판정인가 학습된 모델의 판정인가)와 별개로 **부여 단위**로도 나뉜다.
 위의 보상은 응답 전체에 한 번 주어지는 **outcome 보상**이다.
 풀이의 중간 단계가 틀렸어도 최종 답만 맞으면 보상을 받고,
 긴 풀이의 어느 단계가 기여했는지는 알 수 없다.
+예를 들어 셋째 단계에서 계산을 틀렸는데 뒤에서 우연히 맞는 답에 이르면, outcome 보상은 1을 주지만 단계마다 채점하는 process 보상은 셋째 단계에 낮은 점수를 준다.
 Lightman 등은 2023년에 풀이의 각 단계에 사람이 정오를 표시한 PRM800K 데이터로
 <strong>process reward model(PRM)</strong>을 학습했다.
-문제마다 생성한 후보 풀이 1,860개 중 reward model 점수가 가장 높은 것을 고르는 평가에서 PRM은 MATH
-테스트 부분집합의 78.2%를 맞혔고,
+문제마다 생성한 후보 풀이 1,860개 중 reward model 점수가 가장 높은 것을 고르는 평가에서 PRM은 경시 수학 문제 모음 MATH의 테스트 부분집합에서 78.2%를 맞혔고,
 같은 방식의 outcome reward model은 72.4%였다(원논문 Figure 3).[^prm]
 추론 시 후보 선택의 결과이지 RL로 정책을 학습한 결과는 아니지만,
 단계별 보상이 더 조밀한 학습 신호가 되고 틀린 중간 과정에 벌점을 줄 수 있다는 기대의 근거가 되었다.
@@ -132,11 +128,9 @@ Lightman 등은 2023년에 풀이의 각 단계에 사람이 정오를 표시한
 그런데 DeepSeek-R1 팀은 대규모 RL에서 PRM을 시도한 결과를 실패 사례로 보고했다.
 일반적인 추론에서 "단계"를 어떻게 나눌지 정하기 어렵고,
 중간 단계의 정오를 자동으로 판정하기 어려우며,
-PRM이 reward hacking을 부르면 다시 학습해야 해서 파이프라인이 복잡해진다는 세 가지 이유였다(arXiv v2
-부록 G.2 Unsuccessful Attempts).[^r1]
+PRM이 reward hacking을 부르면 다시 학습해야 해서 파이프라인이 복잡해진다는 세 가지 이유였다(arXiv v2 부록 G.2 Unsuccessful Attempts).[^r1]
 R1 계열이 최종적으로 쓴 보상은 모두 응답 단위로 주어지며 단계별 정오를 PRM으로 보상하지 않는다.
-Outcome과 process 중 어느 쪽이 나은가는 서베이 §4.5가 열린 문제로 정리하며,
-이 노트는 outcome 보상으로 무엇이 가능했는지를 본다.
+Outcome과 process 중 어느 쪽이 나은가는 서베이 §4.5가 열린 문제로 정리한다.
 
 ## 3. 검증기의 실패와 독립 평가
 
@@ -149,14 +143,13 @@ Outcome과 process 중 어느 쪽이 나은가는 서베이 §4.5가 열린 문�
 ### 3-1. 답 추출과 동치 판정
 
 수학의 동치 판정은 보기보다 어렵다.
-Hugging Face의 Math-Verify는 LaTeX와 일반 표기를 파싱해 수치·기호(SymPy)·집합·구간·행렬의 동치를 판정하는 라이브러리로,
+Hugging Face의 Math-Verify는 LaTeX와 일반 표기를 파싱하고 SymPy를 이용한 기호식 비교를 포함해 수치·집합·구간·행렬의 동치를 판정하는 라이브러리로,
 같은 MATH 데이터셋 채점에서 기존 평가 도구들보다 더 많은 정답을 정답으로 인정했다고 저장소 문서가 보고한다.[^mathverify]
 검증기가 정답을 오답으로 판정하면 그 응답은 보상을 못 받고,
 정책은 검증기가 알아보는 형식으로 답을 쓰는 법을 함께 배우게 되기 쉽다.
 
 <Callout type="example">
-**검증기의 판정 세 가지.** 교육용으로 `\boxed{}` 안의 내용만 답으로 추출하고 수치 동치를 판정하는
-단순한 검증기를 가정한다(위의 Math-Verify는 더 넓은 형식을 다룬다).
+**검증기의 판정 세 가지.** 교육용으로 `\boxed{}` 안의 내용만 답으로 추출하고 수치 동치를 판정하는 단순한 검증기를 가정한다(위의 Math-Verify는 더 넓은 형식을 다룬다).
 정답이 $\frac{1}{2}$인 문제에 대한 응답 세 개를 보자.
 
 | 응답의 마지막 줄 | 추출된 답 | 판정 | 보상 |
@@ -165,8 +158,9 @@ Hugging Face의 Math-Verify는 LaTeX와 일반 표기를 파싱해 수치·기�
 | "따라서 답은 $\boxed{\frac{2}{3}}$이다." | $\frac{2}{3}$ | 불일치 | 0 |
 | "따라서 확률은 1/2, 즉 50%다." | 추출 실패 | 판정 불가 | 0 |
 
-셋째 응답은 풀이가 맞지만 이 검증기가 정한 형식이 없어 보상을 받지 못한다.
-이런 응답이 많으면 정책은 형식을 배우고, 검증기가 형식에 관대하면 다른 허점이 생긴다.
+셋째 응답은 최종 답이 맞지만 이 검증기가 정한 형식이 없어 보상을 받지 못한다.
+이런 응답이 많으면 정책은 형식을 배운다.
+반대로 추출 규칙을 넓힐 때는 응답 속 오답이나 중간 값을 최종 답으로 잘못 채택하지 않는지도 확인해야 한다.
 검증기의 설계는 보상의 설계다.
 </Callout>
 
@@ -175,13 +169,13 @@ Hugging Face의 Math-Verify는 LaTeX와 일반 표기를 파싱해 수치·기�
 프로그램이 정해진 조건을 정확히 검사해도 그 조건이 과제의 성공을 다 담지 못할 수 있다.
 이때도 학습된 보상의 과최적화처럼 학습 점수와 실제 목표가 갈라진다.
 
-Tülu 3는 IFEval의 검증 가능한 지시로 RLVR을 돌렸을 때,
-KL이 큰 실행에서 검증기가 확인하는 형식 조건은 만족하되 의미 있는 내용이 없는 응답을 만드는
-over-optimization을 관찰했다(원논문 Appendix B.4).[^tulu3]
+Tülu 3는 지시 따르기 평가 IFEval과 같은 꼴의 검증 가능한 지시로 RLVR을 돌렸을 때,
+KL이 큰 실행에서 검증기가 확인하는 형식 조건은 만족하되 의미 있는 내용이 없는 응답을 만드는 over-optimization을 관찰했다(원논문 Appendix B.4).[^tulu3]
 이를 단순화한 가상의 예로, "300단어 이하로 쓰라"는 조건은 아무 말이나 300단어 이하로 써도 통과한다.
 
 검증기가 프로그램이 아니라 앞에서 본 생성형 검증기여도 같은 일이 생긴다.
-Zhao 등은 LLM 판정자가 응답과 참조 답을 비교한 판정을 보상으로 학습하다가 학습이 무너지는 것을 보았다.[^master-key]
+Zhao 등은 응답과 참조 답의 일치 여부를 LLM으로 채점하고 그 점수로 정책을 학습했는데,
+이 과정에서 학습이 무너지는 것을 보았다.[^master-key]
 응답 길이가 급격히 줄고 KL이 치솟았는데,
 정책이 풀이 대신 "Solution", "Thought process:" 같은 시작 문구만 내놓았고 판정자가 이를 정답으로 판정했기 때문이다.
 GPT-4o를 포함한 여러 판정자가 이런 시작 문구 하나에 속았다(Table 1).
@@ -206,25 +200,26 @@ Allen AI의 Olmo-3-7B-Think-DPO에서 출발해 Olmo 3의 RLVR 설정으로 약 
 500 스텝 뒤에는 약 3.5점(최대 10점) 차이가 났다.
 동형 검증기로 학습한 쪽은 그 차이가 끝까지 거의 0이었다(원논문 Appendix C).
 
-<Figure src={helffGap.src} alt="두 개의 학습 곡선. 가로축은 학습 스텝(0에서 500), 세로축은 보상(3에서 8)이다. 왼쪽은 원래 검증기로 학습한 경우로, 빨간 선(원래 검증기의 보상)과 초록 선(이름을 바꾼 과제에서 잰 보상)이 250 스텝 근처까지 겹쳐 3에서 5 사이를 오르내리다가, 그 뒤 빨간 선은 8.2까지 오르고 초록 선은 4.5 근처에 머문다. 두 선 사이가 분홍색으로 칠해져 있다. 오른쪽은 동형 검증기로 학습한 경우로, 두 선이 끝까지 겹친 채 3에서 5.5 사이를 오르내린다." caption="같은 모델을 두 검증기로 RLVR 학습한 결과. 빨간 선은 원래 검증기(라벨 확인)의 보상, 초록 선은 이름을 바꾼 과제에서 잰 보상이고, 색칠한 영역이 둘의 차이(hacking gap)다. 왼쪽은 원래 검증기로, 오른쪽은 동형 검증기로 학습했다. 학습된 보상의 과최적화처럼 정책이 최적화한 점수만 계속 오른다." source="Helff et al. (2026), LLMs Gaming Verifiers, Figure 3에서 그래프와 부분 캡션 영역만 잘라 냄. arXiv:2604.15149v1 · CC BY 4.0" />
+<Figure src={helffGap.src} alt="두 개의 학습 곡선. 가로축은 학습 스텝(0에서 500), 세로축은 보상(3에서 8)이다. 왼쪽은 원래 검증기로 학습한 경우로, 빨간 선(원래 검증기의 보상)과 초록 선(이름을 바꾼 과제에서 잰 보상)이 250 스텝 근처까지 겹쳐 약 3에서 5.4 사이를 오르내리다가, 그 뒤 빨간 선은 8.2까지 오르고 초록 선은 4.5 근처에 머문다. 두 선 사이가 분홍색으로 칠해져 있다. 오른쪽은 동형 검증기로 학습한 경우로, 두 선이 끝까지 겹친 채 3에서 5.5 사이를 오르내린다." caption="같은 모델을 두 검증기로 RLVR 학습한 결과. 빨간 선은 원래 검증기(라벨 확인)의 보상, 초록 선은 이름을 바꾼 과제에서 잰 보상이고, 색칠한 영역이 둘의 차이(hacking gap)다. 왼쪽은 원래 검증기로, 오른쪽은 동형 검증기로 학습했다. 왼쪽에서는 학습된 보상의 과최적화처럼 원래 검증기의 점수만 계속 올라 두 평가의 차이가 커진다." source="Helff et al. (2026), LLMs Gaming Verifiers, Figure 3에서 그래프와 부분 캡션 영역만 잘라 냄. arXiv:2604.15149v1 · CC BY 4.0" />
 
 [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 저자들은 RLVR로 학습했다고 추정한 상용 모델에서도 같은 지름길을 관찰했다(원논문 §4).
 
-이 사례는 대응의 한 바퀴를 보여 준다.
-다른 각도의 검사(이름 바꾸기)로 허점을 찾고, 빠져 있던 성공 조건(규칙이어야 한다)을 검증기에 넣고,
-다시 학습해 차이가 사라졌는지 확인한다.
-RM-Bench가 문체 조건을 평가에 넣은 것도 같은 논리다.
+이 사례에서는 이름을 바꾼 평가로 허점을 찾고, 빠져 있던 성공 조건(규칙이어야 한다)을 검증기에 넣은 뒤,
+다시 학습해 차이가 사라졌는지 확인했다.
+앞 주차에서 본 RM-Bench가 문체를 바꾼 응답을 따로 평가해 원래 평가가 놓친 편향을 드러낸 것도 같은 논리다.
 
 ### 3-3. 독립 평가
 
-검증기가 완벽해도 검증 통과는 학습 문제에서의 성공일 뿐이다.
+검증기가 완벽해도 학습 문제에서 잰 검증 통과율만으로는 일반화를 알 수 없다.
 RLVR의 학습 문제와 정답은 그 자체로 학습 데이터이므로,
 평가 문제가 pre-training·SFT·RL 데이터에 섞여 있거나 정답이 프롬프트에 노출되면 검증 통과가 일반화를 입증하지 못한다.
-점수가 오른 원인도 따로 따져야 한다.
+
+점수가 오른 원인은 이와 별개로 따져야 한다.
 최적화가 출발 모델이 이미 가진 행동을 증폭했을 수 있고,
-정답과 무관한 보상으로도 점수가 오른 사례가 보고되었다.
+Qwen2.5-Math-7B에서는 정답과 무관한 무작위 보상으로도 수학 점수가 오른 사례가 보고되었다.[^spurious]
+원인을 가리려면 출발 모델이나 보상 조건을 바꾼 대조 실험이 필요하다.
 
 그래서 자기 프로젝트에서 RLVR을 돌릴 때는 문제를 세 묶음으로 나눈다.
 
@@ -232,7 +227,7 @@ RLVR의 학습 문제와 정답은 그 자체로 학습 데이터이므로,
 - **개발 문제.** Checkpoint와 설정을 고르는 데 쓴다.
 - **평가 문제.** 마지막에 한 번만 쓰고, 그 결과를 보고 설정을 다시 고치지 않는다.
 
-Tülu 3도 평가 모음을 모델 개발에 쓰는 개발용과 최종 모델의 평가에만 쓰는 미관측(unseen)용으로 나누고,
+Tülu 3도 평가 벤치마크를 모델 개발 중에 보는 개발용과 최종 평가 전까지 점수를 보지 않는 미관측(unseen)용으로 나누고,
 학습 데이터에서 평가 문제와 겹치는 것을 걸러 냈다(원논문 §3.2, §7).[^tulu3]
 학습 중에는 학습 보상만 보지 말고 개발 문제의 독립 채점 정답률과 답 추출 실패율을 함께 기록하며,
 검증을 통과한 응답 일부를 직접 읽어 본다.
@@ -251,13 +246,12 @@ Tülu 3도 평가 모음을 모델 개발에 쓰는 개발용과 최종 모델�
 2. 현재 정책이 문제마다 응답을 여러 개 생성한다.
    프롬프트 집합은 고정이어도 응답은 매 반복 새로 만들므로 DPO에서 본 구분으로 online이고,
    갱신 중인 정책과 같은 분포에서 뽑은 응답으로 갱신하는 한 on-policy다.
-   효율을 위해 한 배치로 여러 번 갱신하거나 생성과 학습을 비동기로 돌리면 응답을 만든 정책이 갱신
-   대상보다 뒤처지고(Qwen3는 reasoning RL에 off-policy 학습을 썼다고 밝힌다[^qwen3]),
+   효율을 위해 한 배치로 여러 번 갱신하거나 생성과 학습을 비동기로 돌리면 응답을 만든 정책이 갱신 대상보다 뒤처지고(Qwen3는 reasoning RL에 off-policy 학습을 썼다고 밝힌다[^qwen3]),
    그 차이를 보정해야 한다.
 3. 검증기가 응답마다 보상을 매긴다.
-4. 보상(과 KL 벌점)으로 policy gradient를 계산해 정책을 갱신하고 1로 돌아간다.
+4. 보상과, 설정에 따라 KL 벌점을 반영해 policy gradient를 계산하고 정책을 갱신한 뒤 1로 돌아간다.
 
-Reward model이 없으므로 PPO 기반 RLHF의 네 모델 중 reward model이 프로그램으로 바뀌고,
+규칙 기반 검증기를 쓰면 PPO 기반 RLHF의 네 모델 중 reward model이 프로그램으로 바뀌고,
 GRPO를 쓰면 value model도 없어진다.
 
 <Figure src="https://arxiv.org/html/2411.15124v5/rlvrv5.png" alt="Tülu 3의 RLVR 반복. 학습 데이터에서 나온 프롬프트 s_i를 정책이 받아 응답 a_i를 생성하고, 검증기가 정답이면 γ, 아니면 0의 스칼라 보상 r_i를 돌려준다. 오른쪽 아래 갱신식은 θ를 θ + α∇J로 바꾸며, 여기서 α는 학습률이다." caption="RLVR의 기본 반복. 학습된 reward model이 주던 점수를 프로그램 검증의 결과로 바꾼다. 그림의 γ는 앞에서 정의한 정답 보상 α이며, 그림 오른쪽 아래 갱신식의 α는 학습률이다. 이 그림은 정책 갱신 알고리즘을 특정하지 않는다." source="Lambert et al. (2024), Tülu 3, Figure 18. arXiv:2411.15124v5 · CC BY 4.0 · 수정 없음" />
@@ -268,12 +262,12 @@ GRPO를 쓰면 value model도 없어진다.
 
 공개된 사례에서 RLVR의 프롬프트 수는 SFT 데이터보다 훨씬 적다.
 Qwen3의 reasoning RL은 학습 가능성과 난이도로 걸러 낸 3,995개의 문제·검증기 쌍으로 진행되었고,
-Qwen3-235B-A22B의 AIME 2024 점수는 170 스텝 동안 70.1에서 85.1로 올랐다(원논문 §4.2).[^qwen3]
-Tülu 3의 RLVR도 GSM8K·MATH·IFEval 세 과제의 프롬프트 약 3만 개만 썼는데,
-같은 모델의 SFT 프롬프트는 약 94만 개였다.[^tulu3]
+Qwen3-235B-A22B의 미국 수학 경시 AIME 2024 점수는 170 스텝 동안 70.1에서 85.1로 올랐다(원논문 §4.2).[^qwen3]
+Tülu 3의 RLVR도 초등 서술형 수학 GSM8K, MATH, IFEval 세 과제의 프롬프트 약 3만 개만 썼는데(원논문 Table 22),
+같은 모델의 SFT 프롬프트는 약 94만 개였다(Table 7).[^tulu3]
 프롬프트 하나에서 응답을 여러 개 생성해 검증하므로,
-프롬프트의 수뿐 아니라 **문제가 현재 모델에게 풀 수 있으면서 어려운가**도 중요하다.
-정확성 보상만 쓰는 GRPO 설정에서는 같은 문제의 응답들 사이에서 상대적 advantage를 계산하므로 이것이 직접 보인다.
+프롬프트의 수뿐 아니라 **현재 모델이 풀 수는 있지만 늘 맞히지는 못하는 문제인가**도 중요하다.
+정확성 보상만 쓰는 GRPO 설정에서는 같은 문제의 응답들 사이에서 상대적 advantage를 계산하므로 이 조건이 학습 신호로 바로 드러난다.
 응답 넷의 보상이 $[1,1,1,1]$이거나 $[0,0,0,0]$이면 응답 사이에 차이가 없어 advantage가 모두 0이 되고
 보상에서 오는 학습 신호가 없다(KL 항은 별도로 남는다).
 정답과 오답이 섞여야 어느 응답이 나은지가 드러난다.
@@ -296,13 +290,12 @@ RLVR은 SFT checkpoint가 아니라 DPO checkpoint에서 시작했고
 value model은 일반 reward model에서 초기화했다.[^tulu3]
 Tülu 3 8B에서 RLVR은 겨냥한 GSM8K·MATH·IFEval 점수를 1–3점가량 올렸고
 다른 벤치마크는 2점 이내로 오르내렸다(원논문 Table 23).
-겨냥한 능력을 조금 더 끌어올리는 마지막 다듬기다.
 Olmo 3 Think의 RLVR은 수학·코드·지시 따르기에 일반 대화까지 넣되,
 일반 대화의 보상은 LLM 판정자에게 맡겼다.[^olmo3]
 검증기가 없는 과제에는 학습된 보상과 그 문제가 그대로 남는다.
 
 이 자리에서 RLVR은 이미 쓸 만한 모델을 다듬는 도구였다.
-DeepSeek-R1-Zero는 같은 보상을 base model에 직접, 훨씬 큰 규모로 적용하면 무엇이 일어나는지를 보여 주었다.
+DeepSeek-R1-Zero는 검증 결과를 보상으로 쓰는 같은 원리를 base model에 직접, 훨씬 큰 규모로 적용하면 무엇이 일어나는지를 보여 주었다.
 
 ### 5-2. SFT 없는 R1-Zero
 
@@ -321,13 +314,10 @@ pass@1은 문제마다 응답 하나를 표집했을 때의 평균 정답률이�
 구조 지시와 규칙 보상만으로 이런 행동이 늘었다.
 
 다만 base model이 관련 행동을 전혀 몰랐다는 뜻은 아니다.
-저자들 스스로 DeepSeek-V3-Base의 pre-training 데이터에 수학·코드 내용이 많고 웹에 섞인 OpenAI 모델의
-답변도 들어 있어 추론 과정을 상당히 접했을 것이며,
+저자들 스스로 DeepSeek-V3-Base의 pre-training 데이터에 수학·코드 내용이 많고 웹에 섞인 OpenAI 모델의 답변도 들어 있어 추론 과정을 상당히 접했을 것이며,
 RL은 그렇게 생성할 수 있게 된 후보 중 좋은 것을 골라 강화한다고 설명한다(arXiv v2 부록 A.1).[^r1]
-출발점인 base model의 학습 데이터도 결과에 영향을 준다.
 
-그래도 R1-Zero의 결과가 주목받은 이유는 분명하다.
-앞 주차에는 SFT를 RL 전에 긴 사고 과정을 쓰는 행동을 익히게 하는 cold start로 소개했는데,
+그래도 앞 주차에는 SFT를 RL 전에 긴 사고 과정을 쓰는 행동을 익히게 하는 cold start로 소개했는데,
 R1-Zero는 그 SFT 없이도 base model이 구조 지시와 검증 가능한 보상만으로 긴 추론에 도달함을 보였다.
 다만 길이의 증가와 반성·검증 행동이 그대로 능력의 증가라고 볼 수 있는지는 따로 따져야 한다.
 
@@ -336,52 +326,48 @@ R1-Zero는 그 SFT 없이도 base model이 구조 지시와 검증 가능한 보
 R1-Zero의 출력은 읽기 어려웠다.
 사고 과정에 영어와 중국어가 섞이고 형식이 일정하지 않았다.
 저자들은 다국어 pre-training과 언어에 대한 보상의 부재가 원인일 수 있다고 설명했다.[^r1]
-보상이 정답과 태그만 확인하니 그 사이의 내용은 무엇이든 될 수 있었다.
+보상이 정답과 태그만 확인하니 사고 과정의 언어 일관성과 가독성은 보상이 직접 보장하지 않았다.
 앞에서 본 성공 조건의 빈틈처럼, 검증기가 확인하는 조건 밖의 성질은 보장되지 않는다.
 DeepSeek-R1은 이 문제를 네 단계 파이프라인으로 풀었다.[^r1]
 
 | 단계 | 내용 | 역할 |
 |---|---|---|
-| 1. Cold start SFT | R1-Zero의 응답 중 정답이고 읽기 좋은 것을 고른 뒤, 사람이 일부를 대화체로 고치고 이를 본보기로 LLM이 나머지를 다시 쓰고 사람이 재검증한 긴 추론 예시 수천 개로 base model을 SFT (arXiv v2 부록 B.3.2) | 형식과 가독성의 출발점 |
+| 1. Cold start SFT | R1-Zero의 응답 중 정답이고 읽기 좋은 것을 골라 사람과 LLM이 다듬은 긴 추론 예시 수천 개로 base model을 SFT (arXiv v2 부록 B.3.2) | 형식과 가독성의 출발점 |
 | 2. 추론 RL | R1-Zero의 규칙 보상에 언어 일관성 보상(사고 과정의 단어 중 목표 언어 단어의 비율)을 더해 RL | 추론 능력, 언어 섞임 억제 |
-| 3. Rejection sampling과 SFT | 2단계 모델의 응답을 생성해 걸러 추론 데이터 약 60만 건을 확보하고, 일반 과제 데이터 약 20만 건과 합쳐 base model을 다시 SFT | 추론 능력을 일반 과제와 합침 |
+| 3. Rejection sampling과 SFT | 2단계 모델의 응답 중 정답만 남기고 언어가 섞이거나 긴 문단·코드 블록이 든 사고 과정을 걸러 추론 데이터 약 60만 건을 확보하고(부록 B.3.3), 일반 과제 데이터 약 20만 건과 합쳐 base model을 다시 SFT | 추론 능력을 일반 과제와 합침 |
 | 4. 전 과제 RL | 추론 과제는 규칙 보상, 일반 과제는 reward model 보상으로 RL | 사람의 선호와 안전성 |
 
 Cold start를 평가할 때는 풀이를 담은 응답의 validation loss뿐 아니라 다음 RL이 안정적으로 출발하는지도 봐야 한다.
 이 recipe에서 SFT의 역할은 읽기 좋은 추론의 출발점을 만드는 것이다.
 1단계는 SFT, 4단계의 reward model 보상은 RLHF다.
 앞 주차의 요소가 검증 가능한 보상을 축으로 다시 배열된 것이다.
-Qwen3 flagship 모델의 네 단계(long-CoT cold start, reasoning RL, thinking mode fusion, general RL)와
-Olmo 3 Think의 SFT, DPO, RLVR(일반 대화는 RLVR 단계에 함께 섞인다)도 사고 과정을 담은 응답의 학습과
-검증 보상을 결합하면서 일반 과제의 성능을 함께 유지한다는 점을 공유한다.
-단계의 순서와 수는 모델마다 다르다.[^qwen3][^olmo3]
+Qwen3와 Olmo 3 Think도 사고 과정을 담은 응답의 SFT와 검증 보상의 RL을 결합하되, 단계의 순서와 수는 모델마다 다르다.[^qwen3][^olmo3]
 
 ### 5-4. Base model에서 출발하는 RL-Zero
 
 R1-Zero의 경로,
 즉 SFT 없이 base model에 RLVR을 적용하는 실험은 이후 "RL-Zero"라는 이름으로 이어졌다.
-Olmo 3 RL-Zero는 pre-training과 mid-training 데이터가 모두 공개된 base model에서 수학·코드·정밀한
-지시 따르기·일반 대화의 네 영역과 그 혼합에 대해 이 실험을 했다(원논문 §6).
+Olmo 3 RL-Zero는 pre-training과 mid-training 데이터가 모두 공개된 base model에서 수학·코드·정밀한 지시 따르기·일반 대화의 네 영역과 그 혼합에 대해 이 실험을 했다(원논문 §6).
 저자들이 밝힌 목적은 RLVR을 통제된 조건에서 연구할 수 있게 하는 것이다.
 기존의 주요 RLVR 벤치마크와 알고리즘은 공개 가중치 모델 위에서 실험되었는데 그 모델들은 pre-training·mid-training 데이터를 공개하지 않아
 평가 문제의 오염이나 사전학습 데이터의 영향을 통제하기 어려웠다.
-그래서 Olmo 3는 RL-Zero 학습 데이터에서 pre-training·mid-training 데이터와 겹치는 것을 걸러 냈다.[^olmo3]
-독립 평가에서 본 오염 통제를 출발 모델의 학습 데이터까지 넓힌 셈이다.
-RL 뒤의 성능이 RL의 효과인지 pre-training에 이미 있던 능력이 드러난 것인지라는 질문은 "RL이
-새 능력을 만드는가"라는 논쟁으로 이어진다.
+그래서 Olmo 3는 RL-Zero 학습 문제 가운데 pre-training·mid-training 데이터에 이미 나온 것을 걸러 냈다.[^olmo3]
+학습 문제가 사전학습에서 노출되었는지를 통제한 것으로, 평가 문제의 오염 검사와는 별개의 조치다.
+RL 뒤의 성능 가운데 얼마가 RL의 효과이고 얼마가 pre-training에 있던 능력의 발현인지라는 질문은 "RL이 새 능력을 만드는가"라는 논쟁으로 이어진다.
 
-검증기는 보상의 출처를 사람의 판단에서 프로그램으로 옮겼다.
-정답 추출, 성공 조건, 독립 평가가 갖춰지면 수학과 코드에서 유용한 학습 신호를 얻을 수 있다.
-그 신호로 정책을 어떻게 갱신할지가 다음 질문이다.
+규칙 기반 검증기는 수학과 코드에서 보상의 출처를 사람의 판단에서 프로그램으로 옮겼다.
+정답 추출, 성공 조건, 독립 평가가 갖춰질 때 그 신호를 믿을 수 있다.
 
-[^survey]: Zhang, K., et al. (2025). *A Survey of Reinforcement Learning for Large Reasoning Models*. [arXiv:2509.08827v3](https://arxiv.org/abs/2509.08827v3).
-[^deepseekmath]: Shao, Z., et al. (2024). *DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models*. [arXiv:2402.03300](https://arxiv.org/abs/2402.03300).
-[^tulu3]: Lambert, N., et al. (2024). *Tülu 3: Pushing Frontiers in Open Language Model Post-Training*. [arXiv:2411.15124v5](https://arxiv.org/abs/2411.15124v5).
-[^r1]: DeepSeek-AI. (2026). *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning*. [arXiv:2501.12948v2](https://arxiv.org/abs/2501.12948v2). 게재판: Guo, D., et al. (2025). *DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning*. *Nature*, 645, 633–638. [doi:10.1038/s41586-025-09422-z](https://doi.org/10.1038/s41586-025-09422-z).
-[^mathverify]: Hugging Face. (2026). *Math-Verify* (v0.9.0). [GitHub 저장소, 커밋 ba3d3aa](https://github.com/huggingface/Math-Verify/tree/ba3d3aaff23b3f4cac7a14672b4f6e293d97c98b).
-[^prm]: Lightman, H., et al. (2024). *Let's Verify Step by Step*. ICLR 2024. [arXiv:2305.20050](https://arxiv.org/abs/2305.20050).
-[^qwen3]: Qwen Team. (2025). *Qwen3 Technical Report*. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
-[^olmo3]: Team Olmo. (2025). *Olmo 3*. [arXiv:2512.13961v2](https://arxiv.org/abs/2512.13961v2).
-[^master-key]: Zhao, Y., et al. (2025). *One Token to Fool LLM-as-a-Judge*. [arXiv:2507.08794v1](https://arxiv.org/abs/2507.08794v1).
-[^helff]: Helff, L., et al. (2026). *LLMs Gaming Verifiers: RLVR can Lead to Reward Hacking*. LLM Reasoning Workshop @ ICLR 2026. [arXiv:2604.15149v1](https://arxiv.org/abs/2604.15149v1).
-[^rar]: Gunjal, A., et al. (2025). *Rubrics as Rewards: Reinforcement Learning Beyond Verifiable Domains*. [arXiv:2507.17746v2](https://arxiv.org/abs/2507.17746v2).
+[^survey]: Zhang, K., et al. (2025). A Survey of Reinforcement Learning for Large Reasoning Models. [arXiv:2509.08827v3](https://arxiv.org/abs/2509.08827v3).
+[^deepseekmath]: Shao, Z., et al. (2024). DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models. [arXiv:2402.03300](https://arxiv.org/abs/2402.03300).
+[^tulu3]: Lambert, N., et al. (2024). Tülu 3: Pushing Frontiers in Open Language Model Post-Training. [arXiv:2411.15124v5](https://arxiv.org/abs/2411.15124v5).
+[^r1]: DeepSeek-AI. (2026). DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning. [arXiv:2501.12948v2](https://arxiv.org/abs/2501.12948v2). 게재판: Guo, D., et al. (2025). DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning. *Nature*, 645, 633–638. [doi:10.1038/s41586-025-09422-z](https://doi.org/10.1038/s41586-025-09422-z).
+[^mathverify]: Hugging Face. (2026). Math-Verify (v0.9.0). [GitHub 저장소, 커밋 ba3d3aa](https://github.com/huggingface/Math-Verify/tree/ba3d3aaff23b3f4cac7a14672b4f6e293d97c98b).
+[^prm]: Lightman, H., et al. (2024). Let's Verify Step by Step. *ICLR 2024*. [arXiv:2305.20050](https://arxiv.org/abs/2305.20050).
+[^qwen3]: Qwen Team. (2025). Qwen3 Technical Report. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).
+[^olmo3]: Team Olmo. (2025). Olmo 3. [arXiv:2512.13961v2](https://arxiv.org/abs/2512.13961v2).
+[^master-key]: Zhao, Y., et al. (2025). One Token to Fool LLM-as-a-Judge. [arXiv:2507.08794v1](https://arxiv.org/abs/2507.08794v1).
+[^helff]: Helff, L., et al. (2026). LLMs Gaming Verifiers: RLVR can Lead to Reward Hacking. *LLM Reasoning Workshop @ ICLR 2026*. [arXiv:2604.15149v1](https://arxiv.org/abs/2604.15149v1).
+[^o1]: OpenAI. (2024). Learning to Reason with LLMs. *OpenAI Blog*. [openai.com](https://openai.com/index/learning-to-reason-with-llms/).
+[^spurious]: Shao, R., et al. (2025). Spurious Rewards: Rethinking Training Signals in RLVR. [arXiv:2506.10947v2](https://arxiv.org/abs/2506.10947v2).
+[^rar]: Gunjal, A., et al. (2025). Rubrics as Rewards: Reinforcement Learning Beyond Verifiable Domains. [arXiv:2507.17746v2](https://arxiv.org/abs/2507.17746v2).
