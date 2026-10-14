@@ -139,7 +139,10 @@ reward model이 선택된 쪽에 더 높은 점수를 주는 비율(정확도)�
 가상의 예로, 비슷한 길이의 응답쌍은 대부분 맞히는 reward model도
 정책이 그 reward model을 최적화하면서 학습 데이터에 없던 아주 긴 응답을 만들기 시작하면 앞의
 과최적화 곡선처럼 사람의 실제 선호와 어긋날 수 있다.
+
 그래서 이 정확도는 **학습 전에 reward model을 거르는 진단으로 읽어야 하고, 학습 중의 신뢰성은 따로 확인**해야 한다.
+정확도가 높은 reward model이 정책 학습에서도 좋은지는 아직 명확하지 않다.
+정확도로는 그 reward model로 학습한 정책의 성능을 잘 예측하지 못한다는 연구가 있고,[^wen] RewardBench 2도 응답을 고르는 데서는 점수와 성능이 잘 맞았지만 정책 학습에서는 일정 수준을 넘으면 점수가 성능을 구분하지 못했다고 보고한다.[^rewardbench2]
 
 ### 3-2. 문체를 교차한 평가
 
@@ -159,27 +162,6 @@ RM-Bench는 reward model이 응답의 길이나 마크다운 꾸밈 같은 **문
 즉, reward model이 내용보다 문체에 크게 영향을 받는다는 뜻이다.
 Hard 범주에 대해 정확도가 높은 reward model로 학습한 정책일수록
 문체를 통제한 평가에서 점수가 덜 떨어졌다고 보고했다.[^rmbench]
-
-### 3-3. 최적화 결과와의 상관
-
-정확도 벤치마크가 결국 답해야 하는 질문은, 그 점수가 높은 reward model을 쓰면 정책이 좋아지느냐다.
-RewardBench 2는 평가 데이터에 두 가지를 바꿨다.[^rewardbench2]
-downstream 평가의 프롬프트를 재사용하지 않고 새로 모은 사람의 프롬프트를 주로 썼고,
-선택 응답 하나와 탈락 응답 셋 중에서 고르게 해 무작위 추측으로 맞힐 확률을 낮췄다(정답이 여럿인 Ties 범주는 따로 채점한다).
-그리고 이 점수가 학습 후 정책의 과제 성능을 재는 downstream 평가와 얼마나 관련되는지,
-두 쓰임에서 비교했다.
-
-- **Best-of-$n$.** 후보 $n$개를 뽑아 reward model 점수가 가장 높은 것을 고르는 방식이다.
-  100개가 넘는 reward model로 같은 SFT 모델의 후보 중 하나를 고르게 했더니,
-  benchmark 점수와 downstream 과제 평균이 강한 상관을 보였다(§5.1, Figure 3).
-- **PPO.** 직접 학습한 reward model 여럿으로 PPO를 하자,
-  점수가 어느 수준을 넘는 reward model들은 downstream 성능이 비슷한 값에서 포화했다.
-  정책과 다른 초기 checkpoint에서 출발한 reward model(예: Llama Instruct 기반 reward model과 Tülu SFT
-  정책)은 benchmark 점수가 높아도 정책을 개선하지 못하는 경우가 많았다(§5.2).
-
-이 실험에서 정적 정확도는 고정된 후보를 고르는 best-of-$n$의 성능과 높은 상관을 보였다.
-PPO의 성능은 reward model의 초기 모델과 학습 프롬프트 등에도 영향을 받았으므로,
-벤치마크 점수만으로 예측하기 어려웠다.
 
 ## 4. Judge의 편향
 
@@ -309,6 +291,7 @@ Qwen2.5-7B-Instruct를 기반으로 별도의 판정 모델인 Master-RM을 학�
 [^arena]: Chiang, W.-L., et al. (2024). Chatbot Arena: An Open Platform for Evaluating LLMs by Human Preference. *ICML 2024*, PMLR 235, 8359–8388. [arXiv:2403.04132](https://arxiv.org/abs/2403.04132).
 [^rewardbench]: Lambert, N., et al. (2025). RewardBench: Evaluating Reward Models for Language Modeling. *Findings of NAACL 2025*, 1755–1797. [ACL Anthology](https://aclanthology.org/2025.findings-naacl.96/).
 [^rmbench]: Liu, Y., et al. (2025). RM-Bench: Benchmarking Reward Models of Language Models with Subtlety and Style. *ICLR 2025*. [arXiv:2410.16184](https://arxiv.org/abs/2410.16184).
+[^wen]: Wen, X., et al. (2025). Rethinking Reward Model Evaluation: Are We Barking up the Wrong Tree? *ICLR 2025*. [arXiv:2410.05584](https://arxiv.org/abs/2410.05584).
 [^rewardbench2]: Malik, S., et al. (2026). RewardBench 2: Advancing Reward Model Evaluation. *ICLR 2026*. [arXiv:2506.01937](https://arxiv.org/abs/2506.01937).
 [^genrm]: Zhang, L., Hosseini, A., Bansal, H., Kazemi, M., Kumar, A., & Agarwal, R. (2025). Generative Verifiers: Reward Modeling as Next-Token Prediction. *ICLR 2025*. [arXiv:2408.15240](https://arxiv.org/abs/2408.15240).
 [^master-key]: Zhao, Y., et al. (2025). One Token to Fool LLM-as-a-Judge. [arXiv:2507.08794v1](https://arxiv.org/abs/2507.08794v1).
