@@ -54,7 +54,7 @@ DPO는 선호쌍에서 선호하는 응답과 선호하지 않는 응답의 점�
 
 ## 2. Reward model over-optimization
 
-### 2-1. 관찰과 원인
+### 2-1. 과최적화의 관찰과 원인
 
 <strong>과최적화(over-optimization)</strong>는 대리 지표를 더 강하게 최적화할수록 대리 지표의 점수는
 계속 오르는데 실제 목표에 따른 평가는 어느 지점부터 오히려 나빠지는 현상이다.
@@ -78,7 +78,7 @@ KL이 클수록 reward model에 맞춘 최적화가 더 많이 진행된 것이�
 세로축은 정책의 요약이 기준 요약(reference summary)보다 선호된 비율로,
 reward model이 예측한 선호와 사람의 실제 선호를 함께 그린다.
 
-<Figure src="https://arxiv.org/html/2009.01325v3/newoveropt.svg" alt="가로축은 지도 학습 기준 정책에서의 KL(0, 2, 5, 10, 25, 75, 250 눈금), 세로축은 기준 요약보다 선호된 비율(0.2에서 1.0)이다. 점선(RM prediction)은 KL이 커질수록 약 0.37에서 1.0 가까이까지 계속 오른다. 실선(Actual preference, 오차막대 있음)은 약 0.24에서 시작해 KL 10 부근에서 약 0.47로 가장 높고, KL 75까지 0.42 안팎으로 완만히 내려간 뒤 KL 250에서 약 0.05로 급락한다." caption="Reward model을 더 최적화할수록 reward model의 예측 선호(점선)는 계속 오르지만, 사람 평가자의 실제 선호(실선)는 정점을 찍고 크게 떨어진다." source="Stiennon et al. (2020), Learning to summarize from human feedback, Figure 5." />
+<Figure src="https://arxiv.org/html/2009.01325v3/newoveropt.svg" alt="가로축은 지도 학습 기준 정책에서의 KL(0, 2, 5, 10, 25, 75, 250 눈금), 세로축은 기준 요약보다 선호된 비율(0.2에서 1.0)이다. 점선(RM prediction)은 KL이 커질수록 약 0.37에서 1.0 가까이까지 계속 오른다. 실선(Actual preference, 오차막대 있음)은 약 0.24에서 시작해 KL 10 부근에서 약 0.47로 가장 높고, KL 75까지 0.42 안팎으로 완만히 내려간 뒤 KL 250에서 약 0.05로 급락한다." caption="Reward model에 대하여 더 최적화할수록 reward model의 예측 선호(점선)는 계속 오르지만, 사람 평가자의 실제 선호(실선)는 정점을 찍고 크게 떨어진다." source="Stiennon et al. (2020), Learning to summarize from human feedback, Figure 5." />
 
 그림을 보면,
 최적화를 강하게 할수록 reward model이 예측한 선호(점선)는 계속 오르지만 실제 사람의 선호(실선)는 오르다가 내려간다.
@@ -92,114 +92,36 @@ reward model 점수가 높은 요약의 확률을 높인다.
 따라서 기준 정책에서 멀어졌다는 사실 자체가 문제라기보다,
 그 변화가 실제 품질 개선과 **대리 지표의 허점 이용** 중 어느 쪽으로 향했는지가 문제다.
 
-### 2-2. 다른 방식과 지표에서의 과최적화
-
-최적화는 두 방식으로 진행할 수 있다.
-PPO(proximal policy optimization)는 높은 보상을 받는 응답이 더 자주 나오도록 정책의 가중치를 바꾸고,
-best-of-$n$은 가중치는 그대로 두고 생성한 후보 $n$개 중 점수가 가장 높은 응답을 고른다.
-둘 다 내놓는 응답의 분포를 바꾸므로 과최적화가 생길 수 있다.
-Stiennon 등은 부록 G.3에서 같은 평균 보상이라면 두 방식의 요약 품질이 사람이 보기에 비슷했지만,
-PPO 정책이 기준 정책에서 더 멀리 간다고 적는다.[^stiennon]
-Figure 5는 PPO로, 다음 Figure 7은 best-of-$n$으로 만든 결과다.
-
-Best-of-$n$은 학습 없이 후보 $n$개 중 점수가 가장 높은 요약을 고르므로,
-최적화 강도를 $n$ 하나로 조절할 수 있다.
-Stiennon 등은 이 방법으로 ROUGE와 reward model을 각각 최적화해 비교했다.
-ROUGE는 생성한 요약과 기준 요약이 단어를 얼마나 공유하는지 세는 자동 평가 지표로,
-reward model처럼 사람의 평가를 근사한 대리 지표다.
-
-<Figure src="https://arxiv.org/html/2009.01325v3/final_figs/bon_overopt.png" alt="가로축은 best-of-n의 n을 log2 눈금으로 나타낸 값(0에서 11, 즉 N이 1에서 2048), 세로축은 기준 요약보다 선호된 비율(대략 0.15에서 0.65)이다. 곡선은 ROUGE(빨강)와 reward model 세 개(RM3, RM4, RM4_6B)를 각각 최적화한 결과다. ROUGE는 N이 8 부근에서 약 0.35로 정점을 찍은 뒤 0.3 안팎으로 내려가 평평해진다. RM4_6B는 거의 계속 올라 마지막에 약 0.63에 이르고, RM4는 약 0.60까지 오르며, RM3은 약 0.5에서 평평해진다." caption="best-of-n으로 최적화한 정도(n)에 따른 요약 품질. ROUGE를 최적화하면 reward model을 최적화할 때보다 더 일찍, 훨씬 낮은 선호율에서 정점을 찍는다. 비교한 것은 ROUGE, 최종 reward model, 데이터를 약 75%만 쓴 이전 1.3B reward model이다." source="Stiennon et al. (2020), Learning to summarize from human feedback, Figure 7. arXiv:2009.01325v3 · 저작권은 저자에게 있음, 교육 목적의 인용 · 수정 없음" />
-
-ROUGE를 최적화하면 $n$이 작은 구간에서 정점을 찍고, 정점의 선호율도 reward model보다 훨씬 낮다.
-논문은 최적화하면 ROUGE가 reward model보다 훨씬 빨리 나빠진다고 적는다(부록 G.3).[^stiennon]
-$n$을 2048까지 키운 범위에서 reward model 곡선에는 뚜렷한 하락이 보이지 않는다.
-
-명시적 reward model이 없어도 같은 일이 생긴다.
+이 현상은 reward model을 따로 학습하지 않는 DPO에서도 나타난다.
 04c §4-1에서 DPO도 선호쌍의 점수 차이를 키우는 동안 생성 품질이 떨어질 수 있다고 했다.
-Rafailov 등은 이를 실제로 측정해 DPO 계열에서도 정책이 초기 정책에서 멀어질수록 GPT-4로 판정한
-승률이 오르다가 꺾이는 모양을 넓은 KL 범위에서 보였다.[^rafailov-scaling]
+Rafailov 등은 이를 실제로 측정해,
+DPO 계열에서도 정책이 기준 정책에서 멀어질수록 GPT-4로 판정한 승률이 오르다가 꺾이는 모양을 넓은 KL
+범위에서 보였다.[^rafailov-scaling]
 Reward model을 없앤다고 독립 평가가 필요 없어지지는 않는다.
 
-<Details summary="Best-of-n의 KL 계산">
+### 2-2. 과최적화를 줄이는 방법
 
-최적화 강도는 최적화된 정책 $\pi$가 기준 정책 $\pi_{\mathrm{ref}}$에서 얼마나 멀어졌는가로 잰다.
-두 최적화 방식은 $\pi$를 다르게 만든다.
-PPO는 가중치를 바꾼다.
-Best-of-$n$은 가중치를 그대로 두고 응답 $n$개를 뽑아 점수가 가장 높은 것을 내놓는데(이렇게 고른
-응답을 모아 다시 SFT하는 rejection sampling도 같은 방식으로 응답을 고른다),
-이렇게 골라 낸 응답의 분포가 $\pi$다.
-가중치가 같아도 내놓는 응답의 분포는 $n$이 커질수록 $\pi_{\mathrm{ref}}$에서 멀어진다.
-Stiennon 등은 부록에서 이 KL을 $n$만으로 계산했다.[^stiennon]
+가장 기본적인 대응은 KL penalty다.
+보상에서 $\beta\log(\pi_\theta/\pi_{\mathrm{ref}})$를 빼서 정책이 기준 정책에서 멀어지지 않도록 한다.
+$\beta$가 작을수록 정책은 기준 정책에서 더 멀어진다.
+그러나 KL penalty는 어디까지 멀어져도 되는지를 정해 주지는 않는다.
 
-$$
-D_{\mathrm{KL}}(\pi_{\mathrm{bon}}\,\|\,\pi_{\mathrm{ref}})\approx\log n-\frac{n-1}{n}
-$$
+사람의 선호와 대리 지표가 갈라지는 지점을 뒤로 미루려면 대리 지표 자체가 좋아야 한다.
+앞에서 본 것처럼 reward model은 크고 데이터가 많을수록 사람의 선호를 더 잘 근사한다.
+따라서 가능한 한 믿을 만한 reward model을 만들고, 그에 맞는 $\beta$를 찾는 것이 중요하다.
 
-이 식은 같은 응답이나 동점이 드물어 보상 순위를 사실상 연속적으로 볼 수 있을 때의 근사이고,
-Beirami 등은 이것이 실제 KL의 상한임을 보였다.[^beirami]
-응답이 둘뿐이고 확률이 각각 0.5인 극단적인 경우,
-best-of-2는 더 나은 응답을 0.75의 확률로 내놓으므로 실제 KL은 약 0.13인데 식은 $\log 2-1/2\approx0.19$를 준다.
-
-KL에 자연로그를 쓰면 단위는 nat이다.
-$n=16$이면 $\log 16-15/16\approx 2.77-0.94=1.84$ nats이고,
-$n=1000$이어도 약 $6.91-1.00=5.91$ nats다.
-Stiennon 등의 표(Table 10)에서도 $n=8$은 1.2, $n=512$는 5.2로 식과 맞는다.
-Figure 7의 가장 큰 $n=2048$은 $\log 2048-2047/2048\approx 6.63$ nats다.
-Figure 5에서 사람의 선호가 가장 높았던 곳이 KL 10 부근이므로(그림에서 읽은 값),
-2048개까지의 best-of-$n$은 그 구간에 막 닿는 정도다.
-Figure 7의 reward model 곡선에서 뚜렷한 하락이 보이지 않는 것과 어긋나지 않는다.
-다만 두 그림의 reward model이 다르므로 대략적인 비교다.
-
-</Details>
-
-### 2-3. 과최적화를 줄이는 방법
-
-가장 기본적인 대응은 04b §3-2의 KL penalty다.
-보상에서 $\beta\log(\pi_\theta/\pi_{\mathrm{ref}})$를 빼서 정책이 기준 정책에서 멀어지는 것에 벌점을 준다.
-Stiennon 등은 이 항이 두 가지 일을 한다고 설명한다.
-하나는 정책이 한 가지 출력으로 쏠리지 않고 탐색하도록 돕는 entropy bonus 역할이고,
-다른 하나는 정책이 reward model이 학습 중에 본 출력과 지나치게 다른 출력을 배우지 못하게 하는 것이다.[^stiennon]
-뒤의 역할이 위에서 본 extremal 문제에 대응한다.
-
-$\beta$가 작을수록 정책은 더 멀리 간다.
-이전 reward model(rm3)로 학습한 PPO 정책 세 개에서 $\beta$를 0.10, 0.07, 0.05로 줄이면 KL은 3.8,
-9.4, 19.0이 된다(부록 C.6 Table 9).[^stiennon]
-그러나 KL penalty는 어디까지 가도 되는지를 정해 주지 않는다.
-적절한 $\beta$는 reward model이 어디까지 믿을 만한지 알아야 정할 수 있는데,
-그 거리는 사람 평가 없이는 알기 어렵다.
-후속 연구에서 Gao 등은 사람 대신 큰 reward model을 평가자로 둔 통제 실험에서,
-같은 KL로 비교하면 KL penalty를 둔 정책과 벌점 없이 일찍 멈춘 정책의 평가가 다르지 않았다고 보고했다.
-이 결과가 하이퍼파라미터에 민감할 수 있다는 단서도 달았다.[^gao]
-
-꺾이는 지점을 뒤로 미루려면 reward model 자체가 좋아야 한다.
-앞에서 본 것처럼 reward model은 크고 데이터가 많을수록 사람의 선호를 더 잘 근사하고,
-Figure 7에서는 가장 큰 reward model(RM4_6B)이 가장 높은 선호율까지 거의 계속 오른다.
-논문이 과최적화가 줄어든다고 직접 적은 것은 아니고 그림에서 읽은 경향이다.
-Gao 등은 같은 통제 실험에서 reward model이 크고 데이터가 많을수록 평가자의 점수가 더 멀리 가서 꺾였다고 보고한다.[^gao]
-
-Reward model의 한계가 좁은 분포의 적은 데이터에 있다면,
-최적화된 정책이 내놓는 새 요약에 사람의 비교를 다시 받아 학습 범위를 넓히는 방법이 있다.
-Stiennon 등의 절차(Figure 2)는 현재 정책을 포함한 여러 출처에서 요약을 뽑아 사람에게 비교를 받고,
-reward model을 학습하고, 정책을 학습하는 세 단계를 반복할 수 있게 짠다(§3.1).
-Reward model은 새 라벨이 쌓일 때마다 지금까지 모은 라벨 전체로 다시 학습했다(부록 C.6).
-다만 논문은 이 순서를 정확히 반복한 것은 아니고 라벨을 쌓으며 절차를 바꿔 갔다고 밝힌다.[^stiennon]
-04c §5-2에서 본 OAIF(online AI feedback)와 iterative 방식도 정책이 만든 응답에 새 라벨을 붙인다는 점에서 같다.
-
-<Callout type="warning">
-Over-optimization 곡선은 "reward model 점수가 오르면 좋아진다"는 가정이 어디까지 유효한지를 말해 준다.
-학습 로그의 보상 곡선만 보고 저장된 모델(checkpoint)을 고르면 꺾인 뒤의 checkpoint를 고를 수 있다.
-독립적인 평가(사람, 다른 reward model, 벤치마크)를 학습 중에 함께 봐야 한다.
-다만 같은 평가셋으로 checkpoint나 학습 설정을 거듭 고르면,
-그 점수를 학습에 직접 쓰지 않았더라도 평가셋에 맞춰지는 간접 최적화의 영향을 받는다.
-그래서 고르는 데 쓴 평가와 고른 뒤 한 번만 확인하는 held-out 평가를 나눠 둔다.
-"독립"은 평가 모델뿐 아니라 데이터와 선택 절차에도 해당한다.
-</Callout>
+한 reward model의 오류를 정책이 이용하는 것이 문제라면,
+reward model을 여러 개 학습해 함께 쓰는 ensemble 방법이 있다.
+Coste 등은 같은 데이터로 seed만 바꿔 학습한 reward model 다섯 개를 ensemble로 쓰되,
+점수를 그대로 평균하지 않고 가장 낮은 점수를 쓰거나 평균에서 분산에 비례하게 빼서 사용했다.
+여러 reward model이 동의하는 응답은 적게 깎고 한 reward model만 높게 본 응답은 많이 깎는 셈이다.
+사람 라벨의 불일치를 흉내 낸 설정에서 이 방식은 reward model 하나를 쓸 때보다 과최적화를 줄였다.[^coste]
+다만 reward model이 모두 같은 방향으로 틀리면 이 방법으로 막을 수 없다는 한계는 여전히 존재한다.[^eisenstein]
+혹은,
+OAIF(online AI feedback)와 같이 iterative하게 지금까지 학습된 정책이 만든 응답으로 새 선호도
+데이터를 만들어 reward model을 더 학습하는 방법도 있다.
 
 ## 3. 판정자의 편향
-
-독립 평가를 두어도 판정자가 무엇에 끌리는지는 따로 확인해야 한다.
-다만 판정자의 편향이 관찰되었다는 사실만으로 정책이 reward hacking을 했다고 결론 내릴 수는 없다.
-편향은 이용할 수 있는 허점이고, 정책이 그 허점에 맞춰 응답을 바꾸어 점수를 얻는 것은 그다음 단계다.
 
 ### 3-1. LLM-as-a-judge
 
@@ -357,7 +279,8 @@ downstream 평가의 프롬프트를 재사용하지 않고 새로 모은 사람
 그리고 이 점수가 학습 후 정책의 과제 성능을 재는 downstream 평가와 얼마나 관련되는지,
 두 쓰임에서 비교했다.
 
-- **Best-of-$n$.** Reward model 113개로 같은 SFT 모델의 후보 16개 중 하나를 고르게 했더니,
+- **Best-of-$n$.** 후보 $n$개를 뽑아 reward model 점수가 가장 높은 것을 고르는 방식이다.
+  Reward model 113개로 같은 SFT 모델의 후보 16개 중 하나를 고르게 했더니,
   benchmark 점수와 downstream 과제 평균의 Pearson 상관이 0.87이었다(§5.1, Figure 3).
 - **PPO.** Reward model 17개로 PPO를 하자,
   점수가 어느 수준을 넘는 reward model들은 downstream 성능이 비슷한 값에서 포화했다.
@@ -421,40 +344,12 @@ Master-RM은 시험한 문구에서 오판이 거의 0이었다.
 확인한 허점을 오답 예로 학습 데이터에 넣어 판정자를 고친 것이다.
 이 결과는 시험한 문구에 대한 개선을 보여 주며, 새로운 허점까지 모두 막았다는 증거는 아니다.
 
-## 5. Post-training 평가의 해석
-
-4·5주차의 결과 표를 읽을 때 이 노트가 주는 점검 항목은 다음과 같다.
-
-- **학습에 쓴 보상과 평가에 쓴 지표가 같은 허점을 갖는가.** GPT-4 판정 보상으로 학습한 모델을 GPT-4
-  판정 벤치마크로 평가하면 판정자의 편향이 학습과 평가에 함께 들어갈 수 있다.
-- **길이가 통제되었는가.** 원래 승률과 길이 보정 승률이 크게 다르면 회귀 모형이 길이 효과에 귀속한 몫이 크다는 뜻이다.
-- **독립 평가가 내려가기 시작한 뒤의 checkpoint인가.** 학습용 보상만으로는 이를 알아낼 수 없으므로,
-  학습 보상과 독립 평가의 추이가 함께 보고되었는지 본다.
-- **사람 평가가 있다면 어떤 설계인가.** 익명 비교인지, 평가자가 무엇을 기준으로 골랐는지 본다.
-- **차이가 표본 오차보다 큰가.** AlpacaEval은 805개 지시로 승률을 잰다.[^alpacaeval-lc]
-  교육용으로 각 지시의 판정을 서로 독립인 이김·짐으로 단순화하면,
-  승률 50% 근처의 표준오차는 $\sqrt{0.5\times0.5/805}\approx0.018$,
-  즉 약 1.8%p이고 95% 신뢰구간은 ±3.5%p쯤 된다.
-  두 모델이 52%와 50%라면 이 차이만으로 한쪽이 낫다고 말하기 어렵다.
-  실제 AlpacaEval 점수는 지시별 선호 확률의 평균이고 LC 점수에는 회귀 보정이 더해지며,
-  두 모델은 같은 지시에서 짝지어 비교해야 하므로,
-  실제 비교에는 지시 단위로 다시 표본을 뽑는 paired bootstrap 같은 방법을 쓴다.
-  Chatbot Arena가 순위와 함께 신뢰구간을 보여 주는 것도 같은 이유다.[^arena]
-
-직접 실험할 때는 학습 전에 평가 프롬프트와 기준을 정하고,
-checkpoint 선택에 쓸 평가와 최종 확인용 평가를 나눠 둔다.
-학습 중에는 보상과 독립 평가의 추이를 함께 기록하고,
-점수 상승이 길이·문체 변화에만 기대는지 실제 응답을 확인한다.
-허점을 발견해 판정자를 다시 학습했다면, 수정에 쓴 예뿐 아니라 새로 확보한 예에서도 평가한다.
-
-이 과정을 거쳐야 "학습 점수가 올랐다"에서 "원하는 행동이 좋아졌다"로 결론을 옮길 근거가 생긴다.
-
 [^survey]: Wang, X., et al. (2026). Reward Hacking in the Era of Large Models: Mechanisms, Emergent Misalignment, Challenges. [arXiv:2604.13602v1](https://arxiv.org/abs/2604.13602v1).
 [^goodhart]: Manheim, D., & Garrabrant, S. (2018). Categorizing Variants of Goodhart's Law. [arXiv:1803.04585](https://arxiv.org/abs/1803.04585).
-[^gao]: Gao, L., Schulman, J., & Hilton, J. (2023). Scaling Laws for Reward Model Overoptimization. *ICML 2023*, PMLR 202, 10835–10866. [arXiv:2210.10760](https://arxiv.org/abs/2210.10760).
-[^beirami]: Beirami, A., Agarwal, A., Berant, J., D'Amour, A., Eisenstein, J., Nagpal, C., & Suresh, A. T. (2024). Theoretical guarantees on the best-of-n alignment policy. [arXiv:2401.01879](https://arxiv.org/abs/2401.01879).
 [^stiennon]: Stiennon, N., et al. (2020). Learning to summarize from human feedback. *NeurIPS 2020*. [arXiv:2009.01325](https://arxiv.org/abs/2009.01325).
 [^rafailov-scaling]: Rafailov, R., et al. (2024). Scaling Laws for Reward Model Overoptimization in Direct Alignment Algorithms. *NeurIPS 2024*. [arXiv:2406.02900](https://arxiv.org/abs/2406.02900).
+[^coste]: Coste, T., Anwar, U., Kirk, R., & Krueger, D. (2024). Reward Model Ensembles Help Mitigate Overoptimization. *ICLR 2024*. [arXiv:2310.02743](https://arxiv.org/abs/2310.02743).
+[^eisenstein]: Eisenstein, J., et al. (2024). Helping or Herding? Reward Model Ensembles Mitigate but do not Eliminate Reward Hacking. *COLM 2024*. [arXiv:2312.09244](https://arxiv.org/abs/2312.09244).
 [^mtbench]: Zheng, L., et al. (2023). Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena. *NeurIPS 2023 Datasets and Benchmarks*. [arXiv:2306.05685](https://arxiv.org/abs/2306.05685).
 [^alpacaeval-lc]: Dubois, Y., Galambosi, B., Liang, P., & Hashimoto, T. B. (2024). Length-Controlled AlpacaEval: A Simple Way to Debias Automatic Evaluators. *COLM 2024*. [arXiv:2404.04475](https://arxiv.org/abs/2404.04475).
 [^sycophancy]: Sharma, M., et al. (2024). Towards Understanding Sycophancy in Language Models. *ICLR 2024*. [arXiv:2310.13548](https://arxiv.org/abs/2310.13548).
