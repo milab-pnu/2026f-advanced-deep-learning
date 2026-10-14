@@ -29,22 +29,74 @@ order: 4
 
 ### 1-1. 지식 증류의 원형
 
-Distillation은 Hinton 등이 2015년에 정리한 개념이다.
-큰 모델(또는 앙상블)이 내는 부드러운 확률 분포(soft target)를 작은 모델이 따라 배우면,
-정답 라벨만 배우는 것보다 큰 모델의 일반화 성질을 더 많이 옮길 수 있다는 관찰이다.[^hinton]
-언어 모델에서 이 원형은 토큰마다 teacher의 다음 토큰 분포를 학생이 맞추는 것이 되고,
-teacher의 확률 분포(soft probability)에 접근할 수 있어야 한다.
+Distillation은 Hinton 등이 2015년에 이미지 분류와 음성 인식 모델로 정리한 개념이다.[^hinton]
+이미지 분류에서 출발해 보자.
+분류 모델은 클래스마다 로짓 $z_i$를 내고 softmax로 확률을 만든다.
+정답 라벨로 학습할 때의 목표는 정답 클래스에만 1을 둔 one-hot 벡터(hard target)다.
+그런데 학습을 마친 모델은 오답 클래스에도 작은 확률을 나눠 주고, 그 크기는 오답마다 크게 다르다.
+개 사진에 "개" 0.95를 주면서 "고양이"에 0.05, "자동차"에 0.002를 주는 식이다.
+고양이가 자동차보다 20배쯤 그럴듯하다는 이 상대적 크기에는
+개가 자동차보다 고양이를 닮았다는, 클래스 사이의 유사도에 대한 모델의 지식이 담겨 있다.
+One-hot 라벨에는 이런 정보가 없다.
+Hinton 등은 큰 모델(또는 앙상블)이 내는 이 분포 전체를 <strong>soft target</strong>으로 삼아 작은 학생 모델을 학습하면,
+큰 모델이 일반화하는 방식까지 옮길 수 있다고 보았다.
+
+걸림돌은 잘 학습된 teacher일수록 정답을 확신해서 오답 확률이 0에 가깝다는 점이다.
+그런 값은 cross-entropy 손실에 거의 영향을 주지 못한다.
+그래서 softmax에 temperature $T$를 넣는다.
+
+$$
+p_i=\frac{\exp(z_i/T)}{\sum_j \exp(z_j/T)}
+$$
+
+$T=1$이면 보통의 softmax이고, $T$를 키우면 로짓 차이가 $T$로 나뉘어 분포가 평평해진다.
+위 개 사진의 로짓을 (개, 고양이, 자동차) = (6, 3, 0)으로 두고 계산하면 다음과 같다.
+
+| $T$ | 개 | 고양이 | 자동차 |
+|---|---|---|---|
+| 1 | 0.950 | 0.047 | 0.002 |
+| 4 | 0.590 | 0.279 | 0.132 |
+
+순서는 그대로인데, $T=4$에서는 두 오답의 확률이 손실에 의미 있게 기여할 만큼 커져서
+고양이가 자동차보다 그럴듯하다는 정보가 학생에게 전달된다.
+
+학습 손실은 두 cross-entropy의 가중합이다.
+하나는 teacher가 높은 $T$로 만든 soft target과 학생이 같은 $T$로 만든 분포 사이의 cross-entropy이고,
+다른 하나는 정답 라벨과 학생의 $T=1$ 분포 사이의 보통 cross-entropy다.
+
+$$
+\mathcal{L}=\alpha\,T^2\,\mathrm{CE}\big(p^{(T)}_{\text{teacher}},\,p^{(T)}_{\text{student}}\big)+(1-\alpha)\,\mathrm{CE}\big(y,\,p^{(1)}_{\text{student}}\big)
+$$
+
+Soft 항에 $T^2$를 곱하는 것은 그 항의 gradient가 $1/T^2$ 비율로 작아지기 때문이다.
+로짓을 $T$로 나누므로 미분에 $1/T$이 한 번 붙고, 높은 $T$에서는 두 분포의 차이 자체도 $1/T$ 정도로 줄어든다.
+$T^2$를 곱해 두면 $T$를 바꿔 가며 실험해도 두 항의 상대적 비중이 거의 그대로 유지된다.
+원논문은 정답 항에 상당히 낮은 가중치를 줄 때 대체로 결과가 좋았다고 보고했다.
+MNIST에서 dropout 등으로 강하게 정규화한 큰 신경망은 테스트 오류가 67개,
+정규화 없이 정답 라벨로만 학습한 작은 신경망은 146개였는데,
+같은 작은 신경망에 큰 신경망의 soft target($T=20$)을 맞추는 과제를 더하자 74개로 줄었다(원논문 §3).
+
+언어 모델은 매 위치에서 어휘 전체를 클래스로 하는 다음 토큰 분류를 하므로 이 방식을 그대로 옮길 수 있다.
+Kim과 Rush는 2016년 신경망 기계번역에서 KD(knowledge distillation)를 두 방식으로 구분했다.[^seqkd]
+<strong>Word-level KD</strong>는 정답 번역문의 각 위치에서 학생의 다음 단어 분포를 teacher의 분포에 맞춘다.
+위의 분류 증류를 토큰마다 반복하는 셈이고, teacher의 확률 분포(soft probability)에 접근할 수 있어야 한다.
+<strong>Sequence-level KD</strong>(SeqKD)는 문장 전체에 대한 teacher의 분포를 맞추려 한다.
+가능한 문장이 지수적으로 많아 그대로는 계산할 수 없으므로,
+그 분포를 가장 확률이 높은 문장 하나로 근사하고 그 문장을 teacher의 빔 서치(beam search) 출력으로 찾는다.
+결국 학습 데이터의 입력마다 teacher가 번역문을 생성하고, 학생은 그 번역문을 정답처럼 보통의 cross-entropy로 학습한다.
+영어→독일어 번역에서 SeqKD는 word-level KD보다 좋았고, 둘을 함께 쓰면 더 좋아졌다(Table 1).
+Teacher의 분포 없이 생성한 텍스트만 있으면 되는 이 방식이 다음 절에서 볼 응답 기반 증류의 원형이다.
 
 ### 1-2. 응답 기반 증류
 
-실제로 가장 널리 쓰인 방식은 더 단순하다.
+LLM에서 가장 널리 쓰인 방식은 SeqKD를 그대로 옮긴 것이다.
 Teacher가 응답을 생성하고, 학생이 그 응답으로 04a §1의 SFT(supervised fine-tuning)를 한다.
 04a §2-3의 Self-Instruct와 Alpaca가 이 방식이었고, DeepSeek-R1은 이것을 추론 모델에 적용했다.
 데이터는 05a §4-2의 3단계에서 만든 약 80만 건(추론 약 60만 건, 일반 약 20만 건)이다.
 이 데이터로 Qwen2.5 계열 base model들을 SFT만 했더니 32B 모델이 AIME 2024에서 72.6%를 냈다(v2 Table 15).
 같은 Qwen2.5-32B base에 R1-Zero 방식의 대규모 RL을 직접 적용한 모델은 47.0%였다(Table 16).[^r1]
 저자들은 큰 모델에서 찾은 추론 패턴을 옮기는 데는 작은 모델에 RL을 돌리는 것보다 distillation이 낫다고 결론지었다.
-05c §4-1에서 Yue 등이 RLVR(reinforcement learning with verifiable rewards)과 달리 distillation은
+05c §5-1에서 Yue 등이 RLVR(reinforcement learning with verifiable rewards)과 달리 distillation은
 base model이 내지 못하던 풀이를 낸다고 관찰한 것과 같은 방향이다.
 
 이 방식을 이 노트에서는 **off-policy distillation**이라고 부른다.
@@ -119,7 +171,7 @@ reverse KL $\mathrm{KL}(\pi_S\,\|\,\pi_T)$, 그 사이를 잇는 generalized Jen
 reverse KL은 학생이 teacher가 높은 확률을 준 토큰에 집중하는 mode-seeking 성질이라 이를 피하는 대신 다양성이 줄어든다.
 실험에서도 reverse KL 쪽으로 갈수록 생성의 다양성이 줄었고(Figure 4), 최적의 divergence는 과제에 따라 달랐다.
 T5 계열 실험에서 on-policy GKD는 요약·번역·산술 추론 모두에서 정답 응답 위에서 teacher 분포를 맞추는
-supervised KD와 teacher 응답을 SFT하는 SeqKD(sequence-level KD)를 앞섰다(Figure 1).[^gkd]
+supervised KD와 teacher 응답을 SFT하는 SeqKD를 앞섰다(Figure 1).[^gkd]
 
 <Callout type="example">
 **토큰 하나의 reverse KL.** 학생이 자기가 생성한 응답의 어느 위치에서 다음 토큰 후보 세 개에 $\pi_S=(0.6,\,0.3,\,0.1)$을 주고,
@@ -294,7 +346,7 @@ On-policy distillation이 off-policy의 문제를 줄인다고 해서 실패하�
   이를 막아도 학생이 도구를 여러 번 부르는 대신 한 턴의 긴 독백으로 기울거나
   응답이 문맥 한계까지 길어지는 실패를 관찰했다(§6.1).[^ttopd]
 
-다양성의 붕괴는 05c §4의 pass@$k$ 논쟁과 이어진다.
+다양성의 붕괴는 05c §5의 pass@$k$ 논쟁과 이어진다.
 Teacher의 봉우리 하나를 따르는 학생은 넓은 $k$에서의 커버리지가 줄 수 있지만,
 이것은 reverse KL 계열의 가능한 실패이지 필연은 아니다.
 §2-2의 Qwen3 비교에서는 on-policy distillation 뒤 AIME 2024의 pass@64가 오히려 조금 올랐다(Table 21).[^qwen3]
@@ -331,6 +383,7 @@ Agentic RL은 환경이 개입하는 궤적으로의 확장을 다뤘다.
 
 [^survey]: Song, M., & Zheng, M. (2026). *A Survey of On-Policy Distillation for Large Language Models*. [arXiv:2604.00626v4](https://arxiv.org/abs/2604.00626v4).
 [^hinton]: Hinton, G., Vinyals, O., & Dean, J. (2015). *Distilling the Knowledge in a Neural Network*. NIPS 2014 Deep Learning Workshop. [arXiv:1503.02531](https://arxiv.org/abs/1503.02531).
+[^seqkd]: Kim, Y., & Rush, A. M. (2016). *Sequence-Level Knowledge Distillation*. EMNLP 2016. [arXiv:1606.07947](https://arxiv.org/abs/1606.07947).
 [^dagger]: Ross, S., Gordon, G. J., & Bagnell, J. A. (2011). *A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning*. AISTATS 2011. [arXiv:1011.0686](https://arxiv.org/abs/1011.0686).
 [^imitation]: Gudibande, A., et al. (2024). *The False Promise of Imitating Proprietary Language Models*. ICLR 2024. [arXiv:2305.15717](https://arxiv.org/abs/2305.15717).
 [^r1]: DeepSeek-AI. (2026). *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning*. [arXiv:2501.12948v2](https://arxiv.org/abs/2501.12948v2).
