@@ -14,8 +14,7 @@ GRPO의 목적함수가 만드는 세 가지 문제(길이·난이도 편향, �
 정규화의 범위를 배치 전체로 넓힌 갈래가 따로 있다.
 끝에서는 실제 recipe의 조합과, 학습 중에 이 문제들을 가려내는 지표를 정리한다.
 
-전체 지도는 RLVR 노트와 같은 Zhang 등의 서베이[^survey]로 잡되, 이 노트에는 서베이 §3.2(정책 최적화: critic(value model) 기반,
-critic 없는 알고리즘, off-policy 최적화, 정규화 항)와 §3.3(표집 전략)이 대응한다.
+전체 지도는 RLVR 노트와 같은 Zhang 등의 서베이[^survey]로 잡는다.
 이 노트는 학습 시스템이 만드는 off-policy 문제보다 정책 갱신식 자체에 집중한다.
 
 ## 1. Value model 없는 정책 갱신
@@ -41,19 +40,19 @@ Ahmadian 등은 이 설정이 사실상 bandit 문제에 가깝다고 지적했�
 ### 1-2. RLOO의 leave-one-out baseline
 
 RLOO는 value model과 clipping 없이 REINFORCE에 간단한 baseline만 붙였다.
-보상은 응답 하나에 대한 과제 보상에서 KL(Kullback–Leibler) 벌점을 차감한 값이고, 아래 예시는 KL 항을 제외한 교육용 계산이다.
+보상은 응답 하나에 대한 task 보상에서 KL(Kullback–Leibler) penalty를 차감한 값이고, 아래 예시는 KL 항을 제외한 교육용 계산이다.
 Baseline은 같은 프롬프트에서 뽑은 $k$개 응답 중 자기를 뺀 나머지 $k-1$개의 보상 평균이다.
 보상이 $[1,0,1,0]$이면 첫 응답의 baseline은 나머지 셋의 평균 $1/3$이고 advantage는 $2/3$이다.
 RLOO는 응답을 만든 정책으로 바로 갱신하는 on-policy 추정량이라 확률비가 필수가 아니며,
-저자들은 요약과 대화 과제에서 이 방법이 PPO를 앞섰다고 보고했다.[^rloo]
+저자들은 요약과 대화 task에서 이 방법이 PPO를 앞섰다고 보고했다.[^rloo]
 
 ### 1-3. GRPO의 목적함수
 
 DeepSeekMath의 GRPO는 같은 발상을 PPO의 틀 안에서 구현했다.[^deepseekmath]
 이 노트는 원논문의 기호를 따라 프롬프트를 $q$, 응답을 $o$,
-정책 파라미터를 $\theta$로 쓴다(앞 주차 PPO의 $x$, $y$에 해당한다).
+정책 파라미터를 $\theta$로 쓴다(RLVR 노트와 앞 주차 PPO의 $x$, $y$에 해당한다).
 프롬프트 $q$마다 옛 정책 $\pi_{\theta_{\mathrm{old}}}$에서 응답 $G$개 $\{o_1,\dots,o_G\}$를 뽑고,
-각 응답의 보상 $r_i$를 그룹 안에서 정규화해 advantage로 쓴다.
+RLVR 노트에서 본 것처럼 각 응답의 보상 $r_i$(RLVR 노트의 $R_i$)를 그룹 안에서 정규화해 advantage로 쓴다.
 이 노트의 계산 예시는 표준편차의 분모를 $G$로 두며,
 구현에서는 0으로 나누기를 피하는 작은 상수를 분모에 더한다.
 
@@ -62,8 +61,8 @@ $$
 $$
 
 Outcome 보상에서는 응답 $o_i$의 모든 토큰이 같은 $\hat A_i$를 받는다.
-목적함수는 PPO의 clipped surrogate에서 KL 벌점을 뺀 값이고, 프롬프트와 응답 표집에 대해 평균한 이 값을 최대화한다.
-$\varepsilon$은 clipping 폭, $\beta$는 KL 벌점의 세기, $\pi_{\mathrm{ref}}$는 KL의 기준 모델로, 보통 초기 SFT(supervised fine-tuning) 모델을 쓴다.
+목적함수는 PPO의 clipped surrogate에서 KL penalty를 뺀 값이고, 프롬프트와 응답 표집에 대해 평균한 이 값을 최대화한다.
+$\varepsilon$은 clipping 폭, $\beta$는 KL penalty의 세기, $\pi_{\mathrm{ref}}$는 KL의 기준 모델로, 보통 초기 SFT(supervised fine-tuning) 모델을 쓴다.
 
 $$
 \mathcal{J}_{\mathrm{GRPO}}(\theta)=\mathbb{E}\Bigg[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{\lvert o_i\rvert}\sum_{t=1}^{\lvert o_i\rvert}\Big(\min\big(\rho_{i,t}\hat A_i,\ \operatorname{clip}(\rho_{i,t},1-\varepsilon,1+\varepsilon)\hat A_i\big)-\beta\,\mathbb{D}_{\mathrm{KL}}[\pi_\theta\,\|\,\pi_{\mathrm{ref}}]\Big)\Bigg]
@@ -87,7 +86,6 @@ KL 항은 앞 주차 RLHF의 PPO와 달리 보상에 섞지 않고 목적함수�
 $[0,0,0,0]$도 마찬가지다.
 분모의 안정화 상수 덕에 0/0이 되지는 않는다.
 이때 policy 항의 신호는 없지만 KL 항의 gradient는 남을 수 있다.
-RLVR 노트에서 "너무 쉽거나 어려운 문제는 학습 신호가 없다"고 한 이유가 이 식이다.
 
 보상이 $[1,0,0,0]$이면 평균 0.25, 표준편차 0.433이므로 advantage는 $[+1.73,-0.58,-0.58,-0.58]$이다.
 하나만 맞힌 어려운 문제에서 그 정답 응답은 큰 양의 신호를 받는다.
@@ -157,7 +155,7 @@ Liu 등은 GRPO 목적함수의 두 정규화 항이 표준 policy gradient에 �
 이 항 때문에 응답의 토큰 하나가 받는 갱신 계수가 응답이 길수록 작아진다.
 정답 응답은 짧을수록 토큰당 확률을 올리는 신호가 커서 짧은 정답이 유리하고,
 오답 응답은 길수록 토큰당 확률을 내리는 신호가 작아서 긴 오답이 덜 불리하다.
-이 편향은 학습 중 오답이 길어지는 방향으로 작용할 수 있으므로, RLVR 노트에서 본 R1-Zero의 길이 증가를 해석할 때 함께 살펴야 한다.
+이 편향은 학습 중 오답이 길어지는 방향으로 작용할 수 있으므로, RLVR 학습에서 응답이 길어지는 현상을 해석할 때 함께 살펴야 한다.
 다른 하나는 그룹 표준편차로 나누는 것이다.
 정답률이 0이나 1에 가까운 문제는 보상의 표준편차가 작아 그룹 전체에 곱해지는 배율 $1/\mathrm{std}$가 커지고,
 정답률이 중간인 문제는 상대적으로 작은 배율을 받는다.
@@ -169,7 +167,7 @@ Dr. GRPO는 두 항을 모두 지운다.
 advantage는 평균만 빼고 표준편차로 나누지 않는다.
 이렇게 두 정규화에서 생긴 가중 편향을 없앤다.
 PPO의 clipped surrogate를 쓰되, value model 대신 그룹 평균을 baseline으로 쓰는 차이는 남는다.
-같은 설정에서 Dr. GRPO는 정답률을 유지하면서 오답의 길이 증가를 억제했다(원논문 Figure 5).[^drgrpo]
+같은 설정에서 Dr. GRPO는 정답률을 유지하면서 오답의 길이 증가를 억제했다.[^drgrpo]
 
 <Callout type="example">
 **길이 정규화가 만드는 차이.** 위 예시의 보상 $[1,0,1,0]$에서 응답 길이가 각각 100, 400, 100, 400 토큰이라고 하자.
@@ -189,7 +187,7 @@ GRPO에서는 100토큰 정답의 토큰이 400토큰 정답의 토큰보다 절
 두 번째 문제는 **entropy collapse**다.
 여기서 entropy는 문맥마다 다음 토큰 분포가 얼마나 퍼져 있는지를 재는 값이고,
 학습이 길어질수록 이 값이 떨어져 생성의 다양성이 크게 줄어든다.
-Cui 등은 여러 모델·과제에서 entropy가 줄어드는 만큼 성능이 오르다가,
+Cui 등은 여러 모델·task에서 entropy가 줄어드는 만큼 성능이 오르다가,
 entropy가 바닥나면 성능도 더 오르지 않는 경향을 관찰했다.
 어떤 prefix에서 다음 토큰 확률이 0.9와 0.1이고 갱신이 확률 0.9인 토큰의 logit만 올리면,
 이미 우세한 쪽이 더 우세해져 entropy가 줄어든다.
@@ -200,7 +198,7 @@ DAPO는 이 탐색 붕괴와 함께 무효 그룹, 길이 가중, 잘린 응답�
 
 | 수정 | 무엇을 바꾸나 | 겨냥한 문제 |
 |---|---|---|
-| Clip-Higher | Clipping의 상한과 하한을 분리해 $\varepsilon_{\mathrm{low}}=0.2$, $\varepsilon_{\mathrm{high}}=0.28$(원논문 §4.1) | 확률이 낮은 토큰은 $1+\varepsilon$의 상한 때문에 확률을 조금밖에 못 올린다. 상한을 올려 드문 토큰의 탐색을 허용 |
+| Clip-Higher | Clipping의 상한과 하한을 분리해 $\varepsilon_{\mathrm{low}}=0.2$, $\varepsilon_{\mathrm{high}}=0.28$ | 확률이 낮은 토큰은 $1+\varepsilon$의 상한 때문에 확률을 조금밖에 못 올린다. 상한을 올려 드문 토큰의 탐색을 허용 |
 | Dynamic sampling | 보상이 모두 같은 그룹(전부 정답 또는 전부 오답)을 버리고 다시 뽑아 배치를 채움 | 앞의 GRPO 예시에서 advantage가 0이던 그룹이 배치를 차지하는 낭비 |
 | Token-level loss | 응답별로 평균한 뒤 다시 평균하지 않고 그룹 응답들의 토큰을 모두 모아 실제 토큰 수의 합으로 평균 | 긴 응답의 토큰이 과소 가중되는 문제. Dr. GRPO의 길이 항 제거와 같은 방향 |
 | Overlong reward shaping | 응답 길이가 $L_{\max}-L_{\mathrm{cache}}$를 넘으면 길이 $L_{\mathrm{cache}}$의 완충 구간 안에서 길이에 따라 선형으로 커지는 벌점을 주고, 최대 길이 $L_{\max}$ 이상이면 최대 벌점 $-1$. 잘린 응답의 손실을 아예 빼는 overlong filtering과는 별개의 조치 | 잘린 응답 전체를 오답으로 처리할 때 생기는 보상 잡음 |
@@ -225,7 +223,7 @@ $\varepsilon=0.2$일 때 옛 확률이 0.85인 토큰의 상한은 $0.85\times1.
 옛 확률이 0.02인 토큰은 $0.02\times1.2=0.024$만 되어도 그쪽 gradient가 잘린다.
 그 결과 확률이 이미 높은 행동(이 모델의 경우 코드 형식의 추론)이 더 강화되는 쪽으로 기울며,
 저자들은 clipping을 끄면 여러 seed 평균에서 무작위 보상의 일관된 개선이 사라짐을 보였다.
-다만 일부 실행은 clipping 없이도 높은 성능에 도달했다(원논문 부록 B.1–B.2).[^spurious]
+다만 일부 실행은 clipping 없이도 높은 성능에 도달했다.[^spurious]
 Clip-Higher가 낮은 확률 토큰의 상한을 늘리는 것도 같은 비대칭을 겨냥한다.
 알고리즘의 구성 요소 하나가 base model이 이미 자주 내던 행동을 증폭할 수 있으므로,
 새 알고리즘의 개선폭을 읽을 때도 이 점을 염두에 두어야 한다.
@@ -274,11 +272,11 @@ GSPO에서는 응답 하나가 통째로 살거나 잘린다.
 보상이 응답 단위이므로 최적화 단위도 응답이어야 한다는 것이 저자들의 논리다.[^gspo]
 
 토큰별 계수는 한 응답 안에서는 같지만 응답 길이에 따라 달라진다.
-Clipping에 걸리지 않을 때 응답 $o_i$의 토큰 하나가 받는 gradient 계수는 공통 계수 $1/G$를 생략하면 $s_i\hat A_i/\lvert o_i\rvert$이므로(원논문 §4.2),
+Clipping에 걸리지 않을 때 응답 $o_i$의 토큰 하나가 받는 gradient 계수는 공통 계수 $1/G$를 생략하면 $s_i\hat A_i/\lvert o_i\rvert$이므로
 응답 길이로 나누는 GRPO의 길이 가중은 남는다.
 비율의 정의가 다르니 clipping 폭도 다르다.
-원논문 실험은 하한 쪽 폭과 상한 쪽 폭으로 GRPO에 0.2와 0.27(확률비 구간 $[0.8,1.27]$)을, GSPO에 $3\times10^{-4}$와 $4\times10^{-4}$를 썼고,
-두 방법의 clipping 폭이 대개 자릿수부터 다르다고 밝힌다(§4.1, §5.1).[^gspo]
+GSPO 논문의 실험은 하한 쪽 폭과 상한 쪽 폭으로 GRPO에 0.2와 0.27(확률비 구간 $[0.8,1.27]$)을, GSPO에 $3\times10^{-4}$와 $4\times10^{-4}$를 썼고,
+두 방법의 clipping 폭이 대개 자릿수부터 다르다고 밝힌다.[^gspo]
 
 <Callout type="example">
 **세 토큰 응답의 clipping.** Advantage가 양수인 응답에서 세 토큰의 비율이 갱신 중에 $\rho=(1.5,\ 1.0,\ 0.9)$가 되었다고 하자(교육용 가정).
@@ -310,7 +308,7 @@ advantage를 **어느 범위에서 정규화하는가**를 바꿨다.[^rpp]
 대안은 배치 전체(global)로 정규화하는 것이고, 같은 정책·데이터 분포에서는 배치가 클수록 그 평균과 표준편차의 표집 변동이 줄어든다.
 
 REINFORCE++의 기본형은 프롬프트당 응답이 하나여도 쓸 수 있으며,
-응답 보상에서 각 토큰부터 응답 끝까지의 KL 벌점 합을 차감한 return을 배치 전체의 평균과 표준편차로 정규화한다.<Sidenote>Hu 등의 원논문 v9 본문 식 기준이다. 같은 판본의 부록 B.2는 마지막 토큰 앞의 advantage를 0으로 둔다고 써서 본문 식과 맞지 않는다.</Sidenote>
+응답 보상에서 각 토큰부터 응답 끝까지의 KL penalty 합을 차감한 return을 배치 전체의 평균과 표준편차로 정규화한다.<Sidenote>Hu 등의 원논문 v9 본문 식 기준이다. 같은 판본의 부록 B.2는 마지막 토큰 앞의 advantage를 0으로 둔다고 써서 본문 식과 맞지 않는다.</Sidenote>
 Baseline형은 프롬프트당 응답을 여러 개 뽑아 먼저 그룹 평균을 빼고,
 그 결과를 다시 배치 전체로 정규화하며, KL은 보상 대신 별도 손실로 더한다.[^rpp]
 
@@ -343,8 +341,8 @@ B를 $[+0.05,-0.05,+0.05,-0.05]$로 만든 뒤,
 실제 recipe는 이 중 여러 개를 섞는다.
 예를 들어 Olmo 3의 RL(reinforcement learning) 단계는 GRPO를 바탕으로 DAPO의 clip-higher·token-level loss와 Dr. GRPO의 표준편차 정규화 제거를 택하고 KL 항을 뺐으며,
 보상이 모두 같은 프롬프트를 걸러 배치를 채우는 active sampling을 더했다.[^olmo3]
-서베이 §3.2는 이 알고리즘들을 critic 유무와 off-policy 보정 방식으로 분류하고
-§3.2.5에서 KL 정규화의 역할을 논쟁적인 주제로 정리하며 추론 RL에서는 그 필요성을 다시 따져야 한다고 본다.[^survey]
+서베이는 이 알고리즘들을 critic 유무와 off-policy 보정 방식으로 분류하고,
+KL 정규화의 역할을 논쟁적인 주제로 정리하며 추론 RL에서는 그 필요성을 다시 따져야 한다고 본다.[^survey]
 
 ### 4-2. 학습 중 진단
 
