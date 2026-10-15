@@ -163,10 +163,81 @@ SFT는 외부에서 주어진 정답에 맞추므로 그 정답이 모델의 분
 | 단계별 탐색 | 풀이를 단계마다 여러 갈래로 뻗되, 유망한 갈래만 이어 쓴다 |
 | 길게 생각하기 | 풀이 하나를 더 길게 쓴다 |
 
+<figure>
+<svg viewBox="0 0 640 276" role="img" aria-label="추론 시 계산을 더 쓰는 네 방식을 나란히 그린 그림. 각 칸 위에 문제 상자가 있다. 여러 번 풀기는 문제에서 풀이 네 개가 한 층으로 갈라져 그중 하나를 최종 답으로 고른다(깊이 1, 개수 N). 고쳐 쓰기는 풀이가 한 줄로 네 번 이어져 앞 풀이를 보고 다시 쓰며 마지막이 최종 답이다(깊이 N). 단계별 탐색은 트리 구조로, 첫 단계 세 갈래 중 하나를 버리고 남은 두 갈래가 각각 둘로 갈라진 뒤 다시 둘을 버리고, 남은 갈래를 이어 써서 하나를 최종 답으로 고른다. 길게 생각하기는 문제 아래에 긴 막대 하나로 풀이 하나를 길게 쓰는 것을 나타낸다. 아래 범례는 검은 원이 최종 답, 회색 원이 풀이, 점선 원이 버린 갈래다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<text x="80" y="24" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">여러 번 풀기</text>
+<text x="80" y="42" font-size="11" text-anchor="middle" fill="#64748b">따로 N번 풀기</text>
+<rect x="52" y="56" width="56" height="24" rx="6" fill="#f8fafc" stroke="#0f172a"/>
+<text x="80" y="72" font-size="12" text-anchor="middle" fill="#0f172a">문제</text>
+<line x1="80" y1="80" x2="32" y2="142" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="32" cy="150" r="8" fill="#e2e8f0" stroke="#0f172a"/>
+<line x1="80" y1="80" x2="64" y2="142" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="64" cy="150" r="8" fill="#e2e8f0" stroke="#0f172a"/>
+<line x1="80" y1="80" x2="96" y2="142" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="96" cy="150" r="8" fill="#0f172a" stroke="#0f172a"/>
+<line x1="80" y1="80" x2="128" y2="142" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="128" cy="150" r="8" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="80" y="236" font-size="11" text-anchor="middle" fill="#64748b">그중 하나를 고름</text>
+<text x="240" y="24" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">고쳐 쓰기</text>
+<text x="240" y="42" font-size="11" text-anchor="middle" fill="#64748b">앞 풀이를 보고 다시</text>
+<rect x="212" y="56" width="56" height="24" rx="6" fill="#f8fafc" stroke="#0f172a"/>
+<text x="240" y="72" font-size="12" text-anchor="middle" fill="#0f172a">문제</text>
+<line x1="240" y1="80" x2="240" y2="102" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="240" cy="110" r="8" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="270" y="114" font-size="10" text-anchor="middle" fill="#64748b">1번째</text>
+<line x1="240" y1="118" x2="240" y2="137" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="240" cy="145" r="8" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="270" y="149" font-size="10" text-anchor="middle" fill="#64748b">2번째</text>
+<line x1="240" y1="153" x2="240" y2="172" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="240" cy="180" r="8" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="270" y="184" font-size="10" text-anchor="middle" fill="#64748b">3번째</text>
+<line x1="240" y1="188" x2="240" y2="207" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="240" cy="215" r="8" fill="#0f172a" stroke="#0f172a"/>
+<text x="270" y="219" font-size="10" text-anchor="middle" fill="#64748b">4번째</text>
+<text x="400" y="24" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">단계별 탐색</text>
+<text x="400" y="42" font-size="11" text-anchor="middle" fill="#64748b">유망한 갈래만 이어 씀</text>
+<rect x="372" y="56" width="56" height="24" rx="6" fill="#f8fafc" stroke="#0f172a"/>
+<text x="400" y="72" font-size="12" text-anchor="middle" fill="#0f172a">문제</text>
+<line x1="400" y1="80" x2="355" y2="107" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<circle cx="355" cy="115" r="8" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="3 2"/>
+<line x1="400" y1="80" x2="395" y2="107" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="395" cy="115" r="8" fill="#e2e8f0" stroke="#0f172a"/>
+<line x1="400" y1="80" x2="445" y2="107" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="445" cy="115" r="8" fill="#e2e8f0" stroke="#0f172a"/>
+<line x1="395" y1="123" x2="380" y2="157" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<circle cx="380" cy="165" r="8" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="3 2"/>
+<line x1="395" y1="123" x2="410" y2="157" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="410" cy="165" r="8" fill="#e2e8f0" stroke="#0f172a"/>
+<line x1="445" y1="123" x2="430" y2="157" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="430" cy="165" r="8" fill="#e2e8f0" stroke="#0f172a"/>
+<line x1="445" y1="123" x2="460" y2="157" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<circle cx="460" cy="165" r="8" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="3 2"/>
+<line x1="410" y1="173" x2="410" y2="207" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="410" cy="215" r="8" fill="#e2e8f0" stroke="#0f172a"/>
+<line x1="430" y1="173" x2="430" y2="207" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="430" cy="215" r="8" fill="#0f172a" stroke="#0f172a"/>
+<text x="400" y="236" font-size="11" text-anchor="middle" fill="#64748b">검증기가 단계마다 가지치기</text>
+<text x="560" y="24" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">길게 생각하기</text>
+<text x="560" y="42" font-size="11" text-anchor="middle" fill="#64748b">풀이 하나를 길게</text>
+<rect x="532" y="56" width="56" height="24" rx="6" fill="#f8fafc" stroke="#0f172a"/>
+<text x="560" y="72" font-size="12" text-anchor="middle" fill="#0f172a">문제</text>
+<line x1="560" y1="80" x2="560" y2="102" stroke="#0f172a" stroke-width="1.5"/>
+<rect x="550" y="102" width="20" height="121" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="594" y="166" font-size="10" text-anchor="middle" fill="#64748b">긴 사고</text>
+<text x="560" y="236" font-size="11" text-anchor="middle" fill="#64748b">개수는 하나</text>
+<circle cx="214" cy="262" r="6" fill="#0f172a"/>
+<text x="258" y="266" font-size="11" text-anchor="middle" fill="#64748b">최종 답</text>
+<circle cx="314" cy="262" r="6" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="354" y="266" font-size="11" text-anchor="middle" fill="#64748b">풀이</text>
+<circle cx="398" cy="262" r="6" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="3 2"/>
+<text x="444" y="266" font-size="11" text-anchor="middle" fill="#64748b">버린 갈래</text>
+</svg>
+<figcaption>추론 시 계산을 더 쓰는 네 방식.</figcaption>
+</figure>
+
 앞의 셋은 풀이의 개수를, 마지막은 풀이 하나의 길이를 늘린다.
-여러 풀이 중 하나를 고르거나 유망한 갈래를 가리려면 풀이가 맞을 가능성을 점수로 매기는 모델, 곧 검증기(verifier)가 필요하다.
-학습 때의 검증 보상은 정답과 비교해 채점하지만 추론 때는 정답을 모르므로, 풀이만 보고 점수를 매기도록 학습한 reward model을 쓴다.
-그중 풀이 단계마다 점수를 매기는 것을 PRM(process reward model)이라 한다.
+여러 풀이 중 하나를 고르거나 유망한 갈래를 가리려면 풀이가 맞을 가능성을 점수로 매기는 모델이 필요하다.
+학습 때의 검증 보상은 정답과 비교해 채점하지만 추론 때는 정답을 모르므로, 풀이만 보고 점수를 매기도록 학습한 PRM(process reward model)을 쓴다.
 
 ### 3-1. 병렬 후보 선택
 
