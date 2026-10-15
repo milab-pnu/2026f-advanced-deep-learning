@@ -299,9 +299,9 @@ On-policy distillation은 off-policy의 문제를 줄여 주지만 여전히 실
   학습 신호가 잡음에 묻힐 수 있다.
   학생의 정답률이 너무 낮은 프롬프트 비율을 따로 보는 것이 출발점이다.
 - **다양성의 붕괴.** Reverse KL처럼 mode-seeking인 목적함수를 강하게 걸면 학생이 프롬프트마다 풀이 전략 하나로 모여,
-  long CoT 노트에서 본 커버리지(pass@$k$)가 줄 수 있다.
-  GKD 실험에서 관찰한 생성 다양성의 감소와 이어지는 현상이므로 같은 생성 예산에서 pass@1과 pass@$k$를 함께 비교한다.
-  다만 앞의 Qwen3 비교에서는 on-policy distillation 뒤 AIME 2024의 pass@64가 조금 올라, on-policy distillation이 커버리지를 반드시 줄이지는 않았다(수학·코드에서의 한 비교이고 KL의 방향은 명시되지 않았다).[^qwen3]
+  long CoT 노트에서 본 커버리지($\mathrm{pass}@k$)가 줄 수 있다.
+  GKD 실험에서 관찰한 생성 다양성의 감소와 이어지는 현상이므로 같은 생성 예산에서 $\mathrm{pass}@1$과 $\mathrm{pass}@k$를 함께 비교한다.
+  다만 앞의 Qwen3 비교에서는 on-policy distillation 뒤 AIME 2024의 $\mathrm{pass}@64$가 조금 올라, on-policy distillation이 커버리지를 반드시 줄이지는 않았다(수학·코드에서의 한 비교이고 KL의 방향은 명시되지 않았다).[^qwen3]
 
 그리고 모든 distillation은 teacher를 전제한다.
 Teacher를 만드는 비용과 teacher의 편향이 그대로 조건이 된다.

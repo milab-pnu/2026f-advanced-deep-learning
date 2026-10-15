@@ -322,7 +322,7 @@ Qwen3는 사고 길이 조절을 모델의 기능으로 만들었다.
 사고 과정이 정해진 토큰 수에 이르면 "시간이 제한되어 지금까지의 사고로 답한다"는 문장을 넣어 답으로 넘어가게 하는 **thinking budget**을 두었고,
 예산을 늘릴수록 수학·코드 등의 성능이 점진적으로 올랐다.[^qwen3]
 
-### 3-6. Overthinking과 학습 단계의 길이 제어
+### 3-6. Overthinking과 학습을 통한 길이 제어
 
 늘 맞히는 쉬운 문제에서는 긴 사고가 자원만 낭비한다.
 추론 모델이 쉬운 문제에 계산을 과하게 쓰는 것을 **overthinking**이라 한다.
@@ -348,38 +348,47 @@ L1은 프롬프트에 "Think for $n$ tokens."처럼 목표 길이를 적어 주�
 
 ### 4-1. Sharpening과 커버리지
 
-가장 논쟁적인 쟁점은 RLVR이 base model에 **없던** 추론 능력을 만드는지,
-아니면 base model이 이미 낼 수 있던 풀이에 확률을 몰아 더 자주 내게 하는지다.
-뒤의 경우를 분포를 날카롭게 한다는 뜻에서 sharpening이라고 부른다.[^survey]
-앞에서 본 두 결과, 곧 되돌아보기가 RL 전에도 있었고 RL이 원래 분포 근처에 머문다는 것은 sharpening 쪽을 가리킨다.
+RLVR을 하면 정답률이 오른다.
+그런데 모델이 **새로운 풀이법을 배운 것**인지, **원래 알던 풀이를 더 자주 꺼내게 된 것**인지는 다른 문제다.
+열 번 풀면 두 번 맞히던 문제를 열 번 중 아홉 번 맞히게 되었다면 뒤의 경우다.
+이를 분포를 날카롭게 한다는 뜻에서 sharpening이라 부른다.[^survey]
+한 번도 못 풀던 문제를 풀게 되어야 새 능력이라고 할 수 있다.
 
-Yue 등은 이 질문을 pass@$k$로 물었다.[^yue]
-pass@$k$는 응답을 $k$개 뽑았을 때 그중 하나라도 맞을 확률로, 완벽한 검증기로 여러 번 풀기를 하는 것과 같다.
-$k=1$이면 평균 정답률이고, $k$가 크면 "이 모델이 어떤 식으로든 풀 수 있는 문제"의 비율에 가까워진다.
-여러 base model을 RLVR로 학습해 비교하자 $k$가 작을 때는 RLVR 모델이 앞섰지만 $k$가 커지면 base model이 앞섰다.
-RLVR 모델이 낸 풀이도 base model이 이미 낼 법한 풀이였다.
-저자들은 현재의 RLVR이 적은 시도로 맞힐 확률은 높이지만, 풀 수 있는 문제의 범위는 넓히지 않고 오히려 좁히기도 한다고 결론지었다.
+새 문제를 풀게 되었는지는 응답을 많이 뽑아 보면 알 수 있다.
+$\mathrm{pass}@k$는 응답을 $k$개 뽑았을 때 하나라도 맞을 확률이다.
+$k=1$이면 한 번에 맞힐 확률이고, $k$가 크면 여러 번 시도하면 언젠가는 푸는 문제의 비율, 곧 커버리지에 가까워진다.
+Yue 등이 RLVR 전후 모델을 비교하자, 몇 번만 시도할 때는 RLVR 모델이 앞섰지만 아주 많이 시도하게 하면 오히려 base model이 앞섰다.
+RLVR 모델은 맞힐 줄 아는 문제를 더 확실하게 맞히게 되었지만, base model이 가끔 풀던 문제 일부는 아예 못 풀게 된 것이다.
 반면 더 강한 모델의 풀이로 SFT한 모델은 base model이 내지 못하던 풀이를 냈다.[^yue]
-Wu 등도 RLVR 뒤에 출발 모델의 정답 대부분이 보존되지만 사라진 정답이 새로 생긴 정답보다 많다고 보고했다.[^leash]
+Wu 등도 RLVR 뒤에 원래 풀던 문제는 대부분 그대로 풀지만, 새로 풀게 된 문제보다 못 풀게 된 문제가 더 많다고 보고했다.[^leash]
+
+왜 이렇게 될까.
+앞에서 본 두 결과, 곧 "aha moment"가 RL 전에도 있었고 RL이 원래 분포 근처에 머문다는 것은 이 결과와 맞아떨어진다.
+토큰 하나하나를 들여다보면 더 분명하다.
+풀이의 토큰 대부분은 다음에 올 말이 거의 정해져 있어서, 이미 시작한 문장을 마무리할 뿐이다.
+풀이의 방향은 "wait", "however", "suppose"처럼 다음 말이 여러 가지일 수 있는(entropy가 높은) 소수의 토큰에서 갈린다.
+Wang 등은 이런 갈림길 토큰을 forking token이라 불렀다.
+RLVR 동안 바뀐 것은 주로 이 갈림길 토큰이었고, 학습을 entropy 상위 20% 토큰에만 걸어도 전체에 건 것만큼 성능이 올랐다.[^fork]
+RLVR이 새 길을 내기보다, 이미 있던 갈림길에서 어느 쪽으로 갈지를 고쳐 준다는 뜻이다.
 
 반례도 있다.
-Liu 등의 ProRL은 수학 외의 여러 영역을 섞고, KL penalty와 reference 정책의 주기적 재설정으로 RL을 훨씬 오래 이어 갔다.
-그러자 출발 모델이 이미 잘 풀던 task에서는 커버리지가 줄거나 그대로였지만,
-일부 task에서는 출발 모델이 한 번도 못 풀던 문제를 풀었다.[^prorl]
-출발 모델, 학습 영역, 학습 길이, 평가에 뽑은 응답 수가 서로 달라 이 결과들을 하나의 결론으로 합칠 수는 없다.
-또 응답을 유한하게 뽑아서는 "이 모델은 이 문제를 풀 수 없다"를 증명할 수 없고, 뽑아 본 응답 수 안에서 관측한 커버리지만 말할 수 있다.
+Liu 등의 ProRL은 수학 외의 여러 영역을 섞고 RL을 훨씬 오래 이어 갔다.
+오래 학습해도 무너지지 않도록 KL penalty를 걸고 reference 정책을 주기적으로 새로 바꿨다.
+그러자 원래 잘 풀던 task에서는 커버리지가 줄거나 그대로였지만, 일부 task에서는 출발 모델이 한 번도 못 풀던 문제를 풀었다.[^prorl]
+모델, 학습 영역, 학습 길이, 뽑아 본 응답 수가 연구마다 달라서 **아직 하나의 결론을 내리기는 어렵다**.
+또 응답을 아무리 많이 뽑아도 "이 모델은 이 문제를 절대 못 푼다"를 증명할 수는 없다.
+말할 수 있는 것은 "뽑아 본 만큼에서는 못 풀었다"뿐이다.
 
-### 4-2. 안정성·풀이 타당성·충실성
+### 4-2. 안정성과 풀이 타당성
 
-pass@$k$는 $k$번 중 한 번만 맞아도 성공으로 센다.
-그 반대편에 $k$번 **모두** 맞아야 성공으로 세는 $\mathrm{pass}^k$가 있다.
-Yao 등이 도구를 쓰는 agent 평가에서 제안한 지표로,
-pass@$k$가 "한 번이라도 풀 수 있는가"를 잰다면 $\mathrm{pass}^k$는 "매번 안정적으로 푸는가"를 잰다.[^taubench]
+$\mathrm{pass}@k$는 $k$번 중 한 번만 맞아도 성공으로 센다.
+반면, $k$번 **모두** 맞아야 성공으로 세는 $\mathrm{pass}^k$가 있다.
+$\mathrm{pass}@k$가 "한 번이라도 풀 수 있는가"를 잰다면 $\mathrm{pass}^k$는 "매번 안정적으로 푸는가"를 잰다.[^taubench]
 Sharpening은 이 두 지표를 반대 방향으로 움직일 수 있다.
 
 <Callout type="example">
-**두 지표로 본 sharpening.** 문제 두 개와 응답 하나의 정답 확률 $p$를 가정하자(교육용 가정).
-독립적으로 $k$개를 뽑으면 pass@$k$는 $1-(1-p)^k$, $\mathrm{pass}^k$는 $p^k$다.
+**두 지표로 본 sharpening.** 문제 두 개와 응답 하나의 정답 확률 $p$를 가정하자.
+독립적으로 $k$개를 뽑으면 $\mathrm{pass}@k$는 $1-(1-p)^k$, $\mathrm{pass}^k$는 $p^k$다.
 
 - base model은 문제 A에서 $p=0.6$, 문제 B에서 $p=0.05$다.
 - RL이 A에서 이미 내던 정답에 확률을 몰아 $p=0.95$로 올리고,
@@ -387,32 +396,20 @@ Sharpening은 이 두 지표를 반대 방향으로 움직일 수 있다.
 
 | 지표(두 문제 평균) | base model | RL 뒤 |
 |---|---|---|
-| pass@1 | 0.33 | 0.48 |
+| $\mathrm{pass}@1$ | 0.33 | 0.48 |
 | $\mathrm{pass}^4$ | 0.06 | 0.41 |
-| pass@4 | 0.58 | 0.50 |
-| pass@64 | 0.98 | 0.50 |
+| $\mathrm{pass}@4$ | 0.58 | 0.50 |
+| $\mathrm{pass}@64$ | 0.98 | 0.50 |
 
-pass@1과 $\mathrm{pass}^4$는 오르고 pass@$k$는 $k$가 클수록 많이 떨어진다.
+$\mathrm{pass}@1$과 $\mathrm{pass}^4$는 오르고 $\mathrm{pass}@k$는 $k$가 클수록 많이 떨어진다.
 Yue 등이 본 "작은 $k$에서는 RLVR, 큰 $k$에서는 base model"이 이 모양이다.
 같은 모델 쌍을 두고 안정성을 보면 RL이 나아졌고, 커버리지를 보면 나빠졌다.
 </Callout>
 
-다만 앞의 연구들이 직접 잰 것은 pass@1의 상승과 큰 $k$에서 pass@$k$의 정체·하락이고,
-$\mathrm{pass}^k$가 오른다는 것은 이 계산에서 나온 함의다.
-
-pass@$k$에는 빈틈도 있다.
-답이 작은 정수나 몇 개의 선택지인 문제에서는 $k$를 키우면 pass@$k$가 실제 풀이 능력과 무관하게 1에 가까워질 수 있고,
-틀린 풀이 끝의 운 좋은 정답도 성공으로 센다.
-Wen 등은 최종 답과 풀이가 모두 옳은 응답만 세는 CoT-pass@$k$를 제안했고,
+다만 $\mathrm{pass}@k$는 틀린 풀이 끝에 우연히 맞힌 답도 성공으로 센다.
+Wen 등은 최종 답과 풀이가 모두 옳은 응답만 세는 $\mathrm{CoT\text{-}pass}@k$를 제안했고,
 이렇게 세자 일부 수학 벤치마크에서는 큰 $k$에서도 RLVR 모델이 base model을 앞섰다.
-다만 풀이의 판정은 LLM(large language model) judge에 기대므로 LLM judge의 정확도가 다시 조건이 된다.[^wen]
-
-풀이가 옳아 보여도 그것이 답을 만든 실제 경로라는 보장은 없다.
-출력된 풀이가 답을 만든 실제 요인을 충실히 보고하는가를 CoT의 충실성(faithfulness)이라 한다.
-Chen 등(Anthropic)은 프롬프트에 특정 답을 가리키는 힌트를 넣고,
-힌트 때문에 답이 바뀐 경우에 CoT가 그 힌트를 답의 근거로 밝히는지 쟀다.
-추론 모델들은 대부분의 경우 힌트를 썼다는 사실을 말하지 않았다.[^faithful]
-풀이를 읽어 능력을 판단하거나 사고 과정을 감시에 쓸 때 이 한계가 그대로 따라온다.
+다만 **풀이의 판정은 LLM judge에 기대므로 LLM judge의 정확도가 다시 조건**이 된다.[^wen]
 
 [^survey]: Zhang, K., et al. (2025). A Survey of Reinforcement Learning for Large Reasoning Models. [arXiv:2509.08827v3](https://arxiv.org/abs/2509.08827v3).
 [^longcot]: Chen, Q., et al. (2025). Towards Reasoning Era: A Survey of Long Chain-of-Thought for Reasoning Large Language Models. [arXiv:2503.09567v5](https://arxiv.org/abs/2503.09567v5).
@@ -433,9 +430,9 @@ Chen 등(Anthropic)은 프롬프트에 특정 답을 가리키는 힌트를 넣�
 [^effsurvey]: Sui, Y., et al. (2025). Stop Overthinking: A Survey on Efficient Reasoning for Large Language Models. *TMLR*. [arXiv:2503.16419v4](https://arxiv.org/abs/2503.16419v4).
 [^effrl]: Arora, D., & Zanette, A. (2025). Training Language Models to Reason Efficiently. *NeurIPS 2025*. [arXiv:2502.04463v4](https://arxiv.org/abs/2502.04463v4).
 [^l1]: Aggarwal, P., & Welleck, S. (2025). L1: Controlling How Long A Reasoning Model Thinks With Reinforcement Learning. *COLM 2025*. [arXiv:2503.04697v2](https://arxiv.org/abs/2503.04697v2).
+[^fork]: Wang, S., et al. (2025). Beyond the 80/20 Rule: High-Entropy Minority Tokens Drive Effective Reinforcement Learning for LLM Reasoning. *NeurIPS 2025*. [arXiv:2506.01939v2](https://arxiv.org/abs/2506.01939v2).
 [^yue]: Yue, Y., et al. (2025). Does Reinforcement Learning Really Incentivize Reasoning Capacity in LLMs Beyond the Base Model? *NeurIPS 2025*. [arXiv:2504.13837v5](https://arxiv.org/abs/2504.13837v5).
 [^leash]: Wu, F., et al. (2025). The Invisible Leash: Why RLVR May or May Not Escape Its Origin. [arXiv:2507.14843v4](https://arxiv.org/abs/2507.14843v4).
 [^taubench]: Yao, S., Shinn, N., Razavi, P., & Narasimhan, K. (2024). τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains. [arXiv:2406.12045v1](https://arxiv.org/abs/2406.12045v1).
 [^wen]: Wen, X., et al. (2026). Reinforcement Learning with Verifiable Rewards Implicitly Incentivizes Correct Reasoning in Base LLMs. *ICLR 2026*. [arXiv:2506.14245v2](https://arxiv.org/abs/2506.14245v2).
 [^prorl]: Liu, M., et al. (2025). ProRL: Prolonged Reinforcement Learning Expands Reasoning Boundaries in Large Language Models. [arXiv:2505.24864v1](https://arxiv.org/abs/2505.24864v1).
-[^faithful]: Chen, Y., et al. (2025). Reasoning Models Don't Always Say What They Think. [arXiv:2505.05410v1](https://arxiv.org/abs/2505.05410v1).
