@@ -97,7 +97,7 @@ RLVR 노트의 R1-Zero는 이 방향을 학습 방법과 가중치까지 공개�
 
 </Callout>
 
-## 2. Long CoT를 얻는 두 경로
+## 2. Long CoT를 얻는 두 방법
 
 모델이 long CoT를 쓰게 만드는 길은 크게 둘이다.
 RLVR에서 긴 풀이가 나타나게 하거나,
@@ -119,36 +119,34 @@ Liu 등은 RL 전의 base model(Qwen2.5-Math, DeepSeek-V3-Base 등)도 "wait", "
 "aha moment"는 없던 행동의 출현이라기보다 있던 행동의 빈도 증가로 읽는 편이 안전하다.
 둘째, 앞에서 본 GRPO(group relative policy optimization)의 길이 정규화도 긴 오답을 덜 벌하는 편향으로 길이 증가에 한몫한다.[^drgrpo]
 
-### 2-2. SFT 데이터의 선별과 구조 학습
+### 2-2. Long CoT SFT 데이터의 선별
 
 응답 하나가 수천 토큰에 이르는 long CoT는 사람이 대량으로 쓰기 어렵다.
-그래서 앞 주차 SFT의 cold start 데이터나 RLVR 노트의 R1 rejection sampling처럼,
-이미 long CoT를 쓰는 추론 모델로 응답을 생성하고 최종 답이 맞은 것만 남긴다.
+그래서 이미 **long CoT를 쓰는 추론 모델로 응답을 생성하고, 최종 답이 맞은 것만 골라 SFT 학습 데이터**로 쓴다.
 이 데이터는 RL 전의 cold start로도, SFT만으로 추론 모델을 만드는 데도 쓰인다.
-이처럼 추론 모델의 출력으로 다른 모델을 SFT해 능력을 옮기는 방법을 distillation이라 하고, 출력을 내는 모델을 teacher, 그 출력으로 배우는 모델을 학생이라 부른다.
 
-Muennighoff 등이 만든 s1에서는 풀이 예시의 수보다 선별이 결과를 더 크게 좌우했다.
-저자들은 Gemini의 사고 과정이 달린 문제 약 5만 9천 개에서 품질·난이도·다양성을 기준으로 1,000개(s1K)를 골라 Qwen2.5-32B-Instruct를 SFT했다.
-무작위로 고른 1,000개는 AIME 2024에서 s1K보다 크게 뒤처졌고,
-5만 9천 개 전체로 학습해도 s1K와 비슷한 성능에 GPU(graphics processing unit) 시간만 약 56배 들었다.[^s1]
+Muennighoff 등이 만든 s1에서는 **풀이 예시의 수보다 선별**이 결과를 더 크게 좌우했다.
+저자들은 사고 과정이 달린 문제 약 5만 9천 개에서 품질·난이도·다양성을 기준으로 1,000개를 골라 SFT했다.
+무작위로 고른 1,000개로 학습한 모델은 수학 경시 문제에서 크게 뒤처졌고,
+5만 9천 개 전체로 학습해도 성능은 비슷한데 학습 자원만 약 56배 들었다.[^s1]
 
-long CoT 풀이 예시에서 모델이 무엇을 배우는지는 학습 데이터를 일부러 망가뜨려 보면 드러난다.
-Li 등은 Qwen2.5-32B-Instruct를 QwQ-32B-Preview의 정답 풀이로 SFT하면서 데이터를 여러 방식으로 바꿔 보았다.
-풀이 속 숫자의 70%를 무작위로 바꾸거나 "wait" 같은 반성 표현이 든 문장을 지워도 평균 정답률은 3~4%p 떨어지는 데 그쳤지만,
-사고 과정의 단계 순서를 뒤섞자 9.1%p 떨어졌다.[^structure]
-저자들은 모델이 long CoT 풀이 예시로부터 주로 배운 것이 내용보다 단계들이 논리적으로 이어지는 구조라고 해석한다.
+### 2-3. 두 방법의 차이
 
-### 2-3. 두 경로의 차이
+Chu 등은 같은 모델을 같은 task로 SFT와 RL로 각각 학습한 뒤, 프롬프트에 적어 주는 규칙만 바꿔 평가했다.
+카드 네 장으로 24를 만드는 task라면, 학습 때는 프롬프트에 "J·Q·K는 모두 10"이라고 적고 평가 때는 "11·12·13"으로 바꿔 적는 식이다.
+RL 모델은 바뀐 규칙을 따라 계산했지만, SFT 모델은 학습 때의 계산 습관에 묶여 새 규칙에서 오히려 성능이 떨어졌다.
+저자들은 이를 "SFT는 외우고 RL은 일반화한다"로 요약했다.
+다만 RL 전에 출력 형식을 잡는 데는 SFT가 여전히 필요했다.[^sftrl]
+Huan 등도 같은 수학 문제로 SFT와 RL을 비교해, 수학 점수는 둘 다 올랐지만 수학이 아닌 task의 성능은 SFT에서 떨어지고 RL에서는 오히려 올랐음을 보였다.[^transfer]
 
-두 경로는 함께 쓰이지만 모델에 남기는 것은 같지 않다.
-Huan 등은 Qwen3-14B-Base를 같은 수학 문제로 SFT(더 큰 모델의 정답 풀이)와 RL(정답 여부만 보상하는 GRPO)로 각각 학습했다.
-수학 점수는 둘 다 크게 올랐지만 추론이 아닌 task의 평균은 SFT 모델에서 크게 떨어지고 RL 모델에서는 오히려 올랐다.[^transfer]
+이 차이는 학습이 모델을 출발점에서 얼마나 멀리 옮기는가로 설명된다.
+같은 입력에서 SFT 모델의 출력 분포는 학습 전보다 크게 달라졌지만, RL 모델은 수학 밖의 입력에서 원래 분포를 대체로 유지했다.[^transfer]
 Shenfeld 등은 새 task를 학습하며 기존 task의 성능이 떨어지는 망각(forgetting)의 정도가
-새 task의 입력에서 잰 base model과의 KL(Kullback–Leibler) 발산, 즉 출발 분포에서 얼마나 멀어졌는지로 잘 예측된다는 것을 보였다.[^razor]
-RL은 모델 자신이 낸 응답을 보상으로 재가중하므로 base model 근처에 머물고,
-SFT는 고정된 외부 정답에 맞추므로 그 정답이 모델의 분포에서 멀면 그만큼 멀리 이동한다.
-따라서 망각을 가르는 것은 학습 방법의 이름보다 이동 거리이고,
-teacher의 풀이 분포가 학생의 출발 분포에서 멀면 distillation SFT에서도 망각 위험이 커질 수 있다.
+학습 전 모델과의 KL(Kullback–Leibler) 발산, 즉 출력 분포가 멀어진 정도로 잘 예측된다는 것을 보였다.
+저자들은 그 이유를 on-policy 학습에서 찾았다.
+RL은 모델 자신이 낸 응답 가운데 보상이 높은 것을 강화하므로 원래 분포 근처에 머물고,
+SFT는 외부에서 주어진 정답에 맞추므로 그 정답이 모델의 분포에서 멀면 그만큼 멀리 이동한다.
+실제로 오답을 밀어내지 않는 on-policy 방법도 RL처럼 덜 잊었고, 오답을 밀어내는 off-policy 방법은 SFT처럼 많이 잊었다.[^razor]
 
 ## 3. 추론 시 계산의 배분
 
@@ -294,7 +292,7 @@ $k=1$이면 평균 정답률이고, $k$가 크면 "이 모델이 어떤 식으�
 RLVR 모델이 낸 풀이를 base model이 얼마나 예측하기 쉬운지(perplexity, 낮을수록 쉽다)를 재면 base model 자신이 낸 풀이 중 perplexity가 낮은 쪽과 비슷했다.
 저자들의 결론은 현재의 RLVR이 표집 효율을 높이되 풀 수 있는 문제의 범위(reasoning boundary)는 넓히지 않으며,
 학습이 진행될수록 오히려 좁히기도 한다는 것이다.
-반면 더 강한 teacher에서 distillation한 모델은 base model이 내지 못하던 풀이를 냈다.[^yue]
+반면 더 강한 모델의 풀이로 SFT한 모델은 base model이 내지 못하던 풀이를 냈다.[^yue]
 
 Wu 등은 같은 문제에서 서로 다른 풀이가 같은 최종 정답에 도달하면 하나로 묶어 같은 현상을 셌고,
 RLVR 뒤에도 출발 모델의 정답 대부분이 보존되지만 사라진 정답이 새로 생긴 정답보다 많다고 보고했다.
@@ -376,7 +374,7 @@ Chen 등(Anthropic)은 문제 프롬프트에 특정 답을 가리키는 힌트(
 [^drgrpo]: Liu, Z., et al. (2025). Understanding R1-Zero-Like Training: A Critical Perspective. *COLM 2025*. [arXiv:2503.20783v2](https://arxiv.org/abs/2503.20783v2).
 [^qwen3]: Qwen Team. (2025). Qwen3 Technical Report. [arXiv:2505.09388v1](https://arxiv.org/abs/2505.09388v1).
 [^s1]: Muennighoff, N., et al. (2025). s1: Simple test-time scaling. *EMNLP 2025*. [arXiv:2501.19393v3](https://arxiv.org/abs/2501.19393v3).
-[^structure]: Li, D., et al. (2025). LLMs Can Easily Learn to Reason from Demonstrations: Structure, not content, is what matters! [arXiv:2502.07374v2](https://arxiv.org/abs/2502.07374v2).
+[^sftrl]: Chu, T., et al. (2025). SFT Memorizes, RL Generalizes: A Comparative Study of Foundation Model Post-training. *ICML 2025*. [arXiv:2501.17161v2](https://arxiv.org/abs/2501.17161v2).
 [^transfer]: Huan, M., et al. (2025). Does Math Reasoning Improve General LLM Capabilities? Understanding Transferability of LLM Reasoning. [arXiv:2507.00432v2](https://arxiv.org/abs/2507.00432v2).
 [^razor]: Shenfeld, I., Pari, J., & Agrawal, P. (2025). RL's Razor: Why Online Reinforcement Learning Forgets Less. [arXiv:2509.04259v1](https://arxiv.org/abs/2509.04259v1).
 [^sc]: Wang, X., et al. (2023). Self-Consistency Improves Chain of Thought Reasoning in Language Models. *ICLR 2023*. [arXiv:2203.11171v4](https://arxiv.org/abs/2203.11171v4).
