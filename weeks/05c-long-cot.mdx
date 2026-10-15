@@ -312,39 +312,35 @@ Snell 등의 실험에서 쉬운 문제는 고쳐 쓰기만으로 충분했고, 
 ### 3-5. 길게 생각하기와 사고 예산
 
 길게 생각하는 방법에서는 응답 하나의 사고 길이를 추론 때 조절하는 것이 곧 계산 예산의 조절이다.
-s1은 이를 위해 **budget forcing**을 썼다.[^s1]
+앞에서 본 s1은 이를 위해 **budget forcing**을 썼다.
 사고를 늘릴 때는 모델이 사고 과정을 끝내려 하면 종료 토큰을 억제하고 "Wait"를 덧붙여 더 생각하게 한다.
 사고를 줄일 때는 정해진 토큰 수에서 사고 종료 구분자를 붙여 지금까지의 사고로 답하게 한다.
-사고를 늘리자 정답률이 올랐지만, "Wait"를 몇 번 이상 붙이면 더 오르지 않았다.[^s1]
 "더 생각하라"는 개입만으로 정답률이 올랐으므로, long CoT의 길이가 적어도 일부는 실제로 쓰이는 계산이라는 증거가 된다.
+다만 "Wait"를 몇 번 이상 붙이면 정답률이 더 오르지 않았다.[^s1]
 
 Qwen3는 사고 길이 조절을 모델의 기능으로 만들었다.
-`/think`와 `/no_think` 표시로 사고 과정을 켜고 끄게 학습했고,
-사고 과정이 정해진 토큰 수에 이르면 "시간이 제한되어 지금까지의 사고로 답한다"는 문장을 넣어 답으로 넘어가게 하는 **thinking budget**을 두었다.
+사고 과정이 정해진 토큰 수에 이르면 "시간이 제한되어 지금까지의 사고로 답한다"는 문장을 넣어 답으로 넘어가게 하는 **thinking budget**을 두었고,
 예산을 늘릴수록 수학·코드 등의 성능이 점진적으로 올랐다.[^qwen3]
 
 ### 3-6. Overthinking과 학습 단계의 길이 제어
 
-길게 생각할수록 늘 좋아지지는 않는다.
-앞에서 본 대로 이미 늘 맞히는 쉬운 문제에서는 긴 사고가 계산만 쓴다.
-Chen 등은 추론 모델이 쉬운 문제에 계산을 과하게 쓰는 것을 **overthinking**이라 부르고 이를 측정했다.
+늘 맞히는 쉬운 문제에서는 긴 사고가 자원만 낭비한다.
+추론 모델이 쉬운 문제에 계산을 과하게 쓰는 것을 **overthinking**이라 한다.
 예를 들어 "2+3=?"처럼 쉬운 문제에서도 추론 모델은 첫 풀이에서 이미 정답에 도달한 뒤 같은 풀이를 여러 번 되풀이했고, 응답의 대부분이 첫 정답 뒤의 토큰이었다.[^overthinking]
+응답이 길어지면 생성할 토큰과 KV(key-value) cache가 함께 늘므로, overthinking은 이 비용을 필요 없는 문제에 쓰는 셈이다.
 
-<Callout type="warning">
-추론 시 계산은 공짜가 아니다.
-응답이 길어지면 생성할 토큰이 그만큼 늘고,
-KV(key-value) cache는 입력과 누적 출력의 전체 길이에 비례해 늘며 attention의 토큰당 비용도 문맥이 길어질수록 커진다.
-응답을 여러 개 뽑으면 생성할 토큰도 그 수만큼 늘어난다.
-Overthinking은 이 비용을 필요 없는 문제에 쓰는 것이다.
-</Callout>
+이 현상을 해결하기 위해 모델이 스스로 낸 응답으로 다시 학습했다.
+응답에서 처음 정답에 이른 풀이와 검토 한 번까지만 남기고 뒤에 되풀이한 풀이를 잘라 선호 응답으로, 가장 긴 응답을 비선호 응답으로 삼았다.
+검토까지 모두 자르면 어려운 문제에서 정확도가 떨어졌기 때문이다.
+이 응답 쌍을 DPO와 같은 계열의 선호 최적화인 SimPO(simple preference optimization)로 학습하자, 정확도는 거의 유지하면서 출력 길이가 크게 줄었다.
+짧은 응답만 SFT한 경우에는 길이가 조금밖에 줄지 않았다.[^overthinking]
 
-그렇다고 첫 정답 뒤의 검토가 늘 불필요한 것은 아니어서, 저자들은 검토를 모두 지우지 않고 중복된 풀이만 걷어 냈다.
-모델 자신의 응답 가운데 이렇게 줄인 짧은 응답을 선호하고 가장 긴 응답을 피하도록 앞 주차에서 본 SimPO(simple preference optimization)로 다시 학습하자,
-정확도는 거의 유지하면서 출력 길이가 크게 줄었다.[^overthinking]
-
-보상에 길이를 직접 넣는 방법도 있다.
-Kimi k1.5는 같은 문제의 응답 길이를 정규화한 길이 항을 보상에 넣어, 정답이라도 길수록 보상이 낮아지고 오답은 길수록 벌점이 커지게 했다.
-처음부터 넣으면 학습 초반의 진척이 느려져서, 이 항은 초반에는 쓰지 않다가 이후 켰다.[^kimi]
+응답 길이는 토큰 수를 세기만 하면 되므로, 정답 여부처럼 규칙으로 바로 계산할 수 있다.
+그래서 검증 보상에 길이 항을 더해 RL로 사고를 줄이는 연구가 많다.[^effsurvey]
+같은 문제에서 뽑은 정답 응답들의 길이를 평균과 표준편차로 정규화하고, 정답이라도 다른 정답보다 길수록 보상을 조금 깎았다.
+문제마다 정규화하므로 어려운 문제의 긴 풀이가 쉬운 문제의 짧은 풀이보다 과하게 벌받지 않고, 긴 정답도 오답보다는 늘 보상이 높다.[^effrl]
+L1은 프롬프트에 "Think for $n$ tokens."처럼 목표 길이를 적어 주고, 정답 보상에서 목표 길이와 실제 길이의 차이에 비례한 벌점을 빼 학습했다.
+추론 때 목표 길이를 바꾸면 계산과 정확도를 원하는 만큼 맞바꿀 수 있다.[^l1]
 
 ## 4. 추론 능력의 평가와 경계
 
@@ -453,7 +449,9 @@ Chen 등(Anthropic)은 문제 프롬프트에 특정 답을 가리키는 힌트(
 [^sc]: Wang, X., et al. (2023). Self-Consistency Improves Chain of Thought Reasoning in Language Models. *ICLR 2023*. [arXiv:2203.11171v4](https://arxiv.org/abs/2203.11171v4).
 [^snell]: Snell, C., Lee, J., Xu, K., & Kumar, A. (2024). Scaling LLM Test-Time Compute Optimally can be More Effective than Scaling Model Parameters. [arXiv:2408.03314v1](https://arxiv.org/abs/2408.03314v1).
 [^overthinking]: Chen, X., et al. (2025). Do NOT Think That Much for 2+3=? On the Overthinking of o1-Like LLMs. [arXiv:2412.21187v2](https://arxiv.org/abs/2412.21187v2).
-[^kimi]: Kimi Team. (2025). Kimi k1.5: Scaling Reinforcement Learning with LLMs. [arXiv:2501.12599v4](https://arxiv.org/abs/2501.12599v4).
+[^effsurvey]: Sui, Y., et al. (2025). Stop Overthinking: A Survey on Efficient Reasoning for Large Language Models. *TMLR*. [arXiv:2503.16419v4](https://arxiv.org/abs/2503.16419v4).
+[^effrl]: Arora, D., & Zanette, A. (2025). Training Language Models to Reason Efficiently. *NeurIPS 2025*. [arXiv:2502.04463v4](https://arxiv.org/abs/2502.04463v4).
+[^l1]: Aggarwal, P., & Welleck, S. (2025). L1: Controlling How Long A Reasoning Model Thinks With Reinforcement Learning. *COLM 2025*. [arXiv:2503.04697v2](https://arxiv.org/abs/2503.04697v2).
 [^yue]: Yue, Y., et al. (2025). Does Reinforcement Learning Really Incentivize Reasoning Capacity in LLMs Beyond the Base Model? *NeurIPS 2025*. [arXiv:2504.13837v5](https://arxiv.org/abs/2504.13837v5).
 [^leash]: Wu, F., et al. (2025). The Invisible Leash: Why RLVR May or May Not Escape Its Origin. [arXiv:2507.14843v4](https://arxiv.org/abs/2507.14843v4).
 [^taubench]: Yao, S., Shinn, N., Razavi, P., & Narasimhan, K. (2024). τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains. [arXiv:2406.12045v1](https://arxiv.org/abs/2406.12045v1).
