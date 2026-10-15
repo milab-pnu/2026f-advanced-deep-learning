@@ -98,7 +98,7 @@ $G$를 키우면 신호를 얻을 가능성은 커지지만 프롬프트당 생�
 R1-Zero가 쓴 이 GRPO 식에 대해 구성요소들을 분석하고 해결하고자 하는 논문들이 잇달아 나왔다.
 
 <figure>
-<svg viewBox="0 0 660 296" role="img" aria-label="정책 최적화의 분기 지도. PPO에서 value model 대신 그룹 평균을 baseline으로 쓰는 GRPO가 나오고, GRPO의 길이·난이도 편향은 Dr. GRPO가 두 정규화를 지워서, 탐색 붕괴와 무효 그룹은 DAPO가 clip 상한·표집·토큰 가중을 고쳐서, 토큰 확률비의 잡음은 GSPO가 응답 단위 확률비로 바꿔서 다룬다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 660 296" role="img" aria-label="정책 최적화의 분기 지도. PPO에서 value model 대신 그룹 평균을 baseline으로 쓰는 GRPO가 나오고, GRPO의 길이·난이도 편향은 Dr. GRPO가 두 정규화를 지워서, 탐색 붕괴와 무효 그룹은 DAPO가 clip 상한을 넓히고 무효 그룹을 다시 뽑아서, 토큰 확률비의 잡음은 GSPO가 응답 단위 확률비로 바꿔서 다룬다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
 <rect x="255" y="10" width="150" height="40" rx="8" fill="#f8fafc" stroke="#64748b"/>
 <text x="330" y="36" text-anchor="middle" font-size="16" fill="#0f172a">PPO</text>
 <path d="M330 50 L330 74" stroke="#334155" stroke-width="2"/><polygon points="330,80 325,71 335,71" fill="#334155"/>
@@ -116,7 +116,7 @@ R1-Zero가 쓴 이 GRPO 식에 대해 구성요소들을 분석하고 해결하�
 <text x="330" y="208" text-anchor="middle" font-size="16" font-weight="600" fill="#0f172a">DAPO</text>
 <line x1="248" y1="222" x2="412" y2="222" stroke="#cbd5e1"/>
 <text x="330" y="246" text-anchor="middle" font-size="13" fill="#b45309">문제: 탐색 붕괴·무효 그룹</text>
-<text x="330" y="270" text-anchor="middle" font-size="13" fill="#1d4ed8">수정: clip 상한·표집·토큰 가중</text>
+<text x="330" y="270" text-anchor="middle" font-size="13" fill="#1d4ed8">수정: clip 상한 확대·재표집</text>
 <rect x="446" y="180" width="196" height="104" rx="8" fill="#eff6ff" stroke="#94a3b8"/>
 <text x="544" y="208" text-anchor="middle" font-size="16" font-weight="600" fill="#0f172a">GSPO</text>
 <line x1="462" y1="222" x2="626" y2="222" stroke="#cbd5e1"/>
@@ -150,64 +150,43 @@ Clipped surrogate와 그룹 평균 baseline은 GRPO 그대로이고, KL 항은 �
 ### 2-2. 탐색의 붕괴와 DAPO
 
 두 번째 문제는 **entropy collapse**다.
-여기서 entropy는 문맥마다 다음 토큰 분포가 얼마나 퍼져 있는지를 재는 값이고,
-학습이 길어질수록 이 값이 떨어져 생성의 다양성이 크게 줄어든다.
-Cui 등은 여러 모델·task에서 entropy가 줄어드는 만큼 성능이 오르다가,
-entropy가 바닥나면 성능도 더 오르지 않는 경향을 관찰했다.
-어떤 prefix에서 다음 토큰 확률이 0.9와 0.1이고 갱신이 확률 0.9인 토큰의 logit만 올리면,
-이미 우세한 쪽이 더 우세해져 entropy가 줄어든다.
-확률 0.1인 토큰의 logit을 올리면 반대로 entropy가 는다.
-정답 응답에서 이미 확률이 높던 토큰을 계속 강화하는 갱신에서는 앞의 경우가 되기 쉽다.[^entropy]
+여기서 entropy는 문맥마다 다음 토큰 분포가 얼마나 퍼져 있는지를 재는 값이다.
+확률이 높은 토큰을 강화하면 분포가 더 뾰족해져 entropy가 줄고, 확률이 낮은 토큰을 강화하면 분포가 고르게 되어 entropy가 는다.
+Cui 등은 여러 모델·task에서 성능이 오를 때 entropy가 함께 떨어진다는 것을 관찰했다.
+학습 초반에는 entropy가 빠르게 떨어지며 성능이 오르지만, entropy가 0 가까이 떨어지면 같은 문제에 대한 응답들이 거의 같아져 더 시도해 볼 다른 풀이가 없으므로 성능도 멈춘다.[^entropy]
 
-DAPO(decoupled clip and dynamic sampling policy optimization)는 이 탐색 붕괴와 함께 무효 그룹, 길이 가중, 잘린 응답의 보상 잡음을 다루려고 네 가지를 수정했다.[^dapo]
+<Callout type="example">
+**첫 토큰의 entropy.** 수학 문제 풀이의 첫 토큰 후보가 "Let" 0.5, "First" 0.3, "We" 0.2라고 하자.
+Entropy $(-\sum p\log p)$는 약 1.03 nat이다.
+정답 응답이 주로 "Let"으로 시작해 이 토큰이 계속 강화되면 분포가 (0.9, 0.07, 0.03)이 되고 entropy는 약 0.39 nat으로 떨어진다.
+이제 한 문제에 응답을 여럿 뽑아도 대부분 "Let"으로 시작해 비슷한 풀이를 따라가므로,
+다른 풀이를 시도할 기회가 줄고 그룹 안의 보상도 같아지기 쉽다.
+</Callout>
 
-| 수정 | 무엇을 바꾸나 | 겨냥한 문제 |
-|---|---|---|
-| Clip-Higher | Clipping의 상한과 하한을 분리해 $\varepsilon_{\mathrm{low}}=0.2$, $\varepsilon_{\mathrm{high}}=0.28$ | 확률이 낮은 토큰은 $1+\varepsilon$의 상한 때문에 확률을 조금밖에 못 올린다. 상한을 올려 드문 토큰의 탐색을 허용 |
-| Dynamic sampling | 보상이 모두 같은 그룹(전부 정답 또는 전부 오답)을 버리고 다시 뽑아 배치를 채움 | 앞의 GRPO 예시에서 advantage가 0이던 그룹이 배치를 차지하는 낭비 |
-| Token-level loss | 응답별로 평균한 뒤 다시 평균하지 않고 그룹 응답들의 토큰을 모두 모아 실제 토큰 수의 합으로 평균 | 긴 응답의 토큰이 과소 가중되는 문제. Dr. GRPO의 길이 항 제거와 같은 방향 |
-| Overlong reward shaping | 응답 길이가 $L_{\max}-L_{\mathrm{cache}}$를 넘으면 길이 $L_{\mathrm{cache}}$의 완충 구간 안에서 길이에 따라 선형으로 커지는 벌점을 주고, 최대 길이 $L_{\max}$ 이상이면 최대 벌점 $-1$. 잘린 응답의 손실을 아예 빼는 overlong filtering과는 별개의 조치 | 잘린 응답 전체를 오답으로 처리할 때 생기는 보상 잡음 |
+DAPO(decoupled clip and dynamic sampling policy optimization)는 이 문제의 원인을 PPO clipping의 상한(upper bound)에서 찾았다.[^dapo]
+확률비 $\pi_\theta/\pi_{\theta_{\mathrm{old}}}$의 상한이 $1+\varepsilon$이므로, advantage가 양수인 토큰의 $\pi_\theta$는 한 번의 갱신에서 $\pi_{\theta_{\mathrm{old}}}(1+\varepsilon)$까지만 오를 수 있다.
+$\varepsilon=0.2$일 때 $\pi_{\theta_{\mathrm{old}}}=0.9$인 토큰은 $\pi_\theta$가 1.08까지 허용되어 사실상 제한이 없지만, $\pi_{\theta_{\mathrm{old}}}=0.01$인 토큰은 $\pi_\theta$가 0.012까지만 오를 수 있다.
+그래서 이미 확률이 높은 토큰은 쉽게 강화되고, 드물지만 다른 풀이로 이어질 토큰은 거의 강화되지 못한다.
+**Clip-Higher**는 상한과 하한의 폭을 분리해 상한만 넓힌다($\varepsilon_{\mathrm{low}}=0.2$, $\varepsilon_{\mathrm{high}}=0.28$).
+하한까지 넓히면 드문 토큰의 확률이 0 가까이 눌려 오히려 탐색이 줄어드므로 하한은 그대로 둔다.
+저자들은 이 조정으로 entropy가 유지되고 더 다양한 응답이 생성되었다고 보고했다.
 
-Token-level loss와 Dr. GRPO는 응답 길이로 나누지 않는다는 점은 같지만 분모가 다르다.
-DAPO는 그룹의 실제 토큰 수로 나누므로 같은 그룹 안의 토큰은 같은 정규화 계수를 받되 그룹이 길수록 그 계수가 작아지고,
-Dr. GRPO는 고정 상수로 나누므로 정규화 계수가 길이와 무관하게 같다.
-Dynamic sampling은 앞의 유효 그룹 확률이 낮을수록 다시 뽑는 양이 늘어,
-배치 하나를 채우는 생성 비용이 일정하지 않다.
+DAPO는 여기에 **dynamic sampling**을 더했다.
+보상이 모두 같은 그룹(전부 정답 또는 전부 오답)은 advantage가 0이라 신호를 주지 않으므로, 이런 그룹을 버리고 다시 뽑아 배치를 유효 그룹으로 채운다.
+유효 그룹이 드물수록 생성 비용은 커지지만, 저자들은 필요한 학습 스텝이 줄어 전체 학습 시간은 크게 늘지 않았다고 보고했다.
+추가적으로, **Token-level loss**는 손실을 응답마다 길이로 평균하지 않고 그룹 응답들의 토큰을 모두 모아 전체 토큰 수로 평균해, 긴 응답의 토큰이 덜 반영되는 문제를 줄인다.
+**Overlong reward shaping**은 최대 생성 길이 바로 앞에 벌점 구간을 두고, 이 구간에서는 길이가 길수록 보상을 더 깎는다.
+최대 길이에서 잘린 응답은 추론이 옳았더라도 답이 없어 오답이 되는데, 길이 하나 때문에 보상이 갑자기 뒤집히면 학습에 잡음이 된다.
+벌점 구간을 두면 잘리기 전부터 너무 길다는 신호를 점진적으로 줄 수 있다.
+DAPO는 KL 항도 뺐다. 긴 추론을 학습하는 동안에는 모델 분포가 초기 모델에서 크게 벗어날 수 있으므로 이 제약이 필요하지 않다고 보았다.
 
-DAPO는 KL 항도 뺐다.
-긴 추론을 학습하는 동안에는 모델 분포가 초기 모델에서 크게 벗어날 수 있으므로 이 제약이 필요하지 않다고 보았다.[^dapo]
-
-<Details summary="무작위 보상과 clipping의 비대칭">
-
-Shao 등은 Qwen2.5-Math-7B에 정답과 무관한 무작위 보상을 주고 GRPO로 학습해도 수학 점수가 크게 오르는 것을 관찰하고,
-원인 가설로 clipping의 비대칭을 제시했다.[^spurious]
-무작위 보상의 advantage는 기대값이 0이라 양·음의 갱신이 기대값으로는 상쇄되어야 한다.
-그런데 상한은 절대 확률이 아니라 옛 정책에 대한 비율이다.
-$\varepsilon=0.2$일 때 옛 확률이 0.85인 토큰의 상한은 $0.85\times1.2=1.02$라서 확률이 1 이하인 한 양의 advantage 쪽 clipping에 걸리지 않지만,
-옛 확률이 0.02인 토큰은 $0.02\times1.2=0.024$만 되어도 그쪽 gradient가 잘린다.
-그 결과 확률이 이미 높은 행동(이 모델의 경우 코드 형식의 추론)이 더 강화되는 쪽으로 기울며,
-저자들은 clipping을 끄면 여러 seed 평균에서 무작위 보상의 일관된 개선이 사라짐을 보였다.
-다만 일부 실행은 clipping 없이도 높은 성능에 도달했다.[^spurious]
-Clip-Higher가 낮은 확률 토큰의 상한을 늘리는 것도 같은 비대칭을 겨냥한다.
-알고리즘의 구성 요소 하나가 base model이 이미 자주 내던 행동을 증폭할 수 있으므로,
-새 알고리즘의 개선폭을 읽을 때도 이 점을 염두에 두어야 한다.
-
-</Details>
-
-<Details summary="CISPO: 확률비를 잘라도 토큰의 gradient를 유지하는 방식">
-
-Clipping의 역할을 다시 생각한 변형도 있다.
-PPO의 clipping은 advantage가 양수일 때 확률비가 상한을 넘거나 음수일 때 하한 아래로 내려간 토큰의 policy gradient를 0으로 만든다.
-MiniMax-M1의 CISPO(clipped IS-weight policy optimization, IS는 importance sampling)는 그 대신 확률비를 잘라 가중치로 쓰고,
-목적함수를 $\operatorname{sg}[\operatorname{clip}(\rho_{i,t})]\,\hat A_i\log\pi_\theta(y_{i,t}\mid\cdot)$ 꼴로 둔다.
-$\operatorname{sg}$(stop-gradient)는 잘린 비율의 값만 쓰고 그 값을 계산한 경로로는 미분하지 않는다는 뜻이라,
-gradient는 뒤의 $\log\pi_\theta$로만 흐르고 clipping에 걸린 토큰의 gradient도 남는다.
-"However"나 "Wait" 같은 토큰은 확률은 낮지만 추론의 분기를 만든다.
-CISPO는 이런 토큰이 clipping에 걸려 학습에서 빠지는 것을 막으려 한다.[^cispo]
-예를 들어 두 방법의 상한을 모두 1.2로 두고 확률이 1.3배로 오른 토큰에 advantage가 양수이면,
-PPO는 이 토큰의 policy gradient를 0으로 만들지만 CISPO는 가중치 1.2를 곱한 gradient로 계속 밀어 준다.
-
-</Details>
+<Callout type="example">
+**길이 벌점의 계산.** DAPO는 정답에 $+1$, 오답에 $-1$을 주고, 최대 생성 길이 20,480토큰 앞의 4,096토큰(16,384~20,480)을 벌점 구간으로 두었다.
+벌점은 이 구간에서 0부터 $-1$까지 길이에 비례해 커지고 정답 보상에 더해진다.
+16,000토큰에서 맞힌 응답은 벌점 없이 $+1$을 받는다.
+18,432토큰에서 맞힌 응답은 구간의 절반에 있으므로 벌점 $-0.5$가 더해져 $+0.5$를 받는다.
+20,480토큰에서 잘린 응답은 답이 없어 오답 $-1$에 벌점 $-1$을 받는다.
+</Callout>
 
 ### 2-3. 토큰 단위 비율의 잡음과 GSPO
 
@@ -247,8 +226,6 @@ GRPO에 $\varepsilon=0.2$를 쓰면 첫 토큰만 상한 1.2를 넘어 policy gr
 둘째와 셋째 토큰은 각각 가중치 1.0과 0.9로 gradient가 남는다.
 GSPO에서는 $s=(1.5\times1.0\times0.9)^{1/3}=1.35^{1/3}\approx1.105$ 하나만 본다.
 GSPO의 상한을 교육용으로 1.05로 두면(실제 실험값은 이보다 훨씬 좁다) 이 값은 상한을 넘으므로 세 토큰 모두 policy gradient가 0이 된다.
-GRPO의 $\varepsilon=0.2$를 그대로 옮겨 상한이 1.2였다면 상한 안이라 세 토큰이 같은 계수를 받았을 것이다.
-같은 비율 묶음이라도 판정은 상한의 척도에 달려 있다.
 </Callout>
 
 저자들은 GSPO가 GRPO보다 학습 효율이 높았고 MoE에서 routing replay 없이 안정적으로 학습할 수 있었으며,
@@ -262,8 +239,7 @@ GRPO의 $\varepsilon=0.2$를 그대로 옮겨 상한이 1.2였다면 상한 안�
 |---|---|---|---|---|
 | GRPO[^deepseekmath] | PPO의 value model 비용 | 그룹 평균을 빼고 표준편차로 나눔 | 응답 길이로 평균, 토큰 비율에 대칭 clipping | 목적함수에 직접 |
 | Dr. GRPO[^drgrpo] | 길이·난이도 편향 | 그룹 평균만 뺌 | 고정 상수로 나눔, clipping은 GRPO와 같음 | 없음 |
-| DAPO[^dapo] | Entropy collapse, 무효 그룹, 잘린 응답 | GRPO와 같음, 무효 그룹은 다시 표집 | 그룹의 실제 토큰 수로 평균, 상한을 넓힌 비대칭 clipping | 없음 |
-| CISPO[^cispo] | Clipping이 드문 토큰을 버림 | GRPO와 같음 | DAPO처럼 토큰 수로 평균, 잘린 비율을 고정 가중치로 쓰고 gradient 유지 | 없음 |
+| DAPO[^dapo] | Entropy collapse, 무효 그룹 | GRPO와 같음, 무효 그룹은 다시 표집 | 그룹의 실제 토큰 수로 평균, 상한을 넓힌 비대칭 clipping | 없음 |
 | GSPO[^gspo] | 토큰 단위 비율의 잡음, MoE 불안정 | GRPO와 같음 | 응답 단위 기하평균 비율과 clipping, 길이 가중은 남음 | 수식에서 생략 |
 
 실제 recipe는 이 중 여러 개를 섞는다.
@@ -279,13 +255,12 @@ Clipping 비율은 advantage 부호까지 고려해 policy gradient가 실제로
 entropy는 생성한 토큰 위치마다 다음 토큰 분포의 entropy를 구해 평균한다.
 아래 표는 이 노트의 설명을 진단용으로 묶은 것이며, 원논문들이 제시한 처방 목록은 아니다.
 Clipping 비율은 방법과 clipping 폭에 따라 수준이 달라서(GSPO는 GRPO보다 훨씬 많은 토큰을 잘라도 효율이 높았다[^gspo]) 같은 설정 안에서만 추적한다.
-확률비를 잘라 가중치로만 쓰는 CISPO에서는 잘린 토큰에도 gradient가 남으므로, 잘린 비율과 gradient가 차단된 비율이 다르다.[^cispo]
 
 | 관측 | 의심할 원인 | 이 노트의 대응 |
 |---|---|---|
 | 유효 그룹 비율이 낮고 정답률이 0이나 1 근처에 몰림 | 문제가 현재 모델에게 너무 어렵거나 쉬움, 또는 $G$가 작음 | 문제 난이도 조정, $G$ 증가, dynamic sampling |
-| Entropy가 빠르게 떨어진 뒤 정답률이 정체 | 이미 확률이 높은 토큰만 강화, 드문 토큰이 상한에 잘림 | Clip-Higher, CISPO식 가중치 clipping |
-| 오답의 평균 길이만 계속 늘어남 | 응답 길이로 나누는 정규화의 편향 | Dr. GRPO식 고정 상수 집계, token-level loss, overlong reward shaping |
+| Entropy가 빠르게 떨어진 뒤 정답률이 정체 | 이미 확률이 높은 토큰만 강화, 드문 토큰이 상한에 잘림 | Clip-Higher |
+| 오답의 평균 길이만 계속 늘어남 | 응답 길이로 나누는 정규화의 편향 | Dr. GRPO식 고정 상수 집계 |
 | 같은 설정에서 clipping 비율이 급증하고 정답률도 나빠짐 | 옛 정책과 현재 정책의 차이가 커짐 | 배치 재사용 횟수·학습률 점검, 생성과 학습 사이의 정책 차이 점검 |
 | MoE에서 토큰 확률비가 크게 흔들리며 학습이 불안정 | 갱신 전후 expert 선택이 바뀌는 토큰 단위 비율의 잡음 | 응답 단위 비율(GSPO) 검토 |
 
@@ -295,6 +270,4 @@ Clipping 비율은 방법과 clipping 폭에 따라 수준이 달라서(GSPO는 
 [^drgrpo]: Liu, Z., et al. (2025). Understanding R1-Zero-Like Training: A Critical Perspective. *COLM 2025*. [arXiv:2503.20783v2](https://arxiv.org/abs/2503.20783v2).
 [^entropy]: Cui, G., et al. (2025). The Entropy Mechanism of Reinforcement Learning for Reasoning Language Models. [arXiv:2505.22617](https://arxiv.org/abs/2505.22617).
 [^dapo]: Yu, Q., et al. (2025). DAPO: An Open-Source LLM Reinforcement Learning System at Scale. *NeurIPS 2025*. [arXiv:2503.14476v2](https://arxiv.org/abs/2503.14476v2).
-[^spurious]: Shao, R., et al. (2025). Spurious Rewards: Rethinking Training Signals in RLVR. [arXiv:2506.10947v2](https://arxiv.org/abs/2506.10947v2).
-[^cispo]: MiniMax. (2025). MiniMax-M1: Scaling Test-Time Compute Efficiently with Lightning Attention. [arXiv:2506.13585](https://arxiv.org/abs/2506.13585).
 [^gspo]: Zheng, C., et al. (2025). Group Sequence Policy Optimization. [arXiv:2507.18071v2](https://arxiv.org/abs/2507.18071v2).

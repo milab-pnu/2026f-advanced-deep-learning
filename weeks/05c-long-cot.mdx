@@ -350,17 +350,6 @@ Chen 등(Anthropic)은 문제 프롬프트에 특정 답을 가리키는 힌트(
 힌트가 답을 바꾸었는데도 CoT는 대부분 그 사실을 말하지 않았다.[^faithful]
 풀이를 읽어 능력을 판단하거나 사고 과정을 감시에 쓸 때 이 한계가 그대로 따라온다.
 
-### 5-3. 무작위 보상과 평가 오염
-
-RL의 효과가 검증기의 정답 신호에서 온다는 가정을 흔드는 결과도 있다.
-정책 최적화 노트에서 본 무작위 보상 실험에서 Qwen2.5-Math-7B의 MATH-500 점수는 21.4점 올라 검증 보상을 준 경우의 상승폭 29.1점에 가까웠지만,
-Math 특화가 아닌 Qwen2.5와 Llama 3, OLMo 2에서는 대체로 통하지 않았다.[^spurious]
-Shao 등은 이를 clipping의 비대칭이 base model이 원래 자주 내던 행동을 증폭한 결과로 보았다.
-Olmo 3 저자들은 평가 문제가 pre-training이나 mid-training 데이터에 섞이는 오염을 다른 원인으로 의심하고,
-오염을 제거한 Olmo 3 Base에 같은 무작위 보상을 주었더니 어떤 벤치마크에서도 성능이 오르지 않았다.[^olmo3]
-두 설명은 서로 배타적이지 않지만,
-어느 쪽이든 적어도 일부 base model에서는 점수 상승의 일부가 base model이 이미 가진 것에서 온다.
-
 [^survey]: Zhang, K., et al. (2025). A Survey of Reinforcement Learning for Large Reasoning Models. [arXiv:2509.08827v3](https://arxiv.org/abs/2509.08827v3).
 [^longcot]: Chen, Q., et al. (2025). Towards Reasoning Era: A Survey of Long Chain-of-Thought for Reasoning Large Language Models. [arXiv:2503.09567v5](https://arxiv.org/abs/2503.09567v5).
 [^cot]: Wei, J., et al. (2022). Chain-of-Thought Prompting Elicits Reasoning in Large Language Models. *NeurIPS 2022*. [arXiv:2201.11903v6](https://arxiv.org/abs/2201.11903v6).
@@ -382,6 +371,4 @@ Olmo 3 저자들은 평가 문제가 pre-training이나 mid-training 데이터�
 [^taubench]: Yao, S., Shinn, N., Razavi, P., & Narasimhan, K. (2024). τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains. [arXiv:2406.12045v1](https://arxiv.org/abs/2406.12045v1).
 [^wen]: Wen, X., et al. (2026). Reinforcement Learning with Verifiable Rewards Implicitly Incentivizes Correct Reasoning in Base LLMs. *ICLR 2026*. [arXiv:2506.14245v2](https://arxiv.org/abs/2506.14245v2).
 [^prorl]: Liu, M., et al. (2025). ProRL: Prolonged Reinforcement Learning Expands Reasoning Boundaries in Large Language Models. [arXiv:2505.24864v1](https://arxiv.org/abs/2505.24864v1).
-[^spurious]: Shao, R., et al. (2025). Spurious Rewards: Rethinking Training Signals in RLVR. [arXiv:2506.10947v2](https://arxiv.org/abs/2506.10947v2).
-[^olmo3]: Team Olmo. (2025). Olmo 3. [arXiv:2512.13961v2](https://arxiv.org/abs/2512.13961v2).
 [^faithful]: Chen, Y., et al. (2025). Reasoning Models Don't Always Say What They Think. [arXiv:2505.05410v1](https://arxiv.org/abs/2505.05410v1).
