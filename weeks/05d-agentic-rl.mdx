@@ -98,7 +98,7 @@ LLM이 궤적과 성패를 보고 무엇이 잘못되었고 다음에는 어떻�
 ### 2-2. Toolformer의 자기 지도 학습
 
 Schick 등의 Toolformer는 도구 호출을 모델에 **학습**시켰다.[^toolformer]
-계산기, 검색, 번역 같은 API(application programming interface)를 어디에 끼워 넣으면 다음 토큰 예측이 좋아지는지를 모델 자신이 표집·검증해 학습 데이터를 만들고,
+계산기, 검색, 번역 같은 API(application programming interface)를 어디에 끼워 넣으면 다음 토큰 예측이 좋아지는지를 모델 자신이 생성·검증해 학습 데이터를 만들고,
 그 데이터로 언어 모델을 자기 지도 방식으로 fine-tuning했다.
 사람이 쓴 예시는 API마다 몇 개뿐이다.
 검증의 기준은 뒤 토큰의 예측 손실이다.

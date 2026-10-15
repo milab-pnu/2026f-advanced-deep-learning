@@ -160,7 +160,7 @@ AReaL은 staleness 상한과 함께 PPO의 확률비를 둘로 나눈 decoupled 
 이를 clipping의 기준으로 삼으면 최신 정책을 오래된 정책 쪽으로 끌어당기게 된다고 저자들은 설명한다.
 그래서 각 학습 스텝에서 배치가 도착해 갱신을 시작하기 전의 파라미터를 proximal policy $\pi_{\mathrm{prox}}$로 두고(그때 토큰 확률을 다시 계산한다),
 clipping은 $\pi_\theta/\pi_{\mathrm{prox}}$에 걸며,
-clipped surrogate 항 전체에 토큰마다 $\pi_{\mathrm{prox}}/\pi_{\mathrm{behav}}$를 importance sampling 가중치로 곱해 표집 분포의 차이를 보정한다.
+clipped surrogate 항 전체에 토큰마다 $\pi_{\mathrm{prox}}/\pi_{\mathrm{behav}}$를 importance sampling 가중치로 곱해 응답을 뽑은 분포와의 차이를 보정한다.
 
 예를 들어 어떤 토큰의 확률이 behavior 0.20, proximal 0.25, 현재 정책 0.30이면 보정 가중치는 $0.25/0.20=1.25$이고 clipping 대상 비율은 $0.30/0.25=1.2$다.
 behavior policy와 proximal policy가 같으면 보정 가중치가 1이 되어 일반 PPO와 같다.
@@ -203,8 +203,8 @@ Qi 등은 BF16(brain floating point 16)의 짧은 가수부(7비트)에서 생�
 Qi 등의 실험에서 BF16으로 학습한 GRPO는 학습 초반에 붕괴했다.[^fp16]
 
 엔진 쪽 확률이 달라지는 원인이 수치 오차만은 아니다.
-Temperature나 top-p(nucleus) sampling처럼 표집 전에 분포를 일부러 바꾸면 실제로 토큰을 뽑은 분포는 모델의 softmax 분포와 다르다.
-vLLM은 기본 설정에서 이런 후처리를 하기 전의 log 확률을 돌려주므로, 돌려받은 값이 실제 표집에 쓰인 확률과 다를 수 있다.[^vllm-logprobs]
+Temperature나 top-p(nucleus) sampling처럼 토큰을 뽑기 전에 분포를 일부러 바꾸면 실제로 토큰을 뽑은 분포는 모델의 softmax 분포와 다르다.
+vLLM은 기본 설정에서 이런 후처리를 하기 전의 log 확률을 돌려주므로, 돌려받은 값이 실제로 토큰을 뽑을 때 쓰인 확률과 다를 수 있다.[^vllm-logprobs]
 이 차이는 어느 분포를 기준으로 삼을지 정해서 다룰 문제라, 엔진의 log 확률을 확률비에 넣기 전에 어느 분포의 값인지부터 밝혀야 한다.
 
 ### 4-2. 확률비 보정과 정밀도 변경

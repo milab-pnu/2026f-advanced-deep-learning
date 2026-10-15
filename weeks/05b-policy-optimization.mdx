@@ -47,7 +47,7 @@ RLOO와 달리 자기 보상도 평균에 넣고, 그룹 표준편차로 한 번
 그래서 같은 $[1,0,1,0]$에서 첫 응답의 advantage는 $2/3$이 아니라 $+1$이다.
 
 Outcome 보상에서는 응답 $y_i$의 모든 토큰이 같은 $\hat A_i$를 받는다.
-목적함수는 PPO의 clipped surrogate에서 KL(Kullback–Leibler) penalty를 차감한 값이고, 프롬프트와 응답 표집에 대해 평균한 이 값을 최대화한다.
+목적함수는 PPO의 clipped surrogate에서 KL(Kullback–Leibler) penalty를 차감한 값이고, 프롬프트와 정책이 생성한 응답에 대해 평균한 이 값을 최대화한다.
 $\varepsilon$은 clipping 폭, $\beta$는 KL penalty의 세기, $\pi_{\mathrm{ref}}$는 KL의 기준 모델로, 보통 초기 SFT(supervised fine-tuning) 모델을 쓴다.
 
 $$
@@ -116,7 +116,7 @@ R1-Zero가 쓴 이 GRPO 식에 대해 구성요소들을 분석하고 해결하�
 <text x="330" y="208" text-anchor="middle" font-size="16" font-weight="600" fill="#0f172a">DAPO</text>
 <line x1="248" y1="222" x2="412" y2="222" stroke="#cbd5e1"/>
 <text x="330" y="246" text-anchor="middle" font-size="13" fill="#b45309">문제: 탐색 붕괴·무효 그룹</text>
-<text x="330" y="270" text-anchor="middle" font-size="13" fill="#1d4ed8">수정: clip 상한 확대·재표집</text>
+<text x="330" y="270" text-anchor="middle" font-size="13" fill="#1d4ed8">수정: clip 상한 확대·다시 뽑기</text>
 <rect x="446" y="180" width="196" height="104" rx="8" fill="#eff6ff" stroke="#94a3b8"/>
 <text x="544" y="208" text-anchor="middle" font-size="16" font-weight="600" fill="#0f172a">GSPO</text>
 <line x1="462" y1="222" x2="626" y2="222" stroke="#cbd5e1"/>

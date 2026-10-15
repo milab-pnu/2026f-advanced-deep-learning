@@ -168,7 +168,7 @@ Tülu 3의 RLVR도 초등 서술형 수학 GSM8K, MATH, IFEval 세 task의 프�
 실제로 풀지 못한 것이라면 더 쉬운 문제를 섞거나,
 앞 주차에서 본 cold start처럼 풀이를 담은 응답으로 SFT를 먼저 해 정답이 가끔은 나오는 출발 모델을 만든다.
 반대로 대부분 전부 정답이라면 더 어려운 문제가 필요하다.
-한 번의 작은 표집에서 전부 오답이었다고 그 문제를 모델이 영영 못 푼다는 뜻은 아니므로,
+응답 몇 개를 뽑아 전부 오답이었다고 그 문제를 모델이 영영 못 푼다는 뜻은 아니므로,
 이 판단은 문제 하나가 아니라 문제 집합의 분포를 보고 내린다.
 
 ## 4. 검증 보상의 적용 경로
@@ -178,7 +178,7 @@ R1-Zero는 base model에 검증 보상의 RL만 바로 적용했고,
 R1은 SFT를 먼저 한 뒤 SFT와 RL을 번갈아 쌓았다.
 R1-Zero가 생성한 풀이 가운데 정답이고 형식을 지킨 것을 DeepSeek-V3와 사람이 다듬어 R1의 cold start 데이터로 썼다.
 
-<Figure src="https://media.springernature.com/lw1200/springer-static/image/art%3A10.1038%2Fs41586-025-09422-z/MediaObjects/41586_2025_9422_Fig2_HTML.png" alt="DeepSeek-R1의 다단계 파이프라인 흐름도. 왼쪽 열에서 DeepSeek-V3 Base가 추론 프롬프트와 정확성·형식 보상의 RL로 DeepSeek-R1-Zero가 되고, R1-Zero에서 표집한 응답을 정확성·형식으로 거른 뒤 DeepSeek-V3와 사람이 다듬는다. 이 데이터로 둘째 열에서 DeepSeek-V3 Base를 cold-start long CoT SFT해 Dev1을 만들고, 추론 프롬프트와 검증 보상(그림의 rule-based reward)·언어 일관성 보상의 RL로 Dev2를 만든다. 셋째 열에서 Dev2의 추론 응답과 DeepSeek-V3의 비추론 응답을 표집해 DeepSeek-V3 Base를 다시 SFT해 Dev3을 만들고, 다양한 프롬프트와 검증 보상·선호 보상의 RL로 DeepSeek-R1을 만든다. 범례는 모델, 프롬프트와 응답, 학습 알고리즘, 프롬프트, 보상, 후처리를 색으로 구분한다." caption="DeepSeek-R1의 다단계 파이프라인. 왼쪽 열은 R1-Zero와, 그 출력을 걸러 다듬어 cold start 데이터를 만드는 과정이다. 나머지 열은 R1의 네 단계 학습이다. Dev1~3은 중간 checkpoint다." source="Guo et al. (2025), Figure 2 · CC BY 4.0" />
+<Figure src="https://media.springernature.com/lw1200/springer-static/image/art%3A10.1038%2Fs41586-025-09422-z/MediaObjects/41586_2025_9422_Fig2_HTML.png" alt="DeepSeek-R1의 다단계 파이프라인 흐름도. 왼쪽 열에서 DeepSeek-V3 Base가 추론 프롬프트와 정확성·형식 보상의 RL로 DeepSeek-R1-Zero가 되고, R1-Zero가 생성한 응답을 정확성·형식으로 거른 뒤 DeepSeek-V3와 사람이 다듬는다. 이 데이터로 둘째 열에서 DeepSeek-V3 Base를 cold-start long CoT SFT해 Dev1을 만들고, 추론 프롬프트와 검증 보상(그림의 rule-based reward)·언어 일관성 보상의 RL로 Dev2를 만든다. 셋째 열에서 Dev2의 추론 응답과 DeepSeek-V3의 비추론 응답을 생성해 DeepSeek-V3 Base를 다시 SFT해 Dev3을 만들고, 다양한 프롬프트와 검증 보상·선호 보상의 RL로 DeepSeek-R1을 만든다. 범례는 모델, 프롬프트와 응답, 학습 알고리즘, 프롬프트, 보상, 후처리를 색으로 구분한다." caption="DeepSeek-R1의 다단계 파이프라인. 왼쪽 열은 R1-Zero와, 그 출력을 걸러 다듬어 cold start 데이터를 만드는 과정이다. 나머지 열은 R1의 네 단계 학습이다. Dev1~3은 중간 checkpoint다." source="Guo et al. (2025), Figure 2 · CC BY 4.0" />
 
 ### 4-1. SFT 없는 R1-Zero
 
@@ -187,7 +187,7 @@ DeepSeek-R1-Zero는 DeepSeek-V3-Base에서 출발해 앞에서 본 검증 보상
 답을 `<answer>` 태그에 쓰라는 구조 지시뿐이었고 형식 보상이 그 구조를 강화했으며,
 어떻게 추론하라는 예시는 주지 않았다.
 학습이 진행되면서 AIME 2024의 pass@1이 15.6%에서 77.9%로 올랐다.
-pass@1은 문제마다 응답 하나를 표집했을 때의 평균 정답률이다.
+pass@1은 문제마다 응답 하나를 뽑았을 때의 평균 정답률이다.
 같은 문제에서 응답 16개를 뽑아 다수결로 답을 정하면 86.7%였다.
 모델은 **앞의 풀이를 되돌아보고 다른 접근을 시도하는 행동**을 보이기 시작했다.
 저자들은 이를 "aha moment"라고 불렀다.
