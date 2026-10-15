@@ -72,7 +72,7 @@ Paged KV cache라면 데이터를 옮기지 않고 요청의 유효 길이 같�
 다만 앞 주차의 hybrid 모델처럼 recurrent 상태를 쓰는 층은 상태 하나에 모든 위치가 섞여 있어 칸을 지우는 식으로 되돌릴 수 없다.
 이런 층은 검증한 위치마다 중간 상태를 보관해 두었다가 받아들인 위치의 상태를 고르는 식의 별도 처리가 필요하다.
 
-<Figure src="https://arxiv.org/html/2211.17192v2/figure1.png" alt="Leviathan 등의 Figure 1. 무조건 생성 과제에서 문장 'japan's benchmark nikkei 225 index rose 226.69 points, or 1.5 percent, to 10,989.79 in late morning trading.'이 아홉 줄에 걸쳐 만들어진다. 각 줄은 target 모델의 forward 한 번이다. 초록색은 draft가 제안하고 target이 수락한 토큰, 빨간색 취소선은 거부된 토큰, 파란색은 거부 지점에서 target이 고친 토큰이다. 한 줄에 초록 토큰이 여러 개 붙는 경우가 많다." caption="Speculative decoding의 진행. 한 줄이 target의 forward 한 번이고, 초록은 수락된 draft 토큰, 빨강은 거부된 토큰, 파랑은 target이 고친 토큰이다. 한 번의 forward로 여러 토큰이 확정되는 줄이 많다." source="Leviathan, Kalman, & Matias (2023), Fast Inference from Transformers via Speculative Decoding, Figure 1 · CC BY 4.0 · 수정 없음" hero />
+<Figure src="https://arxiv.org/html/2211.17192v2/figure1.png" alt="Leviathan 등의 Figure 1. 무조건 생성 과제에서 문장 'japan's benchmark nikkei 225 index rose 226.69 points, or 1.5 percent, to 10,989.79 in late morning trading.'이 아홉 줄에 걸쳐 만들어진다. 각 줄은 target 모델의 forward 한 번이다. 초록색은 draft가 제안하고 target이 수락한 토큰, 빨간색 취소선은 거부된 토큰, 파란색은 거부 지점에서 target이 고친 토큰이다. 한 줄에 초록 토큰이 여러 개 붙는 경우가 많다." caption="Speculative decoding의 진행. 한 줄이 target의 forward 한 번이고, 초록은 수락된 draft 토큰, 빨강은 거부된 토큰, 파랑은 target이 고친 토큰이다. 한 번의 forward로 여러 토큰이 확정되는 줄이 많다." source="Leviathan et al. (2023), Figure 1 · CC BY 4.0" hero />
 
 [그림 출처](https://arxiv.org/html/2211.17192v2) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
@@ -163,7 +163,7 @@ Medusa는 이 나무 전체를 forward 한 번으로 검증하려고 **tree atte
 position index도 나무의 깊이에 맞춰 준다.
 그래서 서로 다른 경로를 한 시퀀스에 이어 붙여도 경로마다 따로 계산한 것과 같은 결과가 나온다.
 
-<Figure src="https://arxiv.org/html/2401.10774v3/tree_attention.png" alt="Medusa의 Figure 2. 왼쪽은 후보 나무다. Root에서 head 1의 후보 두 개(It, I)가 나오고, 각각에서 head 2의 후보 세 개(is, 따옴표, the)가 이어져 후보 경로가 모두 6개다. 오른쪽은 8×8 attention mask로, 행은 query, 열은 key다. 각 후보 토큰은 자기 자신과 나무에서의 조상에만 체크 표시가 있어, 예를 들어 It 아래의 is는 It과 자기 자신만 본다." caption="Tree attention. Head 1의 상위 2개와 head 2의 상위 3개로 만든 후보 6개 경로를 한 번에 검증한다. Mask는 각 토큰이 자기 자신과 나무에서의 조상만 보게 한다." source="Cai et al. (2024), Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads, Figure 2 · CC BY 4.0 · 수정 없음" hero />
+<Figure src="https://arxiv.org/html/2401.10774v3/tree_attention.png" alt="Medusa의 Figure 2. 왼쪽은 후보 나무다. Root에서 head 1의 후보 두 개(It, I)가 나오고, 각각에서 head 2의 후보 세 개(is, 따옴표, the)가 이어져 후보 경로가 모두 6개다. 오른쪽은 8×8 attention mask로, 행은 query, 열은 key다. 각 후보 토큰은 자기 자신과 나무에서의 조상에만 체크 표시가 있어, 예를 들어 It 아래의 is는 It과 자기 자신만 본다." caption="Tree attention. Head 1의 상위 2개와 head 2의 상위 3개로 만든 후보 6개 경로를 한 번에 검증한다. Mask는 각 토큰이 자기 자신과 나무에서의 조상만 보게 한다." source="Cai et al. (2024), Figure 2 · CC BY 4.0" hero />
 
 [그림 출처](https://arxiv.org/html/2401.10774v3) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
@@ -238,7 +238,7 @@ Gloeckle 등은 공유된 trunk 위에 Transformer 층으로 된 독립 head $n$
 위치마다 다음 토큰 $n$개를 함께 예측하는 <strong>multi-token prediction(MTP)</strong>을 학습 목표로 썼다.[^gloeckle]
 위치 $t$에서 head $i$는 $t+i$번째 정답 토큰의 cross-entropy를 내고, 이 $n$개 손실을 더해 trunk와 head를 함께 학습한다.
 
-<Figure src="https://arxiv.org/html/2404.19737v1/img/main_fig_col.png" alt="Gloeckle 등의 Figure 1. 위 그림은 입력 토큰 1–4가 공유 trunk를 지나 head 4개로 갈라지고, 위치마다 다음 토큰 네 개(예: 입력 1에서 토큰 2, 3, 4, 5)를 예측하는 구조다. 첫 head 외의 예측은 추론 때 버리거나 속도를 최대 3배 높이는 데 쓴다고 적혀 있다. 아래 그림은 모델 크기별 MBPP pass@1 변화로, 0.3B와 0.6B에서는 4-token 예측이 기준보다 낮고, 1.3B부터 높아져 13B에서는 기준 26.0에 4.5점을 더한다." caption="Multi-token prediction의 구조(위)와 모델 크기에 따른 MBPP 성능 변화(아래). 이 코드 학습 실험에서는 작은 모델에서 손해이고 큰 모델에서 이득이었다." source="Gloeckle et al. (2024), Better & Faster Large Language Models via Multi-token Prediction, Figure 1 · CC BY 4.0 · 수정 없음" />
+<Figure src="https://arxiv.org/html/2404.19737v1/img/main_fig_col.png" alt="Gloeckle 등의 Figure 1. 위 그림은 입력 토큰 1–4가 공유 trunk를 지나 head 4개로 갈라지고, 위치마다 다음 토큰 네 개(예: 입력 1에서 토큰 2, 3, 4, 5)를 예측하는 구조다. 첫 head 외의 예측은 추론 때 버리거나 속도를 최대 3배 높이는 데 쓴다고 적혀 있다. 아래 그림은 모델 크기별 MBPP pass@1 변화로, 0.3B와 0.6B에서는 4-token 예측이 기준보다 낮고, 1.3B부터 높아져 13B에서는 기준 26.0에 4.5점을 더한다." caption="Multi-token prediction의 구조(위)와 모델 크기에 따른 MBPP 성능 변화(아래). 이 코드 학습 실험에서는 작은 모델에서 손해이고 큰 모델에서 이득이었다." source="Gloeckle et al. (2024), Figure 1 · CC BY 4.0" />
 
 [그림 출처](https://arxiv.org/html/2404.19737v1) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 

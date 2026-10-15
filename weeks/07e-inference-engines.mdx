@@ -45,7 +45,7 @@ vLLM은 PagedAttention 논문과 함께 공개된 엔진이다.
 2025년의 V1 구조 개편은 코드 단순화, 최적화 통합과 함께 **CPU overhead를 거의 없애는 것**을 주요 목표로 삼았다.
 GPU 실행 시간이 스텝당 수 ms로 짧아지자 그 사이의 CPU 작업이 드러났기 때문이다.[^vllm-v1]
 
-<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.30.0/docs/assets/design/arch_overview/v1_process_architecture_tp4.png" alt="vLLM V1의 프로세스 구조(GPU 4대, TP=4). 왼쪽의 API Server가 HTTP 요청을 받아 입력 처리, 토큰화, 스트리밍을 맡고, ZMQ로 가운데의 Engine Core와 양방향으로 통신한다. Engine Core는 scheduler와 KV cache 관리자를 맡는다. Engine Core에서 오른쪽의 GPU Worker 0–3 네 개로 화살표가 나가며, 각 worker는 GPU 하나에서 모델 실행(forward)을 맡는다. 아래에 프로세스가 모두 6개(API Server 1, Engine Core 1, GPU Worker 4)라고 적혀 있다." caption="vLLM V1의 프로세스 구조. 토큰화와 스트리밍(API Server), scheduling과 KV cache 관리(Engine Core), 모델 실행(GPU Worker)이 서로 다른 프로세스에서 돈다." source="vLLM Project, Architecture Overview 문서 그림(docs/assets/design/arch_overview/v1_process_architecture_tp4.png, v0.30.0) · Apache License 2.0 · 수정 없음" />
+<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.30.0/docs/assets/design/arch_overview/v1_process_architecture_tp4.png" alt="vLLM V1의 프로세스 구조(GPU 4대, TP=4). 왼쪽의 API Server가 HTTP 요청을 받아 입력 처리, 토큰화, 스트리밍을 맡고, ZMQ로 가운데의 Engine Core와 양방향으로 통신한다. Engine Core는 scheduler와 KV cache 관리자를 맡는다. Engine Core에서 오른쪽의 GPU Worker 0–3 네 개로 화살표가 나가며, 각 worker는 GPU 하나에서 모델 실행(forward)을 맡는다. 아래에 프로세스가 모두 6개(API Server 1, Engine Core 1, GPU Worker 4)라고 적혀 있다." caption="vLLM V1의 프로세스 구조. 토큰화와 스트리밍(API Server), scheduling과 KV cache 관리(Engine Core), 모델 실행(GPU Worker)이 서로 다른 프로세스에서 돈다." source="vLLM Project (v0.30.0), Architecture Overview 문서 · Apache-2.0" />
 
 V1의 주요 설계는 다음과 같다.[^vllm-v1][^vllm-arch]
 
