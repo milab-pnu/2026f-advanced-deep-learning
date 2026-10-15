@@ -4,11 +4,12 @@ week: 5
 order: 3
 ---
 
-지금까지의 RL(reinforcement learning)은 프롬프트 하나에 응답 하나를 내고, 응답이 끝나면 보상이 한 번 오는 문제였다.
-실제 task의 많은 부분은 그렇지 않아서, 검색해서 읽고 다시 검색하고, 코드를 실행해 오류를 보고 고치고, 사용자와 여러 턴을 주고받는다.
-이처럼 모델의 출력이 환경을 바꾸고 환경의 응답이 다음 입력이 되는 상호작용 궤적을 보상으로 학습하는 것을 **agentic RL**이라고 부른다.[^survey]
-정책 갱신 식은 앞에서 본 PPO(proximal policy optimization)·GRPO(group relative policy optimization)와 크게 다르지 않고,
-달라지는 것은 그 식에 넣을 궤적을 만들고 믿을 수 있게 채점하는 일이다.
+지금까지의 RL(reinforcement learning)에서는 모델이 프롬프트를 받아 응답을 한 번 내면 끝났다.
+실제 task는 검색해서 읽고 다시 검색하거나, 코드를 실행해 보고 고치거나, 사용자와 여러 턴을 주고받는 경우가 많다.
+이처럼 모델이 환경과 주고받는 여러 턴의 궤적을 보상으로 학습하는 것을 **agentic RL**이라고 부른다.[^survey]
+정책 갱신은 앞에서 본 PPO(proximal policy optimization)·GRPO(group relative policy optimization)를 거의 그대로 쓰고,
+새로 어려워지는 것은 궤적을 만들고 믿을 수 있게 채점하는 일이다.
+실제 학습에서는 정답 궤적을 따라 쓰게 하는 SFT(supervised fine-tuning)를 함께 쓰는 경우가 많다.
 
 ## 1. 단일 응답에서 궤적으로
 
@@ -17,6 +18,7 @@ order: 3
 지금까지의 RL에서 LLM(large language model)은 프롬프트를 받아 응답을 한 번 내고 끝났고, 보상도 응답 끝에 한 번 왔다.
 Agentic RL에서는 모델이 행동(텍스트, 도구 호출)을 낼 때마다 환경이 결과(검색 결과, 실행 출력, 사용자 답)를 돌려주고,
 모델은 그 결과를 문맥에 이어 붙여 다음 행동을 정한다.
+학습 중에는 사람이 rollout마다 대화해 줄 수 없으므로, 사용자 역할도 보통 LLM이 흉내 낸다.
 이 주고받기가 여러 턴 이어지고, 최종 성공은 여러 턴 뒤에 정해진다.
 환경에는 모델이 직접 보지 못하는 부분(파일 시스템 전체, 검색 엔진의 색인, 사용자의 의도)이 있어서,
 모델은 돌려받은 결과로만 그 상태를 짐작한다.
@@ -28,26 +30,97 @@ Agentic RL에서는 모델이 행동(텍스트, 도구 호출)을 낼 때마다 
 
 ### 1-2. 학습에서 달라지는 세 가지
 
-이 형식 변화가 PPO·GRPO의 학습 절차에 미치는 영향은 셋이다.
+이 형식 변화로 학습에서 달라지는 것은 셋이다.
+손실을 거는 위치는 SFT와 RL에 모두 해당하고, 보상의 귀속과 생성 비용은 RL에서 생기는 문제다.
 
 **손실을 거는 위치.** 위 그림에서 정책이 생성한 것은 **회색 상자**(agent의 답과 도구 호출)뿐이다.
-보라(사용자 발화)와 빨강(데이터베이스 결과)은 환경이 넣은 것이므로, 정책의 log 확률을 올리거나 내리는 대상이 아니다.
-SFT(supervised fine-tuning)의 loss mask가 지시 토큰을 제외한 것과 같은 논리로, 시스템 프롬프트에 더해 보라·빨강 토큰도 손실에서 제외한다.
+보라 상자(사용자 발화)와 빨강 상자(데이터베이스 결과)는 환경이 넣은 것이므로, 정책의 log 확률을 올리거나 내리는 대상이 아니다.
+SFT의 loss mask가 지시 토큰을 제외한 것과 같은 논리로, SFT든 RL이든 시스템 프롬프트와 보라·빨강 토큰은 손실에서 제외한다.
 이 토큰들은 문맥에 남아 뒤의 회색 토큰을 예측하는 조건이 된다.
 
-**보상의 귀속.** 그림의 궤적에 보상을 주는 방식은 크게 둘이다.
-최종 결과만 보면, 사용자가 원하는 답을 받았는지로 마지막에 한 번 1 또는 0을 준다.
-이 보상은 모든 회색 턴에 똑같이 가므로, 검색어를 잘못 넣었다가 고쳐서 성공한 궤적은 잘못된 호출까지 1을 받고,
+**보상의 귀속.** 궤적에서 어느 턴이 잘했고 어느 턴이 잘못했는지 가려 보상을 나누는 것이 credit assignment 문제다.
+최종 결과만 채점하면 사용자가 원하는 답을 받았는지로 마지막에 한 번 1 또는 0을 주고, 이 보상이 모든 회색 턴에 똑같이 간다.
+그래서 검색어를 잘못 넣었다가 고쳐서 성공한 궤적은 잘못된 호출까지 1을 받고,
 인증과 검색은 잘했는데 마지막 안내만 틀린 궤적은 잘한 호출까지 0을 받는다.
-중간 과정도 보면, 도구 호출마다 형식과 도구·인자가 맞았는지로 턴마다 보상을 더한다.
+중간 과정도 채점하면 도구 호출마다 형식과 도구·인자가 맞았는지로 턴마다 보상(process 보상)을 더한다.
 신호는 촘촘해지지만, 정해 둔 호출 경로와 다르게 성공한 궤적은 감점될 수 있다.
-어느 쪽이든 각 턴은 앞 주차 PPO에서 본 누적 보상 $G_t$처럼 그 턴부터 끝까지 받은 보상의 합을 받고,
-최종 보상 하나를 여러 턴에 어떻게 나눌지가 credit assignment 문제다.
 
-**생성 비용.** 그림의 궤적 하나를 만들려면 빨강 상자마다 도구 실행을, 보라 상자마다 사용자(학습에서는 보통 사용자 역할의 LLM)의 답을 기다려야 한다.
+**생성 비용.** 그림의 궤적 하나를 만들려면 빨강 상자마다 도구 실행을, 보라 상자마다 사용자의 답을 기다려야 한다.
 이 지연이 생성에 더해지고, 궤적 길이의 분산이 커진다.
-한 궤적이 도구 결과를 기다리는 동안 다른 궤적의 생성이 멈추지 않도록 궤적마다 따로 진행시키고, 가장 긴 궤적을 기다리지 않도록 생성과 학습을 겹쳐 돌리는 비동기 설계가 더 중요해지며,
-비싸게 만든 궤적 중 상당수가 학습 신호를 주지 않는다는 문제도 커진다.
+그래서 한 궤적이 도구 결과를 기다리는 동안 다른 궤적은 계속 생성하고, 생성과 학습을 겹쳐 돌리는 비동기 설계가 더 중요해진다.
+비싸게 만든 궤적이 학습 신호를 주지 못하면 그만큼 손해도 커진다.
+
+### 1-3. SFT 데이터와 RL 데이터
+
+모델이 쓸 수 있는 도구와 그 사용법은 보통 시스템 프롬프트에 넣어 준다.
+도구마다 이름, 설명, 인자를 JSON(JavaScript Object Notation)으로 적은 목록과,
+추론과 호출을 어떤 태그에 어떤 형식으로 쓸지에 대한 지시가 들어간다.
+아래는 NVIDIA의 Tool-N1 학습 데이터 한 건을 Qwen 계열의 chat template으로 직렬화한 것이다.[^tooln1]
+이 template은 `<|im_start|>`와 `<|im_end|>`로 역할의 경계를 표시한다.
+
+```text
+<|im_start|>system
+You are an expert in composing functions. …
+<tools>
+{"type": "function", "function": {
+  "name": "getAdventureActivities",
+  "description": "Retrieve available adventure activities in a specific location",
+  "parameters": {"type": "dict",
+    "properties": {"location": {"type": "string", "description": "The location …"}},
+    "required": ["location"]}}}
+</tools>
+
+In each action step, you MUST:
+1. Think about the reasoning process in the mind and enclosed your reasoning
+   within <think> </think> XML tags.
+2. Then, provide a json object with function names and arguments
+   within <tool_call></tool_call> XML tags. …<|im_end|>
+<|im_start|>user
+I'm planning a trip to Costa Rica and would love to indulge in some adventure
+activities. Can you find out what's available there?<|im_end|>
+<|im_start|>assistant
+<think>To address the query, I need to retrieve the available adventure
+activities in Costa Rica. …</think>
+<tool_call> [{"name": "getAdventureActivities",
+              "arguments": {"location": "Costa Rica"}}]</tool_call><|im_end|>
+```
+
+SFT와 RL은 이 토큰열의 어디까지를 데이터로 주는지가 다르다.
+Tool-N1은 같은 원천 데이터에서 두 형식을 모두 만들었다.
+
+SFT용:
+
+```json
+{
+  "system_prompt": "… <tools>…</tools> …",
+  "query": "I'm planning a trip to Costa Rica … what's available there?",
+  "output": "<think>To address the query, … in Costa Rica. …</think>\n
+             <tool_call> [{\"name\": \"getAdventureActivities\",
+                           \"arguments\": {\"location\": \"Costa Rica\"}}]</tool_call>"
+}
+```
+
+RL용:
+
+```json
+{
+  "prompt": [
+    {"role": "system", "content": "… <tools>…</tools> …"},
+    {"role": "user", "content": "I'm planning a trip to Costa Rica …"}
+  ],
+  "reward_model": {
+    "style": "rule",
+    "ground_truth": "[{\"name\": \"getAdventureActivities\",
+                      \"arguments\": {\"location\": \"Costa Rica\"}}]"
+  }
+}
+```
+
+SFT 데이터에는 assistant 차례의 응답 전체(`output`)가 들어 있고, 모델은 이 토큰을 그대로 따라 쓰도록 학습한다.
+추론(`<think>`)까지 정답으로 정해 두어야 하므로, Tool-N1은 더 강한 모델이 쓴 추론을 증류해 넣었다.
+RL 데이터에는 assistant 차례가 없다. 모델이 그 자리를 직접 생성하면, 규칙(`"style": "rule"`)이 생성된 호출을 `ground_truth`와 비교해 보상을 준다.
+그래서 추론을 주석할 필요가 없고, 인자 순서처럼 겉모습이 달라도 같은 호출이면 맞은 것으로 채점할 수 있다.
+다중 턴 데이터라면 프롬프트에 앞 턴의 호출과 도구 결과가 이력으로 들어간다.
 
 ## 2. 프롬프팅에서 RL까지
 
@@ -101,7 +174,7 @@ Schick 등의 Toolformer는 도구 호출을 모델에 **학습**시켰다.[^too
 다만 도구마다 호출을 따로 만들었으므로, 한 도구의 결과를 다른 도구의 입력으로 쓰는 연쇄 호출의 예는 학습 데이터에 없었다.
 
 지금의 대화 모델은 도구를 흔히 **function calling** 형식으로 쓴다.
-도구마다 이름, 설명, 인자의 이름과 타입을 JSON(JavaScript Object Notation) Schema로 적어 모델에 주고,
+도구마다 이름, 설명, 인자의 이름과 타입을 JSON Schema로 적어 모델에 주고,
 모델은 자유 텍스트 대신 "어떤 도구를 어떤 인자로 부를지"를 구조화된 호출로 낸다.
 실행은 모델 밖의 코드가 맡고, 그 결과는 tool 역할의 메시지로 대화에 다시 들어간다.
 Hugging Face Transformers의 chat template은 이 대화를 다음과 같은 메시지 목록으로 다룬다.[^hf-tools]
@@ -138,7 +211,7 @@ SFT도 새 도구와 상황에 일반화할 수 있다.
 
 Reflexion은 환경의 성패를 반성으로 문맥에 남겼다.
 이제 그 성패를 가중치를 바꾸는 보상으로 쓴다.
-RLVR의 검증 보상이 여기서 다시 쓰인다.
+RLVR(reinforcement learning with verifiable rewards)의 검증 보상이 여기서 다시 쓰인다.
 Jin 등의 Search-R1은 모델이 `<think>`, `<search>`,
 `<answer>` 태그로 추론·검색·답을 번갈아 내게 하고,
 검색 엔진이 `<information>` 태그로 결과를 돌려주며, 보상은 최종 답의 정확 일치뿐이다.[^searchr1]
@@ -178,7 +251,7 @@ Search-R1 형식으로 답하는 교육용 궤적을 보자.
 
 관측 구간은 mask가 0이지만 턴 2의 토큰을 계산할 때 문맥으로 들어간다.
 정책 갱신의 확률비와 log 확률은 mask가 1인 두 구간의 토큰에서만 계산한다.
-최종 답이 맞아 보상 1을 받았고 중간 보상은 없다면, 각 턴의 누적 보상은 둘 다 1이다.
+최종 답이 맞아 보상 1을 받았고 중간 보상은 없다면, 각 턴의 누적 보상(앞 주차 PPO의 $G_t$처럼 그 턴부터 끝까지 받은 보상의 합)은 둘 다 1이다.
 여기에 "검색어가 형식을 지켰는가"에 대한 process 보상 0.1을 턴 1에 더하면 턴 1의 누적 보상은 1.1, 턴 2는 1이 된다.
 최종 보상을 두 턴에 임의로 반씩 나누지는 않는다.
 각 턴은 자기 뒤에 온 보상의 합을 받는다.
@@ -226,7 +299,7 @@ Qian 등의 ToolRL은 SFT가 낯설거나 복잡한 도구 사용에 잘 일반�
 Instruct 모델에서 출발해 GRPO로 학습했다.[^toolrl]
 원논문은 도구 호출 데이터로 SFT를 더 한 뒤 RL을 하는 것보다 Instruct 모델에서 바로 RL을 시작하는 편이 그 실험에서 나았고,
 보상을 세분화하면 학습이 안정적이었다고 보고한다.[^toolrl]
-같은 시기 Tool-N1은 반대로 형식과 도구 이름·인자가 모두 맞을 때만 1점을 주는 이진 보상을 썼다.[^tooln1]
+앞에서 데이터를 본 Tool-N1은 반대로 형식과 도구 이름·인자가 모두 맞을 때만 1점을 주는 이진 보상을 썼다.[^tooln1]
 형식이나 도구 이름만 맞아도 부분 점수를 주는 설정과 비교하면 그 실험에서는 이진 보상이 더 나았고,
 원논문은 부분 점수가 겉모습만 맞춘 호출에도 보상을 주어 reward hacking을 부른다고 해석한다.[^tooln1]
 두 결과는 process 보상이 신호를 촘촘하게 하는 대신 겉모습을 맞추는 쪽으로 최적화될 수 있다는 장단점을 양쪽에서 보여 준다.
