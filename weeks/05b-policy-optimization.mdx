@@ -145,7 +145,7 @@ advantage는 평균만 빼고 표준편차로 나누지 않는다.
 Clipped surrogate와 그룹 평균 baseline은 GRPO 그대로이고, KL 항은 뺐다.
 같은 설정에서 Dr. GRPO는 정답률을 유지하면서 오답의 길이 증가를 억제했다.[^drgrpo]
 
-<Figure src={drgrpo.src} alt="GRPO와 Dr. GRPO의 목적함수를 위아래 상자로 비교한 그림. 위 GRPO 상자에서는 응답 길이로 나누는 1/|o_i|와 advantage 분모의 그룹 보상 표준편차 std가 빨간색으로 강조되어 있다. 아래 Dr. GRPO(GRPO Done Right, without bias) 상자에서는 이 두 항이 사라져, 토큰 손실을 길이로 나누지 않고 더하며 advantage는 보상에서 그룹 평균만 뺀 값이다. 확률비와 clipping 부분은 두 식이 같다." caption="GRPO와 Dr. GRPO의 목적 함수 비교. 그림의 질문 q와 응답 o는 이 노트의 x와 y에 해당." source="Liu et al. (2025), Figure 1" />
+<Figure src={drgrpo.src} alt="GRPO와 Dr. GRPO의 목적함수를 위아래 상자로 비교한 그림. 위 GRPO 상자에서는 응답 길이로 나누는 1/|o_i|와 advantage 분모의 그룹 보상 표준편차 std가 빨간색으로 강조되어 있다. 아래 Dr. GRPO(GRPO Done Right, without bias) 상자에서는 이 두 항이 사라져, 토큰 손실을 길이로 나누지 않고 더하며 advantage는 보상에서 그룹 평균만 뺀 값이다. 확률비와 clipping 부분은 두 식이 같다." caption="GRPO와 Dr. GRPO의 목적 함수 비교. 그림의 질문 q와 응답 o는 이 노트의 x와 y에 해당." source="Liu et al. (2025), Figure 1 · CC BY 4.0" />
 
 ### 2-2. 탐색의 붕괴와 DAPO
 

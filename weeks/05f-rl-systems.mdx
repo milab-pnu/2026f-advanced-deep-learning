@@ -40,7 +40,7 @@ decode 반복마다 살아 있는 응답 각각이 토큰 하나를 만들며, �
 이용률은 따로 재야 한다.
 </Callout>
 
-<Figure src="https://arxiv.org/html/2512.13961v2/static_batching.svg" alt="응답 네 개(S1–S4)를 한 묶음으로 생성하는 static batching의 격자. 가로축은 decode 반복이고, 분홍 칸은 prompt를 채우는 prefill, 회록색 칸은 decode한 토큰, 짙은 칸은 응답의 끝을 뜻하는 EOS(end of sequence) 토큰이다. S3는 네 번째 칸에서, S1은 여섯 번째 칸에서 끝나지만 S2가 여덟 번째 칸에서 끝날 때까지 빈 회색 칸으로 남는다." caption="먼저 끝난 응답의 자리를 채우지 않는 static batching. 회색 칸이 동기식 한 스텝 예시에서 각 응답이 끝난 뒤 가장 늦은 응답을 기다리는 시간에 해당한다." source="Team Olmo (2025), Olmo 3, Figure 17(b). arXiv:2512.13961v2 · CC BY 4.0 · 수정 없음" />
+<Figure src="https://arxiv.org/html/2512.13961v2/static_batching.svg" alt="응답 네 개(S1–S4)를 한 묶음으로 생성하는 static batching의 격자. 가로축은 decode 반복이고, 분홍 칸은 prompt를 채우는 prefill, 회록색 칸은 decode한 토큰, 짙은 칸은 응답의 끝을 뜻하는 EOS(end of sequence) 토큰이다. S3는 네 번째 칸에서, S1은 여섯 번째 칸에서 끝나지만 S2가 여덟 번째 칸에서 끝날 때까지 빈 회색 칸으로 남는다." caption="먼저 끝난 응답의 자리를 채우지 않는 static batching. 회색 칸이 동기식 한 스텝 예시에서 각 응답이 끝난 뒤 가장 늦은 응답을 기다리는 시간에 해당한다." source="Team Olmo (2025), Figure 17(b) · CC BY 4.0" />
 
 [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
@@ -86,7 +86,7 @@ HybridFlow의 3D-HybridEngine은 생성용 GPU 묶음을 학습용 분할과 겹
 이때 응답 하나가 끝나면 그 자리에 곧바로 기다리던 요청을 채우는 continuous batching을 쓰면,
 동기식 rollout 안에서도 배치 전체를 더 빨리 끝낼 수 있다.
 
-<Figure src="https://arxiv.org/html/2512.13961v2/continuous_batching.svg" alt="앞의 static batching 그림과 같은 네 응답 S1–S4를 continuous batching으로 생성한 격자. S1이 여섯 번째 칸에서 EOS로 끝나자 그 자리에서 S5의 prefill이 시작되고, S3 뒤에는 S6, S4 뒤에는 S7이 이어져 빈 회색 칸이 없다." caption="Continuous batching. 기다리는 요청이 있는 동안에는 끝난 응답의 자리를 곧바로 새 응답으로 채우므로 static batching 그림의 회색 대기 칸이 사라진다. 대신 한 학습 배치의 응답들이 서로 다른 시점에 시작된다." source="Team Olmo (2025), Olmo 3, Figure 17(c). arXiv:2512.13961v2 · CC BY 4.0 · 수정 없음" />
+<Figure src="https://arxiv.org/html/2512.13961v2/continuous_batching.svg" alt="앞의 static batching 그림과 같은 네 응답 S1–S4를 continuous batching으로 생성한 격자. S1이 여섯 번째 칸에서 EOS로 끝나자 그 자리에서 S5의 prefill이 시작되고, S3 뒤에는 S6, S4 뒤에는 S7이 이어져 빈 회색 칸이 없다." caption="Continuous batching. 기다리는 요청이 있는 동안에는 끝난 응답의 자리를 곧바로 새 응답으로 채우므로 static batching 그림의 회색 대기 칸이 사라진다. 대신 한 학습 배치의 응답들이 서로 다른 시점에 시작된다." source="Team Olmo (2025), Figure 17(c) · CC BY 4.0" />
 
 [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
@@ -118,7 +118,7 @@ Noukhovitch 등은 LLaMA 3.1 8B로 chatbot을 학습하는 RLHF에서 이런 분
 완전 비동기에서는 생성 worker가 쉬지 않고 응답을 만들고, 학습 worker는 응답이 충분히 모이면 갱신하며,
 새 가중치를 생성 쪽에 주기적으로 보낸다.
 
-<Figure src="https://arxiv.org/html/2512.13961v2/olmo3_distributed_rl_light.svg" alt="Olmo 3의 비동기 RL 구조. 왼쪽의 Learner가 prompt를 Prompts queue에 넣고, 이 queue가 작업을 오른쪽 Actor의 여러 Network 복제본에 나누어 보낸다. Actor가 만든 결과는 Results queue에 쌓이고, Learner가 그 결과를 가져가 학습한다." caption="생성과 학습을 분리한 구조. 학습기(Learner)와 여러 생성 복제본(Actor)이 두 queue를 사이에 두고 돌아가므로, 매 스텝 양쪽이 함께 끝나야 하는 장벽이 없다." source="Team Olmo (2025), Olmo 3, Figure 17(a). arXiv:2512.13961v2 · CC BY 4.0 · 수정 없음" />
+<Figure src="https://arxiv.org/html/2512.13961v2/olmo3_distributed_rl_light.svg" alt="Olmo 3의 비동기 RL 구조. 왼쪽의 Learner가 prompt를 Prompts queue에 넣고, 이 queue가 작업을 오른쪽 Actor의 여러 Network 복제본에 나누어 보낸다. Actor가 만든 결과는 Results queue에 쌓이고, Learner가 그 결과를 가져가 학습한다." caption="생성과 학습을 분리한 구조. 학습기(Learner)와 여러 생성 복제본(Actor)이 두 queue를 사이에 두고 돌아가므로, 매 스텝 양쪽이 함께 끝나야 하는 장벽이 없다." source="Team Olmo (2025), Figure 17(a) · CC BY 4.0" />
 
 [라이선스](https://creativecommons.org/licenses/by/4.0/)
 

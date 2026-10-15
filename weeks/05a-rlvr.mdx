@@ -92,7 +92,7 @@ Sarch 등의 Vero는 VLM을 RL로 학습하면서 59개 데이터셋마다 답�
 차트와 OCR(optical character recognition)은 수치나 문자열을 비교하고, 캡션처럼 답이 자유로운 task만 LLM judge에 맡긴다.
 위 표의 갈래가 실제 학습 데이터에서 어떻게 나뉘는지 보여 주는 예다.
 
-<Figure src={vero.src} alt="Vero의 RL 학습 데이터셋 표. 열은 데이터셋, 남긴 표본 수, 답의 형식, 보상 종류다. 데이터셋은 grounding·counting·search, 차트·OCR, 지식·인식, 공간·행동, STEM, 캡션·지시 따르기의 여섯 범주로 묶여 있다. 예를 들어 AerialVG는 bbox 좌표에 grounding 보상, ChartQA는 수치나 짧은 텍스트에 numeric과 string match 보상, GameQA는 짧은 텍스트나 기호에 string match 보상, PixMo-Cap은 자유 형식 캡션에 LLM-as-judge 보상을 쓴다." caption="Vero의 RL 학습 데이터셋별 답 형식과 보상 종류." source="Sarch et al. (2026), Vero, 부록 Table A1." />
+<Figure src={vero.src} alt="Vero의 RL 학습 데이터셋 표. 열은 데이터셋, 남긴 표본 수, 답의 형식, 보상 종류다. 데이터셋은 grounding·counting·search, 차트·OCR, 지식·인식, 공간·행동, STEM, 캡션·지시 따르기의 여섯 범주로 묶여 있다. 예를 들어 AerialVG는 bbox 좌표에 grounding 보상, ChartQA는 수치나 짧은 텍스트에 numeric과 string match 보상, GameQA는 짧은 텍스트나 기호에 string match 보상, PixMo-Cap은 자유 형식 캡션에 LLM-as-judge 보상을 쓴다." caption="Vero의 RL 학습 데이터셋별 답 형식과 보상 종류." source="Sarch et al. (2026), Table A1 · CC BY 4.0" />
 
 </Details>
 
@@ -146,7 +146,7 @@ R1 계열이 최종적으로 쓴 보상은 **모두 응답 단위로 주어지�
 3. 검증기가 응답마다 보상을 매긴다.
 4. 보상과 KL(Kullback–Leibler) penalty를 반영해 policy gradient를 계산하고 정책을 업데이트한 뒤 1로 돌아간다.
 
-<Figure src="https://arxiv.org/html/2411.15124v5/rlvrv5.png" alt="Tülu 3의 RLVR 반복. 학습 데이터에서 나온 프롬프트 s_i를 정책이 받아 응답 a_i를 생성하고, 검증기가 정답이면 γ, 아니면 0의 스칼라 보상 r_i를 돌려준다. 오른쪽 아래 갱신식은 θ를 θ + α∇J로 바꾸며, 여기서 α는 학습률이다." caption="RLVR 학습 방법." source="Lambert et al. (2024), Tülu 3, Figure 18." />
+<Figure src="https://arxiv.org/html/2411.15124v5/rlvrv5.png" alt="Tülu 3의 RLVR 반복. 학습 데이터에서 나온 프롬프트 s_i를 정책이 받아 응답 a_i를 생성하고, 검증기가 정답이면 γ, 아니면 0의 스칼라 보상 r_i를 돌려준다. 오른쪽 아래 갱신식은 θ를 θ + α∇J로 바꾸며, 여기서 α는 학습률이다." caption="RLVR 학습 방법." source="Lambert et al. (2024), Figure 18 · CC BY 4.0" />
 
 ### 3-2. 학습 문제와 출발 모델
 
@@ -178,7 +178,7 @@ R1-Zero는 base model에 검증 보상의 RL만 바로 적용했고,
 R1은 SFT를 먼저 한 뒤 SFT와 RL을 번갈아 쌓았다.
 R1-Zero가 생성한 풀이 가운데 정답이고 형식을 지킨 것을 DeepSeek-V3와 사람이 다듬어 R1의 cold start 데이터로 썼다.
 
-<Figure src="https://media.springernature.com/lw1200/springer-static/image/art%3A10.1038%2Fs41586-025-09422-z/MediaObjects/41586_2025_9422_Fig2_HTML.png" alt="DeepSeek-R1의 다단계 파이프라인 흐름도. 왼쪽 열에서 DeepSeek-V3 Base가 추론 프롬프트와 정확성·형식 보상의 RL로 DeepSeek-R1-Zero가 되고, R1-Zero에서 표집한 응답을 정확성·형식으로 거른 뒤 DeepSeek-V3와 사람이 다듬는다. 이 데이터로 둘째 열에서 DeepSeek-V3 Base를 cold-start long CoT SFT해 Dev1을 만들고, 추론 프롬프트와 검증 보상(그림의 rule-based reward)·언어 일관성 보상의 RL로 Dev2를 만든다. 셋째 열에서 Dev2의 추론 응답과 DeepSeek-V3의 비추론 응답을 표집해 DeepSeek-V3 Base를 다시 SFT해 Dev3을 만들고, 다양한 프롬프트와 검증 보상·선호 보상의 RL로 DeepSeek-R1을 만든다. 범례는 모델, 프롬프트와 응답, 학습 알고리즘, 프롬프트, 보상, 후처리를 색으로 구분한다." caption="DeepSeek-R1의 다단계 파이프라인. 왼쪽 열은 R1-Zero와, 그 출력을 걸러 다듬어 cold start 데이터를 만드는 과정이다. 나머지 열은 R1의 네 단계 학습이다. Dev1~3은 중간 checkpoint다." source="DeepSeek-AI · Guo, D., et al. (2025), Nature 645, Fig. 2" />
+<Figure src="https://media.springernature.com/lw1200/springer-static/image/art%3A10.1038%2Fs41586-025-09422-z/MediaObjects/41586_2025_9422_Fig2_HTML.png" alt="DeepSeek-R1의 다단계 파이프라인 흐름도. 왼쪽 열에서 DeepSeek-V3 Base가 추론 프롬프트와 정확성·형식 보상의 RL로 DeepSeek-R1-Zero가 되고, R1-Zero에서 표집한 응답을 정확성·형식으로 거른 뒤 DeepSeek-V3와 사람이 다듬는다. 이 데이터로 둘째 열에서 DeepSeek-V3 Base를 cold-start long CoT SFT해 Dev1을 만들고, 추론 프롬프트와 검증 보상(그림의 rule-based reward)·언어 일관성 보상의 RL로 Dev2를 만든다. 셋째 열에서 Dev2의 추론 응답과 DeepSeek-V3의 비추론 응답을 표집해 DeepSeek-V3 Base를 다시 SFT해 Dev3을 만들고, 다양한 프롬프트와 검증 보상·선호 보상의 RL로 DeepSeek-R1을 만든다. 범례는 모델, 프롬프트와 응답, 학습 알고리즘, 프롬프트, 보상, 후처리를 색으로 구분한다." caption="DeepSeek-R1의 다단계 파이프라인. 왼쪽 열은 R1-Zero와, 그 출력을 걸러 다듬어 cold start 데이터를 만드는 과정이다. 나머지 열은 R1의 네 단계 학습이다. Dev1~3은 중간 checkpoint다." source="Guo et al. (2025), Figure 2 · CC BY 4.0" />
 
 ### 4-1. SFT 없는 R1-Zero
 
@@ -257,7 +257,7 @@ Tülu 3는 지시 따르기(instruction following) 평가 IFEval과 같은 꼴�
 [^survey]: Zhang, K., et al. (2025). A Survey of Reinforcement Learning for Large Reasoning Models. [arXiv:2509.08827v3](https://arxiv.org/abs/2509.08827v3).
 [^deepseekmath]: Shao, Z., et al. (2024). DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models. [arXiv:2402.03300](https://arxiv.org/abs/2402.03300).
 [^tulu3]: Lambert, N., et al. (2024). Tülu 3: Pushing Frontiers in Open Language Model Post-Training. [arXiv:2411.15124v5](https://arxiv.org/abs/2411.15124v5).
-[^r1]: DeepSeek-AI. (2026). DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning. [arXiv:2501.12948v2](https://arxiv.org/abs/2501.12948v2). 게재판: Guo, D., et al. (2025). DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning. *Nature*, 645, 633–638. [doi:10.1038/s41586-025-09422-z](https://doi.org/10.1038/s41586-025-09422-z).
+[^r1]: Guo, D., et al. (2025). DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning. *Nature*, 645, 633–638. [doi:10.1038/s41586-025-09422-z](https://doi.org/10.1038/s41586-025-09422-z).
 [^mathverify]: Hugging Face. (2026). Math-Verify (v0.9.0). [GitHub 저장소, 커밋 ba3d3aa](https://github.com/huggingface/Math-Verify/tree/ba3d3aaff23b3f4cac7a14672b4f6e293d97c98b).
 [^prm]: Lightman, H., et al. (2024). Let's Verify Step by Step. *ICLR 2024*. [arXiv:2305.20050](https://arxiv.org/abs/2305.20050).
 [^qwen3]: Qwen Team. (2025). Qwen3 Technical Report. [arXiv:2505.09388](https://arxiv.org/abs/2505.09388).

@@ -47,7 +47,7 @@ RLVR 노트의 R1-Zero는 이 방향을 학습 방법과 가중치까지 공개�
 
   첫 자리는 1 이상이므로 $a\ge1$, $a+b+c=5$.
   $a'=a-1$로 두면 $a'+b+c=4$의 음이 아닌 정수해는 1 네 개와 칸막이 두 개를 늘어놓는 경우의 수 $\binom{6}{2}=15$개.
-  답은 $\boxed{15}$.
+  답은 15.
 
 - **Long CoT.**
 
@@ -74,36 +74,25 @@ RLVR 노트의 R1-Zero는 이 방향을 학습 방법과 가중치까지 공개�
 ## 2. Long CoT를 얻는 두 경로
 
 모델이 long CoT를 쓰게 만드는 길은 크게 둘이다.
-정답 여부를 중심으로 보상하는 RL에서 긴 풀이가 나타나게 하거나,
+RLVR에서 긴 풀이가 나타나게 하거나,
 이미 있는 long CoT를 SFT(supervised fine-tuning)로 따라 쓰게 하는 것이다.
 
 ### 2-1. RL에서의 길이 증가
 
-R1-Zero의 학습 곡선에서 정답률과 함께 오른 것이 응답 길이였다.
-학습 문제에 대한 평균 응답 길이는 처음 수백 토큰에서 약 1만 스텝 뒤 1만 5천 토큰 안팎까지 늘었다.
-저자들이 고른 반성 표현("wait", "mistake", "check" 등)의 빈도는 학습 초기보다 5–7배가 되었고,
-그중 "wait"는 초기에 거의 없다가 8,000스텝 이후 급격히 늘었다.[^r1]
+R1-Zero의 **학습 곡선에서 정답률과 함께 오른 것이 응답 길이**였다.
+학습 문제에 대한 평균 응답 길이는 처음 수백 토큰에서 약 1만 스텝 뒤 1만 5천 토큰 안팎까지 늘었고,
+"wait" 같은 반성 표현도 학습 초기에는 거의 없다가 후반에 급격히 늘었다.[^r1]
 보상은 정답과 형식만 보았는데도 길이와 되돌아보기가 늘었으므로,
-저자들은 모델이 더 많은 사고 시간을 들여 추론 task를 푸는 법을 스스로 배웠다고 해석했다.
-그런데 곡선 전체가 같은 설정에서 나오지는 않았다.
-저자들은 8,200스텝에서 최대 출력 길이를 32,768토큰에서 65,536토큰으로 늘렸고,
-그 지점에서 성능과 응답 길이가 함께 크게 뛰었다고 밝혔다.[^r1]
-8,000스텝 부근의 길이 도약과 "wait"의 급증은 모두 출력 한도를 바꾼 시점과 가깝다.
+저자들은 모델이 더 많은 사고 시간을 들여 추론 task를 푸는 법을 스스로 배웠다고 해석했다.[^r1]
 
-<Figure src="https://media.springernature.com/lw1200/springer-static/image/art%3A10.1038%2Fs41586-025-09422-z/MediaObjects/41586_2025_9422_Fig1_HTML.png" alt="두 개의 선 그래프. 왼쪽 a는 DeepSeek-R1-Zero의 학습 스텝(0에서 1만)에 따른 AIME 정확도로, pass@1(파란색)이 약 0.16에서 0.78로, 응답 16개의 다수결 cons@16(빨간색)이 약 0.25에서 0.87로 오르며 둘 다 사람 참가자 평균(녹색 점선, 약 0.38)을 넘는다. 오른쪽 b는 같은 기간 응답당 평균 길이로, 약 500토큰에서 출발해 꾸준히 늘다가 8,000스텝 부근에서 크게 뛰어 1만 스텝 무렵 1만 2천에서 1만 5천 토큰 사이를 오간다." caption="R1-Zero의 학습 중 AIME 2024 정확도(a, 응답 하나의 정답률 pass@1과 응답 16개 다수결의 정답률 cons@16)와 학습 문제에 대한 평균 응답 길이(b). 길이 곡선의 8,000스텝 부근 도약은 최대 출력 길이를 늘린 시점과 겹친다." source="DeepSeek-AI · Guo, D., et al. (2025), Nature 645, Fig. 1 · CC BY 4.0 · 수정 없음" />
-
-[그림 출처](https://doi.org/10.1038/s41586-025-09422-z) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
+<Figure src="https://media.springernature.com/lw1200/springer-static/image/art%3A10.1038%2Fs41586-025-09422-z/MediaObjects/41586_2025_9422_Fig1_HTML.png" alt="두 개의 선 그래프. 왼쪽 a는 DeepSeek-R1-Zero의 학습 스텝(0에서 1만)에 따른 AIME 정확도로, pass@1(파란색)이 약 0.16에서 0.78로, 응답 16개의 다수결 cons@16(빨간색)이 약 0.25에서 0.87로 오르며 둘 다 사람 참가자 평균(녹색 점선, 약 0.38)을 넘는다. 오른쪽 b는 같은 기간 응답당 평균 길이로, 약 500토큰에서 출발해 꾸준히 늘다가 8,000스텝 부근에서 크게 뛰어 1만 스텝 무렵 1만 2천에서 1만 5천 토큰 사이를 오간다." caption="R1-Zero의 학습 중 AIME 2024 정확도(a, 응답 하나의 정답률 pass@1과 응답 16개 다수결의 정답률 cons@16)와 학습 문제에 대한 평균 응답 길이(b). 길이 곡선의 8,000스텝 부근 도약은 최대 출력 길이를 늘린 시점과 겹친다." source="Guo et al. (2025), Figure 1 · CC BY 4.0" />
 
 두 가지 주의가 필요하다.
-첫째, 이 행동이 RL에서 처음 생긴 것인지는 분명하지 않다.
-Liu 등은 RL을 하기 전의 Qwen2.5-Math base model이 이미 자기 점검 표현을 내며,
-DeepSeek-V3-Base도 그런 표현을 낸다고 보고했다.
-같은 연구에서 R1-Zero의 응답은 자기 점검 표현이 더 잦았지만,
-그 표현의 유무는 정답률과 양의 상관을 보이지 않았다.[^drgrpo]
-RLVR 노트에서 본 R1-Zero의 "aha moment"는 없던 행동의 출현이라기보다 있던 행동의 빈도 증가로 읽는 편이 안전하다.
-둘째, 길이 증가에는 목적함수의 몫도 있다.
-정책 최적화 노트에서 본 것처럼 GRPO(group relative policy optimization)의 길이 정규화는 긴 오답을 덜 벌하며,
-이 편향을 없앤 Dr. GRPO에서는 오답의 길이 증가가 억제되었다.[^drgrpo]
+첫째, 이 행동은 RL에서 처음 생긴 것이 아니다.
+Liu 등은 RL 전의 base model(Qwen2.5-Math, DeepSeek-V3-Base)도 이미 자기 점검 표현을 내며,
+그 표현의 유무가 정답률과 양의 상관을 보이지 않았다고 보고했다.[^drgrpo]
+"aha moment"는 없던 행동의 출현이라기보다 있던 행동의 빈도 증가로 읽는 편이 안전하다.
+둘째, 이전 노트에서 배운대로 길이 증가에는 GRPO(group relative policy optimization)의 길이 정규화가 긴 오답을 덜 벌하는 편향도 한몫한다.[^drgrpo]
 응답이 길어졌다는 사실만으로 추론이 나아졌다고 볼 수는 없다.
 
 ### 2-2. SFT 데이터의 선별과 구조 학습
@@ -115,33 +104,26 @@ RLVR 노트에서 본 R1-Zero의 "aha moment"는 없던 행동의 출현이라�
 이처럼 추론 모델의 출력으로 다른 모델을 SFT해 능력을 옮기는 방법을 distillation이라 하고, 출력을 내는 모델을 teacher, 그 출력으로 배우는 모델을 학생이라 부른다.
 
 Muennighoff 등이 만든 s1에서는 풀이 예시의 수보다 선별이 결과를 더 크게 좌우했다.
-저자들은 Gemini의 사고 과정이 달린 문제 약 5만 9천 개에서 1,000개(s1K)를 골라 Qwen2.5-32B-Instruct를 SFT했다.[^s1]
-선별 기준은 형식이 깨진 예시를 걸러 내는 품질,
-Qwen2.5-7B·32B-Instruct가 이미 맞히는 문제를 빼는 난이도,
-수학 분야 분류에 따라 고르게 뽑는 다양성의 셋이었다.
-정답 여부는 기준에 없어서, 앞의 rejection sampling과 달리 틀린 풀이도 남았다.
-같은 크기로 무작위로 고르거나, 다양성만 보거나, 풀이가 가장 긴 것만 고른 1,000개는 AIME 2024에서 s1K보다 크게 뒤처졌고,
-5만 9천 개 전체로 학습한 경우는 s1K와 비슷한 성능에 GPU(graphics processing unit) 시간이 약 56배 들었다.[^s1]
-강한 출발 모델과 잘 고른 데이터라는 조건 아래의 결과다.
+저자들은 Gemini의 사고 과정이 달린 문제 약 5만 9천 개에서 품질·난이도·다양성을 기준으로 1,000개(s1K)를 골라 Qwen2.5-32B-Instruct를 SFT했다.
+무작위로 고른 1,000개는 AIME 2024에서 s1K보다 크게 뒤처졌고,
+5만 9천 개 전체로 학습해도 s1K와 비슷한 성능에 GPU(graphics processing unit) 시간만 약 56배 들었다.[^s1]
 
 long CoT 풀이 예시에서 모델이 무엇을 배우는지는 학습 데이터를 일부러 망가뜨려 보면 드러난다.
-Li 등은 Qwen2.5-32B-Instruct를 QwQ-32B-Preview의 정답 풀이 4,618개로 SFT하면서 데이터를 여러 방식으로 바꿔 보았다.
-풀이에 등장하는 숫자의 각 자리 중 70%를 골라 무작위 숫자로 바꾸어도 수학 벤치마크 넷의 평균 정답률은 망가뜨리지 않은 데이터로 학습한 경우(66.3%)보다 4.3%p 낮았을 뿐이고,
-"wait" 같은 반성 표현이 든 문장을 모두 지워도 3.3%p 낮았다.
-반면 최종 해답 부분은 그대로 두고 사고 과정만 단계로 나눠 67%의 단계를 뒤섞자 평균 정답률이 9.1%p 떨어졌다.[^structure]
-저자들은 이 설정에서 모델이 long CoT 풀이 예시로부터 주로 배운 것이 단계들이 논리적으로 이어지는 구조라고 해석한다.
-그래도 숫자를 전부 바꾸면 정답률이 무너졌으므로 내용도 무시할 수 없다.[^structure]
+Li 등은 Qwen2.5-32B-Instruct를 QwQ-32B-Preview의 정답 풀이로 SFT하면서 데이터를 여러 방식으로 바꿔 보았다.
+풀이 속 숫자의 70%를 무작위로 바꾸거나 "wait" 같은 반성 표현이 든 문장을 지워도 평균 정답률은 3~4%p 떨어지는 데 그쳤지만,
+사고 과정의 단계 순서를 뒤섞자 9.1%p 떨어졌다.[^structure]
+저자들은 모델이 long CoT 풀이 예시로부터 주로 배운 것이 내용보다 단계들이 논리적으로 이어지는 구조라고 해석한다.
 
 ### 2-3. 두 경로의 차이
 
 두 경로는 함께 쓰이지만 모델에 남기는 것은 같지 않다.
 Huan 등은 Qwen3-14B-Base를 같은 수학 문제로 SFT(더 큰 모델의 정답 풀이)와 RL(정답 여부만 보상하는 GRPO)로 각각 학습했다.
 수학 점수는 둘 다 크게 올랐지만 추론이 아닌 task의 평균은 SFT 모델에서 크게 떨어지고 RL 모델에서는 오히려 올랐다.[^transfer]
-Shenfeld 등은 여러 task에서, 새 task를 학습하며 기존 task의 성능이 떨어지는 망각(forgetting)의 정도가 학습 중인 새 task의 입력에서 잰 base model과의 KL(Kullback–Leibler) 발산으로 잘 예측된다는 것을 보였다.
-저자들의 설명으로는 RL은 모델 자신이 낸 응답을 보상으로 재가중하므로 base model 근처의 해를 고르고,
+Shenfeld 등은 새 task를 학습하며 기존 task의 성능이 떨어지는 망각(forgetting)의 정도가
+새 task의 입력에서 잰 base model과의 KL(Kullback–Leibler) 발산, 즉 출발 분포에서 얼마나 멀어졌는지로 잘 예측된다는 것을 보였다.[^razor]
+RL은 모델 자신이 낸 응답을 보상으로 재가중하므로 base model 근처에 머물고,
 SFT는 고정된 외부 정답에 맞추므로 그 정답이 모델의 분포에서 멀면 그만큼 멀리 이동한다.
-통제된 작은 실험에서는 새 task를 모두 맞히는 분포 가운데 base model에 가장 가까운 것을 골라 SFT하면 RL보다도 덜 잊었다.[^razor]
-갈림길은 학습 방법의 이름보다 출발 분포에서 얼마나 이동하는가에 있고,
+따라서 망각을 가르는 것은 학습 방법의 이름보다 이동 거리이고,
 teacher의 풀이 분포가 학생의 출발 분포에서 멀면 distillation SFT에서도 망각 위험이 커질 수 있다.
 
 ## 3. 추론 시 계산의 배분
@@ -365,7 +347,7 @@ Chen 등(Anthropic)은 문제 프롬프트에 특정 답을 가리키는 힌트(
 [^cot]: Wei, J., et al. (2022). Chain-of-Thought Prompting Elicits Reasoning in Large Language Models. *NeurIPS 2022*. [arXiv:2201.11903v6](https://arxiv.org/abs/2201.11903v6).
 [^zscot]: Kojima, T., et al. (2022). Large Language Models are Zero-Shot Reasoners. *NeurIPS 2022*. [arXiv:2205.11916v4](https://arxiv.org/abs/2205.11916v4).
 [^o1]: OpenAI. (2024). Learning to Reason with LLMs. *OpenAI Blog*. [openai.com](https://openai.com/index/learning-to-reason-with-llms/).
-[^r1]: DeepSeek-AI. (2026). DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning. [arXiv:2501.12948v2](https://arxiv.org/abs/2501.12948v2). 게재판: Guo, D., et al. (2025). DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning. *Nature*, 645, 633–638. [doi:10.1038/s41586-025-09422-z](https://doi.org/10.1038/s41586-025-09422-z).
+[^r1]: Guo, D., et al. (2025). DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning. *Nature*, 645, 633–638. [doi:10.1038/s41586-025-09422-z](https://doi.org/10.1038/s41586-025-09422-z).
 [^prm]: Lightman, H., et al. (2024). Let's Verify Step by Step. *ICLR 2024*. [arXiv:2305.20050](https://arxiv.org/abs/2305.20050).
 [^drgrpo]: Liu, Z., et al. (2025). Understanding R1-Zero-Like Training: A Critical Perspective. *COLM 2025*. [arXiv:2503.20783v2](https://arxiv.org/abs/2503.20783v2).
 [^qwen3]: Qwen Team. (2025). Qwen3 Technical Report. [arXiv:2505.09388v1](https://arxiv.org/abs/2505.09388v1).
