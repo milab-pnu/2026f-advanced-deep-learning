@@ -4,22 +4,24 @@ week: 5
 order: 3
 ---
 
-지금까지의 RL(reinforcement learning)에서는 모델이 프롬프트를 받아 응답을 한 번 내면 끝났다.
+import reactFig from "./assets/week05-react.png";
+import reflexionFig from "./assets/week05-reflexion.png";
+
+지금까지의 RL(reinforcement learning)에서는 LLM(large language model)이 프롬프트를 받아 응답을 한 번 내면 끝났다.
 실제 task는 검색해서 읽고 다시 검색하거나, 코드를 실행해 보고 고치거나, 사용자와 여러 턴을 주고받는 경우가 많다.
 이처럼 모델이 환경과 주고받는 여러 턴의 궤적을 보상으로 학습하는 것을 **agentic RL**이라고 부른다.[^survey]
 정책 갱신은 앞에서 본 PPO(proximal policy optimization)·GRPO(group relative policy optimization)를 거의 그대로 쓰고,
 새로 어려워지는 것은 궤적을 만들고 믿을 수 있게 채점하는 일이다.
-실제 학습에서는 정답 궤적을 따라 쓰게 하는 SFT(supervised fine-tuning)를 함께 쓰는 경우가 많다.
+실제로는 정답 궤적을 흉내 내게 하는 SFT(supervised fine-tuning)와 함께 쓰는 경우가 많다.
 
 ## 1. 단일 응답에서 궤적으로
 
 ### 1-1. 형식의 차이
 
-지금까지의 RL에서 LLM(large language model)은 프롬프트를 받아 응답을 한 번 내고 끝났고, 보상도 응답 끝에 한 번 왔다.
 Agentic RL에서는 모델이 행동(텍스트, 도구 호출)을 낼 때마다 환경이 결과(검색 결과, 실행 출력, 사용자 답)를 돌려주고,
 모델은 그 결과를 문맥에 이어 붙여 다음 행동을 정한다.
+이 주고받기가 여러 턴 이어진 뒤에야 성공 여부가 정해진다.
 학습 중에는 사람이 rollout마다 대화해 줄 수 없으므로, 사용자 역할도 보통 LLM이 흉내 낸다.
-이 주고받기가 여러 턴 이어지고, 최종 성공은 여러 턴 뒤에 정해진다.
 환경에는 모델이 직접 보지 못하는 부분(파일 시스템 전체, 검색 엔진의 색인, 사용자의 의도)이 있어서,
 모델은 돌려받은 결과로만 그 상태를 짐작한다.
 이런 문제는 부분 관측 MDP(partially observable Markov decision process, POMDP)로 모델링한다.[^survey]
@@ -35,19 +37,19 @@ Agentic RL에서는 모델이 행동(텍스트, 도구 호출)을 낼 때마다 
 
 **손실을 거는 위치.** 위 그림에서 정책이 생성한 것은 **회색 상자**(agent의 답과 도구 호출)뿐이다.
 보라 상자(사용자 발화)와 빨강 상자(데이터베이스 결과)는 환경이 넣은 것이므로, 정책의 log 확률을 올리거나 내리는 대상이 아니다.
-SFT의 loss mask가 지시 토큰을 제외한 것과 같은 논리로, SFT든 RL이든 시스템 프롬프트와 보라·빨강 토큰은 손실에서 제외한다.
+앞 주차 SFT에서 loss mask로 지시 토큰을 뺀 것과 같은 이유로, SFT든 RL이든 시스템 프롬프트와 보라·빨강 토큰은 손실에서 제외한다.
 이 토큰들은 문맥에 남아 뒤의 회색 토큰을 예측하는 조건이 된다.
 
 **보상의 귀속.** 궤적에서 어느 턴이 잘했고 어느 턴이 잘못했는지 가려 보상을 나누는 것이 credit assignment 문제다.
 최종 결과만 채점하면 사용자가 원하는 답을 받았는지로 마지막에 한 번 1 또는 0을 주고, 이 보상이 모든 회색 턴에 똑같이 간다.
 그래서 검색어를 잘못 넣었다가 고쳐서 성공한 궤적은 잘못된 호출까지 1을 받고,
 인증과 검색은 잘했는데 마지막 안내만 틀린 궤적은 잘한 호출까지 0을 받는다.
-중간 과정도 채점하면 도구 호출마다 형식과 도구·인자가 맞았는지로 턴마다 보상(process 보상)을 더한다.
+중간 과정도 채점하면 도구 호출의 형식과 도구·인자가 맞았는지에 따라 턴마다 보상(process 보상)을 더한다.
 신호는 촘촘해지지만, 정해 둔 호출 경로와 다르게 성공한 궤적은 감점될 수 있다.
 
 **생성 비용.** 그림의 궤적 하나를 만들려면 빨강 상자마다 도구 실행을, 보라 상자마다 사용자의 답을 기다려야 한다.
-이 지연이 생성에 더해지고, 궤적 길이의 분산이 커진다.
-그래서 한 궤적이 도구 결과를 기다리는 동안 다른 궤적은 계속 생성하고, 생성과 학습을 겹쳐 돌리는 비동기 설계가 더 중요해진다.
+이 대기 시간이 생성 시간에 더해지고, 궤적마다 길이 차이도 커진다.
+그래서 한 궤적이 도구 결과를 기다리는 동안 다른 궤적을 계속 생성하고 생성과 학습도 겹쳐 돌리는 비동기 설계가 더 중요해진다.
 비싸게 만든 궤적이 학습 신호를 주지 못하면 그만큼 손해도 커진다.
 
 ### 1-3. SFT 데이터와 RL 데이터
@@ -120,80 +122,105 @@ SFT 데이터에는 assistant 차례의 응답 전체(`output`)가 들어 있고
 추론(`<think>`)까지 정답으로 정해 두어야 하므로, Tool-N1은 더 강한 모델이 쓴 추론을 증류해 넣었다.
 RL 데이터에는 assistant 차례가 없다. 모델이 그 자리를 직접 생성하면, 규칙(`"style": "rule"`)이 생성된 호출을 `ground_truth`와 비교해 보상을 준다.
 그래서 추론을 주석할 필요가 없고, 인자 순서처럼 겉모습이 달라도 같은 호출이면 맞은 것으로 채점할 수 있다.
-다중 턴 데이터라면 프롬프트에 앞 턴의 호출과 도구 결과가 이력으로 들어간다.
+
+다중 턴 데이터에서는 앞 턴의 호출과 도구 결과가 이력으로 프롬프트에 들어간다.
+아래는 "티켓 상태를 확인하고, 담당자가 없으면 john_doe에게 배정해 달라"는 요청을 담은 Tool-N1 데이터를 같은 template으로 직렬화한 것이다.
+도구 결과는 user 차례 안에 `<tool_response>`로 감싸 넣는다.
+
+```text
+<|im_start|>system
+… <tools> getSupportTicketStatus, assignTicket, resolveTicket … </tools> …<|im_end|>
+<|im_start|>user
+I have an IT support ticket ID '12345'. Could you check the status of this ticket
+and if it is assigned to someone? If it isn't assigned to anyone,
+please assign it to 'john_doe'.<|im_end|>
+<|im_start|>assistant
+<tool_call> [{"name": "getSupportTicketStatus",
+              "arguments": {"ticket_id": "12345"}}]</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+[{"name": "getSupportTicketStatus", "results": {"status": "unassigned"}}]
+</tool_response><|im_end|>
+<|im_start|>assistant
+<think>…</think>
+<tool_call> [{"name": "assignTicket",
+              "arguments": {"ticket_id": "12345",
+                            "assignee": "john_doe"}}]</tool_call><|im_end|>
+```
+
+RL 데이터에서는 마지막 assistant 차례만 모델이 생성하고, 그 호출을 `ground_truth`와 비교해 채점한다.
+SFT라면 모든 assistant 차례에 손실을 걸고, `<tool_response>` 구간은 앞의 loss mask처럼 제외한다.
 
 ## 2. 프롬프팅에서 RL까지
 
-계보는 프롬프팅 논문 두 편에서 시작한다.
-ReAct는 모델이 도구·환경과 주고받는 **상호작용 형식**을 정했고,
-Reflexion은 실패한 시도의 **피드백**을 다음 시도의 문맥에 넣어, 가중치를 바꾸지 않고 행동을 고쳤다.
-다른 갈래는 모델 자체를 학습시키는 쪽이었다.
-Toolformer는 도구 호출이 든 텍스트로 가중치를 학습했고,
-이후의 function calling SFT는 구조화된 호출 형식과 대규모 합성 데이터로 대화 모델이 도구 호출을 생성하도록 학습했다.
-두 학습 방식 모두 신호는 정해진 텍스트의 다음 토큰 예측이었다.
-RL에서 두 갈래가 합쳐진다.
-환경이 판정한 결과를 Reflexion처럼 신호로 쓰면서 SFT처럼 가중치에 남긴다.
-표의 "겨냥한 한계"는 각 방법을 앞의 방법과 견주어 정리한 것이며, 원논문이 앞 방법을 직접 계승했다는 뜻은 아니다.
-
-| 방법 | 축 | 겨냥한 한계 | 학습 신호 | 학습 단위 |
-|---|---|---|---|---|
-| ReAct | 상호작용 형식 | (출발점) 추론만 하는 프롬프팅과 행동만 하는 방식이 따로 다뤄짐 | 주로 few-shot 프롬프트 | 없음(주 방법 기준) |
-| Reflexion | 피드백 활용 (문맥) | ReAct는 실패한 시도의 경험을 다음 시도로 넘기지 못함 | 환경의 성패를 말로 옮긴 반성 (가중치 갱신 없음) | 없음(반성을 기억에 쌓아 다음 시도의 문맥에 넣음) |
-| Toolformer | 가중치 학습 (자기 지도) | ReAct식 프롬프팅은 매번 예시가 필요하고 호출 시점을 학습하지 않음 | 다음 토큰 예측 | 도구 호출이 끼워진 텍스트 |
-| Function calling SFT | 가중치 학습 (합성 시연) | Toolformer는 소수의 도구를 하나씩 따로 호출하고 연쇄 호출의 예가 없음 | 다음 토큰 예측 | 도구 schema가 주어진 단일·병렬 호출, 또는 관측을 포함한 다중 턴 궤적 |
-| Search-R1 | 피드백으로 가중치 학습 (RL, 궤적 갈래) | 고정된 시연은 현재 정책이 스스로 실수한 뒤의 문맥을 충분히 덮지 못할 수 있음 | 최종 답의 정확 일치 | 검색 실행을 포함한 다중 턴 궤적 |
-| ARPO(agentic reinforced policy optimization) | 피드백으로 가중치 학습 (RL, 궤적 갈래) | Search-R1식 궤적 단위 보상은 궤적 안의 어느 구간이 좋았는지 구분 못함 | 정확성·형식 + 다중 도구 사용 보너스 | 분기로 공통 prefix를 공유하는 궤적 묶음 |
-| ToolRL | 피드백으로 가중치 학습 (RL, 단계 갈래) | SFT는 낯설거나 복잡한 도구 사용에 일반화가 약함(궤적 대신 단일 단계 호출과 보상 설계로 접근) | 형식 + 호출의 세분화된 정확성 | 이력이 주어진 다음 호출 한 단계 |
+Agent를 만드는 방법은 프롬프팅, SFT, RL의 세 방식으로 나눠 볼 수 있다.
+ReAct와 Reflexion은 가중치를 그대로 두고 프롬프트와 문맥만으로 도구를 쓰고 실패에서 배우게 했지만,
+매번 예시를 넣어야 했고 실패에서 얻은 교훈도 문맥에만 남았다.
+Toolformer와 function calling SFT는 도구 호출을 가중치에 학습시켰지만,
+신호가 정해진 시연의 다음 토큰 예측이라 정책이 스스로 실수한 뒤의 상황은 배우기 어려웠다.
+RL은 정책이 직접 만든 출력을 채점한 결과를 Reflexion처럼 신호로 쓰면서 SFT처럼 가중치에 남긴다.
+RL 쪽은 다시 궤적 전체에 보상을 주는 갈래(Search-R1, ARPO)와 호출 하나에 보상을 주는 갈래(ToolRL, Tool-N1)로 나뉜다.
 
 ### 2-1. ReAct와 Reflexion의 프롬프팅
 
-Yao 등의 ReAct는 주로 가중치 학습 없이 프롬프트만으로 도구 사용을 유도했다.[^react]
-모델이 "생각(thought)"과 "행동(action)"을 번갈아 쓰고 행동의 결과인 "관측(observation)"을 받아 다음 생각을 잇는 형식이며, few-shot 예시로 이 형식을 보여 주었다.
-질의응답과 사실 확인에서 위키백과 검색을, 상호작용 task에서 환경 명령을 행동으로 썼다.
-이 형식은 이후 agent에서 널리 쓰이게 되었지만,
-이 프롬프팅 설정에서는 매번 예시를 넣어야 하고 예시에 없는 상황에서 언제 도구를 부를지 모델이 알기 어렵다.
+ReAct(reasoning + acting)는 가중치 학습 없이 프롬프트만으로 도구 사용을 유도했다.[^react]
+이름대로 모델은 추론을 적는 "생각(thought)"과 "행동(action)"을 번갈아 쓰고, 행동의 결과인 "관측(observation)"을 받아 다음 생각을 잇는다.
+이 형식은 few-shot 예시로 보여 주었다.
+질의응답에서는 행동을 `Search[entity]`, `Lookup[keyword]`, `Finish[answer]` 세 가지로 정해 두고, 외부 코드가 이 문자열을 파싱해 위키백과를 조회한 결과를 관측으로 붙였다.
+프롬프트는 지시문, 사람이 쓴 예시 궤적, 실제 질문 순으로 이어 붙인 텍스트 하나이고, 모델은 마지막 `Thought 1:` 뒤를 이어 쓴다.
+
+```text
+Solve a question answering task with interleaving Thought, Action, Observation steps.
+Thought can reason about the current situation, and Action can be three types:
+(1) Search[entity], which searches the exact entity on Wikipedia ...
+(2) Lookup[keyword], which returns the next sentence containing keyword ...
+(3) Finish[answer], which returns the answer and finishes the task.
+Here are some examples.
+Question: …
+Thought 1: …
+Action 1: Search[…]
+Observation 1: …
+…
+Question: Aside from the Apple Remote, what other device can control the program …?
+Thought 1:
+```
+
+모델이 `Action`까지 쓰면 `Observation` 직전에서 생성을 멈추고, 코드가 행동을 실행한 결과를 `Observation`으로 붙인 뒤 다음 `Thought`를 이어 쓰게 한다.
+이 형식은 이후 agent에 널리 퍼졌지만,
+프롬프팅만으로는 매번 예시를 넣어야 하고 예시에 없는 상황에서 언제 도구를 부를지 모델이 알기 어렵다.
 또 한 번의 시도 안에서는 관측을 보고 다음 행동을 고칠 수 있지만, 시도가 실패로 끝나면 그 경험은 다음 시도로 이어지지 않는다.
+
+<Figure src={reactFig.src} alt="HotpotQA 질문 'Apple Remote가 원래 상호작용하도록 설계된 프로그램을 또 무엇으로 제어할 수 있나'에 대한 네 방식의 궤적. (1a) 바로 답하기는 iPod로 틀리고, (1b) 추론만 하는 CoT는 Apple TV라는 사실을 지어내 틀리고, (1c) 행동만 하는 방식은 검색을 반복하다 yes로 틀린다. (1d) ReAct는 Thought, Act, Obs를 번갈아 Apple Remote와 Front Row를 검색해 keyboard function keys로 맞힌다." caption="같은 질문에 대한 네 방식의 궤적." source="Yao et al. (2023), Figure 1 · CC BY 4.0" wide />
 
 Shinn 등의 Reflexion은 실패한 시도의 경험을 다음 시도로 넘기는 방법을 보였다.[^reflexion]
 Task를 한 번 수행하면 평가자가 그 궤적의 성패를 판정하고(질의응답은 정답과의 정확 일치, 코딩은 모델이 스스로 만든 단위 테스트),
 LLM이 궤적과 성패를 보고 무엇이 잘못되었고 다음에는 어떻게 할지를 글로 쓴다.
-이 반성문을 기억(episodic memory)에 쌓아 같은 task의 다음 시도 문맥에 넣는다.
-가중치를 바꾸는 대신 말로 된 피드백으로 행동을 강화한다는 뜻에서 저자들은 이를 verbal reinforcement라 불렀다.
+이 반성문을 **기억(episodic memory)에 쌓아** 같은 task의 다음 시도 문맥에 넣는다.
+**가중치를 바꾸는 대신 말로 된 피드백**으로 행동을 강화한다는 뜻에서 저자들은 이를 verbal reinforcement라 불렀다.
 그러나 모델은 그대로이고 나아진 것은 문맥뿐이다.
 반성은 같은 task의 다음 시도 문맥에 들어가므로 새 task에 그대로 쓰기 어렵고,
 문맥에 넣을 수 있는 반성의 양에도 한계가 있다.
 피드백으로 나아지는 효과를 모델에 남기려면 가중치를 학습해야 한다.
 
+<Figure src={reflexionFig.src} alt="의사 결정, 프로그래밍, 추론의 세 task 열마다 (a) task, (b) 첫 궤적, (c) 평가, (d) 반성, (e) 다음 궤적을 위에서 아래로 보인 그림. 예를 들어 추론 열에서는 두 사람의 공통 직업을 novelist와 screenwriter로 답해 환경 보상 0을 받고, 둘 다 여러 직업을 가졌다고 잘못 가정했다는 반성을 쓴 뒤 다음 시도에서 novelist로 답한다." caption="Reflexion의 한 사이클. 평가와 반성을 거쳐 다음 시도를 고친다." source="Shinn et al. (2023), Figure 1 · CC BY 4.0" wide />
+
 ### 2-2. Toolformer와 function calling의 SFT
 
-Schick 등의 Toolformer는 도구 호출을 모델에 **학습**시켰다.[^toolformer]
-계산기, 검색, 번역 같은 API(application programming interface)를 어디에 끼워 넣으면 다음 토큰 예측이 좋아지는지를 모델 자신이 생성·검증해 학습 데이터를 만들고,
-그 데이터로 언어 모델을 자기 지도 방식으로 fine-tuning했다.
-검증의 기준은 뒤 토큰의 예측 손실이다.
-"Out of 1400 participants, 400 (or 29%) passed"에서 "29%" 자리에 `[Calculator(400 / 1400) → 0.29]`를 끼워 넣었을 때 "29%"부터 이어지는 토큰들의 손실이 충분히 줄면 그 호출을 남긴다.
-다만 도구마다 호출을 따로 만들었으므로, 한 도구의 결과를 다른 도구의 입력으로 쓰는 연쇄 호출의 예는 학습 데이터에 없었다.
+Toolformer는 사람이 호출 위치를 표시하지 않고도 계산기, 검색, 번역 같은 API(application programming interface) 호출을 **모델에 학습**시켰다.[^toolformer]
+호출이 쓸모 있는지는 그 자리에서 도구 결과를 알았을 때 뒤의 글을 더 쉽게 맞히는지, 즉 모델 자신의 손실이 줄어드는지로 판단한다.
+"Out of 1400 participants, 400 (or 29%) passed"에서 모델은 "29%"를 맞히기 어렵지만
+앞에 `[Calculator(400 / 1400) → 0.29]`가 있으면 쉽게 맞힌다.
+그래서 먼저 일반 텍스트에서 모델이 호출할 만한 위치와 호출을 후보로 생성하고 실제로 실행해 결과를 얻는다.
+그다음 호출과 결과를 끼워 넣었을 때의 뒤 토큰 손실이,
+아무것도 넣지 않았을 때와 결과 없이 호출만 넣었을 때보다 모두 충분히 작은 호출만 남긴다.
+학습 데이터에는 `→` 앞의 호출과 뒤의 결과가 모두 채워진 텍스트가 들어간다.
+이 텍스트로 다음 토큰 예측을 다시 학습하면 모델은 도움이 되는 자리에서 스스로 호출을 쓰게 되고
+추론 때는 `→`가 나오면 생성을 멈추고 도구를 실행해 결과를 붙인 뒤 이어 쓴다.
 
 지금의 대화 모델은 도구를 흔히 **function calling** 형식으로 쓴다.
-도구마다 이름, 설명, 인자의 이름과 타입을 JSON Schema로 적어 모델에 주고,
+앞에서 본 데이터처럼 도구마다 이름, 설명, 인자를 JSON Schema로 적어 시스템 프롬프트에 주면,
 모델은 자유 텍스트 대신 "어떤 도구를 어떤 인자로 부를지"를 구조화된 호출로 낸다.
 실행은 모델 밖의 코드가 맡고, 그 결과는 tool 역할의 메시지로 대화에 다시 들어간다.
-Hugging Face Transformers의 chat template은 이 대화를 다음과 같은 메시지 목록으로 다룬다.[^hf-tools]
-
-```python
-tools = [get_current_temperature]  # 이름·인자·docstring으로 JSON Schema를 만든다
-messages = [
-    {"role": "user", "content": "지금 파리 기온이 몇 도야?"},
-    {"role": "assistant", "tool_calls": [{"type": "function", "function": {
-        "name": "get_current_temperature",
-        "arguments": {"location": "Paris, France", "unit": "celsius"}}}]},
-    {"role": "tool", "content": "22"},          # 실행 결과는 항상 문자열로 넣는다
-    {"role": "assistant", "content": "지금 파리는 섭씨 22도입니다."},
-]
-```
-
-각 모델의 chat template은 이 목록을 그 모델의 특수 토큰을 쓴 문자열로 바꾸고, 모델이 생성한 호출 문자열은 외부 코드가 파싱해 실행한다.
-SFT에서는 assistant 차례의 토큰(호출과 최종 답)에만 손실을 걸고 tool 메시지는 mask하도록 설정할 수 있다.
-이렇게 하면 앞에서 본 관측 토큰의 mask가 SFT 단계부터 들어간다.
 
 이런 대화를 사람이 대량으로 쓰기는 어려워서 학습 데이터를 합성하는 경우가 많다.
 특히 호출 결과를 보고 다음 호출을 정하는 다중 턴 궤적이 있어야 연쇄 호출을 배운다.
@@ -229,14 +256,8 @@ Search-R1의 rollout은 다음 순서로 돈다.
 6. 행동 횟수를 하나 늘리고, 최대 행동 수에 이르지 않았으면 2로 돌아간다.
 
 끝난 궤적은 최종 답을 정답과 비교해 채점하고, 그 보상으로 PPO나 GRPO를 써서 정책을 갱신한다.
-여기서 보듯 잘못된 형식의 출력, 도구 실행의 오류나 timeout, 예산 소진은 각각 처리 방식을 정해야 하는 설계 선택이다.
-Search-R1은 잘못된 형식을 다시 생각하라는 관측으로 돌려주고 예산이 다하면 그대로 끝내 채점한다.
-오류를 관측으로 돌려주면 정책이 복구를 배울 기회가 생기고,
-궤적을 끝내고 보상 0을 주면 형식 실수에 강한 벌이 된다.
-검색 서버 장애처럼 정책의 잘못이 아닌 실패에 보상 0을 주면 정책이 하지 않은 실수를 벌하게 되므로,
-그런 궤적은 학습에서 빼는 선택도 있다.
-또 파일을 고치거나 데이터베이스를 바꾸는 환경이라면 그룹의 각 궤적은 같은 초기 상태의 독립된 사본에서 시작해야 한다.
-한 궤적이 바꾼 상태 위에서 다른 궤적이 시작하면 그룹 안의 비교가 공정하지 않다.
+Search-R1처럼 형식 오류를 관측으로 돌려주면 정책이 복구를 배울 기회가 생기고,
+검색 서버 장애처럼 정책의 잘못이 아닌 실패는 보상 0을 주는 대신 학습에서 뺄 수 있다.
 
 <Callout type="example">
 **두 턴 궤적의 mask와 누적 보상.** "소설 『채식주의자』의 작가가 노벨 문학상을 받은 해는?"이라는 질문에
@@ -253,8 +274,6 @@ Search-R1 형식으로 답하는 교육용 궤적을 보자.
 정책 갱신의 확률비와 log 확률은 mask가 1인 두 구간의 토큰에서만 계산한다.
 최종 답이 맞아 보상 1을 받았고 중간 보상은 없다면, 각 턴의 누적 보상(앞 주차 PPO의 $G_t$처럼 그 턴부터 끝까지 받은 보상의 합)은 둘 다 1이다.
 여기에 "검색어가 형식을 지켰는가"에 대한 process 보상 0.1을 턴 1에 더하면 턴 1의 누적 보상은 1.1, 턴 2는 1이 된다.
-최종 보상을 두 턴에 임의로 반씩 나누지는 않는다.
-각 턴은 자기 뒤에 온 보상의 합을 받는다.
 PPO에서는 단순한 추정이라면 이 누적 보상에서 value model의 예측을 빼 advantage를 구하고, 이 값이 갱신 방향을 정한다.
 중간 보상 없이 최종 outcome 보상만 쓰는 GRPO에서는 궤적의 최종 보상을 같은 질문의 다른 궤적들과 비교해 정규화한 값을 그 궤적의 모든 정책 토큰에 준다.
 이 궤적과 같은 질문의 다른 궤적들이 모두 1을 받았다면 advantage가 0이 되어 학습 신호가 사라진다.
@@ -268,7 +287,7 @@ mask를 적용했을 때 성능 향상이 더 크고 학습이 더 안정적이�
 ### 2-4. ARPO의 분기 rollout
 
 Search-R1처럼 궤적 단위로 보상을 주는 GRPO를 그대로 쓰면 궤적 안의 어느 구간이 좋았는지 구분하지 못한다.
-Dong 등의 ARPO는 도구 결과가 돌아온 직후 정책의 entropy가 급격히 오른다는 관측에서 출발했다.[^arpo]
+Dong 등의 ARPO(agentic reinforced policy optimization)는 도구 결과가 돌아온 직후 정책의 entropy가 급격히 오른다는 관측에서 출발했다.[^arpo]
 새 정보를 받은 직후에 모델이 특히 불확실해진다는 뜻이다.
 그래서 ARPO는 rollout 예산의 일부로만 궤적을 처음부터 따로 만들고,
 나머지는 도구 결과 뒤에 entropy가 크게 오른 지점에서 궤적을 여러 갈래로 분기해 이어 생성하는 데 쓴다.
@@ -280,10 +299,9 @@ Dong 등의 ARPO는 도구 결과가 돌아온 직후 정책의 entropy가 급�
 예를 들어 한 prefix에서 갈라진 두 분기 중 하나는 성공하고 하나는 실패했다면,
 공통 토큰은 두 신호를 합친 만큼 움직이고,
 갈라진 뒤의 토큰은 성공한 쪽은 확률이 오르고 실패한 쪽은 내려간다.
-다만 갈라진 뒤의 구간 안에서 어느 행동이 성패에 기여했는지는 여전히 나누지 못하며,
-단계별 기여를 직접 판정하는 방법은 아니다.
-보상은 정확성과 형식에 더해, 정답을 내면서 검색과 코드 실행을 함께 쓴 궤적에 작은 보너스를 준다.
+다만 갈라진 뒤의 구간 안에서 어느 행동이 성패에 기여했는지는 여전히 나누지 못한다.
 
+보상은 정확성과 형식에 더해, 정답을 내면서 검색과 코드 실행을 함께 쓴 궤적에 작은 보너스를 준다.
 수학·지식 질의응답·심층 검색 벤치마크에서 ARPO는 궤적 단위 RL보다 성능이 높았고,
 학습 중 도구 호출은 GRPO보다 적게 썼다.[^arpo]
 
@@ -296,13 +314,18 @@ Qian 등의 ToolRL은 SFT가 낯설거나 복잡한 도구 사용에 잘 일반�
 정답 호출과 비교해 도구 이름·인자 이름·인자 값이 각각 맞는지를 나누어 점수를 주는 세분화된 정확성 보상을 두었다.
 예를 들어 정답 호출이 `search(query="한강", year=2024)`인데 모델이 `search(query="한강", year=2023)`을 냈다면,
 도구 이름과 인자 이름은 맞고 인자 값 하나만 틀렸으므로 0점이 아니라 부분 점수를 받는다.
-Instruct 모델에서 출발해 GRPO로 학습했다.[^toolrl]
-원논문은 도구 호출 데이터로 SFT를 더 한 뒤 RL을 하는 것보다 Instruct 모델에서 바로 RL을 시작하는 편이 그 실험에서 나았고,
-보상을 세분화하면 학습이 안정적이었다고 보고한다.[^toolrl]
+Instruct 모델에서 출발해 GRPO로 학습했고, 보상을 세분화하면 학습이 안정적이었다고 보고한다.[^toolrl]
+
+<Figure src="https://raw.githubusercontent.com/qiancheng0/ToolRL/8cee13ec0ca72f0461da372a93a6fd8140dbb840/assets/reward.png" alt="대화 이력을 받아 정책이 여러 rollout을 생성하고, 각 rollout을 형식 보상과 정확성 보상의 합으로 채점하는 그림. 형식 보상은 think와 tool_call 태그를 지켰는지로 1 또는 0을 준다. 정확성 보상은 정답 호출과 비교해 도구 이름 집합, 인자 이름 집합, 인자 값의 일치를 각각 비율로 채점해 더하므로, 도구 하나를 잘못 고른 rollout도 부분 점수를 받는다." caption="ToolRL의 형식 보상과 부분 점수를 주는 정확성 보상." source="Qian et al. (2025), ToolRL 저장소 그림 · Apache-2.0" wide />
+
 앞에서 데이터를 본 Tool-N1은 반대로 형식과 도구 이름·인자가 모두 맞을 때만 1점을 주는 이진 보상을 썼다.[^tooln1]
 형식이나 도구 이름만 맞아도 부분 점수를 주는 설정과 비교하면 그 실험에서는 이진 보상이 더 나았고,
 원논문은 부분 점수가 겉모습만 맞춘 호출에도 보상을 주어 reward hacking을 부른다고 해석한다.[^tooln1]
+
+<Figure src="https://raw.githubusercontent.com/NVlabs/Tool-N1/f9b48492c7894dcdfeb0431def8bda24249a4e9c/assets/overview.png" alt="질의와 도구 목록을 담은 학습 데이터로 정책이 여러 rollout을 생성하고, 규칙 기반 보상이 형식과 도구 호출이 모두 맞으면 1, 아니면 0을 준다. think 태그를 잘못 쓴 rollout은 형식 오류, 인자 값을 us 대신 uk로 쓴 rollout은 호출 오류로 0을 받고, 둘 다 맞은 rollout만 1을 받는다. 보상과 reference model의 KL loss로 정책을 갱신한다." caption="Tool-N1의 이진 보상." source="Zhang et al. (2025), Tool-N1 저장소 그림 · Apache-2.0" />
+
 두 결과는 process 보상이 신호를 촘촘하게 하는 대신 겉모습을 맞추는 쪽으로 최적화될 수 있다는 장단점을 양쪽에서 보여 준다.
+한편 두 논문 모두 도구 호출 데이터로 SFT를 먼저 한 뒤 RL을 하는 것이 Instruct 모델에서 바로 RL을 하는 것보다 꼭 낫지는 않았다고 보고한다.[^toolrl][^tooln1]
 
 정답 호출이 주석된 데이터만 있으면 환경을 끝까지 돌리지 않고도 RL을 구성할 수 있다는 것이 이 갈래의 장점이다.
 대신 보상이 정해진 정답 호출과의 일치이므로,
@@ -321,6 +344,8 @@ Instruct 모델에서 출발해 GRPO로 학습했다.[^toolrl]
 Task 하나에는 저장소, 고칠 내용을 적은 이슈, 코드를 실제로 돌릴 수 있는 실행 환경, 수정이 맞는지 확인할 단위 테스트가 들어 있다.
 정책은 파일을 찾아 읽고, 코드를 고치고, 실행해 결과를 보는 일을 여러 턴 되풀이한 뒤 최종 patch를 낸다.
 그 patch에 테스트를 돌려 통과하면 성공이다.
+정책이 파일을 고치므로, 같은 task의 그룹 안 궤적은 각각 같은 초기 상태의 독립된 사본에서 시작해야 한다.
+한 궤적이 바꾼 저장소 위에서 다른 궤적이 시작하면 그룹 안의 비교가 공정하지 않다.
 SWE-bench는 이 형식을 갖춘 대표적인 평가 세트인데,
 평가 세트로 학습하면 그 점수를 믿을 수 없으므로 학습에는 같은 형식이면서 평가와 겹치지 않는 task가 따로 필요하다.
 Pan 등의 SWE-Gym은 SWE-bench와 겹치지 않는 Python 저장소에서 GitHub 이슈와 그것을 해결한 pull request를 모아,
@@ -342,8 +367,6 @@ Liu 등은 도구 호출 agent의 학습과 평가를 함께 점검했다.[^liu2
 도구 호출 RL에서는 이런 프롬프트가 대부분이었다.
 
 <Figure src="https://arxiv.org/html/2606.00135v2/figs/efficiency/zero-variance2.png" alt="Qwen3-4B를 다중 턴 도구 호출 데이터로 RL 학습하는 동안 step별로, rollout 보상에 분산이 있는 유효 프롬프트의 비율(파란 선, 약 0.1–0.2)과 모든 rollout이 최대 보상을 받은 프롬프트의 비율(주황 선, 약 0.8–0.9)을 그린 그래프" caption="다중 턴 도구 호출 RL에서 유효 프롬프트(rollout 보상에 분산이 있는 프롬프트, 파란 선)와 모든 rollout이 최대 보상을 받은 프롬프트(주황 선)의 비율. 학습 내내 유효 프롬프트는 일부뿐이고 나머지 대부분은 이미 다 맞히는 프롬프트다." source="Liu et al. (2026), Figure 4 오른쪽 · CC BY 4.0" />
-
-[라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 앞에서 본 DAPO(decoupled clip and dynamic sampling policy optimization)의 dynamic sampling은 이런 그룹을 버리고 다시 뽑아 배치를 채우지만,
 버린 만큼 생성을 다시 해야 하고,
@@ -414,7 +437,6 @@ MacDiarmid 등이 실제 학습 환경 가운데 해킹에 취약한 코딩 환�
 [^react]: Yao, S., et al. (2023). ReAct: Synergizing Reasoning and Acting in Language Models. *ICLR 2023*. [arXiv:2210.03629](https://arxiv.org/abs/2210.03629).
 [^reflexion]: Shinn, N., et al. (2023). Reflexion: Language Agents with Verbal Reinforcement Learning. *NeurIPS 2023*. [arXiv:2303.11366v4](https://arxiv.org/abs/2303.11366v4).
 [^toolformer]: Schick, T., et al. (2023). Toolformer: Language Models Can Teach Themselves to Use Tools. *NeurIPS 2023*. [arXiv:2302.04761](https://arxiv.org/abs/2302.04761).
-[^hf-tools]: Hugging Face. (2026). Tool use. *Transformers documentation v5.19.0*. [huggingface.co](https://huggingface.co/docs/transformers/v5.19.0/en/chat_extras).
 [^toolllm]: Qin, Y., et al. (2024). ToolLLM: Facilitating Large Language Models to Master 16000+ Real-world APIs. *ICLR 2024*. [arXiv:2307.16789](https://arxiv.org/abs/2307.16789).
 [^kimik2]: Kimi Team. (2025). Kimi K2: Open Agentic Intelligence. [arXiv:2507.20534v2](https://arxiv.org/abs/2507.20534v2).
 [^searchr1]: Jin, B., et al. (2025). Search-R1: Training LLMs to Reason and Leverage Search Engines with Reinforcement Learning. *COLM 2025*. [arXiv:2503.09516v5](https://arxiv.org/abs/2503.09516v5).
