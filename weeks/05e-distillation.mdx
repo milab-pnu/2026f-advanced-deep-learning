@@ -8,6 +8,13 @@ order: 4
 응답 하나가 수천에서 수만 토큰이고, 학습 중에 그런 응답을 계속 생성하고 채점해야 한다.
 이미 좋은 행동을 익힌 모델이 있다면, 다른 모델이 그 모델에게서 직접 배우게 할 수 있다.
 <strong>Distillation(지식 증류)</strong>은 teacher 모델의 출력이나 출력 분포로 학생 모델을 학습하는 방법이다.[^survey]
+이 노트는 distillation 방법을 두 축으로 나눈다.
+하나는 학습할 응답(문맥)을 **누가 만드는가**이고, 다른 하나는 응답의 위치마다 teacher에게서 **무엇을 받는가**다.
+
+| | 위치마다 토큰 하나 | 위치마다 분포 전체 |
+|---|---|---|
+| teacher가 응답을 만듦 | teacher 응답을 정답처럼 학습 | teacher 응답 위에서 teacher 분포를 맞춤 |
+| 학생이 응답을 만듦 | 학생이 뽑은 토큰의 teacher 확률을 신호로 씀 | 학생 응답 위에서 teacher 분포를 맞춤 |
 
 ## 1. Teacher 출력의 모방
 
@@ -69,11 +76,11 @@ SeqKD만 쓰면 teacher의 확률 분포 없이 생성한 텍스트만으로 학
 ### 1-2. 추론 응답의 전달
 
 LLM(large language model)의 응답 기반 증류는 teacher가 만든 시퀀스를 정답처럼 학습한다는 SeqKD의 발상을 이어받았다.
-앞 주차 SFT(supervised fine-tuning)에서 본 Alpaca도 teacher(text-davinci-003)가 만든 응답을 그대로 SFT했다.
+앞 주차 SFT(supervised fine-tuning)에서 본 Alpaca도 teacher가 만든 응답을 그대로 SFT했다.
 추론 모델에서는 빔 서치 출력 하나 대신 응답을 여러 개 생성하고 정답으로 거른 것을 쓰는 경우가 많으며, DeepSeek-R1이 이렇게 했다.
-데이터는 RLVR(reinforcement learning with verifiable rewards) 노트에서 본 R1 파이프라인의 rejection sampling 단계에서 만든 약 80만 건(추론 약 60만 건, 일반 약 20만 건)이다.
-이 데이터로 Qwen2.5 계열 base model들을 SFT만 했더니 32B 모델이 AIME 2024에서 72.6%를 냈다.
-같은 Qwen2.5-32B base에 R1-Zero 방식으로 대규모 RL을 직접 적용한 모델은 47.0%였다.[^r1]
+데이터는 RLVR(reinforcement learning with verifiable rewards) 노트에서 본 R1 파이프라인의 rejection sampling 단계에서 만든 것이다.
+이 데이터로 작은 base model을 SFT만 한 모델이,
+같은 base model에 R1-Zero 방식으로 대규모 RL을 직접 한 모델보다 수학 벤치마크 점수가 훨씬 높았다.[^r1]
 저자들은 큰 모델에서 찾은 추론 패턴을 옮기는 데는 작은 모델에 RL을 돌리는 것보다 distillation이 낫다고 결론지었다.
 Long CoT(long chain of thought) 노트에서 본 Yue 등의 관찰에서도 distillation한 모델은 base model이 내지 못한 풀이를 냈다.[^yue]
 
@@ -82,7 +89,7 @@ Long CoT(long chain of thought) 노트에서 본 Yue 등의 관찰에서도 dist
 
 다만 off-policy distillation의 효과는 데이터가 덮는 영역에 묶인다.
 Gudibande 등은 ChatGPT의 출력으로 SFT한 모델이 문체는 닮았지만, 모방 데이터가 충분히 다루지 않은 task에서는 ChatGPT와의 격차가 거의 줄지 않았다고 보고했다.[^imitation]
-R1이 보고한 향상도 데이터가 집중된 추론 영역(데이터의 약 75%가 수학·코드)의 벤치마크에서 나왔다.
+R1이 보고한 향상도 데이터 대부분을 차지한 수학·코드 영역의 벤치마크에서 나왔다.
 
 ### 1-3. 문맥 불일치와 감독 정보의 한계
 
@@ -104,8 +111,7 @@ Off-policy distillation은 매 토큰에 손실을 주므로 신호가 드물지
 teacher가 다른 후보를 얼마나 그럴듯하게 보았는지는 전해지지 않는다.
 또 그 감독은 teacher의 문맥에서만 주어지므로, 학생이 다른 길로 갔을 때 그 길이 얼마나 나쁜지,
 어느 토큰에서 갈렸는지는 알려 주지 않는다.
-즉 **누가 문맥을 만드는가**(teacher 또는 학생)와 **위치마다 무엇을 맞추는가**(토큰 하나 또는 분포 전체)는 서로 다른 축이고,
-off-policy distillation은 두 축 모두에서 좁은 쪽에 있다.
+도입의 표로 보면 off-policy distillation은 두 축 모두에서 좁은 칸에 있다.
 앞에서 본 soft target은 둘째 축만 넓힌다.
 
 ## 2. 학생 문맥에서의 증류
@@ -151,7 +157,8 @@ Forward KL은 토큰마다의 로그 비를 teacher의 확률로, reverse KL은 
 용량이 작은 학생은 teacher가 낮은 확률을 준 토큰에도 확률을 나누다 품질이 낮은 생성을 할 수 있다.
 Reverse KL을 최소화하면 학생이 teacher가 높은 확률을 준 토큰에 집중하는 mode-seeking 성향이 나타나 이 문제를 피하는 대신 다양성이 줄어든다.
 실험에서도 reverse KL 쪽으로 갈수록 생성의 다양성이 줄었고, 최적의 divergence는 task에 따라 달랐다.
-T5 계열 실험에서 on-policy GKD는 요약·번역·산술 추론 모두에서 정답 응답 위에서 teacher 분포를 맞추는 supervised KD와 teacher 응답을 SFT하는 SeqKD를 앞섰다.[^gkd]
+다양성이 줄면 학생이 프롬프트마다 풀이 전략 하나로 모여 long CoT 노트에서 본 커버리지($\mathrm{pass}@k$)가 줄 수 있으므로, $\mathrm{pass}@1$과 $\mathrm{pass}@k$를 함께 비교한다.
+실험에서 on-policy GKD는 요약·번역·산술 추론 모두에서 정답 응답 위에서 teacher 분포를 맞추는 supervised KD와 teacher 응답을 SFT하는 SeqKD를 앞섰다.[^gkd]
 
 ### 2-3. 전체 분포와 표본 토큰의 학습
 
@@ -204,14 +211,14 @@ GKD처럼 어휘 전체의 분포나 상위 $k$개 후보의 분포를 맞추려
 
 ### 2-4. 추론 모델의 적용과 비용
 
-Qwen3는 작은 모델(0.6B–14B dense와 30B-A3B MoE(mixture of experts))의 post-training을 큰 teacher 모델에서의 distillation으로 했다.[^qwen3]
+Qwen3는 작은 모델들의 post-training을 큰 teacher 모델에서의 distillation으로 했다.[^qwen3]
 먼저 teacher 모델들이 thinking·non-thinking 두 모드로 만든 응답을 SFT하는 **off-policy** 단계로 기본 추론과 모드 전환을 익히고,
-다음으로 학생이 생성한 응답에서 teacher(Qwen3-32B 또는 235B-A22B)의 로짓에 맞춰 KL divergence를 줄이는 **on-policy** 단계를 둔다.
-같은 off-policy 단계를 거친 8B 모델에서 출발해 비교하면,
-RL을 한 경우 AIME 2024 점수 67.6에 GPU-hours 17,920이었고,
-on-policy distillation을 한 경우 74.4에 GPU-hours 1,800이었다.[^qwen3]
+다음으로 학생이 생성한 응답에서 teacher의 로짓에 맞춰 KL divergence를 줄이는 **on-policy** 단계를 둔다.
+같은 off-policy 단계를 거친 모델에서 출발해 비교하면,
+on-policy distillation이 RL보다 수학 벤치마크 점수가 높으면서 GPU 시간은 약 10분의 1이었다.[^qwen3]
 이 비교는 보고서가 명시한 수학·코드 질의 실험에 한정되며, teacher가 이미 있는 상황의 비교다.
 Teacher를 만드는 RL 비용은 따로 든다.
+또 이 비교에서 on-policy distillation 뒤 큰 $k$의 $\mathrm{pass}@k$는 오히려 조금 올라, 커버리지가 반드시 줄지는 않았다(KL의 방향은 명시되지 않았다).[^qwen3]
 
 ## 3. Multi-teacher distillation
 
@@ -240,7 +247,7 @@ teacher가 학생보다 나은 점은 자기 영역에서 RL을 더 받았다는
 Teacher들은 서로 독립적으로, 병렬로 만들 수 있고,
 학생은 가중치 평균이 아니라 정책 공간에서 영역별로 다른 teacher를 따른다.
 
-Qwen3-30B-A3B 실험에서 MOPD의 학생은 수학·지시 따르기·소프트웨어 공학 세 영역 모두에서 출발점과 teacher 사이 격차의 91–95%를 메웠고,
+MOPD의 학생은 수학·지시 따르기·소프트웨어 공학 세 영역 모두에서 출발점과 teacher 사이 격차를 대부분 메웠고,
 세 영역의 정규화 점수를 평균한 비교에서 영역을 섞어 RL하거나 차례로 RL한 경우, teacher 응답을 SFT한 경우, teacher 가중치를 병합한 경우보다 높았다.
 지시 따르기와 소프트웨어 공학에서는 혼합 RL보다 훨씬 적은 학습 샘플로 teacher 수준에 도달했는데(전문 teacher를 만드는 비용은 뺀 비교다),
 저자들은 이를 토큰마다 오는 조밀한 신호가 궤적당 한 번 오는 보상보다 표본 효율이 높기 때문이라고 설명한다.[^mopd]
@@ -283,25 +290,19 @@ Qwen3-30B-A3B 실험에서 MOPD의 학생은 수학·지시 따르기·소프트
 <text x="300" y="320" font-size="11" text-anchor="middle" fill="#64748b">점선: 출발점에서 초기화 · 가는 실선: 학생 응답의 전달과 라우팅(흐린 선은 선택되지 않은 경로)</text>
 <text x="300" y="336" font-size="11" text-anchor="middle" fill="#64748b">굵은 실선: 선택된 teacher의 토큰별 신호(수학 예시)</text>
 </svg>
-<figcaption>MOPD의 세 단계. 영역별 teacher를 같은 출발점에서 병렬로 만들고, 학생은 자기가 생성한 응답의 토큰마다 프롬프트 영역에 맞는 teacher의 분포를 따른다. 그림은 수학 프롬프트가 수학 teacher로 라우팅된 경우를 진하게, 나머지 경로를 흐리게 보인다. 자체 구성, Ma et al. (2026) §3의 절차에 근거.</figcaption>
+<figcaption>MOPD의 세 단계. 영역별 teacher를 같은 출발점에서 병렬로 만들고, 학생은 자기가 생성한 응답의 토큰마다 프롬프트 영역에 맞는 teacher의 분포를 따른다. 그림은 수학 프롬프트가 수학 teacher로 라우팅된 경우를 진하게, 나머지 경로를 흐리게 보인다.</figcaption>
 </figure>
 
 ## 4. 적용 조건과 실패
 
 On-policy distillation은 off-policy의 문제를 줄여 주지만 여전히 실패할 수 있다.
-서베이가 원인별로 묶은 실패 가운데 먼저 점검할 것은 둘이다.[^survey]
-
-- **틀린 prefix의 함정**(flawed prefix trap).
-  학생이 이미 틀린 prefix를 만들면 teacher도 그런 문맥을 학습 때 거의 보지 못했으므로,
-  그 위에서 내는 다음 토큰 분포를 믿기 어렵다.
-  DAgger 이론의 가정이 바로 여기서 깨진다.
-  학생에게 너무 어려운 프롬프트에서 초반 오류가 반복되고 teacher가 그런 문맥에 믿을 만한 감독을 주지 못하면,
-  학습 신호가 잡음에 묻힐 수 있다.
-  학생의 정답률이 너무 낮은 프롬프트 비율을 따로 보는 것이 출발점이다.
-- **다양성의 붕괴.** Reverse KL처럼 mode-seeking인 목적함수를 강하게 걸면 학생이 프롬프트마다 풀이 전략 하나로 모여,
-  long CoT 노트에서 본 커버리지($\mathrm{pass}@k$)가 줄 수 있다.
-  GKD 실험에서 관찰한 생성 다양성의 감소와 이어지는 현상이므로 같은 생성 예산에서 $\mathrm{pass}@1$과 $\mathrm{pass}@k$를 함께 비교한다.
-  다만 앞의 Qwen3 비교에서는 on-policy distillation 뒤 AIME 2024의 $\mathrm{pass}@64$가 조금 올라, on-policy distillation이 커버리지를 반드시 줄이지는 않았다(수학·코드에서의 한 비교이고 KL의 방향은 명시되지 않았다).[^qwen3]
+서베이가 원인별로 묶은 실패 가운데 먼저 점검할 것은 **틀린 prefix의 함정**(flawed prefix trap)이다.[^survey]
+학생이 이미 틀린 prefix를 만들면 teacher도 그런 문맥을 학습 때 거의 보지 못했으므로,
+그 위에서 내는 다음 토큰 분포를 믿기 어렵다.
+DAgger 이론의 가정이 바로 여기서 깨진다.
+학생에게 너무 어려운 프롬프트에서 초반 오류가 반복되고 teacher가 그런 문맥에 믿을 만한 감독을 주지 못하면,
+학습 신호가 잡음에 묻힐 수 있다.
+학생의 정답률이 너무 낮은 프롬프트 비율을 따로 보는 것이 출발점이다.
 
 그리고 모든 distillation은 teacher를 전제한다.
 Teacher를 만드는 비용과 teacher의 편향이 그대로 조건이 된다.
