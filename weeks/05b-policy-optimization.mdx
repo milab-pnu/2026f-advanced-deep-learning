@@ -5,34 +5,36 @@ order: 1
 ---
 
 앞 주차 RLHF(reinforcement learning from human feedback)에서 본 PPO(proximal policy optimization)는 value model로 advantage를 추정했다.
-검증 보상으로 긴 추론을 학습하는 RLVR(reinforcement learning with verifiable rewards)에서는 사정이 다르다.[^survey]
-응답이 수천 토큰이고 보상은 끝에 한 번뿐이며, 같은 문제의 응답을 여러 개 뽑는 것이 자연스럽다.
+검증 보상으로 긴 추론을 학습하는 RLVR(reinforcement learning with verifiable rewards)에서는 다르다.[^survey]
+응답이 수천 토큰이고 보상은 끝에 한 번뿐이며, 같은 문제에 대한 응답을 여러 개 뽑는 것이 자연스럽다.
 그래서 RLVR의 정책 최적화는 value model 대신 같은 문제의 응답끼리 비교하는 GRPO(group relative policy optimization)에서 출발했고, 그 식의 각 부분을 고친 변형들이 뒤따랐다.
 
-## 1. Value model 없는 정책 갱신
+## 1. Value model 없는 Policy optimization
 
 ### 1-1. PPO의 비용과 응답 단위 baseline
 
-토큰마다 advantage $\hat A_t$를 value model의 예측 $\hat V(s_t)$로 추정하는 PPO의 설계는($s_t$는 토큰 $t$를 고르기 직전까지의 문맥)
+토큰마다 advantage $\hat A_t$를 value model의 예측 $\hat V(s_t)$로 추정하는 PPO의 설계는
 언어 모델의 RLVR에서 두 가지 부담이 된다.
-첫째, 정책과 비슷한 크기의 value model을 따로 두면 메모리와 계산이 그만큼 더 든다.
+첫째, 정책과 비슷한 크기의 reward model, value model을 따로 두면 메모리와 계산이 그만큼 더 든다.
 둘째, 보상이 응답 끝에 한 번만 주어지는 긴 응답에서 토큰마다 "앞으로 받을 보상의 기대값"을 정확히 배우기는 어렵고,
 value 예측이 부정확하면 그 예측을 기준으로 계산한 advantage에도 오차가 들어간다.
 
-Ahmadian 등은 RLHF처럼 보상이 응답 단위로 주어지는 설정이 사실상 bandit 문제에 가깝다고 지적했다.
-보상이 응답 전체에 한 번 오므로 응답 하나를 행동 하나로 보면 상태 전이가 없고,
-강한 사전학습 모델에서 출발하므로 저자들의 실험에서 policy gradient의 분산이 학습을 방해할 만큼 크지 않았다는 것이다.[^rloo]
-그렇다면 토큰마다 value를 배우는 대신 같은 프롬프트에서 뽑은 다른 응답들을 기준으로 삼을 수 있다.
-저자들은 각 응답의 baseline을 같은 프롬프트의 나머지 응답들의 보상 평균으로 두고, 확률비와 clipping 없이 REINFORCE에 그대로 붙이는 RLOO(REINFORCE leave-one-out)를 RLHF에 적용해,
-value model 없이도 요약과 대화 task에서 PPO를 앞섰다고 보고했다.[^rloo]
-보상이 $[1,0,1,0]$이면 첫 응답의 baseline은 나머지 셋의 평균 $1/3$이고 advantage는 $2/3$이다.
+Action의 단위를 바꾸어 이 문제를 피했다.[^rloo]
+PPO는 다음 토큰 하나를 action으로 보았기 때문에 토큰마다 value가 필요했다.
+그런데 보상은 응답 끝에 한 번만 오므로, 응답 전체를 action 하나로 보는 편이 자연스럽다.
+그러면 토큰마다 value를 배울 필요 없이, **같은 프롬프트에 응답을 여러 개 뽑아 서로 비교**하면 된다.
+나머지 응답들의 평균 보상을 baseline으로 삼아, 이보다 나은 응답은 확률을 올리고 못한 응답은 내린다.
+보상이 $[1,0,1,0]$이면 첫 응답의 baseline은 나머지 셋의 평균 $1/3$이고 advantage는 $1-1/3=2/3$이다.
+자기 자신을 빼고(leave-one-out) 평균을 내는 이 방법이 RLOO(REINFORCE leave-one-out)다.
+RLOO는 응답을 만든 옛 정책과 갱신 중인 정책의 차이를 보정하는 PPO의 확률비 $\pi_\theta/\pi_{\theta_{\mathrm{old}}}$도, 그 비율을 자르는 clipping도 쓰지 않는다.
+Reference model과의 KL penalty는 RLHF처럼 보상에 넣어 그대로 두었다.
+RLOO가 요약과 대화 task에서 PPO를 앞섰다고 보고했다.
 
 ### 1-2. GRPO의 목적함수
 
 DeepSeekMath의 GRPO도 같은 프롬프트의 응답들을 baseline으로 쓰되, PPO의 확률비와 clipping은 그대로 두었다.[^deepseekmath]
 프롬프트 $x$마다 옛 정책 $\pi_{\theta_{\mathrm{old}}}$에서 응답 $G$개 $\{y_1,\dots,y_G\}$를 뽑고,
 RLVR 노트에서 본 것처럼 각 응답의 보상 $R_i$를 그룹 안에서 정규화해 advantage로 쓴다.
-이 노트의 계산 예시는 표준편차의 분모를 $G$로 두며,
 구현에서는 0으로 나누기를 피하는 작은 상수를 분모에 더한다.
 
 $$
@@ -53,9 +55,8 @@ $\rho_{i,t}=\pi_\theta(y_{i,t}\mid x,y_{i,<t})/\pi_{\theta_{\mathrm{old}}}(y_{i,
 GRPO는 같은 배치로 여러 번 갱신할 수 있게 설계되어, 응답을 만든 $\pi_{\theta_{\mathrm{old}}}$와 갱신 중인 $\pi_\theta$의 차이를 이 비율로 보정한다.
 두 정책이 많이 멀어지면 clipping에 걸려 policy 항의 gradient가 사라지는 토큰이 늘며,
 생성 엔진과 학습기의 수치 차이나 비동기 학습의 정책 지연도 같은 차이를 만든다.
-KL 항은 앞 주차 RLHF의 PPO와 달리 보상에 섞지 않고 목적함수에 직접 넣으며,
-토큰마다 $\frac{\pi_{\mathrm{ref}}}{\pi_\theta}-\log\frac{\pi_{\mathrm{ref}}}{\pi_\theta}-1$로 추정한다.
-이 값은 표본마다 0 이상이다.[^deepseekmath]
+KL 항은 앞 주차 RLHF의 PPO와 달리 보상에 섞지 않고 목적함수에 직접 넣는다.
+보상에 섞으면 토큰마다 보상이 달라져 응답 전체가 같은 advantage를 받는 계산이 복잡해지기 때문이다.[^deepseekmath]
 
 <Callout type="example">
 **응답 네 개의 GRPO advantage.** 한 문제에 대한 응답 네 개의 보상이 $[1,0,1,0]$이라고 하자.
@@ -76,15 +77,17 @@ $[0,0,0,0]$도 마찬가지다.
 
 보상이 모두 같은 그룹은 policy 항의 신호를 주지 않으므로,
 한 문제가 학습 신호를 줄 확률은 그 그룹에 정답과 오답이 섞여 나올 확률이다.
-응답들이 서로 독립이고 응답 하나의 정답 확률이 $p$라는 교육용 가정에서 이 확률은 다음과 같다.
+응답들이 서로 독립이고 응답 하나의 정답 확률이 $p$라면 이 확률은 다음과 같다.
 
 $$
 P(\text{유효 그룹})=1-p^G-(1-p)^G
 $$
 
 정답률이 10%인 어려운 문제라면 $G=4$에서 약 34%, $G=8$에서 약 57%다.
-$G$를 키우면 신호를 얻을 가능성은 커지지만 프롬프트당 생성 비용도 $G$에 비례해 는다.
 $G=1$이면 그룹 평균이 자기 보상이라 advantage가 항상 0이다.
+$G$를 키우면 신호를 얻을 가능성은 커지지만 프롬프트당 생성 비용도 $G$에 비례해 늘고,
+같은 생성 예산이라면 한 배치에 담을 수 있는 프롬프트 수가 그만큼 준다.
+일반적으로, $G$를 8~16 정도로 고정하는 경우가 많다.
 
 ## 2. GRPO의 문제별 분기
 
