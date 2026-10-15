@@ -132,7 +132,7 @@ Muennighoff 등이 만든 s1에서는 **풀이 예시의 수보다 선별**이 �
 
 ### 2-3. 두 방법의 차이
 
-Chu 등은 같은 모델을 같은 task로 SFT와 RL로 각각 학습한 뒤, 프롬프트에 적어 주는 규칙만 바꿔 평가했다.
+Chu 등은 SFT로 한 번 초기화한 모델에서 출발해 같은 task로 SFT를 더 하는 경우와 RL을 하는 경우를 비교하되, 평가 때는 프롬프트에 적어 주는 규칙만 바꿨다.
 카드 네 장으로 24를 만드는 task라면, 학습 때는 프롬프트에 "J·Q·K는 모두 10"이라고 적고 평가 때는 "11·12·13"으로 바꿔 적는 식이다.
 RL 모델은 바뀐 규칙을 따라 계산했지만, SFT 모델은 학습 때의 계산 습관에 묶여 새 규칙에서 오히려 성능이 떨어졌다.
 저자들은 이를 "SFT는 외우고 RL은 일반화한다"로 요약했다.
@@ -158,13 +158,13 @@ SFT는 외부에서 주어진 정답에 맞추므로 그 정답이 모델의 분
 
 | 방법 | 어떻게 하나 |
 |---|---|
-| 여러 번 풀기 | 같은 문제를 서로 독립적으로 여러 번 풀고 그중 하나를 고른다 |
+| 여러 번 풀기 | 같은 문제를 서로 독립적으로 여러 번 풀고, 다수결이나 검증기 점수로 답을 고른다 |
 | 고쳐 쓰기 | 앞의 풀이를 보고 다시 풀기를 여러 번 반복한다 |
 | 단계별 탐색 | 풀이를 단계마다 여러 갈래로 뻗되, 유망한 갈래만 이어 쓴다 |
 | 길게 생각하기 | 풀이 하나를 더 길게 쓴다 |
 
 <figure>
-<svg viewBox="0 0 640 276" role="img" aria-label="추론 시 계산을 더 쓰는 네 방식을 나란히 그린 그림. 각 칸 위에 문제 상자가 있다. 여러 번 풀기는 문제에서 풀이 네 개가 한 층으로 갈라져 그중 하나를 최종 답으로 고른다(깊이 1, 개수 N). 고쳐 쓰기는 풀이가 한 줄로 네 번 이어져 앞 풀이를 보고 다시 쓰며 마지막이 최종 답이다(깊이 N). 단계별 탐색은 트리 구조로, 첫 단계 세 갈래 중 하나를 버리고 남은 두 갈래가 각각 둘로 갈라진 뒤 다시 둘을 버리고, 남은 갈래를 이어 써서 하나를 최종 답으로 고른다. 길게 생각하기는 문제 아래에 긴 막대 하나로 풀이 하나를 길게 쓰는 것을 나타낸다. 아래 범례는 검은 원이 최종 답, 회색 원이 풀이, 점선 원이 버린 갈래다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 640 276" role="img" aria-label="추론 시 계산을 더 쓰는 네 방식을 나란히 그린 그림. 각 칸 위에 문제 상자가 있다. 여러 번 풀기는 문제에서 풀이 네 개가 한 층으로 갈라지고, 네 풀이가 다수결 또는 최고 점수 상자로 모여 최종 답 하나가 된다(깊이 1, 개수 N). 고쳐 쓰기는 풀이가 한 줄로 세 번 이어져 앞 풀이를 보고 다시 쓰고, 세 풀이가 모두 다수결 또는 최고 점수 상자로 모여 최종 답 하나가 된다(깊이 N). 단계별 탐색은 트리 구조로, 각 마디가 완성된 풀이가 아니라 풀이 한 단계를 뜻하는 네모다. 매 단계 네 후보 가운데 두 개만 남기고 나머지 둘을 점선으로 버리며, 남은 두 개가 각각 두 갈래로 이어져 다시 네 후보가 된다. 마지막 단계에서는 가지를 치지 않고, 완성된 네 풀이 가운데 하나를 최종 답으로 고른다. 길게 생각하기는 문제 아래에 긴 막대 하나로 풀이 하나를 길게 쓰는 것을 나타낸다. 아래 범례는 검은 원이 최종 답, 회색 원이 풀이 전체, 회색 네모가 풀이 한 단계, 점선이 버린 갈래다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
 <text x="80" y="24" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">여러 번 풀기</text>
 <text x="80" y="42" font-size="11" text-anchor="middle" fill="#64748b">따로 N번 풀기</text>
 <rect x="52" y="56" width="56" height="24" rx="6" fill="#f8fafc" stroke="#0f172a"/>
@@ -174,48 +174,65 @@ SFT는 외부에서 주어진 정답에 맞추므로 그 정답이 모델의 분
 <line x1="80" y1="80" x2="64" y2="142" stroke="#0f172a" stroke-width="1.5"/>
 <circle cx="64" cy="150" r="8" fill="#e2e8f0" stroke="#0f172a"/>
 <line x1="80" y1="80" x2="96" y2="142" stroke="#0f172a" stroke-width="1.5"/>
-<circle cx="96" cy="150" r="8" fill="#0f172a" stroke="#0f172a"/>
+<circle cx="96" cy="150" r="8" fill="#e2e8f0" stroke="#0f172a"/>
 <line x1="80" y1="80" x2="128" y2="142" stroke="#0f172a" stroke-width="1.5"/>
 <circle cx="128" cy="150" r="8" fill="#e2e8f0" stroke="#0f172a"/>
-<text x="80" y="236" font-size="11" text-anchor="middle" fill="#64748b">그중 하나를 고름</text>
+<line x1="32" y1="158" x2="80" y2="180" stroke="#0f172a" stroke-width="1.5"/>
+<line x1="64" y1="158" x2="80" y2="180" stroke="#0f172a" stroke-width="1.5"/>
+<line x1="96" y1="158" x2="80" y2="180" stroke="#0f172a" stroke-width="1.5"/>
+<line x1="128" y1="158" x2="80" y2="180" stroke="#0f172a" stroke-width="1.5"/>
+<rect x="22" y="180" width="116" height="22" rx="6" fill="#f8fafc" stroke="#0f172a"/>
+<text x="80" y="195" font-size="10" text-anchor="middle" fill="#0f172a">다수결 또는 최고 점수</text>
+<line x1="80" y1="202" x2="80" y2="207" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="80" cy="215" r="8" fill="#0f172a" stroke="#0f172a"/>
 <text x="240" y="24" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">고쳐 쓰기</text>
 <text x="240" y="42" font-size="11" text-anchor="middle" fill="#64748b">앞 풀이를 보고 다시</text>
 <rect x="212" y="56" width="56" height="24" rx="6" fill="#f8fafc" stroke="#0f172a"/>
 <text x="240" y="72" font-size="12" text-anchor="middle" fill="#0f172a">문제</text>
-<line x1="240" y1="80" x2="240" y2="102" stroke="#0f172a" stroke-width="1.5"/>
-<circle cx="240" cy="110" r="8" fill="#e2e8f0" stroke="#0f172a"/>
-<text x="270" y="114" font-size="10" text-anchor="middle" fill="#64748b">1번째</text>
-<line x1="240" y1="118" x2="240" y2="137" stroke="#0f172a" stroke-width="1.5"/>
-<circle cx="240" cy="145" r="8" fill="#e2e8f0" stroke="#0f172a"/>
-<text x="270" y="149" font-size="10" text-anchor="middle" fill="#64748b">2번째</text>
-<line x1="240" y1="153" x2="240" y2="172" stroke="#0f172a" stroke-width="1.5"/>
-<circle cx="240" cy="180" r="8" fill="#e2e8f0" stroke="#0f172a"/>
-<text x="270" y="184" font-size="10" text-anchor="middle" fill="#64748b">3번째</text>
-<line x1="240" y1="188" x2="240" y2="207" stroke="#0f172a" stroke-width="1.5"/>
+<line x1="240" y1="80" x2="222" y2="93" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="222" cy="100" r="8" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="192" y="104" font-size="10" text-anchor="middle" fill="#64748b">1번째</text>
+<line x1="222" y1="108" x2="222" y2="118" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="222" cy="126" r="8" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="192" y="130" font-size="10" text-anchor="middle" fill="#64748b">2번째</text>
+<line x1="222" y1="134" x2="222" y2="144" stroke="#0f172a" stroke-width="1.5"/>
+<circle cx="222" cy="152" r="8" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="192" y="156" font-size="10" text-anchor="middle" fill="#64748b">3번째</text>
+<line x1="222" y1="160" x2="222" y2="180" stroke="#0f172a" stroke-width="1.5"/>
+<line x1="229" y1="104" x2="276" y2="180" stroke="#0f172a" stroke-width="1.5"/>
+<line x1="229" y1="130" x2="262" y2="180" stroke="#0f172a" stroke-width="1.5"/>
+<rect x="182" y="180" width="116" height="22" rx="6" fill="#f8fafc" stroke="#0f172a"/>
+<text x="240" y="195" font-size="10" text-anchor="middle" fill="#0f172a">다수결 또는 최고 점수</text>
+<line x1="240" y1="202" x2="240" y2="207" stroke="#0f172a" stroke-width="1.5"/>
 <circle cx="240" cy="215" r="8" fill="#0f172a" stroke="#0f172a"/>
-<text x="270" y="219" font-size="10" text-anchor="middle" fill="#64748b">4번째</text>
 <text x="400" y="24" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">단계별 탐색</text>
 <text x="400" y="42" font-size="11" text-anchor="middle" fill="#64748b">유망한 갈래만 이어 씀</text>
 <rect x="372" y="56" width="56" height="24" rx="6" fill="#f8fafc" stroke="#0f172a"/>
 <text x="400" y="72" font-size="12" text-anchor="middle" fill="#0f172a">문제</text>
-<line x1="400" y1="80" x2="355" y2="107" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3"/>
-<circle cx="355" cy="115" r="8" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="3 2"/>
-<line x1="400" y1="80" x2="395" y2="107" stroke="#0f172a" stroke-width="1.5"/>
-<circle cx="395" cy="115" r="8" fill="#e2e8f0" stroke="#0f172a"/>
-<line x1="400" y1="80" x2="445" y2="107" stroke="#0f172a" stroke-width="1.5"/>
-<circle cx="445" cy="115" r="8" fill="#e2e8f0" stroke="#0f172a"/>
-<line x1="395" y1="123" x2="380" y2="157" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3"/>
-<circle cx="380" cy="165" r="8" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="3 2"/>
-<line x1="395" y1="123" x2="410" y2="157" stroke="#0f172a" stroke-width="1.5"/>
-<circle cx="410" cy="165" r="8" fill="#e2e8f0" stroke="#0f172a"/>
-<line x1="445" y1="123" x2="430" y2="157" stroke="#0f172a" stroke-width="1.5"/>
-<circle cx="430" cy="165" r="8" fill="#e2e8f0" stroke="#0f172a"/>
-<line x1="445" y1="123" x2="460" y2="157" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3"/>
-<circle cx="460" cy="165" r="8" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="3 2"/>
-<line x1="410" y1="173" x2="410" y2="207" stroke="#0f172a" stroke-width="1.5"/>
-<circle cx="410" cy="215" r="8" fill="#e2e8f0" stroke="#0f172a"/>
-<line x1="430" y1="173" x2="430" y2="207" stroke="#0f172a" stroke-width="1.5"/>
-<circle cx="430" cy="215" r="8" fill="#0f172a" stroke="#0f172a"/>
+<line x1="400" y1="80" x2="340" y2="108" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<rect x="333" y="108" width="14" height="14" rx="3" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="3 2"/>
+<line x1="400" y1="80" x2="380" y2="108" stroke="#0f172a" stroke-width="1.5"/>
+<rect x="373" y="108" width="14" height="14" rx="3" fill="#e2e8f0" stroke="#0f172a"/>
+<line x1="400" y1="80" x2="420" y2="108" stroke="#0f172a" stroke-width="1.5"/>
+<rect x="413" y="108" width="14" height="14" rx="3" fill="#e2e8f0" stroke="#0f172a"/>
+<line x1="400" y1="80" x2="460" y2="108" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<rect x="453" y="108" width="14" height="14" rx="3" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="3 2"/>
+<line x1="380" y1="122" x2="350" y2="158" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<rect x="343" y="158" width="14" height="14" rx="3" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="3 2"/>
+<line x1="380" y1="122" x2="385" y2="158" stroke="#0f172a" stroke-width="1.5"/>
+<rect x="378" y="158" width="14" height="14" rx="3" fill="#e2e8f0" stroke="#0f172a"/>
+<line x1="420" y1="122" x2="415" y2="158" stroke="#0f172a" stroke-width="1.5"/>
+<rect x="408" y="158" width="14" height="14" rx="3" fill="#e2e8f0" stroke="#0f172a"/>
+<line x1="420" y1="122" x2="450" y2="158" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<rect x="443" y="158" width="14" height="14" rx="3" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="3 2"/>
+<line x1="385" y1="172" x2="355" y2="208" stroke="#0f172a" stroke-width="1.5"/>
+<rect x="348" y="208" width="14" height="14" rx="3" fill="#e2e8f0" stroke="#0f172a"/>
+<line x1="385" y1="172" x2="385" y2="208" stroke="#0f172a" stroke-width="1.5"/>
+<rect x="378" y="208" width="14" height="14" rx="3" fill="#e2e8f0" stroke="#0f172a"/>
+<line x1="415" y1="172" x2="415" y2="208" stroke="#0f172a" stroke-width="1.5"/>
+<rect x="408" y="208" width="14" height="14" rx="3" fill="#0f172a" stroke="#0f172a"/>
+<line x1="415" y1="172" x2="445" y2="208" stroke="#0f172a" stroke-width="1.5"/>
+<rect x="438" y="208" width="14" height="14" rx="3" fill="#e2e8f0" stroke="#0f172a"/>
 <text x="400" y="236" font-size="11" text-anchor="middle" fill="#64748b">검증기가 단계마다 가지치기</text>
 <text x="560" y="24" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">길게 생각하기</text>
 <text x="560" y="42" font-size="11" text-anchor="middle" fill="#64748b">풀이 하나를 길게</text>
@@ -225,134 +242,116 @@ SFT는 외부에서 주어진 정답에 맞추므로 그 정답이 모델의 분
 <rect x="550" y="102" width="20" height="121" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
 <text x="594" y="166" font-size="10" text-anchor="middle" fill="#64748b">긴 사고</text>
 <text x="560" y="236" font-size="11" text-anchor="middle" fill="#64748b">개수는 하나</text>
-<circle cx="214" cy="262" r="6" fill="#0f172a"/>
-<text x="258" y="266" font-size="11" text-anchor="middle" fill="#64748b">최종 답</text>
-<circle cx="314" cy="262" r="6" fill="#e2e8f0" stroke="#0f172a"/>
-<text x="354" y="266" font-size="11" text-anchor="middle" fill="#64748b">풀이</text>
-<circle cx="398" cy="262" r="6" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="3 2"/>
-<text x="444" y="266" font-size="11" text-anchor="middle" fill="#64748b">버린 갈래</text>
+<circle cx="120" cy="262" r="6" fill="#0f172a"/>
+<text x="160" y="266" font-size="11" text-anchor="middle" fill="#64748b">최종 답</text>
+<circle cx="222" cy="262" r="6" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="270" y="266" font-size="11" text-anchor="middle" fill="#64748b">풀이 전체</text>
+<rect x="326" y="256" width="12" height="12" rx="3" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="384" y="266" font-size="11" text-anchor="middle" fill="#64748b">풀이 한 단계</text>
+<circle cx="452" cy="262" r="6" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="3 2"/>
+<text x="498" y="266" font-size="11" text-anchor="middle" fill="#64748b">버린 갈래</text>
 </svg>
-<figcaption>추론 시 계산을 더 쓰는 네 방식.</figcaption>
+<figcaption>추론 시 계산을 더 쓰는 네 방식. 단계별 탐색의 네모는 완성된 풀이가 아니라 풀이 한 단계이며, 검증기(PRM)는 이 부분 풀이에 점수를 매겨 이어 쓸 갈래를 고른다.</figcaption>
 </figure>
 
 앞의 셋은 풀이의 개수를, 마지막은 풀이 하나의 길이를 늘린다.
 여러 풀이 중 하나를 고르거나 유망한 갈래를 가리려면 풀이가 맞을 가능성을 점수로 매기는 모델이 필요하다.
-학습 때의 검증 보상은 정답과 비교해 채점하지만 추론 때는 정답을 모르므로, 풀이만 보고 점수를 매기도록 학습한 PRM(process reward model)을 쓴다.
+학습 때의 검증 보상은 정답과 비교해 채점하지만 추론 때는 정답을 모르므로, 풀이만 보고 점수를 매기도록 학습한 PRM(process reward model)을 쓴다.[^prm]
 
-### 3-1. 병렬 후보 선택
+### 3-1. 여러 번 풀기
 
-여러 번 생각하는 갈래가 먼저 있었다.
-Wang 등의 self-consistency는 풀이를 여러 개 뽑아 최종 답의 다수결을 취하는 방법으로,
-PaLM 540B의 GSM8K 정답률을 CoT 프롬프팅의 56.5%에서 74.4%로 17.9%p 올렸다.[^sc]
-<strong>best-of-$n$</strong>은 후보 $n$개를 생성한 뒤 검증기나 reward model의 점수가 가장 높은 하나를 고른다.
-RLVR 노트에서 본 PRM 비교가 이 방식으로 후보 1,860개 중 하나를 고른 실험이다.[^prm]
-R1-Zero의 AIME 2024 점수가 pass@1 77.9%에서 응답 16개의 다수결로 86.7%가 된 것도 이 갈래다.[^r1]
+가장 단순한 방법은 같은 문제를 여러 번 풀어 답을 모으는 것이다.
+**self-consistency**는 풀이를 여러 개 뽑아 최종 답의 다수결을 취하는 방법으로, 풀이 하나만 뽑는 CoT 프롬프팅보다 수학 문제에 대한 정답률을 크게 올렸다.[^sc]
+<strong>best-of-$n$</strong>은 후보 $n$개를 생성한 뒤 검증기 점수가 가장 높은 하나를 고른다.
 
-<Callout type="example">
-**같은 예산을 어떻게 쓸까.** 문제 하나에 생성 토큰 16,000개를 쓸 수 있다고 하자.
-이 예의 정답률은 모두 교육용 가정이다.
-4,000토큰짜리 응답 하나가 맞을 확률을 $p=0.5$,
-16,000토큰까지 길게 생각한 응답 하나가 맞을 확률을 $0.6$으로 둔다.
+### 3-2. 고쳐 쓰기
 
-- **길게 하나.** 정답률 0.6.
-- **짧게 넷, 다수결.** 응답 4개가 서로 독립이고, 틀린 응답은 매번 다른 답을 낸다고 가정하자.
-  그러면 정답이 2개 이상일 때 최다 득표가 된다(1개뿐이면 다른 답들과 1표씩 동률이라 틀린 것으로 센다).
-  정답 수 $X$가 이항분포 $\mathrm{Bin}(4,0.5)$를 따르므로 $P(X\ge2)=1-\frac{1}{16}-\frac{4}{16}=\frac{11}{16}\approx0.69$다.
-- **짧게 넷, 완벽한 검증기로 선택.** 하나라도 맞으면 고를 수 있으므로 $1-0.5^4\approx0.94$다.
-  이것이 pass@4이며, 선택 방법이 낼 수 있는 상한이다.
-  실제 검증기는 틀리고, 검증에도 계산이 든다.
-
-틀린 답들이 같은 오답으로 몰리면 다수결은 0.69보다 낮아지고,
-응답들이 강하게 양의 상관을 가져 거의 같은 성공·실패를 반복하면 넷을 뽑아도 하나를 뽑은 것과 크게 다르지 않다.
-어느 쪽이 나은지는 이 가정들에 달려 있고 문제마다 답이 다르다.
-</Callout>
-
-### 3-2. 순차 수정과 단계별 탐색
-
-병렬 후보는 서로를 보지 못한다.
-첫 풀이가 거의 맞았는데 한 군데만 틀렸다면, 처음부터 다시 뽑기보다 그 풀이를 고치는 편이 나을 수 있다.
+여러 번 풀기의 후보들은 서로를 보지 못한다.
+첫 풀이가 거의 맞았는데 한 군데만 틀렸다면, 처음부터 다시 풀기보다 그 풀이를 고치는 편이 나을 수 있다.
 Snell 등의 순차 수정은 앞선 시도들을 문맥에 넣고 새 답을 쓰게 한다.[^snell]
-단순히 "다시 생각하라"고 프롬프트를 준 것이 아니라,
-틀린 시도 뒤에 정답이 오는 궤적으로 따로 fine-tuning한 수정 모델을 썼다.
-그래도 수정이 맞던 답을 틀리게 바꾸는 경우가 있어서 최종 답은 다수결이나 검증기로 다시 골랐다.
+그럼에도 불구하고, 수정이 맞던 답을 틀리게 바꾸는 경우가 있어서, 최종 답은 여러 수정본 가운데 다수결이나 검증기로 다시 골랐다.
 
-완성된 후보만 평가하면 중간에 틀린 풀이에도 끝까지 계산을 쓴다.
-단계별 탐색은 풀이를 단계별로 생성하면서 PRM이 부분 풀이를 평가해 유망한 후보만 남기고 그 뒤를 이어 쓰게 하는 beam search 같은 방식이다.[^snell]
-교육용으로 예를 들면, 첫 단계 후보 4개 중 PRM 점수가 높은 2개만 남겨 각각 다음 단계를 2개씩 이어 쓰면 같은 생성 횟수를 유망한 풀이에 몰아줄 수 있다.
-응답을 서로 독립으로 뽑은 뒤 고르는 best-of-$n$과는 후보가 만들어지는 과정부터 다르다.
-대신 검증기가 틀린 부분 풀이에 높은 점수를 주면 탐색 전체가 그 오류를 따라간다.
+### 3-3. 단계별 탐색
 
-### 3-3. 난이도별 예산 배분
+여러 번 풀기와 고쳐 쓰기는 완성된 풀이만 평가하므로 중간에 틀린 풀이에도 끝까지 계산을 쓴다.
+단계별 탐색은 풀이를 한 단계씩 생성하면서 PRM이 부분 풀이를 평가해 유망한 갈래만 남기고 그 뒤를 이어 쓰게 한다(beam search).[^snell]
+같은 생성 횟수를 유망한 풀이에 몰아줄 수 있지만, PRM이 틀린 부분 풀이에 높은 점수를 주면 탐색 전체가 그 오류를 따라간다.
 
-Snell 등은 어느 방법이 나은지가 문제 난이도에 따라 달라진다는 관찰에서 출발했다.
-병렬 표집과 순차 수정의 비율, 그리고 단계별 탐색 방법을 문제 난이도별로 고르는 compute-optimal 전략을 제안했고,
-생성 표본 수를 계산 예산으로 둔 비교에서 이 전략은 best-of-$n$ 기준 방법보다 최대 약 4배 적은 예산(예: 64개 대신 16개)으로 비슷하거나 더 나은 성능을 냈다.[^snell]
-다만 이 배율을 그대로 배포 비용의 절약으로 읽기는 어렵다.
-난이도는 정답 판정으로 구한 oracle 난이도와 검증기 점수로 추정한 난이도의 두 가지로 실험했는데,
-배포 때는 정답을 모르므로 추정한 쪽만 쓸 수 있다.
-저자들은 난이도를 추정하는 데 드는 계산도 단순화를 위해 비교에서 뺐다고 밝혔다.[^snell]
+<Details summary="Beam search">
+Beam search는 답을 한 단계씩 만들어 가면서 매 단계에 점수가 높은 후보만 남겨 이어 가는 탐색이다.
+원래는 기계번역 같은 디코딩에서 토큰 하나를 한 단계로, 모델의 확률을 점수로 쓰던 방법이다.
+Snell 등의 단계별 탐색에서는 풀이 한 단계가 한 단계이고, PRM이 매긴 부분 풀이의 점수가 점수다.
+매 단계의 후보 수를 $N$, 남긴 후보 하나가 뻗는 갈래 수를 $M$이라 하면 다음을 반복한다.[^snell]
 
-Snell 등은 학습과 추론의 총 계산량을 맞춰, 작은 모델에 추론 시 계산을 더 쓰는 경우와 파라미터를 키운 모델도 비교했다.
-추론 부하는 사전학습 토큰 수에 대한 추론 토큰 수의 비율로 정의하고 0.16, 0.79, 22의 세 값을 비교했다.
-문제가 쉽거나 중간 난이도여서 작은 모델도 어느 정도 풀 수 있거나 추론 부하가 작을 때는 작은 모델이 약 14배 큰 모델을 앞섰다.
-반면 어려운 문제나 추론 부하가 큰 설정에서는 파라미터를 키우는 편이 나았다.[^snell]
-이 결과대로라면 추론 시 계산은 모델이 이미 어느 정도 풀 수 있는 문제에서 가장 잘 통한다.
+1. 풀이의 첫 단계를 $N$개 생성한다.
+2. PRM으로 각 부분 풀이에 점수를 매긴다.
+3. 점수가 높은 $N/M$개만 남긴다.
+4. 남은 후보마다 다음 단계를 $M$개씩 이어 써서 다시 $N$개를 만들고, 풀이가 끝날 때까지 2~4를 반복한다.
+5. 끝나면 완성된 풀이 $N$개 가운데 검증기 점수로 최종 답을 고른다.
 
-## 4. 사고 길이의 제어
+위 그림의 단계별 탐색은 $N=4$, $M=2$인 경우다.
+매 단계 4개 가운데 실선 네모 2개만 남고 점선 네모는 버려지며, 남은 2개가 2갈래씩 이어져 다시 4개가 된다.
+마지막 단계의 4개는 모두 완성된 풀이이고, 그중 검은 네모가 최종 답이다.
+</Details>
 
-### 4-1. Budget forcing과 thinking budget
+### 3-4. 난이도별 예산 배분
 
-더 길게 생각하는 갈래에서는 응답 하나의 사고 길이를 추론 때 조절하는 것이 곧 계산 예산의 조절이다.
+세 방법 중 어느 것이 나은지는 문제의 난이도에 따라 달랐다.
+Snell 등의 실험에서 쉬운 문제는 고쳐 쓰기만으로 충분했고, 어려운 문제일수록 여러 번 풀기를 섞거나 단계별 탐색을 쓰는 편이 나았다.
+가장 어려운 문제에서는 어느 방법도 성능을 거의 올리지 못했다.
+저자들은 이를 이용해 compute-optimal 전략을 제안했다.
+먼저 문제의 난이도를 검증기 점수로 추정하고, 그 난이도에서 가장 잘 통한 설정(고쳐 쓰기와 여러 번 풀기의 비율, 탐색 방법 등)으로 같은 예산을 쓰는 것이다.
+이렇게 하면 같은 성능을 best-of-$n$보다 훨씬 적은 계산으로 얻었다.[^snell]
+
+같은 계산을 모델 크기에 쓰는 것과도 비교했다.
+작은 모델에 추론 시 계산을 더 쓰면 쉽거나 중간 난이도의 문제에서는 훨씬 큰 모델을 앞섰지만,
+어려운 문제에서는 파라미터를 키우는 편이 나았다.[^snell]
+정리하면 추론 시 계산은 **모델이 가끔은 맞히는 문제에서 가장 잘 통한다.**
+전혀 못 푸는 문제에는 계산을 더 써도 소용이 없고, 이미 늘 맞히는 문제에는 더 쓸 필요가 없다.
+
+### 3-5. 길게 생각하기와 사고 예산
+
+길게 생각하는 방법에서는 응답 하나의 사고 길이를 추론 때 조절하는 것이 곧 계산 예산의 조절이다.
 s1은 이를 위해 **budget forcing**을 썼다.[^s1]
-사고를 늘릴 때는 모델이 사고 과정을 끝내려고 종료 토큰을 내면 이를 억제하고 "Wait"를 덧붙여 더 생각하게 한다.
-사고를 줄일 때는 정해진 토큰 수에서 사고 종료 구분자를 붙이고, 필요하면 "Final Answer:"도 덧붙여 지금까지의 사고로 답하게 한다.
-개입하지 않았을 때 50%이던 AIME 2024 정답률은 사고를 늘리자 57%까지 올랐지만 "Wait"를 붙이는 횟수가 여섯 번에 이르자 더 오르지 않고 평탄해졌다.[^s1]
-이 설정에서는 "더 생각하라"는 개입으로 사고 길이를 늘리자 정답률이 올랐으므로,
-long CoT의 길이가 적어도 일부는 활용 가능한 계산이라는 증거가 된다.
+사고를 늘릴 때는 모델이 사고 과정을 끝내려 하면 종료 토큰을 억제하고 "Wait"를 덧붙여 더 생각하게 한다.
+사고를 줄일 때는 정해진 토큰 수에서 사고 종료 구분자를 붙여 지금까지의 사고로 답하게 한다.
+사고를 늘리자 정답률이 올랐지만, "Wait"를 몇 번 이상 붙이면 더 오르지 않았다.[^s1]
+"더 생각하라"는 개입만으로 정답률이 올랐으므로, long CoT의 길이가 적어도 일부는 실제로 쓰이는 계산이라는 증거가 된다.
 
-Qwen3는 줄이는 쪽을 모델의 기능으로 만들었다.
-thinking mode fusion 단계에서 `/think`와 `/no_think` 표시로 사고 과정을 켜고 끄게 학습했다.
-사고 과정이 정해진 토큰 수에 이르면 "시간이 제한되어 지금까지의 사고로 답한다"는 문장을 넣어 답으로 넘어가게 하는 **thinking budget**은,
-따로 학습하지 않았는데도 이 단계에서 자연스럽게 생겼다고 저자들은 밝혔다.
-Qwen3-235B-A22B는 수학·코드·STEM(science, technology, engineering, mathematics)의 네 벤치마크에서
-예산을 늘릴수록 성능이 점진적으로 올랐다.[^qwen3]
+Qwen3는 사고 길이 조절을 모델의 기능으로 만들었다.
+`/think`와 `/no_think` 표시로 사고 과정을 켜고 끄게 학습했고,
+사고 과정이 정해진 토큰 수에 이르면 "시간이 제한되어 지금까지의 사고로 답한다"는 문장을 넣어 답으로 넘어가게 하는 **thinking budget**을 두었다.
+예산을 늘릴수록 수학·코드 등의 성능이 점진적으로 올랐다.[^qwen3]
 
-두 방식 모두에서 사고 예산은 전체 출력 한도와 다르다.
-사고 예산이 소진되면 종료 구분자나 전환 문장을 넣고, 남은 출력 한도 안에서 최종 답을 생성하게 한다.
-전체 출력 한도에 걸려 답 없이 잘린 응답은 이와 다르다.
-평가에서는 완성된 응답의 오답과 답 없이 잘린 응답을 따로 세야 예산을 줄인 효과와 잘림의 효과가 섞이지 않는다.
+### 3-6. Overthinking과 학습 단계의 길이 제어
 
-### 4-2. Overthinking과 학습 단계의 길이 제어
-
-길게 생각할수록 늘 좋아지지는 않고, 쉬운 문제에서는 긴 사고가 계산만 쓰기 쉽다.
-Overthinking을 다룬 Chen 등은 사고 과정이 공개된 QwQ-32B-Preview와 DeepSeek-R1 같은 o1-like 추론 모델이 쉬운 문제에 과하게 계산을 쓰는 **overthinking**을 측정했다.
-그들이 든 예에서 QwQ-32B-Preview는 "2+3=?"에 901토큰을 쓰며 답이 담긴 풀이를 13번 냈는데,
-첫 풀이의 39토큰에서 이미 정답 5에 도달했다.
-첫 정답 뒤의 토큰이 전체의 95% 이상이다.[^overthinking]
+길게 생각할수록 늘 좋아지지는 않는다.
+앞에서 본 대로 이미 늘 맞히는 쉬운 문제에서는 긴 사고가 계산만 쓴다.
+Chen 등은 추론 모델이 쉬운 문제에 계산을 과하게 쓰는 것을 **overthinking**이라 부르고 이를 측정했다.
+예를 들어 "2+3=?"처럼 쉬운 문제에서도 추론 모델은 첫 풀이에서 이미 정답에 도달한 뒤 같은 풀이를 여러 번 되풀이했고, 응답의 대부분이 첫 정답 뒤의 토큰이었다.[^overthinking]
 
 <Callout type="warning">
 추론 시 계산은 공짜가 아니다.
-응답이 10배 길어지면 생성해야 할 토큰 수가 10배이고,
+응답이 길어지면 생성할 토큰이 그만큼 늘고,
 KV(key-value) cache는 입력과 누적 출력의 전체 길이에 비례해 늘며 attention의 토큰당 비용도 문맥이 길어질수록 커진다.
-응답을 16개 뽑으면 생성해야 할 토큰이 16배이며, 실제 시간은 batching에 따라 달라진다.
+응답을 여러 개 뽑으면 생성할 토큰도 그 수만큼 늘어난다.
 Overthinking은 이 비용을 필요 없는 문제에 쓰는 것이다.
 </Callout>
 
-그렇다고 첫 정답 뒤의 검토가 모든 문제에서 불필요하다는 뜻은 아니어서, 저자들은 검토를 모두 지우지 않고 중복된 풀이만 걷어 냈다.
-모델 자신의 응답 가운데 이렇게 줄인 짧은 응답을 선호하고 가장 긴 응답을 피하도록 앞 주차에서 본 SimPO(simple preference optimization)로 다시 학습해 overthinking을 줄였고,
-QwQ-32B-Preview의 MATH-500 평균 출력 토큰을 2,408개에서 1,331개로 약 45% 줄이면서 정확도는 93.0%에서 92.8%로 거의 유지했다.[^overthinking]
-같은 논문의 서론은 이 감소를 48.6%로 적어 표와 맞지 않는다.
+그렇다고 첫 정답 뒤의 검토가 늘 불필요한 것은 아니어서, 저자들은 검토를 모두 지우지 않고 중복된 풀이만 걷어 냈다.
+모델 자신의 응답 가운데 이렇게 줄인 짧은 응답을 선호하고 가장 긴 응답을 피하도록 앞 주차에서 본 SimPO(simple preference optimization)로 다시 학습하자,
+정확도는 거의 유지하면서 출력 길이가 크게 줄었다.[^overthinking]
 
 보상에 길이를 직접 넣는 방법도 있다.
-Kimi k1.5는 같은 문제의 응답 길이를 최소·최대 길이로 정규화한 길이 항을 보상에 넣어, 정답이라도 길수록 보상이 낮아지고(중간 길이보다 긴 정답은 음수) 오답은 길수록 벌점이 커지게 했다.
+Kimi k1.5는 같은 문제의 응답 길이를 정규화한 길이 항을 보상에 넣어, 정답이라도 길수록 보상이 낮아지고 오답은 길수록 벌점이 커지게 했다.
 처음부터 넣으면 학습 초반의 진척이 느려져서, 이 항은 초반에는 쓰지 않다가 이후 켰다.[^kimi]
 
-## 5. 추론 능력의 평가와 경계
+## 4. 추론 능력의 평가와 경계
 
 추론 시 계산을 어떻게 쓰든, RL이 모델 자체에 무엇을 더했는지는 따로 물어야 한다.
 풀 수 있는 범위(커버리지), 성공의 안정성, 풀이의 타당성 중 무엇으로 재느냐에 따라 답이 달라진다.
 
-### 5-1. Sharpening과 커버리지
+### 4-1. Sharpening과 커버리지
 
 가장 논쟁적인 쟁점은 RLVR이 base model에 **없던** 추론 능력을 만드는지,
 아니면 base model이 이미 낼 수 있던 풀이에 확률을 몰아 더 자주 내게 하는지다.
@@ -382,7 +381,7 @@ KL penalty와 reference 정책의 주기적 재설정으로 2천 스텝 이상 R
 같은 ProRL 모델을 정답별로 센 Wu 등의 분석에서도 확장은 있었지만 축소보다 적었다.[^leash]
 출발 모델·학습 영역·표집 예산이 서로 달라 Yue, Wu, ProRL의 결과를 하나의 결론으로 합칠 수는 없다.
 
-### 5-2. 안정성·풀이 타당성·충실성
+### 4-2. 안정성·풀이 타당성·충실성
 
 pass@$k$는 $k$번 중 한 번만 맞아도 성공으로 센다.
 그 반대편에 $k$번 **모두** 맞아야 성공으로 세는 $\mathrm{pass}^k$가 있다.
