@@ -18,13 +18,12 @@ weeks:
   - { n: 7, topic: "Inference Optimization 2" }
   - { n: 8, topic: "Final Project Proposal — Open Peer Review" }
   - { n: 9, topic: "Multi-/Omni-modal LLM" }
-  - { n: 10, topic: "Diffusion Model" }
-  - { n: 11, topic: "Diffusion LLM" }
-  - { n: 12, topic: "Flow Matching, Consistency Model" }
-  - { n: 13, topic: "3D Generation, Gaussian Splatting" }
-  - { n: 14, topic: "Vision-Language-Action Model, World Model" }
-  - { n: 15, topic: "Safety" }
-  - { n: 16, topic: "Final Project — Open Peer Review" }
+  - { n: 10, topic: "Diffusion Model, Diffusion LLM" }
+  - { n: 11, topic: "Flow Matching, Consistency Model" }
+  - { n: 12, topic: "3D Generation, Gaussian Splatting" }
+  - { n: 13, topic: "Vision-Language-Action Model, World Model" }
+  - { n: 14, topic: "Safety" }
+  - { n: 15, topic: "Final Project — Open Peer Review" }
 ---
 
 ## Course Description
