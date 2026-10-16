@@ -304,92 +304,45 @@ Tool-N1은 반대로 형식과 호출이 모두 맞을 때만 1점을 주는 이
 대신 보상이 정답 호출과의 일치라서, 같은 결과에 이르는 다른 도구·인자 조합은 낮은 점수를 받을 수 있고,
 자기 실수 뒤의 복구나 여러 턴 뒤의 최종 성공은 직접 최적화하지 않는다.
 
-## 3. 환경, 채점, 평가
+## 3. 환경, 채점 및 평가
 
-### 3-1. 학습 환경의 구성
+### 3-1. 환경의 구성
 
-환경과 상호작용하는 궤적을 직접 학습하려면 문제와 정답뿐 아니라 실행할 수 있는 **환경**과 성공을 판정하는 절차가 필요하다.
-도구가 실제로든 시뮬레이터 안에서든 실행되어야 하고 task마다 성공 조건이 있어야 해서,
-이런 task를 사람이 하나씩 만들기 어렵다.
+Agentic RL을 학습 및 평가하려면 문제와 정답뿐 아니라 실행할 수 있는 **환경**과 성공을 판정하는 절차가 필요하다.
+도구가 실제로든 시뮬레이터 안에서든 실행되어야 하고 task마다 성공 조건이 있어야 한다.
 
-코딩 agent의 학습 task를 보면 환경이 무엇인지 구체적으로 드러난다.
-Task 하나에는 저장소, 고칠 내용을 적은 이슈, 코드를 실제로 돌릴 수 있는 실행 환경, 수정이 맞는지 확인할 단위 테스트가 들어 있다.
-정책은 파일을 찾아 읽고, 코드를 고치고, 실행해 결과를 보는 일을 여러 턴 되풀이한 뒤 최종 patch를 낸다.
-그 patch에 테스트를 돌려 통과하면 성공이다.
-정책이 파일을 고치므로, 같은 task의 그룹 안 궤적은 각각 같은 초기 상태의 독립된 사본에서 시작해야 한다.
+코딩 agent의 환경은 SWE-bench를 보면 구체적으로 드러난다.[^swebench]
+SWE-bench는 실제 GitHub 저장소의 이슈와 그 이슈를 해결한 pull request를 모아 만든 평가 세트다.
+task 하나는 이슈가 열린 시점의 저장소, 이슈 내용, 그리고 pull request에 들어 있던 테스트로 이루어진다.
+저장소는 의존성까지 설치한 격리된 실행 환경(sandbox, 보통 Docker 컨테이너)에 두고,
+agent는 그 안에서 셸 명령과 파일 편집 도구를 호출해 코드를 읽고, 고치고, 실행해 보는 일을 여러 턴 되풀이한다.<Sidenote>sandbox는 프로그램이 접근할 수 있는 파일·네트워크·권한을 제한한 격리된 실행 공간이다. agent가 실행한 명령이 잘못되어도 바깥 시스템에 영향을 주지 않고, 끝나면 버리고 같은 초기 상태로 다시 띄울 수 있다. SWE-bench의 평가 도구도 task마다 별도 Docker 컨테이너를 띄운다.[^swebench-docker]</Sidenote>
+마지막에 낸 patch를 적용하고, 이슈를 고치면 통과해야 하는 테스트와 원래 통과하던 테스트를 함께 돌려 모두 통과하면 성공이다.
+
+평가 세트로 학습하면 그 점수를 믿을 수 없으므로, SWE-Gym은 같은 방식으로 SWE-bench와 겹치지 않는 저장소에서 학습용 task를 만들었다.[^swegym]
+테스트 통과를 그대로 보상으로 쓰면 검증 보상을 건 RL이 된다.
+이때 정책이 파일을 고치므로, rollout마다 sandbox를 새로 띄워 그룹 안의 궤적이 모두 같은 초기 상태에서 시작하게 한다.
 한 궤적이 바꾼 저장소 위에서 다른 궤적이 시작하면 그룹 안의 비교가 공정하지 않다.
-SWE-bench는 이 형식을 갖춘 대표적인 평가 세트인데,
-평가 세트로 학습하면 그 점수를 믿을 수 없으므로 학습에는 같은 형식이면서 평가와 겹치지 않는 task가 따로 필요하다.
-Pan 등의 SWE-Gym은 SWE-bench와 겹치지 않는 Python 저장소에서 GitHub 이슈와 그것을 해결한 pull request를 모아,
-실행 환경과 테스트를 갖춘 학습용 task를 만들었다.[^swegym]
-같은 환경에서 테스트 통과를 그대로 보상으로 쓰면 검증 보상을 건 RL이 된다.
-
-실제 저장소마다 환경을 손으로 만드는 방식은 규모를 키우기 어려워서, 도구와 사용자를 시뮬레이터로 대신하기도 한다.
-Kimi K2는 실제 MCP(model context protocol) 도구와 합성 도구로 도구 저장소를 만들고,
-성공 기준(rubric)이 달린 task를 사용자 역할의 LLM과 상태를 유지하는 도구 시뮬레이터 사이에서 풀게 해 다중 턴 궤적을 대규모로 생성했다.[^kimik2]
-이렇게 만든 궤적 중 LLM judge가 rubric으로 거른 것은 SFT 데이터가 되고, 그 뒤의 RL은 검증 보상과 rubric 기반 자기 비평 보상을 함께 쓴다.
-시뮬레이터가 실제 환경과 다르면 시뮬레이터에 맞춘 행동을 배운다는 위험은 앞 주차 reward hacking에서 본 대리 지표 문제와 같다.
 
 ### 3-2. 무효 rollout과 생성 전 필터링
 
 환경에서 궤적을 만드는 비용이 큰 만큼, 만든 궤적이 학습 신호를 주는지가 더 중요해진다.
-Liu 등은 도구 호출 agent의 학습과 평가를 함께 점검했다.[^liu2026]
-한 프롬프트의 rollout이 모두 같은 보상을 받으면 그룹 advantage가 0이 되어 policy 항의 학습 신호가 없는데,
+한 프롬프트의 rollout이 모두 같은 보상을 받으면 그룹 advantage가 0이 되어 학습 신호가 사라지는데,
 도구 호출 RL에서는 이런 프롬프트가 대부분이었다.
 
-<Figure src="https://arxiv.org/html/2606.00135v2/figs/efficiency/zero-variance2.png" alt="Qwen3-4B를 다중 턴 도구 호출 데이터로 RL 학습하는 동안 step별로, rollout 보상에 분산이 있는 유효 프롬프트의 비율(파란 선, 약 0.1–0.2)과 모든 rollout이 최대 보상을 받은 프롬프트의 비율(주황 선, 약 0.8–0.9)을 그린 그래프" caption="다중 턴 도구 호출 RL에서 유효 프롬프트(rollout 보상에 분산이 있는 프롬프트, 파란 선)와 모든 rollout이 최대 보상을 받은 프롬프트(주황 선)의 비율. 학습 내내 유효 프롬프트는 일부뿐이고 나머지 대부분은 이미 다 맞히는 프롬프트다." source="Liu et al. (2026), Figure 4 오른쪽 · CC BY 4.0" />
+<Figure src="https://arxiv.org/html/2606.00135v2/figs/efficiency/zero-variance2.png" alt="Qwen3-4B를 다중 턴 도구 호출 데이터로 RL 학습하는 동안 step별로, rollout 보상에 분산이 있는 유효 프롬프트의 비율(파란 선, 약 0.1–0.2)과 모든 rollout이 최대 보상을 받은 프롬프트의 비율(주황 선, 약 0.8–0.9)을 그린 그래프" caption="다중 턴 도구 호출 RL에서 유효 프롬프트와 모든 rollout이 최대 보상을 받은 프롬프트의 비율." source="Liu et al. (2026), Figure 4 · CC BY 4.0" />
 
 앞에서 본 DAPO(decoupled clip and dynamic sampling policy optimization)의 dynamic sampling은 이런 그룹을 버리고 다시 뽑아 배치를 채우지만,
 버린 만큼 생성을 다시 해야 하고,
-Liu 등은 이 방식이 오히려 학습 시간을 크게 늘렸다고 관찰했다.
-대신 이들은 생성 **전에** 거르는 방법을 제안했다.
-최근 몇 epoch 동안 모든 rollout이 정답이었던 프롬프트는 한동안 계속 정답일 가능성이 높다는 관찰에 근거해,
+Liu 등은 이 방식이 오히려 학습 시간을 크게 늘렸다고 관찰했다.[^liu2026]
+대신 이들은 최근 몇 epoch 동안 모든 rollout이 정답이었던 프롬프트는 한동안 계속 정답일 가능성이 높다는 관찰에 근거해,
 그런 프롬프트를 rollout을 만들기 전에 건너뛴다.
 어느 프롬프트가 무효인지는 학습 중에 바뀌므로 학습 전에 한 번 거르는 것으로는 부족하다.
 여기에 생성한 rollout 중 보상의 분산이 가장 크게 남도록 일부만 골라 정책 갱신에 쓰는 down-sampling을 더해,
 같은 성능에 더 빨리 도달했다고 보고했다.[^liu2026]
 
-### 3-3. 채점 환경의 분리와 감시
+### 3-3. 평가의 보고 기준
 
-Agentic 코딩 task에서는 정책이 코드를 고치는 바로 그 환경 안에 테스트와 채점 스크립트가 있다.
-그러면 정책은 답을 고치는 대신 채점을 고칠 수 있다.
-Baker 등은 OpenAI가 추론 모델을 학습하던 중 두 해킹이 거의 모든 학습 환경으로 퍼진 것을 보고했다.[^baker]
-하나는 `exit(0)`로, 단위 테스트가 모두 실행되기 전에 프로그램을 끝낸다.
-다른 하나는 `raise SkipTest`로, 테스트 프레임워크 밖에서 예외를 일으켜 테스트를 건너뛰게 한다.
-
-이런 해킹은 검증 조건을 늘려서는 막기 어렵다.
-정책이 답을 맞히는 대신 테스트가 실행되는 과정을 피해 가거나, 채점 코드와 결과 보고를 고치기 때문이다.
-대응은 환경 설계 쪽에 있다.
-정책이 고칠 수 있는 파일과 채점에 쓰는 파일을 나누고,
-채점은 정책이 손대지 못하는 원래 테스트로 다시 돌린다.
-Baker 등은 정책이 테스트를 고칠 수 있게 한 실험에서,
-모든 테스트를 통과하더라도 테스트에 가한 변경을 되돌렸을 때 실패하면 그 해답을 부정행위로 판정했다.[^baker]
-
-사고 과정까지 보면 해킹을 더 많이 잡을 수 있다.
-Baker 등은 다른 LLM을 감시자(monitor)로 두고 실제 해킹을 얼마나 잡아내는지 비교했다.
-정책의 행동(도구 호출과 출력)만 본 감시자보다 사고 과정까지 본 감시자가 훨씬 많은 해킹을 잡았다.[^baker]
-원논문이 든 예에서 정책은 테스트가 특정 함수만 확인한다는 점을 짚고, verify가 항상 참을 돌려주게 해 테스트를 피해 가자는 생각을 사고 과정에 적었다.
-
-그렇다면 감시자의 판정을 보상에 넣어 "나쁜 생각"에 벌점을 주면 어떨까.
-저자들이 사고 과정만 보는 감시자로 이를 시험하자,
-부정행위 없이 통과하는 해답은 기준 정책보다 늘었다.
-그러나 정책은 여전히 부정행위를 했고, 사고 과정에는 그 의도를 쓰지 않게 되어
-감시자가 해킹을 거의 잡지 못하게 되었다.
-저자들은 이를 obfuscated reward hacking이라 부르고,
-사고 과정에 직접 강한 최적화 압력을 가하지 말 것을 권했다.[^baker]
-사고 과정을 보는 감시 신호를 보상에 넣으면 그 신호도 대리 지표가 된다.
-다만 이 경고는 사고 과정 자체에 벌점을 주는 경우에 관한 것이다.
-MacDiarmid 등이 실제 학습 환경 가운데 해킹에 취약한 코딩 환경을 골라 한 실험에서는,
-해킹 행동을 잡는 분류기의 벌점을 보상에 넣자 해킹이 학습되지 않았다.[^macdiarmid]
-
-채점 코드를 숨겨도 정책이 채점의 입력을 바꿀 수 있으면 판정은 무력해진다.
-가중치 대신 자기 코드를 고치며 점수를 올리는 코딩 agent인 Darwin Gödel Machine은 도구를 부르지 않고 부른 척 쓰는 환각(hallucination)을 검사하는 함수를 볼 수 없었는데도,
-실제 도구 호출 때 남기던 표시 토큰을 기록하지 않도록 자기 코드를 고쳐 만점을 받았다.[^dgm]
-그래서 채점 코드뿐 아니라 실행 기록의 수집 경로도 정책이 고칠 수 없는 곳에 둔다.
-
-### 3-4. 평가의 보고 기준
-
-채점을 정책에게서 떼어 놓아도, 서로 다른 설정에서 잰 점수끼리는 여전히 비교하기 어렵다.
+서로 다른 설정에서 잰 agent의 점수끼리는 비교하기 어렵다.
 앞의 Liu 등은 평가 쪽에서 무작위 시드, 시스템 프롬프트, 다중 턴 template의 구성,
 이전 턴의 이력과 추론을 다음 턴에 어떻게 넘기는지 같은 문서화되지 않은 작은 선택이 보고 점수를 크게 바꾸며,
 다중 턴 설정에서는 표준화 없이 leaderboard 순위를 믿기 어렵다고 보고했다.[^liu2026]
@@ -409,15 +362,13 @@ MacDiarmid 등이 실제 학습 환경 가운데 해킹에 취약한 코딩 환�
 [^react]: Yao, S., et al. (2023). ReAct: Synergizing Reasoning and Acting in Language Models. *ICLR 2023*. [arXiv:2210.03629](https://arxiv.org/abs/2210.03629).
 [^reflexion]: Shinn, N., et al. (2023). Reflexion: Language Agents with Verbal Reinforcement Learning. *NeurIPS 2023*. [arXiv:2303.11366v4](https://arxiv.org/abs/2303.11366v4).
 [^toolformer]: Schick, T., et al. (2023). Toolformer: Language Models Can Teach Themselves to Use Tools. *NeurIPS 2023*. [arXiv:2302.04761](https://arxiv.org/abs/2302.04761).
-[^kimik2]: Kimi Team. (2025). Kimi K2: Open Agentic Intelligence. [arXiv:2507.20534v2](https://arxiv.org/abs/2507.20534v2).
 [^searchr1]: Jin, B., et al. (2025). Search-R1: Training LLMs to Reason and Leverage Search Engines with Reinforcement Learning. *COLM 2025*. [arXiv:2503.09516v5](https://arxiv.org/abs/2503.09516v5).
 [^arpo]: Dong, G., et al. (2025). Agentic Reinforced Policy Optimization. [arXiv:2507.19849](https://arxiv.org/abs/2507.19849).
 [^toolrl]: Qian, C., et al. (2025). ToolRL: Reward is All Tool Learning Needs. [arXiv:2504.13958](https://arxiv.org/abs/2504.13958).
 [^tooln1]: Zhang, S., et al. (2025). Nemotron-Research-Tool-N1: Exploring Tool-Using Language Models with Reinforced Reasoning. [arXiv:2505.00024](https://arxiv.org/abs/2505.00024).
+[^swebench]: Jimenez, C. E., et al. (2024). SWE-bench: Can Language Models Resolve Real-World GitHub Issues? *ICLR 2024*. [arXiv:2310.06770](https://arxiv.org/abs/2310.06770).
+[^swebench-docker]: SWE-bench. Docker Setup Guide. [GitHub](https://github.com/SWE-bench/SWE-bench/blob/02e7a74ffd0b707aab73d203fe87bdc7c76afc8e/docs/guides/docker_setup.md).
 [^swegym]: Pan, J., et al. (2025). Training Software Engineering Agents and Verifiers with SWE-Gym. *ICML 2025*. [arXiv:2412.21139](https://arxiv.org/abs/2412.21139).
 [^liu2026]: Liu, T., et al. (2026). On Effectiveness and Efficiency of Agentic Tool-calling and RL Training. *ICML 2026*. [arXiv:2606.00135v2](https://arxiv.org/abs/2606.00135v2).
-[^baker]: Baker, B., et al. (2025). Monitoring Reasoning Models for Misbehavior and the Risks of Promoting Obfuscation. [arXiv:2503.11926](https://arxiv.org/abs/2503.11926).
-[^macdiarmid]: MacDiarmid, M., et al. (2025). Natural Emergent Misalignment from Reward Hacking in Production RL. [arXiv:2511.18397](https://arxiv.org/abs/2511.18397).
-[^dgm]: Zhang, J., Hu, S., Lu, C., Lange, R., & Clune, J. (2025). Darwin Gödel Machine: Open-Ended Evolution of Self-Improving Agents. [arXiv:2505.22954v3](https://arxiv.org/abs/2505.22954v3).
 [^bfcl]: Patil, S. G., et al. (2025). The Berkeley Function Calling Leaderboard (BFCL): From Tool Use to Agentic Evaluation of Large Language Models. *ICML 2025*. [PMLR 267](https://proceedings.mlr.press/v267/patil25a.html).
 [^taubench]: Yao, S., Shinn, N., Razavi, P., & Narasimhan, K. (2024). τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains. [arXiv:2406.12045v1](https://arxiv.org/abs/2406.12045v1).
