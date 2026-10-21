@@ -237,7 +237,7 @@ LLaMA-7B의 파라미터 20%를 지우고 회복하면 zero-shot 분류 task 일
 
 층 전체를 지우는 깊이 방향 pruning도 있다.
 Men 등의 ShortGPT는 입력과 출력이 거의 같은 층,
-곧 표현을 별로 바꾸지 않는 층을 찾아 지워 파라미터 25%를 줄이고도 선다형 task에서 성능의 약 90%를 유지했다.[^shortgpt]
+곧 표현을 별로 바꾸지 않는 층을 찾아 지워 파라미터의 약 25%를 줄이고도 선다형 task에서 성능의 약 90%를 유지했다.[^shortgpt]
 Gromov 등은 입력과 출력이 가장 비슷한 연속된 층들을 지운 뒤 QLoRA(quantized LoRA)로 짧게 미세조정해 회복(healing)하는 방식으로,
 Llama-2-70B에서 층의 절반 가까이 지울 때까지 MMLU(Massive Multitask Language Understanding)·BoolQ 정확도가 크게 떨어지지 않다가 40–50% 근처에서 급격히 무너진다는 것을 보였다.[^gromov]
 MMLU는 회복 학습 없이도 비슷했지만, BoolQ에서는 회복 학습이 점수를 크게 올렸다.

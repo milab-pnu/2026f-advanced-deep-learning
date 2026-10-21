@@ -21,7 +21,7 @@ Gong 등의 저비트 LLM 서베이는 숫자 형식과 실행 방식, 양자화
 
 ### 1-1. 균일 양자화
 
-앞에서 mixed precision 학습을 다룰 때 FP32(32-bit floating point)와 BF16 같은 부동소수점 형식을 보았다.
+앞서 mixed precision 학습에서 FP32(32-bit floating point)와 BF16 같은 부동소수점 형식을 보았다.
 양자화는 실숫값을 더 적은 bits로 표현할 수 있는 값의 집합(격자)에 대응시킨다.
 가장 기본적인 균일 양자화는 등간격의 정수 격자를 쓴다.
 간격(scale) $s$와 영점(zero-point) $z$로 실숫값 $x$를 $b$-bit 정수로 바꾸고,
@@ -228,10 +228,10 @@ $$
 모델 전체에서 이 회전을 가중치에 미리 합쳐 둘 수 있는 것은 층 사이의 RMSNorm 덕분이다.
 RMSNorm은 벡터를 그 크기로 나누는데, 회전은 벡터의 크기를 바꾸지 않으므로 회전한 입력을 넣으면 출력도 같은 회전을 받은 값이 된다.
 RMSNorm의 channel별 gain만 먼저 다음 가중치에 흡수해 두면 된다.
-그래서 잔차 흐름 전체를 회전된 좌표에 두고 회전과 그 전치를 앞뒤 가중치에 곱해 두면, 실행 중에는 추가 비용이 없다.
+그래서 residual stream 전체를 회전된 좌표에 두고 회전과 그 전치를 앞뒤 가중치에 곱해 두면, 실행 중에는 추가 비용이 없다.
 앞 가중치에 합칠 수 없는 곳에만 실행 중에 빠른 Hadamard 변환을 넣는다.
 FFN 안에서 비선형 연산을 거쳐 down projection으로 들어가는 activation이 그런 곳이다.
-Attention에서는 RoPE를 적용한 뒤의 query와 key에 같은 회전을 함께 곱해, 내적은 그대로 두고 key만 양자화하기 쉽게 만든다.
+Attention에서는 RoPE를 적용한 뒤의 query와 key에 같은 회전을 함께 곱해, 내적은 그대로 두고 KV cache에 저장할 key를 양자화하기 쉽게 만든다.
 Value의 회전은 대부분 value 투영과 출력 투영의 가중치에 합쳐 두고, head 사이를 섞는 일부만 실행 중에 한다.
 QuaRot은 이렇게 가중치, activation, KV cache를 모두 4-bit로 두고도 LLaMA2-70B의 WikiText-2 perplexity 증가를 0.47 이내로 막았다.[^quarot]
 Liu 등의 SpinQuant는 회전에 따라 결과가 크게 달라진다는 데 주목해 회전 행렬 자체를 학습했고,
@@ -245,7 +245,7 @@ Meta는 Llama 3.2 1B와 3B의 양자화 배포판 가운데 하나를 SpinQuant�
 Decode 스텝을 가중치 읽기가 지배한다면 가중치만 4-bit 이하로 줄이는 쪽이 이득이 크다.
 가중치에는 activation 같은 극단적인 outlier가 드물어 8-bit에서는 단순 반올림(RTN, round-to-nearest)으로도 괜찮지만,
 4-bit 이하로 내려가면 오차가 쌓인다.
-GPTQ 논문의 OPT-175B 실험에서 WikiText2 perplexity는 FP16이 8.34, RTN 4-bit이 10.54였고,
+GPTQ 논문의 OPT-175B 실험에서 WikiText-2 perplexity는 FP16이 8.34, RTN 4-bit이 10.54였고,
 RTN 3-bit은 7,300으로 모델이 무너졌다.[^gptq]
 
 ### 3-2. GPTQ
