@@ -27,7 +27,7 @@ FlashInfer 등은 길이가 다른 작업을 이어 붙여 고르게 흘려 보�
 
 ## 1. GPU에서 kernel이 실행되는 방식
 
-학습 엔지니어링을 다룰 때 kernel을 GPU가 많은 데이터를 병렬로 처리하도록 실행하는 프로그램으로,
+앞선 주차에서 FlashAttention을 볼 때 kernel을 GPU가 많은 데이터를 병렬로 처리하도록 실행하는 프로그램으로,
 kernel fusion을 이어지는 연산을 한 kernel에 묶어 중간값의 HBM 왕복을 줄이는 방법으로 보았다.
 여기에 한 가지를 더한다.
 GPU는 수많은 연산 장치를 SM(streaming multiprocessor)이라는 단위로 묶어 두고,
@@ -221,7 +221,7 @@ Decode의 선형층은 batch가 작으면 행렬과 벡터의 곱에 가깝다.
 한쪽 차원이 아주 작은 이 납작한 행렬곱에서는 대역폭을 다 쓰지 못한다.
 Hong 등의 FlashDecoding++는 이 납작한 행렬곱(flat GEMM, GEMM은 general matrix multiplication)을 따로 다뤘다.[^fdpp]
 원논문이 비교한 cuBLAS·CUTLASS 구현처럼 batch 쪽 차원을 64행 타일로 처리하면, batch가 8일 때 타일의 87.5%를 0으로 채운 채 계산한다.
-FlashDecoding++는 batch 쪽 타일을 Tensor Core가 한 번에 처리하는 8행으로 줄여, batch가 8보다 작을 때도 8행까지만 0으로 채운다.
+FlashDecoding++는 batch 쪽 타일을 Tensor Core가 한 번에 처리하는 8행으로 줄여, batch가 8보다 작으면 8행이 될 때까지만 0으로 채운다.
 일은 출력 차원 방향으로 thread block들에 나누고,
 출력 차원이 크면 shared memory 버퍼 두 개를 번갈아 써서 다음 타일을 읽는 동안 현재 타일을 계산한다(double buffering).
 

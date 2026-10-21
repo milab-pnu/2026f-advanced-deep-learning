@@ -26,7 +26,7 @@ Park 등은 오픈소스와 상용 엔진 25개를 살펴보고, 엔진들이 �
 4. **Model runner**가 batch의 입력 텐서를 준비하고,
    attention·선형층 kernel과 CUDA graph로 모델을 한 번 실행한다.
 5. **Sampler**가 일반 decode에서는 마지막 위치의 logits로 다음 토큰을 고르고,
-   speculative decoding에서는 추측한 토큰 위치들의 logits로 각 토큰의 승인 여부를 정한다.
+   speculative decoding에서는 추측한 토큰 위치들의 logits로 각 토큰의 수락 여부를 정한다.
 
 앞 주차 roofline의 단순화한 모형에서 Llama 3 8B의 decode 한 스텝 하한은 BF16(bfloat16) 가중치와 KV cache, H100 SXM, batch 1, 문맥 2,048토큰에서 약 4.9 ms였다.
 실제 GPU(graphics processing unit) 실행도 이렇게 수 ms에 끝나므로,
