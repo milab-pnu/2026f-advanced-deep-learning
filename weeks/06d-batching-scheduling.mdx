@@ -254,7 +254,7 @@ Llama 3 8B를 H100 두 대로 서빙한다고 하자.
 TP2라면 GPU마다 가중치가 8 GB만 차지해 KV cache에 약 61.6 GB, 합해서 약 123 GB가 남고,
 GPU마다 읽는 가중치와 KV cache가 절반이라 통신을 빼면 스텝 하한이 약 2.4 ms로 준다.
 이 계산에서는 요청 하나의 TPOT가 중요하면 TP가, 통신 없이 처리량을 늘리고 싶으면 복제본이 낫다.
-LLM(large language model) inference 노트의 교육용 가정(사용 가능 메모리 73.6 GB, 작업 공간 4 GB)으로 계산했다.
+메모리는 이번 주 앞에서 쓴 교육용 가정(사용 가능 메모리 73.6 GB, 작업 공간 4 GB)으로 계산했다.
 </Callout>
 
 PP(pipeline parallelism)는 층을 몇 묶음으로 나누어 GPU마다 한 묶음씩 맡긴다.
