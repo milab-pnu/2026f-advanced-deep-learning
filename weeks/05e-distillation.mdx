@@ -202,7 +202,7 @@ A_t=\log\pi_T(y_t\mid x,y_{<t})-\log\pi_{\theta_{\mathrm{old}}}(y_t\mid x,y_{<t}
 $$
 
 그다음 RL 손실의 advantage 자리에 응답 단위 보상 대신 이 $A_t$를 넣는다.
-손실은 확률비 $\rho_t=\pi_\theta(y_t\mid\cdot)/\pi_{\theta_{\mathrm{old}}}(y_t\mid\cdot)$(앞 주차 PPO에서 본 토큰 확률비)에 advantage를 곱하는 importance sampling 손실을 쓰며,
+손실은 확률비 $\rho_t=\pi_\theta(y_t\mid\cdot)/\pi_{\theta_{\mathrm{old}}}(y_t\mid\cdot)$(앞 주차 PPO(proximal policy optimization)에서 본 토큰 확률비)에 advantage를 곱하는 importance sampling 손실을 쓰며,
 갱신 시작점($\rho_t=1$)에서 기대 gradient는 고정한 prefix의 다음 토큰 reverse KL을 줄이는 방향과 같다.
 위 예시의 `60`처럼 teacher가 학생보다 높게 본 토큰은 확률이 오르고 `50`처럼 낮게 본 토큰은 내려간다.
 지금 고른 토큰이 뒤 위치들의 KL에 미치는 영향은 반영하지 않으며, 저자들은 이를 반영해도 실험에서 도움이 되지 않았다고 보고했다.[^tm]
@@ -256,7 +256,7 @@ teacher가 학생보다 나은 점은 자기 영역에서 RL을 더 받았다는
 Teacher들은 서로 독립적으로, 병렬로 만들 수 있고,
 학생은 가중치 평균이 아니라 정책 공간에서 영역별로 다른 teacher를 따른다.
 
-MOPD의 학생은 수학·지시 따르기·소프트웨어 공학 세 영역 모두에서 출발점과 teacher 사이 격차의 91~95%를 메웠고,
+MOPD의 학생은 수학·지시 따르기·소프트웨어 공학 세 영역 모두에서 출발점과 teacher 사이 격차의 91–95%를 메웠고,
 세 영역의 정규화 점수를 평균한 비교에서 영역을 섞어 RL하거나 차례로 RL한 경우, teacher 응답을 SFT한 경우, teacher 가중치를 병합한 경우보다 높았다.
 지시 따르기와 소프트웨어 공학에서는 혼합 RL보다 훨씬 적은 학습 샘플로 teacher 수준에 도달했는데(전문 teacher를 만드는 비용은 뺀 비교다),
 저자들은 이를 토큰마다 오는 조밀한 신호가 궤적당 한 번 오는 보상보다 표본 효율이 높기 때문이라고 설명한다.[^mopd]

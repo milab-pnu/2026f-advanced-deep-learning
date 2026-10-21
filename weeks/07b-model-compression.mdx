@@ -263,6 +263,7 @@ $$
 \mathcal{L}_{\text{KD}}=\sum_t \mathrm{KL}\big(p_T(\cdot\mid x_{<t})\,\big\|\,p_S(\cdot\mid x_{<t})\big)
 $$
 
+$t$는 토큰 위치이고, $x_{<t}$는 그 위치 앞의 토큰열이다.
 예를 들어 "The cat sat on the" 다음 토큰이 데이터에서는 `mat`이고,
 teacher가 `mat`, `floor`, `sofa`에 0.6, 0.3, 0.1을 준다고 하자(설명을 위한 가상의 확률).
 정답 토큰만 맞히는 학습은 `mat` 하나만 알려 주지만,
@@ -288,7 +289,7 @@ Head와 FFN channel만 지운 모델은 지운 직후에는 embedding 차원까�
 
 후속 보고서는 같은 방법으로 Llama 3.1 8B에서 층을 절반으로 줄인 모델과 너비를 줄인 모델을 만들었다.[^minitron-practice]
 원래 학습 데이터가 없어서 teacher를 distillation 데이터에 먼저 맞추는 teacher correction도 더했다.
-H100 한 대의 TensorRT-LLM(FP8)에서 여러 입출력 길이로 잰 평균 처리량은 원래 8B보다 깊이를 줄인 모델이 2.7배, 너비를 줄인 모델이 1.8배 높았다.
+H100 한 대의 TensorRT-LLM(FP8, 8-bit floating point)에서 여러 입출력 길이로 잰 평균 처리량은 원래 8B보다 깊이를 줄인 모델이 2.7배, 너비를 줄인 모델이 1.8배 높았다.
 작은 모델에 두 배 큰 batch를 준 비교라 그 이득도 섞여 있다.
 깊이 pruning은 순차로 계산할 층 수 자체를 줄여 속도 이득이 크고,
 너비 pruning은 base 모델의 MMLU가 더 높아 품질이 낫다는 맞교환이다.

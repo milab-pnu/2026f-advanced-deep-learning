@@ -287,7 +287,7 @@ MiMo처럼 pre-training 뒤 MTP 층을 복제해 따로 미세 조정하는 경�
 앞에서 구한 개선 배수는 target이 $\gamma+1$개 위치를 위치 하나와 같은 시간에 계산한다는 가정에 기댔다.
 이 가정은 decode가 memory-bound일 때 근사적으로 성립한다.
 앞 주차에서 batch를 키우면 선형층의 intensity가 오른다고 했는데,
-speculative decoding은 요청마다 위치를 $\gamma+1$개로 늘리므로 한 스텝의 토큰 수가 $b(\gamma+1)$개가 된다.
+speculative decoding은 요청마다 위치를 $\gamma+1$개로 늘리므로 batch의 요청 수를 $b$라 하면 한 스텝의 토큰 수가 $b(\gamma+1)$개가 된다.
 Batch가 크면 이 값이 ridge point를 넘어 선형층이 compute-bound가 되고,
 그때부터는 수락되지 않을 추측을 검증하는 계산이 실제 시간을 잡아먹는다.
 

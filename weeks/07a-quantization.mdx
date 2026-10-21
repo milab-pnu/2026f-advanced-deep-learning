@@ -106,7 +106,7 @@ $$
 
 이다.
 두 scale은 합의 첨자 $k$와 무관하므로 합 밖으로 나온다.
-그래서 합은 정수끼리의 곱셈과 덧셈으로 하고(INT8 곱이 넘치지 않게 대개 INT32로 누적한다), 마지막에 결과 원소마다 scale 두 개를 곱하면 된다.
+그래서 합은 정수끼리의 곱셈과 덧셈으로 하고(INT8 곱이 넘치지 않게 대개 INT32(32-bit integer)로 누적한다), 마지막에 결과 원소마다 scale 두 개를 곱하면 된다.
 반대로 입력 channel $k$마다 scale을 두면 그 scale이 합 안에 남아, 정수 행렬곱 하나로 계산할 수 없다.[^nagel]
 
 <Figure src="https://arxiv.org/html/2409.16694v3/fig_matmul_process.png" alt="Gong 등의 서베이 Figure 5. (a)는 가중치를 미리 양자화해 4-bit 값 8개를 32-bit 정수 하나에 묶어 두는 준비 과정으로, 32-bit 원소 대비 저장 공간이 약 8배 줄어든다. (b)는 weight-only 양자화의 실행 흐름이다. 묶인 가중치를 GPU 메모리에서 레지스터로 읽어 와 FP16으로 되돌린(dequantize) 뒤, FP16 activation과 함께 FP16 행렬곱 kernel로 계산한다. 왼쪽 시간축에서 가중치를 읽는 구간은 빨라지고 되돌리는 구간은 느려진다. (c)는 weight와 activation을 모두 양자화하는 흐름으로, activation도 레지스터에서 4-bit로 양자화한 뒤 정수 행렬곱 kernel로 계산하고 결과만 FP16으로 바꾼다." caption="Weight-only 양자화(b)는 가중치를 읽는 시간을 줄이는 대신 kernel 안에서 가중치를 되돌리는 시간이 들고, weight-activation 양자화(c)는 행렬곱 자체를 낮은 정밀도의 연산 장치로 한다." source="Gong et al. (2025), Figure 5 · CC BY 4.0" hero />
@@ -175,7 +175,7 @@ $$
 $X_j$는 보정 입력에서 잰 activation의 $j$번째 입력 channel, $W_j$는 거기에 곱해지는 가중치의 $j$번째 행이다.
 $\alpha$는 어려움을 얼마나 옮길지를 정하고,
 OPT와 BLOOM에서는 $\alpha=0.5$가 균형점이었다.[^smoothquant]
-Activation을 나누는 연산은 대개 앞 층의 LayerNorm이나 선형층에 미리 합쳐 두므로 실행 중 추가 비용이 없다.
+Activation을 나누는 연산은 대개 앞 층의 LayerNorm(layer normalization)이나 선형층에 미리 합쳐 두므로 실행 중 추가 비용이 없다.
 Residual 덧셈의 입력처럼 앞 연산에 합칠 수 없는 곳에는 scaling을 따로 넣는다.
 
 <Callout type="example">
@@ -225,13 +225,13 @@ $$
 회전 없이는 0이 되었던 작은 값들이 0.11 오차 안에서 살아난다.
 </Callout>
 
-모델 전체에서 이 회전을 가중치에 미리 합쳐 둘 수 있는 것은 층 사이의 RMSNorm 덕분이다.
+모델 전체에서 이 회전을 가중치에 미리 합쳐 둘 수 있는 것은 층 사이의 RMSNorm(root mean square normalization) 덕분이다.
 RMSNorm은 벡터를 그 크기로 나누는데, 회전은 벡터의 크기를 바꾸지 않으므로 회전한 입력을 넣으면 출력도 같은 회전을 받은 값이 된다.
 RMSNorm의 channel별 gain만 먼저 다음 가중치에 흡수해 두면 된다.
 그래서 residual stream 전체를 회전된 좌표에 두고 회전과 그 전치를 앞뒤 가중치에 곱해 두면, 실행 중에는 추가 비용이 없다.
 앞 가중치에 합칠 수 없는 곳에만 실행 중에 빠른 Hadamard 변환을 넣는다.
-FFN 안에서 비선형 연산을 거쳐 down projection으로 들어가는 activation이 그런 곳이다.
-Attention에서는 RoPE를 적용한 뒤의 query와 key에 같은 회전을 함께 곱해, 내적은 그대로 두고 KV cache에 저장할 key를 양자화하기 쉽게 만든다.
+FFN(feed-forward network) 안에서 비선형 연산을 거쳐 down projection으로 들어가는 activation이 그런 곳이다.
+Attention에서는 RoPE(rotary position embedding)를 적용한 뒤의 query와 key에 같은 회전을 함께 곱해, 내적은 그대로 두고 KV cache에 저장할 key를 양자화하기 쉽게 만든다.
 Value의 회전은 대부분 value 투영과 출력 투영의 가중치에 합쳐 두고, head 사이를 섞는 일부만 실행 중에 한다.
 QuaRot은 이렇게 가중치, activation, KV cache를 모두 4-bit로 두고도 LLaMA2-70B의 WikiText-2 perplexity 증가를 0.47 이내로 막았다.[^quarot]
 Liu 등의 SpinQuant는 회전에 따라 결과가 크게 달라진다는 데 주목해 회전 행렬 자체를 학습했고,
@@ -354,7 +354,7 @@ NVFP4가 텐서 전체에 두는 FP32 scale은 이 예에서 1로 두었다.
 </Callout>
 
 이런 형식은 최신 GPU의 연산 형식으로 들어갔다.
-Blackwell 세대의 DGX B200에서는 FP4의 이론 최대 처리율이 FP8의 두 배다.[^b200]
+Blackwell 세대의 DGX B200에서는 FP4(4-bit floating point)의 이론 최대 처리율이 FP8의 두 배다.[^b200]
 모델 배포에도 쓰이기 시작했다.
 OpenAI의 gpt-oss는 MoE(mixture of experts) 가중치를 MXFP4로 양자화해 원소당 4.25 bits로 저장했고,
 MoE 가중치가 전체 파라미터의 90% 이상을 차지하므로 116.8B 파라미터의 120b 모델이 80 GB GPU 한 대에 올라간다.[^gptoss]

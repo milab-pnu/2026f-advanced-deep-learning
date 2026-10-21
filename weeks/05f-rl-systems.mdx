@@ -141,7 +141,7 @@ AReaL은 staleness 상한과 함께 PPO의 확률비를 둘로 나눈 decoupled 
 비동기에서는 응답을 만든 정책(behavior policy) $\pi_{\mathrm{behav}}$가 여러 버전이고 그중에는 꽤 오래된 것도 있어,
 이를 clipping의 기준으로 삼으면 최신 정책을 오래된 정책 쪽으로 끌어당기게 된다고 저자들은 설명한다.
 그래서 각 학습 스텝에서 배치가 도착해 갱신을 시작하기 전의 파라미터를 proximal policy $\pi_{\mathrm{prox}}$로 두고(그때 토큰 확률을 다시 계산한다),
-clipping은 $\pi_\theta/\pi_{\mathrm{prox}}$에 건다.
+clipping은 갱신 중인 현재 정책 $\pi_\theta$와의 비 $\pi_\theta/\pi_{\mathrm{prox}}$에 건다.
 응답을 뽑은 분포와의 차이는 토큰마다 $\pi_{\mathrm{prox}}/\pi_{\mathrm{behav}}$를 importance sampling 가중치로 곱해 보정한다.
 프롬프트 $x$에 대한 응답 $y$의 토큰 $t$에서 목적함수 항은 다음과 같고, 이를 응답의 토큰과 배치에 걸쳐 모아 최대화한다.
 
@@ -149,8 +149,9 @@ $$
 \frac{\pi_{\mathrm{prox}}(y_t\mid x,y_{<t})}{\pi_{\mathrm{behav}}(y_t\mid x,y_{<t})}\,\min\big(\rho_t\hat A_t,\ \operatorname{clip}(\rho_t,1-\varepsilon,1+\varepsilon)\hat A_t\big),\qquad \rho_t=\frac{\pi_\theta(y_t\mid x,y_{<t})}{\pi_{\mathrm{prox}}(y_t\mid x,y_{<t})}
 $$
 
+$\hat A_t$는 토큰 $t$의 advantage 추정값이고, $\varepsilon$은 clipping 폭이다.
 예를 들어 어떤 토큰의 확률이 behavior 0.20, proximal 0.25, 현재 정책 0.30이면 보정 가중치는 $0.25/0.20=1.25$이고 clipping 대상 비율은 $0.30/0.25=1.2$다.
-behavior policy와 proximal policy가 같으면 보정 가중치가 1이 되어 일반 PPO와 같다.
+Behavior policy와 proximal policy가 같으면 보정 가중치가 1이 되어 일반 PPO와 같다.
 
 수학 task ablation에서는 decoupled 목적함수 대신 일반 PPO 목적함수를 쓰면 staleness가 커질 때 성능이 크게 떨어졌고,
 decoupled 목적함수를 써도 staleness 상한을 없애면 지연 없는 기준보다 낮았다.[^areal]
@@ -175,7 +176,7 @@ Staleness가 없어도 off-policy가 생기는 경로가 하나 더 있다.
 Qi 등은 BF16(bfloat16)의 짧은 가수부(7비트)에서 생기는 반올림 오차가 두 경로에서 다르게 누적되어,
 같은 응답에 대한 토큰 확률이 엔진과 학습기에서 달라진다고 분석했다.[^fp16]
 정책이 "방금 생성한" 응답인데도 학습기가 보는 확률은 그것을 만든 확률이 아니다.
-정책 최적화 목적함수의 확률비 $\pi_\theta/\pi_{\theta_{\mathrm{old}}}$의 분모를 학습기가 다시 계산하면 갱신 전에는 1이고,
+정책 최적화 목적함수의 확률비 $\pi_\theta/\pi_{\theta_{\mathrm{old}}}$, 곧 갱신 중인 정책과 이번 갱신을 시작하기 전 정책의 비에서 분모를 학습기가 다시 계산하면 갱신 전에는 1이고,
 생성 때 엔진이 저장한 확률을 분모로 쓰면 갱신 전에도 1에서 벗어날 수 있다.
 앞의 경우 표본은 엔진 분포에서 나왔는데 학습기 분포의 표본처럼 다루므로 그 차이가 gradient에 편향으로 남고,
 뒤의 경우 clipping이 정책 변화와 수치 불일치를 구분하지 못하고 한데 자른다.
@@ -195,7 +196,7 @@ Olmo 3는 RL 목적함수에 이 두 비율을 따로 두고 vLLM과 학습기 �
 
 <Callout type="example">
 **두 확률비가 함께 작동하는 토큰 하나.** 교육용 수치로, decoupled PPO 예시와 같은 값을 쓴다.
-behavior policy 자리에 엔진의 확률이, proximal policy 자리에 학습기가 다시 계산한 확률이 온다.
+Behavior policy 자리에 엔진의 확률이, proximal policy 자리에 학습기가 다시 계산한 확률이 온다.
 상한을 $C=2$, clipping 폭을 $\varepsilon=0.2$로 두자.
 어떤 토큰을 엔진은 확률 0.20으로 뽑았고, 같은 가중치로 학습기가 다시 계산한 확률은 0.25다.
 보정 가중치는 $0.25/0.20=1.25$로 상한 아래라 그대로 쓴다.
