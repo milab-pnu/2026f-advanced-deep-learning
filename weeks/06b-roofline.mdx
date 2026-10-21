@@ -9,22 +9,15 @@ order: 1
 연산 하나가 GPU(graphics processing unit)의 계산 능력과 메모리 대역폭 가운데 어느 쪽에 막히는지는 계산량과 옮겨야 할 바이트의 비율로 정해지고,
 그 관계를 한 장의 그림으로 보이는 것이 **roofline model**이다.
 
-전체 지도는 Yuan 등의 서베이[^survey]로 잡는다.
-이 서베이는 inference 기법을 roofline으로 분석한다는 점이 다른 서베이와 다르다.
-§2.2가 roofline model과 arithmetic intensity를 정의하고,
-Table 1은 Llama-2-7B를 A6000 GPU에서 batch 1, 길이 2,048로 층별로 분석한다.
-거기서 prefill의 투영 행렬곱은 arithmetic intensity가 1,024–1,215로 계산 한계에,
-decode의 층들은 0.25–1.75로 모두 메모리 한계에 놓인다.
-Prefill에서도 attention 행렬곱(114)과 softmax·정규화(normalization) 같은 행렬곱이 아닌 연산은 메모리 한계다.
-이 노트는 같은 분석을 Llama 3 8B와 H100으로 다시 해 보고,
+Yuan 등의 서베이는 LLM inference의 기법들을 이 모형 위에서 분석해 정리했다.[^survey]
+이 노트는 같은 분석을 Llama 3 8B와 H100으로 해 보고,
 그 결과로 TTFT(time to first token)와 TPOT(time per output token)의 하한, 처리량(throughput)의 상한을 계산한다.
-서베이 §3–6은 이 분석 위에서 모델 압축, 빠른 decoding 알고리즘, 컴파일러·시스템, 하드웨어 최적화를 정리한다.
 
 ## 1. 연산 속도와 메모리 대역폭
 
 ### 1-1. GPU의 두 가지 한계
 
-Training engineering 노트에서 FlashAttention을 볼 때 GPU 메모리를 두 층으로 나누었다.
+앞서 FlashAttention을 볼 때 GPU 메모리를 두 층으로 나누었다.
 칩 바깥의 크고 느린 HBM(high-bandwidth memory)과,
 연산 장치 곁의 작고 빠른 SRAM(static random-access memory)이다.
 가중치와 KV(key-value) cache는 HBM에 있고, 계산하려면 연산 장치 쪽으로 읽어 와야 한다.
@@ -171,7 +164,7 @@ Attention은 사정이 다르다.
 선형층의 가중치는 batch 안의 모든 요청이 공유하지만, KV cache는 요청마다 따로 있다.
 요청을 많이 묶어도 각 요청의 새 query는 **자기 KV cache만** 읽는다.
 그래서 batch를 키워도 attention의 intensity는 오르지 않는다.
-Attention heads and KV cache 노트에서 Shazeer의 점근 분석으로 본 두 항,
+MQA(multi-query attention)를 제안한 Shazeer의 점근 분석에서 본 두 항,
 곧 batch를 키우면 줄어드는 가중치 항과 줄지 않는 K/V 항이 여기서 숫자로 드러난다.[^mqa]
 
 요청 하나, 층 하나에서 문맥 길이가 $s$일 때를 계산해 보자.
@@ -190,23 +183,23 @@ Llama 3 8B는 $g=32/8=4$이므로 decode attention의 intensity는 4다.
 그림에서 속이 빈 점이다.
 이 계산에서는 batch를 키워도 점이 그 자리에 머문다.
 
-이 식은 Attention heads and KV cache 노트의 KV head 공유를 다른 눈으로 보여 준다.
-MHA(multi-head attention)는 $g=1$, MQA(multi-query attention)는 $g=n_q$다.
+이 식은 KV head 공유를 다른 눈으로 보여 준다.
+MHA(multi-head attention)는 $g=1$, MQA는 $g=n_q$다.
 Head를 공유하면 캐시가 줄 뿐 아니라,
 한 번 읽은 key·value를 여러 query head가 재사용해 decode attention의 intensity가 올라간다.
 MLA(multi-head latent attention)를 흡수 방식으로 계산하면 이 효과가 더 크다.
 DeepSeek-V3 설정에서 캐시된 토큰 하나는 latent 512개와 RoPE(rotary position embedding) key 64개를 합한 576개 원소, 1,152 bytes이고,
-head 128개가 모두 이 latent로 점수를 계산하고(576차원) 가중합을 한다(512차원, 원논문 §2.1.1·§4.2).[^dsv3]
+head 128개가 모두 이 latent로 점수를 계산하고(576차원) 가중합을 한다(512차원).[^dsv3]
 캐시된 토큰 하나에 $2\cdot128\cdot(576+512)\approx2.8\times10^5$ FLOPs이므로 intensity는 약 240으로,
 ridge point 가까이 간다.
-MLA를 볼 때 흡수는 복원한 K/V를 캐시하는 방식보다 head당 계산을 늘린다고 했는데,
+앞서 MLA를 볼 때 흡수는 복원한 K/V를 캐시하는 방식보다 head당 계산을 늘린다고 했는데,
 memory-bound인 decode에서는 그 늘어난 계산이 놀던 연산 장치를 채우는 셈이다.
 
 다만 이 intensity는 head 수에 비례한다.
 Head가 256개라면 약 480으로 ridge point를 넘어 decode attention이 계산에 막힌다.
 문맥이 길어지면 attention이 스텝 전체에서 차지하는 몫도 커지므로,
 MLA 모델에서는 head 수가 곧 추론 FLOPs의 문제가 된다.
-앞 주차에서 본 Kimi K2가 query head를 64개로 줄인 것도 이 추론 FLOPs 때문이었다.
+앞 주차에서 본 Kimi K2가 query head를 64개로 줄인 것도 이 추론 FLOPs 때문이었다.[^kimi]
 
 ### 3-3. Prefill
 
@@ -214,7 +207,9 @@ Prefill에서는 선형층과 attention 모두 intensity를 높일 여지가 있
 선형층은 decode에서 본 것처럼 토큰 $n$개에 가중치를 재사용하고,
 attention도 query $n$개가 같은 key·value를 재사용할 수 있다.
 다만 점수 행렬을 HBM에 썼다가 다시 읽으면 $n^2$ 크기의 이동이 더해져 intensity가 낮아진다.
-서베이 Table 1에서 prefill의 attention 행렬곱이 memory-bound였던 것도 이 때문이다.
+서베이가 Llama-2-7B를 A6000 GPU에서 batch 1, 길이 2,048로 층별 분석한 결과가 이를 보여 준다.[^survey]
+Prefill의 투영 행렬곱은 intensity가 1,024–1,215로 compute-bound였지만,
+점수 행렬을 HBM에 두고 센 attention 행렬곱은 114로 memory-bound였다.
 FlashAttention은 이 중간 행렬을 SRAM 안에서 처리해 그 이동을 줄인다.
 
 <Callout type="example">
@@ -244,7 +239,6 @@ attention이 Q·K·V를 읽고 출력을 쓰는 약 1.3 GB를 합해 약 8.6 ms 
 계산은 요청마다 선형층 $2N\approx16.1$ GFLOP과 attention 약 1.1 GFLOP이다.
 Activation의 읽기·쓰기는 같은 방식으로 세면 batch 192에서도 약 1 GB라 뺐다.
 스텝 시간은 선형층과 attention의 하한을 따로 구해 더했다.
-아래 batch에서는 두 연산이 모두 memory-bound라 스텝 시간이 읽기 시간과 같다.
 
 | batch $b$ | 읽는 데이터 | 읽기 시간 | 계산 시간 | 전체 intensity | 스텝 시간(TPOT 하한) | 처리량 상한 |
 |---|---|---|---|---|---|---|
@@ -257,7 +251,8 @@ Batch를 1에서 192로 늘리면 스텝 시간은 약 4배 늘지만 처리량�
 가중치 16 GB를 한 번 읽어 192개 요청에 나누어 쓰기 때문이다.
 앞 노트에서 말한 지연과 처리량의 맞교환이 이 표의 마지막 두 열이다.
 
-그런데 표의 모든 행이 memory-bound다.
+그런데 표의 모든 행에서 스텝 시간이 읽기 시간과 같다.
+선형층과 attention이 모두 memory-bound라는 뜻이다.
 Batch 192에서도 전체 intensity는 49로 ridge point 295에 한참 못 미친다.
 모든 선형층을 합쳐 activation 이동까지 세면 선형층의 intensity는 약 180까지 올랐지만,
 KV cache를 읽는 데이터가 batch에 비례해 함께 늘었기 때문이다.
@@ -270,8 +265,10 @@ Batch를 키울수록 스텝에서 읽는 데이터의 대부분이 가중치에
 표가 192에서 멈춘 데는 이유가 있다.
 앞 노트의 가정에서 H100 한 대에 KV cache용으로 남는 공간은 약 53.5 GB였다.
 요청당 0.27 GB이면 약 199개가 상한이다.
-선형층을 ridge point까지 끌어올리려면 activation 이동까지 세어 요청 약 330개를 묶어야 하는데, 그 전에 메모리가 바닥난다.
-이 330은 선형층의 intensity $2Nb/(2N+Ab)$에 토큰당 activation $A\approx5.5$ MB를 넣고 295와 같아지는 $b$를 푼 값이다.
+선형층만이라도 ridge point에 닿게 하려면 요청 약 330개를 묶어야 하는데, 그 전에 메모리가 바닥난다.
+이 330은 앞에서처럼 모든 선형층을 합쳐 activation 이동까지 센 intensity $2Nb/(2N+Ab)$가 295와 같아지는 $b$를 푼 값이다.
+분자는 FLOPs이고, 분모의 $2N$은 BF16 가중치의 bytes, $A\approx5.5$ MB는 토큰당 activation이다.
+행렬 하나씩 보면 FFN은 약 325, Q·출력 투영은 약 345, 출력이 작은 K·V 투영은 약 460에서 ridge point에 닿는다.
 
 <Callout type="intuition">
 식당 주방으로 비유해 보자.
@@ -280,8 +277,8 @@ Batch를 키울수록 스텝에서 읽는 데이터의 대부분이 가중치에
 그런데 손님마다 따로 보관하는 재료(KV cache)도 있어서, 주문이 늘면 그 재료를 나르는 일도 같이 늘고,
 냉장고 칸이 다 차면 더 받을 수도 없다.
 비유가 놓치는 점도 있다.
-실제 GPU에서는 재료를 나르는 일과 요리를 동시에 할 수 있어서,
-전체 시간은 둘 중 오래 걸리는 쪽보다 짧아질 수 없다.
+실제 GPU는 재료를 나르는 일과 요리를 동시에 하므로,
+전체 시간은 둘을 더한 값이 아니라 둘 중 오래 걸리는 쪽에 가깝다.
 </Callout>
 
 문맥이 길수록 벽은 더 가깝다.
@@ -297,7 +294,7 @@ Batch를 키울수록 스텝에서 읽는 데이터의 대부분이 가중치에
 
 ### 5-1. MFU
 
-**MFU**는 학습에서 쓴 지표다.
+**MFU**는 학습 효율을 잴 때 본 지표다.
 모델이 이론적으로 필요로 하는 FLOP/s를 하드웨어의 최대 FLOP/s로 나눈 값이다.
 학습에서는 토큰당 $6N$을 썼지만 inference는 forward만 하므로 토큰당 $2N$이다.
 
@@ -323,7 +320,7 @@ $$
 분자는 한 스텝에 읽어야 하는 데이터를 실제 스텝 시간으로 나눈 달성 대역폭이다.
 같은 글은 7B 모델을 16-bit로 두고 토큰당 14 ms가 걸리면 14 GB를 14 ms에 읽은 셈이라 1 TB/s이고,
 peak가 2 TB/s인 장비에서 MBU는 50%라는 예를 든다.
-그 글의 측정에서는 H100 두 대에 나누어 올린 모델이 입력 512토큰, batch 1에서 MBU 약 60%를 냈다(원문 Figure 3).[^mbu]
+그 글의 측정에서는 H100 두 대에 나누어 올린 모델이 입력 512토큰, batch 1에서 MBU 약 60%를 냈다.[^mbu]
 
 <Callout type="example">
 Llama 3 8B를 H100 한 대에서 batch 1, 문맥 2,048토큰으로 돌렸더니 TPOT가 8.0 ms였다고 하자.
@@ -341,7 +338,7 @@ Batch를 키워 연산 쪽이 병목이 되면 MBU만으로는 효율을 판단�
 
 ## 6. Roofline 위의 최적화 기법
 
-시간의 하한 식은 이번 주와 다음 주의 기법을 한 줄로 분류해 준다.
+시간의 하한 식은 이번 주와 다음 주의 기법을 한 틀로 분류해 준다.
 각 기법은 한 스텝의 FLOPs와 bytes 가운데 어느 항을 줄이거나,
 같은 bytes로 더 많은 일을 하게 해 점을 오른쪽으로 옮기거나,
 점은 그대로 두고 실제 성능을 지붕에 가깝게 올린다.
@@ -355,7 +352,7 @@ Batch를 키워 연산 쪽이 병목이 되면 MBU만으로는 효율을 판단�
 | Pruning·distillation | 모델을 작게 만들어 FLOPs와 bytes를 함께 감소. 비구조적 pruning은 희소 형식·kernel이 있어야 효과 |
 | Speculative decoding | 가중치를 한 번 읽어 토큰 여러 개를 검증해 decode의 점을 오른쪽으로 |
 | Kernel fusion·tiling | 중간값의 HBM 왕복과 재읽기를 없애 bytes를 줄이고 점을 오른쪽으로 |
-| FLOPs와 traffic을 그대로 두는 작업 분배·실행 중첩 같은 그 밖의 kernel 최적화 | 점의 위치는 그대로 두고 실제 성능을 지붕에 가깝게 |
+| 작업 분배·실행 중첩 같은 그 밖의 kernel 최적화 | FLOPs와 bytes는 그대로라 점은 제자리, 실제 성능을 지붕에 가깝게 |
 
 예를 들어 계산은 BF16으로 두고 가중치만 INT4(4-bit 정수)로 저장하면 batch 1 스텝에서 읽을 가중치가 16 GB에서 약 4 GB로 줄어 하한이 약 1.3 ms로 내려간다.
 같은 방식이 compute-bound인 prefill에는 효과가 작다.
@@ -372,22 +369,14 @@ Williams 등은 최적화가 덜 된 경우의 한계도 지붕 아래에 추가
 
 ## 7. 정리
 
-연산이 계산 능력과 메모리 대역폭 가운데 어느 쪽에 막히는지는 계산량과 옮기는 바이트의 비,
-arithmetic intensity로 정해진다.
-H100 SXM은 BF16에서 989 TFLOP/s와 3.35 TB/s를 내므로 ridge point가 약 295 FLOP/byte이고,
-그보다 intensity가 낮은 연산은 대역폭에, 높은 연산은 연산 속도에 묶인다.
+새 모델이나 하드웨어를 만나도 roofline 분석은 같은 순서로 할 수 있다.
+연산마다 FLOPs와 HBM을 오가는 bytes를 세어 intensity를 구하고, 하드웨어의 ridge point와 비교한다.
+연산별 시간 하한을 더해 스텝의 하한을 얻고, 그 안에서 계산과 데이터 이동 가운데 어느 항이 큰지 본다.
+실측 시간은 MFU나 MBU로 바꿔 하한과의 거리를 잰다.
 
-선형층의 intensity는 토큰 수가 모델 차원보다 훨씬 적은 동안 함께 처리하는 토큰 수와 거의 같다.
-그래서 수백 토큰 넘는 프롬프트를 한 번에 넣는 prefill은 compute-bound이고, 요청 하나의 decode는 intensity가 약 1이다.
-Decode attention은 요청마다 자기 KV cache를 읽기 때문에 이 모형에서는 batch와 무관하게 intensity가 query head와 KV head의 비,
-Llama 3 8B에서는 4에 머문다.
-DeepSeek-V3 설정의 MLA는 이 값을 약 240까지 올린다.
-
-Batching은 decode의 처리량을 크게 늘린다.
-Llama 3 8B, 2,048토큰 문맥에서 batch를 1에서 192로 늘리면 TPOT 하한은 4.9 ms에서 20 ms로 늘고 처리량 상한은 46배 는다.
-그래도 KV cache 읽기가 늘어 전체는 memory-bound에 머물고,
-H100 한 대의 KV cache 공간은 batch 약 199개에서 바닥난다.
-실제 시스템의 효율은 계산에 막힌 구간(대개 prefill)에서는 MFU로, 대역폭에 막힌 구간(대개 작은 batch의 decode)에서는 MBU로 잰다.
+Llama 3 8B를 H100 한 대에 올렸을 때 이 순서가 그린 모습은 이렇다.
+Prefill은 토큰을 한꺼번에 넣어 ridge point 오른쪽에 놓이고, decode는 batch를 키워야 겨우 오른쪽으로 움직인다.
+그마저 요청마다 따로 읽는 KV cache가 발목을 잡아, batch가 커질수록 스텝은 가중치보다 KV cache 읽기에 좌우되고 끝내 메모리 용량에 막힌다.
 
 [^roofline]: Williams, S., Waterman, A., & Patterson, D. (2009). Roofline: An Insightful Visual Performance Model for Multicore Architectures. *Communications of the ACM*, 52(4), 65–76. [doi:10.1145/1498765.1498785](https://doi.org/10.1145/1498765.1498785).
 
@@ -398,6 +387,8 @@ H100 한 대의 KV cache 공간은 batch 약 199개에서 바닥난다.
 [^llama3]: Llama Team, AI @ Meta. (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
 
 [^dsv3]: DeepSeek-AI. (2024). DeepSeek-V3 Technical Report. [arXiv:2412.19437](https://arxiv.org/abs/2412.19437).
+
+[^kimi]: Kimi Team. (2025). Kimi K2: Open Agentic Intelligence. [arXiv:2507.20534](https://arxiv.org/abs/2507.20534).
 
 [^mqa]: Shazeer, N. (2019). Fast Transformer Decoding: One Write-Head is All You Need. [arXiv:1911.02150](https://arxiv.org/abs/1911.02150).
 
