@@ -42,12 +42,12 @@ RLHF(reinforcement learning from human feedback)에서 본 PPO(proximal policy o
 
 ## 2. 동기식 실행의 병목과 개선
 
-같은 GPU에서 생성과 학습을 번갈아 하는 동기식 구성에서 출발해, 학습이 가장 긴 응답을 기다리는 시간을 줄이는 갈래는 둘이다.
+같은 GPU(graphics processing unit)에서 생성과 학습을 번갈아 하는 동기식 구성에서 출발해, 학습이 가장 긴 응답을 기다리는 시간을 줄이는 갈래는 둘이다.
 하나는 긴 응답을 길이 예산에서 끊어 다음 스텝으로 넘기고, 다른 하나는 생성과 학습을 겹친다.
 
 | 설계 | 생성과 학습 | 응답을 만든 정책 | 대표 |
 |---|---|---|---|
-| 동기식, 같은 GPU(graphics processing unit) | 번갈아 실행, 매 스텝 재분할 | 해당 배치 학습을 시작할 때의 정책 | HybridFlow(verl)[^hybridflow] |
+| 동기식, 같은 GPU | 번갈아 실행, 매 스텝 재분할 | 해당 배치 학습을 시작할 때의 정책 | HybridFlow(verl)[^hybridflow] |
 | 동기식 + partial rollout | 길이 예산에서 끊고 다음 스텝에 이어 생성 | 긴 응답은 여러 스텝의 정책 | Kimi k1.5[^kimi] |
 | 한 스텝 지연 | 다음 배치 생성과 현재 배치 학습을 겹침 | 한 스텝 전 정책 | Noukhovitch 등[^async-rlhf] |
 | 완전 비동기 | 독립 실행 | 여러 버전, 생성 중 가중치를 바꾸면 한 응답 안에서도 섞임 | AReaL[^areal], Olmo 3[^olmo3] |
@@ -172,7 +172,7 @@ Olmo 3는 엔진을 멈추지 않고 KV cache도 버리지 않은 채 가중치�
 Staleness가 없어도 off-policy가 생기는 경로가 하나 더 있다.
 생성은 inference engine(vLLM 등)이, 학습의 확률 계산은 학습 프레임워크가 맡는데,
 둘은 같은 가중치로도 다른 커널·다른 연산 순서·다른 정밀도를 쓴다.
-Qi 등은 BF16(brain floating point 16)의 짧은 가수부(7비트)에서 생기는 반올림 오차가 두 경로에서 다르게 누적되어,
+Qi 등은 BF16(bfloat16)의 짧은 가수부(7비트)에서 생기는 반올림 오차가 두 경로에서 다르게 누적되어,
 같은 응답에 대한 토큰 확률이 엔진과 학습기에서 달라진다고 분석했다.[^fp16]
 정책이 "방금 생성한" 응답인데도 학습기가 보는 확률은 그것을 만든 확률이 아니다.
 정책 최적화 목적함수의 확률비 $\pi_\theta/\pi_{\theta_{\mathrm{old}}}$의 분모를 학습기가 다시 계산하면 갱신 전에는 1이고,
@@ -222,7 +222,7 @@ Qi 등은 이런 보정만으로는 부족하다고 본다.[^fp16]
 정밀도를 바꾸는 쪽은 불일치의 원인을 직접 건드린다.
 Qi 등은 학습과 생성 모두를 가수부가 10비트인 FP16(16-bit floating point)으로 바꾸면 불일치가 BF16보다 크게 줄고,
 여러 설정에서 안정성과 수렴 속도가 개선됐다고 보고했다.[^fp16]
-Pre-training의 mixed precision에서 본 BF16의 장점은 FP32(32-bit floating point)와 같은 지수 범위였다.
+Mixed precision 학습에서 본 BF16의 장점은 FP32(32-bit floating point)와 같은 지수 범위였다.
 Qi 등은 값의 범위가 pre-training에서 이미 자리 잡은 RL fine-tuning에서는 그 범위보다 BF16이 잃은 정밀도가 더 문제가 된다고 본다.
 다만 FP16은 지수 범위가 좁아 작은 gradient가 0이 되지 않도록 loss scaling을 함께 쓰는 경우가 많다.
 생성·학습 일치라는 새 조건이 붙으면 정밀도 선택이 달라질 수 있다.

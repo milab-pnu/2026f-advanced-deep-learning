@@ -80,7 +80,7 @@ LLM(large language model)의 응답 기반 증류는 teacher가 만든 시퀀스
 추론 모델에서는 빔 서치 출력 하나 대신 응답을 여러 개 생성하고 정답으로 거른 것을 쓰는 경우가 많으며, DeepSeek-R1이 이렇게 했다.
 데이터는 RLVR(reinforcement learning with verifiable rewards)에서 본 R1 파이프라인의 rejection sampling 단계에서 만든 것이다.
 이 데이터로 작은 base model을 SFT만 한 모델이,
-같은 base model에 R1-Zero 방식으로 대규모 RL을 직접 한 모델보다 수학·과학·코드 벤치마크 점수가 모두 높았다(Qwen2.5-32B에서 AIME 2024 pass@1 47.0% 대 72.6%).[^r1]
+같은 base model에 R1-Zero 방식으로 대규모 RL을 직접 한 모델보다 수학·과학·코드 벤치마크 점수가 모두 높았다(Qwen2.5-32B에서 AIME 2024 pass@1이 distillation 72.6%, 직접 RL 47.0%).[^r1]
 저자들은 큰 모델에서 찾은 추론 패턴을 옮기는 데는 작은 모델에 RL을 돌리는 것보다 distillation이 낫다고 결론지었다.
 Long CoT(long chain of thought)에서 본 Yue 등의 비교에서도 distillation한 모델은 시도 횟수를 크게 늘린 평가에서 base model이 풀지 못한 문제까지 풀었다.[^yue]
 
@@ -103,8 +103,8 @@ R1의 distillation 데이터도 대부분이 추론 데이터였고, 보고한 �
 Ross 등의 DAgger(dataset aggregation)는 학습자가 실제로 방문한 상태에서 expert의 행동을 모아 학습을 반복하는 절차로,
 expert의 상태에서만 배울 때보다 오류의 누적이 크게 완화됨을 보였다.[^dagger]
 LLM에 옮기면 expert는 teacher, 상태는 지금까지의 prefix이므로, 학생이 만든 prefix에서 teacher의 감독을 받자는 뜻이 된다.
-다만 teacher를 잘 따라 할수록 결과도 좋아진다는 이 결론은 teacher가 학생이 만든 prefix에서도 좋은 다음 토큰을 알려 줄 때 의미가 있고,
-LLM에서는 그렇지 않을 수 있다.
+다만 이 보장은 학습자가 방문한 상태에서도 expert가 좋은 행동을 알려 준다는 가정에 기댄다.
+LLM에서는 학생이 만든 틀린 prefix에서도 teacher가 좋은 다음 토큰을 알려 준다는 보장이 없다.
 
 둘째는 teacher 응답을 정답처럼 학습할 때 **감독에 담긴 정보**다.
 이 방식은 매 토큰에 손실을 주므로 신호가 드물지는 않다.
@@ -202,7 +202,7 @@ A_t=\log\pi_T(y_t\mid x,y_{<t})-\log\pi_{\theta_{\mathrm{old}}}(y_t\mid x,y_{<t}
 $$
 
 그다음 RL 손실의 advantage 자리에 응답 단위 보상 대신 이 $A_t$를 넣는다.
-손실은 확률비 $\rho_t=\pi_\theta(y_t\mid\cdot)/\pi_{\theta_{\mathrm{old}}}(y_t\mid\cdot)$(정책 최적화 노트에서 본 토큰 확률비)에 advantage를 곱하는 importance sampling 손실을 쓰며,
+손실은 확률비 $\rho_t=\pi_\theta(y_t\mid\cdot)/\pi_{\theta_{\mathrm{old}}}(y_t\mid\cdot)$(앞 주차 PPO에서 본 토큰 확률비)에 advantage를 곱하는 importance sampling 손실을 쓰며,
 갱신 시작점($\rho_t=1$)에서 기대 gradient는 고정한 prefix의 다음 토큰 reverse KL을 줄이는 방향과 같다.
 위 예시의 `60`처럼 teacher가 학생보다 높게 본 토큰은 확률이 오르고 `50`처럼 낮게 본 토큰은 내려간다.
 지금 고른 토큰이 뒤 위치들의 KL에 미치는 영향은 반영하지 않으며, 저자들은 이를 반영해도 실험에서 도움이 되지 않았다고 보고했다.[^tm]
@@ -311,7 +311,7 @@ On-policy distillation은 off-policy의 문제를 줄여 주지만 여전히 실
 앞의 곱셈 예시에서 틀린 `50` 한 토큰은 teacher가 바로 짚을 수 있다.
 그러나 학생이 `120 + 50 = 170`까지 써 버린 뒤에는, teacher가 틀린 값을 이어 받아 계산을 계속할지 오류를 고치는 문장을 낼지부터 분명하지 않고,
 어느 쪽이 학생에게 좋은 신호인지도 보장되지 않는다.
-앞에서 본 DAgger의 결론이 의미를 잃는 지점이 여기다.
+앞에서 본 DAgger의 가정이 깨지는 지점이 여기다.
 학생에게 너무 어려운 프롬프트에서 초반 오류가 반복되고 teacher가 그런 문맥에 믿을 만한 감독을 주지 못하면,
 학습 신호가 잡음에 묻힐 수 있다.
 그래서 학생의 정답률이 너무 낮은 프롬프트가 학습 데이터에 얼마나 섞였는지부터 확인한다.
