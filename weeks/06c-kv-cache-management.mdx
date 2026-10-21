@@ -32,8 +32,6 @@ Kwon 등은 이런 방식에서 생기는 낭비를 세 가지로 나누었다.[
 
 <Figure src="https://arxiv.org/html/2309.06180v1/baseline-memory-management.svg" alt="vLLM 논문의 Figure 3. 한 줄로 이어진 KV cache 공간에 요청 A와 요청 B가 나란히 놓여 있다. 요청 A는 프롬프트 'Four score and seven years ago our' 7칸, 생성한 'fathers' 1칸, 이번 단계에서 처리하는 'brought' 1칸, 앞으로 생성할 'forth'와 종료 토큰 2칸(reserved), 끝까지 쓰이지 않을 2,038칸(internal fragmentation)을 차지한다. 두 요청 사이의 빈칸 두 개는 external fragmentation이다. 요청 B는 최대 512칸 가운데 프롬프트 'You only live' 3칸, 이번 단계의 'once' 1칸, 종료 토큰 1칸(reserved), 끝까지 쓰이지 않을 507칸(internal fragmentation)을 차지한다." caption="최대 길이만큼 연속 공간을 미리 잡을 때의 세 가지 낭비. Reserved는 나중에 쓰이지만 지금은 다른 요청이 쓸 수 없는 칸, internal fragmentation은 끝까지 쓰이지 않는 칸, external fragmentation은 요청 사이에 남은 칸이다. 요청 A의 칸 수는 원그림대로 더하면 2,049칸이라 최대 길이 2,048과 하나 어긋난다." source="Kwon et al. (2023), Figure 3 · CC BY 4.0" hero />
 
-[그림 출처](https://arxiv.org/html/2309.06180v1) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
-
 - **Reserved**: 앞으로 생성할 토큰을 위해 잡아 둔 칸이다.
   결국 쓰이지만, 쓰이기 전까지는 다른 요청이 쓸 수 없다.
 - **Internal fragmentation**: 최대 길이를 넉넉히 잡은 탓에 끝까지 쓰이지 않는 칸이다.
@@ -70,8 +68,6 @@ vLLM은 같은 생각으로 KV cache를 고정 크기 **블록**으로 나눈다
 원논문의 비유대로 블록은 page, 토큰은 byte, 요청은 process에 해당한다.[^vllm]
 
 <Figure src="https://arxiv.org/html/2309.06180v1/logical-and-physical-block-table.svg" alt="vLLM 논문의 Figure 6. 요청 A의 프롬프트는 'Four score and seven years ago our', 출력은 'fathers', 'brought' 순이다. 왼쪽의 logical KV block은 블록마다 토큰 4칸이며 block 0에 Four score and seven, block 1에 years ago our fathers, block 2에 brought가 들어 있다. 가운데 block table은 logical block 0을 physical block 7에, block 1을 physical block 1에, block 2를 physical block 3에 대응시키고, 블록마다 채워진 칸 수(4, 3에서 4로, 1)를 기록한다. 오른쪽의 physical KV block은 GPU 메모리에서 7, 1, 3번 블록에 흩어져 있다. 동그라미 숫자 1, 2, 3은 prefill, 첫 decode, 둘째 decode 단계를 뜻한다." caption="Logical 블록과 physical 블록을 잇는 block table. 요청은 연속된 logical 블록을 보지만 실제 블록은 GPU 메모리 어디에나 놓일 수 있다. 동그라미 숫자는 블록이 채워진 단계다." source="Kwon et al. (2023), Figure 6 · CC BY 4.0" hero />
-
-[그림 출처](https://arxiv.org/html/2309.06180v1) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 요청마다 logical 블록이 순서대로 이어지고,
 block table은 logical 블록마다 그 내용을 담은 physical 블록 번호와 채워진 칸 수를 기록한다.

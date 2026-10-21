@@ -403,8 +403,6 @@ Press 등의 실험에서 RoPE 모델은 sinusoidal보다 나았지만,
 
 <Figure src="https://arxiv.org/html/2503.19786v1/assets/lc_all_sizes3.png" alt="Gemma 3 4B, 12B, 27B의 문맥 길이별 평균 perplexity. 가로축은 16K부터 512K까지 로그 간격이다. 점선은 32K로 학습한 모델, 실선은 긴 문맥으로 확장한 모델이다. 12B 점선은 32K를 조금 넘자 perplexity가 급격히 치솟고, 4B와 27B 점선은 64K–128K 부근에서 평탄해진 뒤 천천히 오른다. 실선은 128K를 넘어서도 perplexity가 내려가다가, 4B와 12B는 256K 부근을 지나며 다시 오르고 12B는 급격히 치솟는다. 27B 실선은 400K 부근까지 내려간 뒤 약간 오른다." caption="Gemma 3의 사전학습 모델. 32K로 학습한 모델(점선) 중 12B는 32K를 조금 넘자 급격히 나빠지고, 4B와 27B는 그 뒤로도 한동안 개선된 뒤 64K–128K 부근에서 평탄해지거나 다시 오른다. RoPE를 rescale해 128K로 확장한 모델(실선)은 128K를 넘어서도 한동안 개선되지만, 4B와 12B는 256K 부근을 지나며 다시 나빠진다. 언어 모델링 perplexity 기준으로도 학습 길이, 설정 길이(128K), 성능이 유지되는 길이가 서로 다르다. 유효 길이는 과제별로 따로 측정해야 하며, 보고서는 RULER·MRCR 결과를 표 15에서 따로 보고한다." source="Gemma Team (2025), Gemma 3 Technical Report, Figure 7 · arXiv · CC BY 4.0 · 수정 없음" />
 
-[그림 출처](https://arxiv.org/html/2503.19786v1) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
-
 ### 5-2. RoPE의 외삽 실패
 
 그렇다면 RoPE는 왜 학습 길이 밖에서 무너질까?
@@ -498,8 +496,6 @@ f'(x, m) = f\!\left(x, \frac{m}{s}\right),\qquad s=\frac{L'}{L}
 $$
 
 <Figure src="https://arxiv.org/html/2306.15595v2/sin.png" alt="RoPE의 한 성분을 위치에 따라 그린 그림. 위쪽은 학습 범위 0부터 2048까지 파란 점으로 표시되고, 2048부터 4096까지는 학습에서 보지 못한 범위로 붉게 칠해진 채 빨간 점이 이어진다. 아래쪽은 position interpolation으로 위치 0부터 4096을 절반으로 줄여, 모든 점이 학습 범위 0부터 2048 안의 곡선 위에 촘촘히 놓인다. 원래 정수 위치는 파란 점, 새로 생긴 정수 사이 위치는 초록 점이다." caption="외삽과 보간. 위: 2,048로 학습한 모델에 4,096 길이를 넣으면 위치 2,048 이후는 학습 범위 밖이다(빨간 점). 아래: PI는 위치를 절반으로 줄여 모든 점을 학습 범위 안에 놓는다(초록 점은 원래 없던 정수 사이 위치). 한 성분만 보면 빨간 점의 값도 [−1, 1] 안에 있다는 점에 주목하자. 낯선 것은 여러 성분의 조합이다." source="Chen et al. (2023), Extending Context Window of Large Language Models via Position Interpolation, Figure 1 · arXiv · CC BY 4.0 · 수정 없음" />
-
-[그림 출처](https://arxiv.org/html/2306.15595v2) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 2,048로 학습한 모델을 4,096으로 늘리면($s=2$) 위치 3,000은 1,500으로, 4,095는 2,047.5로 바뀐다.
 위치와 거리는 원래 길이에 해당하는 연속 구간 $[0,2048)$로 압축되고,

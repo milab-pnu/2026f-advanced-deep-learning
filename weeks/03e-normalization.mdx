@@ -141,8 +141,6 @@ Sub-layer 입력(A), sub-layer 출력(B), 덧셈 뒤의 residual 경로 위(C)�
 
 <Figure src="https://arxiv.org/html/2502.02732v3/Figures/method_abc_ver3.png" alt="Peri-LN 논문의 정규화 위치도. Attention 또는 MLP를 지나는 가지에서 A는 모듈 입력, B는 모듈 출력이며, C는 이 가지를 residual 경로와 더한 뒤의 위치다." caption="정규화 위치 A·B·C. A와 B는 sub-layer 가지에 있고 C는 residual 덧셈 뒤에 있다. 어느 위치를 선택하는지는 표에서 비교한다." source="Kim et al. · Peri-LN (arXiv:2502.02732v3) Figure 2의 위치도 · CC BY-SA 4.0 · 수정 없음" />
 
-[그림 출처](https://arxiv.org/html/2502.02732v3#S3.F2) · [라이선스](https://creativecommons.org/licenses/by-sa/4.0/)
-
 | 배치 | A: sub-layer 입력 | B: sub-layer 출력 | C: residual 덧셈 뒤 | 예시 모델 |
 |---|---|---|---|---|
 | Post-LN | 없음 | 없음 | 정규화 | 원 Transformer |
@@ -407,8 +405,6 @@ Xiao 등은 Llama-2-7B의 attention map에서,
 
 <Figure src="https://arxiv.org/html/2309.17453v4/attention_weights.png" alt="Llama-2-7B의 평균 attention logit 지도 일곱 개. Layer 0과 Layer 1의 head 0은 대각선 근처, 즉 최근 토큰 쪽 값이 크다. Layer 2, 9, 16, 23, 31의 head 0은 모든 query 행에서 첫 번째 열, 즉 첫 토큰의 값이 두드러지게 크다." caption="길이 16인 문장 256개에 대한 Llama-2-7B의 평균 attention logit. 가로축은 key 위치, 세로축은 query 위치다. Layer 2부터 첫 열(첫 토큰)이 두드러진다." source="Xiao et al. · Efficient Streaming Language Models with Attention Sinks, Figure 2 · CC BY 4.0 · 수정 없음" />
 
-[그림 출처](https://arxiv.org/abs/2309.17453) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
-
 이 현상은 실제 동작에도 영향을 준다.
 최근 토큰만 KV(key-value) cache에 남기는 window attention으로 긴 텍스트를 처리하면,
 첫 토큰들이 cache에서 밀려나는 순간 perplexity가 급증했다.
@@ -499,8 +495,6 @@ Positional encoding 노트에서 본 것처럼 학습 길이 밖의 위치가 at
 원논문은 Llama-2, MPT, Falcon, Pythia로 400만 토큰까지 안정적으로 언어 모델링했다고 보고한다.
 
 <Figure src="https://arxiv.org/html/2309.17453v4/scheme.png" alt="네 가지 attention 방식 비교. (a) Dense attention은 모든 T개 토큰을 cache에 두어 O(T²) 비용이고 긴 텍스트에서 perplexity가 5641이다. (b) Window attention은 최근 L개 토큰만 남겨 O(TL)이지만 첫 토큰이 밀려나면 perplexity가 5158로 무너진다. (c) Re-computation을 쓰는 sliding window는 perplexity 5.43이지만 토큰마다 cache를 다시 계산해 O(TL²)다. (d) StreamingLLM은 attention sink인 처음 몇 토큰과 최근 L개 토큰을 유지해 O(TL) 비용으로 perplexity 5.40을 얻는다." caption="StreamingLLM과 기존 방식의 비교. (d)의 노란 칸이 보존하는 초기 토큰(attention sink)이다. PPL(perplexity)은 Llama-2-13B로 PG19 시험 집합의 첫 책(65K 토큰)을 평가한 값이다." source="Xiao et al. · Efficient Streaming Language Models with Attention Sinks, Figure 1 · CC BY 4.0 · 수정 없음" />
-
-[그림 출처](https://arxiv.org/abs/2309.17453) · [라이선스](https://creativecommons.org/licenses/by/4.0/)
 
 StreamingLLM은 문맥 길이를 늘리는 방법이 아니다.
 밀려난 중간 토큰의 정보는 여전히 볼 수 없고, 긴 생성에서 분포가 무너지지 않게 할 뿐이다.

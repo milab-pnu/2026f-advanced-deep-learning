@@ -130,8 +130,6 @@ Decode만 하는 batch에 prefill 하나를 더하자 decode 반복의 지연이
 
 <Figure src="https://arxiv.org/html/2401.09670v3/prefill-decoding-interference.svg" alt="DistServe 논문의 Figure 2. 두 그래프 모두 가로축은 batch 크기, 세로축은 지연(ms)이다. 주황색 선은 decode만 하는 batch, 파란 선은 decode batch에 prefill 하나를 더한 경우다. 왼쪽(입력 128토큰)에서는 파란 선이 주황 선보다 몇 ms 위에 있다. 오른쪽(입력 1,024토큰)에서는 주황 선이 10–40 ms인 데 비해 파란 선은 120–150 ms로, prefill 하나가 decode 반복을 여러 배 느리게 한다. 가로 점선은 batch 1일 때 파란 선의 값이고, 두 그래프에 decoding slowdown(주황 선에서 파란 선까지)과 prefill slowdown(점선에서 파란 선까지)이 화살표로 표시되어 있다." caption="Decode batch에 prefill 하나를 더했을 때의 지연. 프롬프트가 길수록(오른쪽) decode 반복이 크게 느려지고, prefill도 decode와 섞여 느려진다." source="Zhong et al. (2024), Figure 2 · CC BY-SA 4.0" />
 
-[그림 출처](https://arxiv.org/html/2401.09670v3) · [라이선스](https://creativecommons.org/licenses/by-sa/4.0/)
-
 Agrawal 등은 이 문제를 scheduler의 선택으로 정리했다.[^sarathi-serve]
 대기 중인 prefill을 먼저 넣는 prefill 우선 정책(vLLM 초기판, Orca)은 batch를 빨리 채워 처리량이 높지만 decode 요청의 토큰 간격이 튄다.
 진행 중인 decode를 먼저 끝내는 decode 우선 정책은 토큰 간격이 고르지만 새 요청의 TTFT(time to first token)가 길어지고 batch가 작아 처리량이 낮다.
