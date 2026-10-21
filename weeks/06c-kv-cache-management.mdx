@@ -7,28 +7,17 @@ order: 2
 앞의 두 노트는 같은 결론에 닿았다.
 H100(80 GB) 한 대에 Llama 3 8B를 올리고 GPU(graphics processing unit) 메모리의 92%를 쓰며 작업 공간으로 약 4 GB를 뺀다고 가정하면,
 가중치 16.1 GB를 올린 뒤 KV(key-value) cache에 약 53.5 GB가 남는다.
-KV를 BF16(bfloat16, 2 bytes)으로 저장하면 토큰당 128 KiB라서 8,192토큰 요청이 49개까지 들어간다고 계산했고,
-batch를 키워 처리량(throughput)을 올리는 일이 이 공간에서 먼저 막힌다는 것을 보았다.
-그런데 이 계산은 공간을 한 칸도 낭비하지 않는다고 가정했다.
-실제 서빙 시스템은 이 공간을 얼마나 알뜰하게 쓰고 있을까?
-그리고 여러 요청이 같은 문장을 따로따로 계산해 저장하고 있지는 않을까?
+KV를 BF16(bfloat16, 2 bytes)으로 저장하면 토큰당 128 KiB라서 8,192토큰 요청이 49개까지 들어가고,
+batch를 키워 처리량(throughput)을 올리는 일이 이 공간에서 먼저 막힌다.
+그런데 이 계산은 공간을 한 칸도 낭비하지 않는다고 가정했고,
+여러 요청이 같은 앞부분을 가져도 요청마다 따로 저장한다고 셈했다.
 
-이 노트는 KV cache를 서빙 중에 관리하는 방법을 다룬다.
-전체 지도는 Jiang 등의 서베이[^survey]로 잡는다.
-이 서베이는 모델 가중치나 구조를 바꾸지 않고 서빙 단계에서 KV cache를 다루는 방법만 범위로 삼아,
-실행 순서(temporal), 저장 위치(spatial), 표현과 보존(structural)의 세 축으로 나눈다.
-공간 할당과 prefix 재사용은 서베이 §5.2.1에,
-eviction은 §5.2.2, offloading은 §4.1에 대응한다.
-KV cache를 적은 bits로 저장하는 양자화(quantization, 서베이 §5.1.1)는 가중치 양자화와 같은 scale과 묶음 단위의 원리를 따른다.
-같은 서베이도 범위에서 뺀 구조 변경,
-곧 GQA(grouped-query attention)·MLA(multi-head latent attention)처럼 KV head나 표현 자체를 줄이는 방법은 Attention heads and KV cache 노트에서,
-sliding window처럼 참조 위치를 줄이는 방법은 Efficient attention 노트에서 다뤘다.
-
-세 가지 문제를 차례로 본다.
+이 노트는 실제 서빙에서 이 공간을 관리하는 방법을 다룬다.
+Jiang 등의 서베이처럼 모델 가중치나 구조는 그대로 두고 서빙 단계에서 KV cache를 다루는 방법만 범위로 삼는다.[^survey]
+앞 주차에서 본 GQA(grouped-query attention)·MLA(multi-head latent attention)나 sliding window처럼 모델 구조를 바꿔 KV cache를 줄이는 방법은 여기서 다시 다루지 않는다.
+문제는 세 가지다.
 공간을 미리 잡아 두는 방식의 낭비, 같은 prefix를 요청마다 다시 계산하고 저장하는 중복,
 그리고 낭비와 중복을 없애도 남는 길이에 비례하는 크기다.
-문제마다 동기가 달라 해법도 각각의 계보를 따른다.
-마지막으로 층마다 저장하는 상태가 다른 hybrid 모델에서 이 관리가 어떻게 달라지는지 본다.
 
 ## 1. 연속 공간 할당의 낭비
 
@@ -66,7 +55,7 @@ Llama 3 8B로 최대 8,192토큰을 허용하는 서비스에서,
 
 Kwon 등은 이 낭비를 실제 서빙 실험에서 쟀다.
 연속 할당을 쓰는 기존 서빙 시스템을 재현해 보니, 최대 길이만큼 미리 잡으면 KV cache 공간의 20.4%만 실제 토큰 상태를 담았다.
-출력 길이를 미리 알고 그 길이를 담는 가장 작은 2의 거듭제곱만큼 잡으면(Pow2) 26.8%, 출력 길이만큼 정확히 잡는 이상적인 경우(Oracle)에도 38.2%였다(Figure 2).[^vllm]
+출력 길이를 미리 알고 그 길이를 담는 가장 작은 2의 거듭제곱만큼 잡으면(Pow2) 26.8%, 출력 길이만큼 정확히 잡는 이상적인 경우(Oracle)에도 38.2%였다.[^vllm]
 Oracle에서도 internal fragmentation이 사라질 뿐 reserved와 external fragmentation이 남기 때문이다.
 Roofline 분석에서 KV cache 공간이 batch 크기의 상한이었으니, 이 낭비는 곧 처리량의 손실이다.
 
@@ -91,23 +80,23 @@ block table은 logical 블록마다 그 내용을 담은 physical 블록 번호�
 이렇게 하면 최대 길이만큼 미리 잡지 않고,
 모든 블록의 크기가 같아 external fragmentation도 사라진다.
 Reserved와 internal fragmentation은 요청마다 마지막 블록의 빈칸으로 줄어들어,
-원논문의 표현대로 낭비가 요청당 블록 하나 안으로 제한된다(원논문 §4.3).[^vllm]
+원논문의 표현대로 낭비가 요청당 블록 하나 안으로 제한된다.[^vllm]
 
 <Callout type="example">
-원논문에서 vLLM의 기본 블록 크기는 16토큰이다(§7.2).[^vllm]
+원논문에서 vLLM의 기본 블록 크기는 16토큰이다.[^vllm]
 Llama 3 8B에서 블록 하나는 $16\times128\ \text{KiB}=2\ \text{MiB}$다.
 앞의 요청이 300토큰까지 자라면 블록 19개(304칸)를 쓰고, 마지막 블록의 빈칸 4개,
 0.5 MiB만 낭비한다.
 연속 할당의 1 GiB 대신 38 MiB다.
 블록이 너무 작으면 kernel이 KV cache를 읽고 처리할 때 GPU의 병렬성을 충분히 쓰지 못하고,
 너무 크면 마지막 블록의 빈칸이 커진다.
-원논문은 ShareGPT 작업에서 16–128토큰 블록이 가장 좋았다고 보고했다(Figure 18(b)).
+원논문은 ShareGPT 작업에서 16–128토큰 블록이 가장 좋았다고 보고했다.
 </Callout>
 
 이 방식에는 대가가 있다.
 한 요청의 key·value가 메모리에 흩어져 있으므로,
 attention kernel이 block table을 보며 블록을 찾아 읽어야 한다.
-원논문은 이 때문에 attention kernel 자체의 지연이 연속 메모리를 쓰는 FasterTransformer보다 20–26% 길었다고 밝혔다(§7.1).[^vllm]
+원논문은 이 때문에 attention kernel 자체의 지연이 연속 메모리를 쓰는 FasterTransformer보다 20–26% 길었다고 밝혔다.[^vllm]
 그래도 batch를 훨씬 크게 키울 수 있어 전체 처리량은 크게 오른다.
 
 ### 2-2. 블록 공유와 copy-on-write
@@ -118,34 +107,36 @@ attention kernel이 block table을 보며 블록을 찾아 읽어야 한다.
 block table을 쓰면 여러 시퀀스의 logical 블록이 같은 physical 블록을 가리키게 하면 된다.
 vLLM은 physical 블록마다 몇 개의 시퀀스가 가리키는지 reference count를 두고,
 공유 중인 블록에 어느 한 시퀀스가 새 토큰을 써야 할 때만 그 블록을 복사한다.
-운영체제의 **copy-on-write**와 같은 방식이다(§4.4).[^vllm]
+운영체제의 **copy-on-write**와 같은 방식이다.[^vllm]
 
 공유로 줄어드는 메모리는 작업에 따라 다르다.
 OPT-13B로 Alpaca 데이터를 처리한 실험에서 parallel sampling은 6.1–9.8%,
-가지가 더 많이 공유되는 beam search는 37.6–55.2%의 메모리를 아꼈다(Figure 15).[^vllm]
-프롬프트가 더 긴 ShareGPT에서는 각각 16.2–30.5%, 44.3–66.3%였다(§6.3).
+가지가 더 많이 공유되는 beam search는 37.6–55.2%의 메모리를 아꼈다.[^vllm]
+프롬프트가 더 긴 ShareGPT에서는 각각 16.2–30.5%, 44.3–66.3%였다.
 
 ### 2-3. 결과와 선점
 
 이 설계를 구현한 것이 vLLM이다.
-원논문은 같은 지연 수준에서 기존 시스템(FasterTransformer, Orca)보다 처리량이 2–4배 높았다고 초록에서 요약했다.[^vllm]
-앞에서 20.4–38.2%였던 KV cache 공간의 실제 사용률은 96.3%로 올랐다(원논문 Figure 2).
+원논문은 같은 지연 수준에서 기존 시스템(FasterTransformer, Orca)보다 처리량이 2–4배 높았다고 보고했다.[^vllm]
+앞에서 20.4–38.2%였던 KV cache 공간의 실제 사용률은 96.3%로 올랐다.
 
 공간을 쓰는 만큼만 주면 새로운 문제가 생긴다.
 생성 도중 빈 블록이 바닥날 수 있다는 것이다.
 그때는 실행 중인 요청 일부를 멈추고(preemption) 그 블록을 회수해야 한다.
 원논문은 두 방법을 비교했다.
 멈춘 요청의 블록을 CPU(central processing unit) 메모리로 옮겨 두었다가 다시 가져오는 swapping과,
-블록을 버리고 나중에 다시 prefill해 KV cache를 재계산하는 recomputation이다(§4.5).
+블록을 버리고 나중에 다시 prefill해 KV cache를 재계산하는 recomputation이다.
 재계산은 이미 생성한 토큰까지 프롬프트처럼 한 번에 처리하므로 원래의 decode보다 훨씬 빠를 수 있다.
-현재 vLLM은 recomputation을 기본으로 쓴다.[^vllm-opt]
+원논문의 실험에서는 블록이 작을수록 CPU와 GPU 사이의 작은 전송이 많아져 swapping이 불리했고,
+블록이 크면 swapping이 유리했다.
+16–64토큰 블록에서는 두 방법의 전체 성능이 비슷했다.[^vllm]
 
 ## 3. Prefix 재사용
 
 ### 3-1. 반복되는 prefix
 
 앞에서 본 공유는 한 요청 안에서 갈라진 시퀀스끼리의 이야기였다.
-원논문도 서비스 제공자가 미리 지정한 prefix를 여러 요청이 공유하게 했지만(§4.4),
+원논문도 서비스 제공자가 미리 지정한 prefix를 여러 요청이 공유하게 했지만,
 실제 서비스에서는 미리 정하지 않은 **서로 다른 요청**도 같은 시작 부분을 자주 가진다.
 모든 요청 앞에 붙는 시스템 프롬프트, 같은 few-shot 예시, 대화가 이어질 때마다 다시 보내는 이전 대화,
 agent가 도구 결과를 받을 때마다 다시 넣는 문맥이 그렇다.
@@ -207,11 +198,11 @@ vLLM과 달리 블록 경계와 상관없이 일치하는 토큰까지 재사용
 cache를 위한 공간을 따로 떼어 둘 필요가 없다.[^sglang]
 
 SGLang 논문은 cache 적중률을 전체 프롬프트 토큰 가운데 cache에서 찾은 토큰의 비율로 정의하고,
-여러 작업에서 이 값이 50–99%였다고 보고했다(원논문 §6.2).[^sglang]
+여러 작업에서 이 값이 50–99%였다고 보고했다.[^sglang]
 서버 지표로 보는 prefix cache 적중률도 같은 개념이다.
 적중률이 높을수록 prefill 계산이 줄어 TTFT와 처리량이 좋아지지만,
 출력이 길어 decode가 시간을 지배하는 작업에서는 그 효과가 작다.
-RadixAttention을 포함한 SGLang 전체 시스템은 기존 시스템보다 초당 실행한 프로그램 수로 잰 처리량이 최대 6.4배 높았다(원논문 Figure 5).
+RadixAttention을 포함한 SGLang 전체 시스템은 기존 시스템보다 초당 실행한 프로그램 수로 잰 처리량이 최대 6.4배 높았다.
 
 <Callout type="note">
 두 설계는 같은 문제를 다른 단위로 푼다.
@@ -228,40 +219,69 @@ SGLang은 원논문 구현에서 토큰 단위의 나무로 일치하는 토큰�
 Paging과 prefix 재사용으로 낭비와 중복을 없애도,
 남은 KV cache는 여전히 토큰 하나에 128 KiB씩 문맥 길이에 비례해 자란다.
 Roofline 분석에서 보았듯 긴 문맥의 decode는 이 KV cache를 읽는 시간이 스텝을 지배한다.
-GPU 메모리에 둘 KV cache를 줄이는 방법은 토큰 하나를 적은 bytes로 저장하는 양자화 말고도 두 갈래가 있다.
-저장할 토큰 수를 줄이거나(eviction), GPU 밖의 더 큰 저장소로 옮기는 것(offloading)이다.
+GPU 메모리에 둘 KV cache를 더 줄이려면 세 갈래가 있다.
+토큰 하나를 적은 bytes로 저장하거나(양자화, quantization), 저장할 토큰 수를 줄이거나(eviction), GPU 밖의 더 큰 저장소로 옮기는 것(offloading)이다.
+KV cache 양자화는 가중치 양자화와 원리가 같아 양자화를 다룰 때 함께 보고, 여기서는 나머지 두 갈래를 본다.
 
 ### 4-1. Eviction
 
-Eviction은 생성 중에 모든 과거 토큰이 똑같이 중요하지는 않다는 관찰에서 출발한다.
+앞의 prefix caching에서 블록을 내보내는 일은 어느 요청도 쓰지 않는 cache를 지우는 것이었다.
+지운 prefix가 다시 필요하면 다시 계산하면 되고, 결과는 그대로다.
+여기서 말하는 eviction은 다르다.
+실행 중인 요청이 attention할 과거 토큰의 key·value 자체를 지워, 그 요청이 볼 문맥을 줄인다.
+
+이런 eviction은 생성 중에 모든 과거 토큰이 똑같이 중요하지는 않다는 관찰에서 출발한다.
 Zhang 등의 H2O(Heavy-Hitter Oracle)는 각 행 최댓값의 1%보다 작은 값을 0으로 볼 때,
 OPT 모델의 attention 행렬이 거의 모든 층에서 95% 넘게 희소하고,
-누적 attention 점수가 power law를 따라 소수의 토큰에 몰린다는 것을 관찰했다(원논문 Figure 2(a)(b)).[^h2o]
+누적 attention 점수가 power law를 따라 소수의 토큰에 몰린다는 것을 관찰했다.[^h2o]
 그런 토큰을 heavy hitter라 부르고, 최근 토큰과 heavy hitter만 KV cache에 남기고 나머지를 지운다.
-생성 중에도 cache가 차면 최근 토큰을 보호하면서, 나머지 가운데 누적 attention 점수가 가장 낮은 KV를 head마다 하나씩 지운다(원논문 §4, Appendix A).
-KV cache 예산을 프롬프트 길이의 20%로 잡아 heavy hitter와 최근 토큰에 반씩 나누고도,
-T4 GPU에서 CPU offloading이 필요한 OPT-30B의 처리량이 DeepSpeed·Accelerate보다 약 21–31배 높았다(원논문 Table 3–4의 값으로 계산).
+생성 중에도 cache가 차면 최근 토큰을 보호하면서, 나머지 가운데 누적 attention 점수가 가장 낮은 KV를 head마다 하나씩 지운다.
+KV cache 예산을 프롬프트 길이의 20%로 잡아 heavy hitter와 최근 토큰에 반씩 나누어도,
+LLaMA-13B의 XSUM 요약 같은 task에서 full cache와 비슷한 성능을 냈다.
+저자들은 H2O를 offloading 추론 엔진 FlexGen 위에 구현해 T4 GPU에서 OPT-30B를 돌렸다.
+512토큰 프롬프트에 32토큰을 생성하는 설정에서 줄어든 cache만큼 batch를 144에서 728로 키울 수 있었고,
+생성 길이와 데이터를 바꾼 네 설정에서 처리량이 같은 FlexGen보다 1.6–2.2배 높았다(보고된 처리량으로 계산).
 
-Li 등의 SnapKV는 스텝마다 지울 토큰을 다시 고르는 대신,
-prefill이 끝날 때 프롬프트의 KV cache를 한 번 골라 압축하고 생성 중에는 고치지 않는다.[^snapkv]
+H2O는 생성하면서 스텝마다 지울 토큰을 고른다.
+그런데 긴 문서를 넣고 짧게 답하는 요약이나 문서 질의응답에서는 cache의 대부분이 프롬프트 몫이고,
+그 부분은 prefill이 끝나는 순간 이미 다 만들어져 있다.
+Li 등의 SnapKV는 그래서 prefill이 끝날 때 프롬프트의 KV cache를 한 번 골라 압축하고 생성 중에는 고치지 않는다.[^snapkv]
 프롬프트의 마지막 부분(observation window)이 앞부분의 어느 위치에 attention하는지를 보면,
 생성하는 동안 각 head가 주목할 위치를 미리 알 수 있다는 관찰이다.
 Head마다 observation window의 attention 점수를 앞부분의 위치별로 더하고,
 이웃 위치끼리 pooling한 점수로 상위 위치를 고른다.
-Pooling은 이웃 위치의 점수를 함께 반영해 점수가 높은 위치의 주변도 같이 뽑히기 쉽게 하고,
+Pooling은 점수가 높은 위치의 주변도 같이 뽑히게 해서,
 전화번호에서 국가 번호만 남는 식으로 정보가 끊기는 것을 줄인다.
 고른 위치의 key·value에 observation window 자체의 key·value를 이어 붙인 것이 압축된 KV cache다.
+
+<Callout type="example">
+프롬프트가 10토큰이고 마지막 2토큰을 observation window로 삼아, 앞 8토큰 가운데 3토큰만 남긴다고 하자.
+한 head에서 window의 두 토큰이 앞 위치에 준 attention 점수를 더한 값과,
+자기와 양옆 위치의 평균으로 pooling한 값이 다음과 같다고 하자(설명을 위한 가상의 값이고, 양 끝 바깥은 0으로 채운다).
+
+| 위치 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| 점수 합 | 0.04 | 0.02 | 0.15 | 0.40 | 0.12 | 0.03 | 0.08 | 0.16 |
+| Pooling 뒤 | 0.02 | 0.07 | 0.19 | 0.22 | 0.18 | 0.08 | 0.09 | 0.08 |
+
+점수 합만으로 고르면 4, 8, 3번 위치가 남아 4번의 오른쪽 이웃인 5번이 빠진다.
+Pooling 뒤의 점수로 고르면 4번을 가운데 둔 3, 4, 5번이 함께 남는다.
+압축된 cache는 이 세 위치와 window의 두 토큰(9, 10번)을 합한 5토큰이다.
+</Callout>
+
 LWM-Text-Chat-1M을 A100 80GB 한 대에서 batch 2로 돌리고 압축한 prompt KV cache를 2,048토큰으로 둔 실험에서,
 16K토큰 입력의 decode 속도가 3.6배 빨라졌고,
-메모리가 모자라기 전까지 받을 수 있는 입력 길이는 16K에서 131K토큰으로 약 8.2배 늘었다(원논문 Figure 7).
-Prompt KV cache를 1,024토큰으로 둔 실험에서는 같은 GPU 한 대로 380K토큰 문맥을 처리했다(Figure 6).
+메모리가 모자라기 전까지 받을 수 있는 입력 길이는 16K에서 131K토큰으로 약 8.2배 늘었다.
+Prompt KV cache를 1,024토큰으로 둔 실험에서는 같은 GPU 한 대로 380K토큰 문맥에서 긴 문서 속 문장 찾기(Needle-in-a-Haystack)를 정확도 하락이 거의 없이 처리했다.
+품질은 긴 입력 데이터셋 16개에서도 압축하지 않은 모델과 비슷했다고 보고했다.
 
 <Callout type="warning">
-Eviction은 손실이 있는 압축이다.
+실행 중인 요청의 eviction은 손실이 있는 압축이다.
 지운 토큰의 key·value는 처음부터 다시 prefill하지 않는 한, 나중에 그 토큰이 다시 중요해져도 되살릴 수 없다.
-Normalization and attention sink 노트의 StreamingLLM도 같은 성격이어서,
+앞 주차에서 본 StreamingLLM도 같은 성격이어서,
 생성이 무너지지 않게 할 뿐 밀려난 중간 토큰의 정보를 볼 수 있게 하지는 않는다.
-긴 문서에서 특정 문장을 찾아야 하는 작업처럼 어떤 토큰이 나중에 필요할지 미리 알기 어려운 경우에는 품질을 꼭 확인한다.
+위의 품질 결과도 특정 모델과 task에서 잰 것이므로,
+긴 문서에서 특정 문장을 찾아야 하는 작업처럼 어떤 토큰이 나중에 필요할지 미리 알기 어려운 경우에는 자기 작업에서 품질을 꼭 확인한다.
 Paging과 prefix caching은 결과를 바꾸지 않는다는 점에서 성격이 다르다.
 </Callout>
 
@@ -271,7 +291,6 @@ Paging과 prefix caching은 결과를 바꾸지 않는다는 점에서 성격이
 GPU 메모리(HBM, high-bandwidth memory) 바깥에는 CPU 메모리(DRAM, dynamic random-access memory),
 SSD(solid-state drive), 네트워크로 연결된 다른 서버의 메모리가 있다.
 GPU에서 멀어질수록 대체로 용량은 커지지만, 다시 가져오는 비용은 장치와 연결 방식에 따라 다르다.
-서베이는 이런 계층 사이에서 KV cache를 배치하고 옮기는 방법을 §4.1에서 정리한다.[^survey]
 
 이 방식이 특히 잘 맞는 곳이 prefix caching이다.
 GPU 메모리에서 밀려난 prefix를 지우는 대신 CPU 메모리에 두었다가,
@@ -357,8 +376,6 @@ prefill과 decode를 한 batch에 섞을지를 정해야 한다.
 [^survey]: Jiang, J., Yang, P., Zhang, R., & Liu, F. (2026). Towards Efficient Large Language Model Serving: A Survey on System-Aware KV Cache Optimization. *Findings of ACL 2026*, 38450–38476. [arXiv:2607.08057](https://arxiv.org/abs/2607.08057).
 
 [^vllm]: Kwon, W., Li, Z., Zhuang, S., et al. (2023). Efficient Memory Management for Large Language Model Serving with PagedAttention. *SOSP 2023*. [arXiv:2309.06180](https://arxiv.org/abs/2309.06180).
-
-[^vllm-opt]: vLLM Project. (2026). Optimization and Tuning. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/configuration/optimization/).
 
 [^vllm-apc]: vLLM Project. (2026). Automatic Prefix Caching. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/prefix_caching/).
 
