@@ -9,7 +9,7 @@ order: 1
 연산 하나가 GPU(graphics processing unit)의 계산 능력과 메모리 대역폭 가운데 어느 쪽에 막히는지는 계산량과 옮겨야 할 바이트의 비율로 정해지고,
 그 관계를 한 장의 그림으로 보이는 것이 **roofline model**이다.
 
-Yuan 등의 서베이는 LLM inference의 기법들을 이 모형 위에서 분석해 정리했다.[^survey]
+Yuan 등의 서베이는 LLM(large language model) inference의 기법들을 이 모형 위에서 분석해 정리했다.[^survey]
 이 노트는 같은 분석을 Llama 3 8B와 H100으로 해 보고,
 그 결과로 TTFT(time to first token)와 TPOT(time per output token)의 하한, 처리량(throughput)의 상한을 계산한다.
 
@@ -17,7 +17,7 @@ Yuan 등의 서베이는 LLM inference의 기법들을 이 모형 위에서 분�
 
 ### 1-1. GPU의 두 가지 한계
 
-앞서 FlashAttention을 볼 때 GPU 메모리를 두 층으로 나누었다.
+앞 주차에서 FlashAttention을 볼 때 GPU 메모리를 두 층으로 나누었다.
 칩 바깥의 크고 느린 HBM(high-bandwidth memory)과,
 연산 장치 곁의 작고 빠른 SRAM(static random-access memory)이다.
 가중치와 KV(key-value) cache는 HBM에 있고, 계산하려면 연산 장치 쪽으로 읽어 와야 한다.
@@ -192,7 +192,7 @@ DeepSeek-V3 설정에서 캐시된 토큰 하나는 latent 512개와 RoPE(rotary
 head 128개가 모두 이 latent로 점수를 계산하고(576차원) 가중합을 한다(512차원).[^dsv3]
 캐시된 토큰 하나에 $2\cdot128\cdot(576+512)\approx2.8\times10^5$ FLOPs이므로 intensity는 약 240으로,
 ridge point 가까이 간다.
-앞서 MLA를 볼 때 흡수는 복원한 K/V를 캐시하는 방식보다 head당 계산을 늘린다고 했는데,
+앞 주차에서 MLA를 볼 때 흡수는 복원한 K/V를 캐시하는 방식보다 head당 계산을 늘린다고 했는데,
 memory-bound인 decode에서는 그 늘어난 계산이 놀던 연산 장치를 채우는 셈이다.
 
 다만 이 intensity는 head 수에 비례한다.
