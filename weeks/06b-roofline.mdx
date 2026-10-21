@@ -367,17 +367,6 @@ Williams 등은 최적화가 덜 된 경우의 한계도 지붕 아래에 추가
 그러므로 이 노트의 숫자는 성능의 이상적 상한, 곧 시간의 이상적 하한으로 읽고,
 실측값이 여기서 멀다면 그 차이가 어디서 오는지를 찾는 출발점으로 쓴다.
 
-## 7. 정리
-
-새 모델이나 하드웨어를 만나도 roofline 분석은 같은 순서로 할 수 있다.
-연산마다 FLOPs와 HBM을 오가는 bytes를 세어 intensity를 구하고, 하드웨어의 ridge point와 비교한다.
-연산별 시간 하한을 더해 스텝의 하한을 얻고, 그 안에서 계산과 데이터 이동 가운데 어느 항이 큰지 본다.
-실측 시간은 MFU나 MBU로 바꿔 하한과의 거리를 잰다.
-
-Llama 3 8B를 H100 한 대에 올렸을 때 이 순서가 그린 모습은 이렇다.
-Prefill은 토큰을 한꺼번에 넣어 ridge point 오른쪽에 놓이고, decode는 batch를 키워야 겨우 오른쪽으로 움직인다.
-그마저 요청마다 따로 읽는 KV cache가 발목을 잡아, batch가 커질수록 스텝은 가중치보다 KV cache 읽기에 좌우되고 끝내 메모리 용량에 막힌다.
-
 [^roofline]: Williams, S., Waterman, A., & Patterson, D. (2009). Roofline: An Insightful Visual Performance Model for Multicore Architectures. *Communications of the ACM*, 52(4), 65–76. [doi:10.1145/1498765.1498785](https://doi.org/10.1145/1498765.1498785).
 
 [^survey]: Yuan, Z., Shang, Y., Zhou, Y., et al. (2024). LLM Inference Unveiled: Survey and Roofline Model Insights. [arXiv:2402.16363v6](https://arxiv.org/abs/2402.16363v6).

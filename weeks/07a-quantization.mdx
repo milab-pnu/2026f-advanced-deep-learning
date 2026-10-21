@@ -413,28 +413,6 @@ Marchisio 등은 다국어 LLM에서 양자화의 손해가 라틴 문자가 아
 자동 평가가 사람 평가보다 그 손해를 크게 과소평가했다고 보고했다.[^marchisio]
 양자화 모델을 평가할 때는 그 모델이 실제로 쓰일 작업으로, 원래 정밀도 모델과 같은 조건에서 비교한다.
 
-## 8. 정리
-
-양자화는 실숫값을 적은 bits의 격자에 대응시키고, scale로 그 격자를 값의 범위에 맞춘다.
-범위를 정하는 큰 값이 있으면 나머지 값의 정밀도가 무너지므로,
-scale을 얼마나 작은 묶음마다 둘지가 오차와 저장 공간을 함께 정한다.
-Inference에서는 가중치만 줄여 읽는 bytes를 줄이는 weight-only와,
-activation까지 줄여 행렬곱을 저정밀 연산 장치로 하는 weight-activation이 서로 다른 병목을 겨냥한다.
-
-LLM에서 어려움의 중심은 특정 channel에 몰린 activation outlier였고, LLM.int8()이 실험한 모델에서는 6.7B 무렵부터 뚜렷해졌다.
-LLM.int8()은 outlier 차원을 FP16으로 떼어 내 정확도를 지켰지만 속도 이득은 거의 없었다.
-SmoothQuant는 그 어려움을 입력 channel별 smoothing factor로 가중치에 옮겼고,
-QuaRot과 SpinQuant는 직교 회전으로 outlier를 여러 channel에 흩어 4-bit activation까지 내려갔다.
-Weight-only 쪽에서는 GPTQ가 한 가중치의 오차를 아직 양자화하지 않은 가중치가 메우게 하고,
-AWQ가 activation으로 고른 중요한 가중치를 적당히 키워 상대 오차를 줄인다.
-
-하드웨어는 FP8과,
-블록마다 scale을 두는 MXFP4·NVFP4 같은 형식으로 저정밀 연산을 직접 지원하며 연산의 지붕을 높이고 있다.
-KV cache도 FP8로, 더 낮게는 key를 channel별·value를 토큰별로 묶어 양자화해 긴 문맥의 용량과 읽기 시간을 줄인다.
-PTQ로 부족한 bits에서는 QAT를 distillation과 함께 쓴다.
-어느 방법이든 효과는 배포의 병목과 batch 크기에 따라 다르므로,
-roofline으로 병목을 먼저 확인하고 실제 작업으로 품질을 잰다.
-
 [^survey]: Gong, R., Ding, Y., Wang, Z., et al. (2025). A Survey of Low-bit Large Language Models: Basics, Systems, and Algorithms. *Neural Networks*, 192, 107856. [arXiv:2409.16694v3](https://arxiv.org/abs/2409.16694v3).
 
 [^nagel]: Nagel, M., Fournarakis, M., Amjad, R. A., Bondarenko, Y., van Baalen, M., & Blankevoort, T. (2021). A White Paper on Neural Network Quantization. [arXiv:2106.08295](https://arxiv.org/abs/2106.08295).

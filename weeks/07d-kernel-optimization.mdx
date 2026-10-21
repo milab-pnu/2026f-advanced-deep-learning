@@ -13,6 +13,11 @@ Kernel 최적화는 두 가지 일을 한다.
 Kernel fusion처럼 중간값의 HBM(high-bandwidth memory) 왕복을 없애 실제로 옮기는 bytes를 줄이면 roofline 위의 점이 오른쪽으로 옮겨 가고,
 일을 GPU의 연산 단위에 고르게 나누거나 kernel 사이의 빈 시간을 없애면 같은 위치의 점이 지붕에 가까워진다.
 
+다만 kernel 하나의 배율이 곧 서비스의 배율은 아니다.
+이 8 ms 스텝에서 attention이 2 ms를 차지한다고 가정하면,
+attention kernel을 두 배 빠르게 해도 스텝은 7 ms가 되어 약 1.14배 빨라질 뿐이다(Amdahl의 법칙).
+그래서 개선은 스텝 시간을 연산별로 나누어 보고 큰 몫부터 손댄다.
+
 전체 지도는 Pan과 Li의 inference 시스템 서베이[^survey]로 잡는다.
 §3.1이 kernel을 다루며,
 그 가운데 §3.1.1은 attention kernel의 계보를 작업을 GPU 연산 단위에 나누어 주는 방식으로 정리한다.
@@ -287,30 +292,6 @@ Inference 엔진은 둘을 섞어 쓴다.
 vLLM은 attention 사이의 토큰별 연산을 `torch.compile`로 묶어 fusion하고 그 구간을 CUDA graph로 기록하며,[^vllm-cg] attention은 FlashAttention이나 FlashInfer처럼 직접 최적화한 kernel을 쓴다.
 FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kernel만큼 빠르지 않아 CUDA 코드를 생성한다고 밝힌다.[^flashinfer]
 성능이 가장 중요한 몇 개의 kernel은 손으로, 나머지는 컴파일러로 처리하는 분업이다.
-
-## 5. 정리
-
-Decode에서 kernel이 하드웨어를 다 쓰지 못하는 까닭은 대개 일의 모양에 있다.
-병목의 모양과 그에 맞춘 kernel을 묶으면 다음과 같다.
-
-| 일의 모양 | 생기는 문제 | 대응 |
-|---|---|---|
-| 짧은 query, 긴 KV cache | batch × head만으로는 SM이 남는다 | Flash-Decoding의 KV split과 LSE 합치기 |
-| 흩어진 블록, 다른 길이, 공유 prefix | 연속 메모리를 전제한 kernel이 맞지 않는다 | FlashInfer의 block-sparse 형식과 plan/run |
-| 작은 batch의 선형층 | 큰 행렬곱용 타일이 0을 계산한다 | flat GEMM kernel |
-| 작은 batch의 가중치 읽기 | 읽는 bytes가 시간을 정한다 | 4-bit 가중치를 레지스터에서 되돌리는 Marlin |
-| expert마다 다른 토큰 수 | padding을 하거나 토큰을 버린다 | block-sparse 행렬곱, fused MoE kernel |
-| 짧은 kernel의 연속 | 제출 비용 동안 GPU가 논다 | CUDA graph, `torch.compile`의 fusion |
-
-어느 경우든 기준은 roofline이 정한 하한이다.
-Memory-bound인 decode에서는 MBU로 대역폭을 얼마나 쓰는지 보고,
-batch가 커져 compute-bound로 옮겨 가면 MFU(model FLOPs utilization)와 계산 시간의 하한을 함께 본다.
-Marlin의 이득이 batch에 따라 줄어들듯, 같은 kernel이라도 어떤 batch에서 쓰는지가 효과를 정한다.
-
-Kernel 하나의 배율이 곧 서비스의 배율도 아니다.
-도입의 8 ms 스텝에서 attention이 2 ms를 차지한다고 가정하면,
-attention kernel을 두 배 빠르게 해도 스텝은 7 ms가 되어 약 1.14배 빨라질 뿐이다(Amdahl의 법칙).
-그래서 개선은 스텝 시간을 연산별로 나누어 보고 큰 몫부터 손댄다.
 
 [^survey]: Pan, J., & Li, G. (2025). A Survey of LLM Inference Systems. [arXiv:2506.21901](https://arxiv.org/abs/2506.21901).
 
