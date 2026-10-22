@@ -4,13 +4,12 @@ week: 6
 order: 1
 ---
 
-앞 노트에서 prefill은 계산이, decode는 가중치와 KV(key-value) cache를 읽는 시간이 병목이라고 했다.
-연산 하나가 GPU(graphics processing unit)의 연산 속도와 메모리 대역폭 가운데 어느 쪽에 막히는지는 계산량과 옮겨야 할 bytes의 비로 정해진다.
-이 관계를 그림 한 장으로 보이는 것이 **roofline model**이다.
+앞에서 prefill은 계산이, decode는 가중치와 KV(key-value) cache를 읽는 시간이 병목임을 보았다.
+연산 하나가 GPU(graphics processing unit)의 연산 속도와 메모리 대역폭 가운데 어느 쪽에 막히는지를 그림 한 장으로 보이는 것이 **roofline model**이다.
 
 Yuan 등의 서베이는 LLM(large language model) inference의 기법들을 이 모형 위에서 분석해 정리했다.[^survey]
 이 노트는 같은 분석을 Llama 3 8B와 H100으로 해 보고,
-앞 노트의 두 병목을 TTFT(time to first token)와 TPOT(time per output token)의 하한, 처리량(throughput)의 상한이라는 숫자로 바꾼다.
+이 두 병목을 TTFT(time to first token)와 TPOT(time per output token)의 하한, 처리량(throughput)의 상한이라는 숫자로 바꾼다.
 
 ## 1. 연산 속도와 메모리 대역폭
 
@@ -30,7 +29,7 @@ Yuan 등의 서베이는 LLM(large language model) inference의 기법들을 이
 
 두 숫자의 비는 $989\times10^{12}/(3.35\times10^{12})\approx295$다.
 HBM에서 1 byte를 읽어 오는 동안 연산 장치는 약 295 FLOP을 할 수 있다는 뜻이다.
-읽어 온 데이터마다 이보다 적은 계산을 한다면 연산 장치는 데이터를 기다리며 놀게 된다.
+읽어 온 1 byte당 계산이 이보다 적으면 연산 장치는 데이터를 기다리며 논다.
 
 ### 1-2. Arithmetic intensity
 
@@ -42,14 +41,16 @@ I=\frac{\text{FLOPs}}{\text{HBM과 주고받은 bytes}}\quad[\text{FLOP/byte}]
 $$
 
 두 가지 극단을 보자.
-BF16 벡터 두 개를 더하는 $z=x+y$는 원소 하나마다 2 bytes씩 두 개를 읽고 2 bytes를 써서 6 bytes를 옮기는 동안 덧셈 한 번을 한다.
+BF16 벡터 두 개를 더하는 $z=x+y$는 원소 하나마다 덧셈 한 번을 하는 동안 6 bytes(입력 2 bytes씩 두 개, 출력 2 bytes)를 옮긴다.
 $I=1/6\approx0.17$이다.
 반대로 $m\times m$ 행렬 두 개의 곱은 $2m^3$ FLOPs다.
 입력 두 개와 출력 하나를 한 번씩만 옮긴다면 bytes는 $3\cdot2m^2$이므로 $I=m/3$이고, $m=4096$이면 1,365다.
 같은 데이터를 여러 번 재사용하는 연산일수록 intensity가 높다.
-Roofline model을 제안한 Williams 등은 같은 값을 operational intensity라 불렀고,
+
+Roofline model을 제안한 Williams 등은 processor와 cache 사이의 트래픽을 세는 기존 arithmetic intensity와 구분하려고 operational intensity라는 이름을 썼고,
 cache 계층에서 걸러진 뒤 메모리까지 실제로 간 bytes로 정의했다.[^roofline]
-그래서 L2(level-2) cache나 SRAM에서의 재사용은 HBM과 주고받는 bytes를 줄여 intensity를 높이는 효과로 들어간다.
+이 노트의 intensity도 HBM과 주고받은 bytes로 세므로 이 정의를 따른다.
+그래서 L2(level-2) cache나 SRAM에서 데이터를 재사용하면 HBM과 주고받는 bytes가 줄어 intensity가 높아진다.
 
 ## 2. Roofline model
 
@@ -77,59 +78,58 @@ Ridge point보다 왼쪽에 있는 연산은 **memory-bound**, 오른쪽에 있�
   <line x1="220" y1="260" x2="220" y2="265" stroke="#0f172a"/>
   <line x1="343" y1="260" x2="343" y2="265" stroke="#0f172a"/>
   <line x1="466" y1="260" x2="466" y2="265" stroke="#0f172a"/>
-  <text x="97" y="278" font-size="11" text-anchor="middle" fill="#64748b">1</text>
-  <text x="220" y="278" font-size="11" text-anchor="middle" fill="#64748b">10</text>
-  <text x="343" y="278" font-size="11" text-anchor="middle" fill="#64748b">100</text>
-  <text x="466" y="278" font-size="11" text-anchor="middle" fill="#64748b">1,000</text>
-  <text x="305" y="300" font-size="12" text-anchor="middle" fill="#64748b">arithmetic intensity (FLOP/byte, 로그)</text>
+  <text x="97" y="278" font-size="13" text-anchor="middle" fill="#64748b">1</text>
+  <text x="220" y="278" font-size="13" text-anchor="middle" fill="#64748b">10</text>
+  <text x="343" y="278" font-size="13" text-anchor="middle" fill="#64748b">100</text>
+  <text x="466" y="278" font-size="13" text-anchor="middle" fill="#64748b">1,000</text>
+  <text x="305" y="300" font-size="14" text-anchor="middle" fill="#64748b">arithmetic intensity (FLOP/byte, 로그)</text>
   <line x1="55" y1="193" x2="60" y2="193" stroke="#0f172a"/>
   <line x1="55" y1="127" x2="60" y2="127" stroke="#0f172a"/>
   <line x1="55" y1="60" x2="60" y2="60" stroke="#0f172a"/>
-  <text x="50" y="197" font-size="11" text-anchor="end" fill="#64748b">10</text>
-  <text x="50" y="131" font-size="11" text-anchor="end" fill="#64748b">100</text>
-  <text x="50" y="64" font-size="11" text-anchor="end" fill="#64748b">1,000</text>
-  <text x="22" y="150" font-size="12" fill="#64748b" text-anchor="middle" transform="rotate(-90 22 150)">달성 가능한 TFLOP/s (로그)</text>
+  <text x="50" y="197" font-size="13" text-anchor="end" fill="#64748b">10</text>
+  <text x="50" y="131" font-size="13" text-anchor="end" fill="#64748b">100</text>
+  <text x="50" y="64" font-size="13" text-anchor="end" fill="#64748b">1,000</text>
+  <text x="18" y="165" font-size="14" fill="#64748b" text-anchor="middle" transform="rotate(-90 18 165)">달성 가능한 TFLOP/s (로그)</text>
   <line x1="60" y1="245" x2="401" y2="60" stroke="#0f172a" stroke-width="2"/>
   <line x1="401" y1="60" x2="550" y2="60" stroke="#0f172a" stroke-width="2"/>
   <line x1="401" y1="60" x2="401" y2="260" stroke="#94a3b8" stroke-dasharray="4 3"/>
-  <text x="401" y="50" font-size="11" text-anchor="middle" fill="#64748b">ridge point 295</text>
-  <text x="200" y="150" font-size="11" fill="#64748b" text-anchor="middle" transform="rotate(-28.5 200 150)">대역폭 3.35 TB/s</text>
-  <text x="490" y="50" font-size="11" text-anchor="middle" fill="#64748b">989 TFLOP/s</text>
+  <text x="401" y="50" font-size="13" text-anchor="middle" fill="#64748b">ridge point 295</text>
+  <text x="200" y="150" font-size="13" fill="#64748b" text-anchor="middle" transform="rotate(-28.5 200 150)">대역폭 3.35 TB/s</text>
+  <text x="505" y="50" font-size="13" text-anchor="middle" fill="#64748b">989 TFLOP/s</text>
   <circle cx="97" cy="225" r="5" fill="#0f172a"/>
-  <text x="103" y="243" font-size="11" fill="#0f172a">decode b=1</text>
+  <text x="103" y="243" font-size="13" fill="#0f172a">decode b=1</text>
   <circle cx="171" cy="185" r="5" fill="#e2e8f0" stroke="#0f172a"/>
-  <text x="177" y="203" font-size="11" fill="#0f172a">decode attention</text>
+  <text x="177" y="203" font-size="13" fill="#0f172a">decode attention</text>
   <circle cx="305" cy="112" r="5" fill="#0f172a"/>
-  <text x="311" y="130" font-size="11" fill="#0f172a">decode b=192</text>
+  <text x="311" y="130" font-size="13" fill="#0f172a">decode b=192</text>
   <circle cx="475" cy="60" r="5" fill="#0f172a"/>
-  <text x="475" y="80" font-size="11" text-anchor="middle" fill="#0f172a">prefill 2,048토큰</text>
+  <text x="475" y="80" font-size="13" text-anchor="middle" fill="#0f172a">prefill 2,048토큰</text>
 </svg>
-<figcaption>H100 SXM의 BF16 roofline 위에 Llama 3 8B의 연산을 올린 그림. b는 함께 decode하는 요청 수다. 검은 점은 decode 한 스텝 전체와 prefill 전체, 속이 빈 점은 decode attention만의 intensity에 놓았고, 세로 위치는 모두 지붕 위의 이상적인 상한이다. Batch를 키우면 decode 점은 오른쪽으로 가지만 요청마다 읽는 KV cache 때문에 ridge point에 못 미치고, attention 점은 batch와 상관없이 4에 머문다. Williams 등의 roofline 정의와 NVIDIA 사양으로 직접 구성했다.[^roofline][^h100]</figcaption>
+<figcaption>H100 SXM의 BF16 roofline 위에 Llama 3 8B의 연산을 올린 그림. b는 함께 decode하는 요청 수다. 검은 점은 decode 한 스텝 전체와 prefill 전체의 intensity, 속이 빈 점은 decode attention만의 intensity다. 세로 위치는 모두 지붕이 주는 이상적인 상한이다. Batch를 키우면 decode 점은 오른쪽으로 가지만 요청마다 읽는 KV cache 때문에 ridge point에 못 미치고, attention 점은 batch와 상관없이 4에 머문다. Williams 등의 roofline 정의와 NVIDIA 사양으로 직접 구성했다.[^roofline][^h100]</figcaption>
 </figure>
 
 ### 2-2. 시간의 하한
 
 Roofline을 시간으로 바꾸면 계산이 더 쉬워진다.
 연산 하나의 계산량이 $F$ FLOPs, 데이터 이동량이 $B$ bytes라면,
-계산은 $F/\text{peak}$보다 빨리 끝날 수 없고 데이터 이동은 $B/\text{대역폭}$보다 빨리 끝날 수 없다.
-둘이 완전히 겹친다고 해도 시간은 큰 쪽보다 짧아질 수 없다.
+계산에는 적어도 $F/\text{peak}$, 데이터 이동에는 적어도 $B/\text{대역폭}$이 걸린다.
+둘이 완전히 겹쳐도 전체 시간은 둘 중 큰 쪽보다 짧을 수 없다.
 
 $$
 t\ \ge\ \max\!\left(\frac{F}{\text{peak FLOP/s}},\ \frac{B}{\text{대역폭}}\right)
 $$
 
-이 식은 성능의 상한을 시간의 하한으로 바꿔 쓴 것이다.
 모델의 한 스텝에서는 선형층과 attention 같은 연산이 차례로 실행되므로,
 연산 $i$마다 이 하한을 구해 더한 $\sum_i\max(F_i/\text{peak},\,B_i/\text{대역폭})$를 스텝 시간의 하한으로 쓴다.
 스텝 전체의 FLOPs와 bytes를 먼저 합친 뒤 max를 취하면,
 한 연산의 계산이 다른 연산의 데이터 이동과 겹친다고 가정하는 셈이라 시간을 너무 짧게 잡는다.
 
 실제 시간은 이 하한보다 길다.
-Kernel은 한 연산 안에서도 두 작업을 완전히 겹치지 못하고,
-CPU(central processing unit)에서 kernel을 띄우는 비용과 여러 GPU 사이의 통신은 이 식에 들어 있지 않다.
+Kernel은 한 연산 안에서도 두 작업을 완전히 겹치지 못한다.
+CPU(central processing unit)에서 kernel을 띄우는 비용과 여러 GPU 사이의 통신도 이 식에는 없다.
 Williams 등은 대역폭 지붕을 사양값이 아니라 microbenchmark로 잰 지속 가능한 메모리 대역폭으로 그렸고,
 최적화가 덜 된 경우의 한계는 지붕 아래의 추가 천장(ceiling)으로 그려 넣었다.[^roofline]
-이 노트는 사양값 3.35 TB/s와 peak 하나만 두므로, 여기서 구하는 숫자는 이상적인 하한이다.
+이 노트는 추가 천장 없이 사양값 3.35 TB/s와 989 TFLOP/s의 두 지붕만 쓰므로, 여기서 구하는 숫자는 이상적인 하한이다.
 
 그래도 어느 항이 큰지가 무엇을 줄여야 하는지 알려 준다.
 계산 항이 크면 FLOPs를 줄이거나 더 빠른 연산 형식을 써야 하고,
@@ -138,14 +138,14 @@ Williams 등은 대역폭 지붕을 사양값이 아니라 microbenchmark로 잰
 ## 3. Transformer 연산의 위치
 
 이제 Llama 3 8B의 연산을 그림 위에 올려 보자.
-32층, 모델 폭 $d=4096$, FFN(feed-forward network) 폭 14,336, 어휘(vocabulary) 약 128K, query head 32개, KV head 8개, head 차원 128이다.[^llama3]
-모든 수치는 BF16(원소당 2 bytes)을 가정하고,
-bytes는 각 입력을 한 번 읽고 출력을 한 번 쓰는 최소량으로 센다.
+이 모델은 32층이고, 모델 차원 $d=4096$, FFN(feed-forward network) 폭 14,336, 어휘(vocabulary) 약 128K, query head 32개, KV head 8개, head 차원 128이다.[^llama3]
+모든 수치는 BF16(원소당 2 bytes)을 가정하고 1 GB는 $10^9$ bytes로 쓴다.
+Bytes는 각 입력을 한 번 읽고 출력을 한 번 쓰는 최소량으로 센다.
 실제 kernel은 이보다 더 많이 옮길 수 있다.
-또 앞 노트처럼 파라미터 $N\approx8.03\times10^9$개가 모두 행렬곱에 쓰이고 매 스텝 읽힌다고 단순화한다.
+또 앞에서 본 가중치 메모리 계산처럼 embedding까지 센 파라미터 $N\approx8.03\times10^9$개가 모두 행렬곱에 쓰이고 매 스텝 읽힌다고 단순화한다.
 실제로는 입력 embedding 약 $0.53\times10^9$개를 토큰마다 한 행씩 꺼내기만 하므로,
-가중치를 읽고 계산하는 몫이 7%쯤 크게 잡힌다.
-그래서 아래의 하한과 상한은 이 단순화한 모형 안의 값이고, 실제 모델의 엄밀한 시간 하한은 조금 더 작다.
+가중치 bytes와 선형층 FLOPs가 7%쯤 크게 잡힌다.
+그래서 이 노트에서 구하는 하한과 상한은 단순화한 모형 안의 값이고, 실제 모델의 엄밀한 시간 하한은 조금 더 작다.
 
 ### 3-1. 선형층
 
@@ -161,12 +161,12 @@ $$
 이다.
 토큰 수가 $d$보다 훨씬 적으면 **intensity가 함께 처리하는 토큰 수와 거의 같다.**
 가중치를 한 번 읽어 토큰 $b$개에 쓰기 때문이다.
-$b=1$이면 약 1, $b=16$이면 약 16, $b=256$이면 228이고,
+$b=1$이면 약 1, $b=16$이면 약 16, $b=256$이면 약 228이고,
 $b=2048$이면 1,024로 ridge point를 크게 넘는다.
 
 Decode 한 스텝은 요청마다 토큰 하나만 넣으므로 batch에 요청이 $b$개 있으면 선형층의 토큰 수도 $b$다.
-요청 하나만 처리할 때 intensity가 약 1이라는 것이 앞 노트에서 decode가 memory-bound라고 한 이유다.
-Prefill은 프롬프트 길이 $n$만큼의 토큰을 한 번에 넣으므로 $n$이 수백을 넘으면 ridge point에 가까워지거나 넘어선다.
+Decode가 memory-bound인 것은 요청 하나만 처리하면 intensity가 약 1이기 때문이다.
+Prefill은 프롬프트 길이 $n$만큼의 토큰을 한 번에 넣으므로, $n$이 수백을 넘으면 선형층의 intensity가 ridge point에 가까워지거나 넘어선다.
 
 ### 3-2. Decode의 attention
 
@@ -174,12 +174,12 @@ Attention은 사정이 다르다.
 선형층의 가중치는 batch 안의 모든 요청이 공유하지만, KV cache는 요청마다 따로 있다.
 요청을 많이 묶어도 각 요청의 새 query는 **자기 KV cache만** 읽는다.
 그래서 batch를 키워도 attention의 intensity는 오르지 않는다.
-앞 주차에서 MQA(multi-query attention)를 볼 때 Shazeer의 점근 분석이 남긴 두 항,
-곧 batch를 키우면 줄어드는 가중치 항과 줄지 않는 key·value 항이 여기서 숫자로 드러난다.[^mqa]
+앞 주차에서 MQA(multi-query attention)를 볼 때 본 Shazeer의 점근 분석에 나온 두 항,
+곧 batch를 키우면 비중이 줄어드는 가중치 항과 줄지 않는 key·value 항이 여기서 숫자로 드러난다.[^mqa]
 
 요청 하나, 층 하나에서 문맥 길이가 $s$일 때를 계산해 보자.
 Head 차원을 $d_{\text{head}}$라 하면, query head 하나는 key $s$개와 내적하고($2sd_{\text{head}}$ FLOPs) value $s$개를 가중합한다($2sd_{\text{head}}$ FLOPs).
-GQA(grouped-query attention)에서는 query head $g=n_h/n_{kv}$개가 KV head 하나를 함께 쓴다($n_h$, $n_{kv}$는 query head와 KV head의 수).[^gqa]
+GQA(grouped-query attention)에서는 query head $g=n_h/n_{kv}$개가 KV head 하나를 함께 쓴다($n_h$, $n_{kv}$는 query head와 KV head의 수이고, $g$는 앞 주차에서 본 그룹 크기다).[^gqa]
 그래서 KV head 하나를 읽는 동안 $4gsd_{\text{head}}$ FLOPs를 한다.
 읽는 데이터는 그 KV head의 key와 value, $2\cdot s\cdot d_{\text{head}}\cdot2$ bytes다.
 Query와 출력은 $d_{\text{head}}$ 크기라 문맥 $s$개분의 key·value에 비해 작으므로 뺐다.
@@ -191,28 +191,28 @@ $$
 문맥 길이는 약분되고 batch는 처음부터 식에 없으므로 **query head와 KV head의 비만 남는다.**
 Llama 3 8B는 $g=32/8=4$이므로 decode attention의 intensity는 4이고, 그림의 속이 빈 점이다.
 
-이 식은 KV head 공유를 다른 눈으로 보여 준다.
-MHA(multi-head attention)는 $g=1$, MQA는 $g=n_h$다.
-앞 주차에서 MHA로 센 "원소 하나를 읽을 때마다 곱셈-덧셈 한 번"이 $g=1$인 경우다.
+이 식은 앞 주차에서 원소 하나당 곱셈-덧셈 횟수로 센 KV head 공유의 효과를 FLOP/byte로 다시 쓴 것이다.
+곱셈-덧셈 한 번은 2 FLOP이고 BF16 원소 하나는 2 bytes이므로 두 단위의 값이 같다.
+MHA(multi-head attention)는 $g=1$로 원소 하나당 한 번, Llama 3 8B의 GQA는 약 4번이었고, MQA는 $g=n_h$다.
 Head를 공유하면 KV cache가 줄 뿐 아니라,
 한 번 읽은 key·value를 여러 query head가 재사용해 decode attention의 intensity가 올라간다.
-앞 주차 MLA(multi-head latent attention)에서 본 행렬 흡수(absorb)로 계산하면 이 효과가 더 크다.[^dsv2]
-DeepSeek-V3 설정에서 캐시된 토큰 하나는 latent 512차원과 RoPE(rotary position embedding) key 64차원을 합한 576개 원소, 곧 1,152 bytes다.
-Query head 128개가 모두 이 576차원으로 점수를 계산하고 512차원 latent로 가중합을 한다.[^dsv3]
+
+앞 주차 MLA(multi-head latent attention)에서 본 행렬 흡수(absorb) 경로에서는 이 효과가 더 크다.[^dsv2]
+DeepSeek-V3 설정에서 층마다 캐시된 토큰 하나는 latent 512차원과 RoPE(rotary position embedding) key 64차원을 합한 576개 원소로, BF16이면 1,152 bytes다.
+흡수 경로에서는 query head 128개가 모두 이 캐시를 함께 읽어, head마다 576차원으로 점수를 계산하고 512차원 latent로 가중합을 한다.[^dsv3]
 캐시된 토큰 하나를 읽을 때 $2\cdot128\cdot(576+512)\approx2.8\times10^5$ FLOPs를 하므로,
 intensity는 $2.8\times10^5/1152\approx240$이고 ridge point에 가깝다.
-흡수는 복원한 key·value를 캐시하는 방식보다 head당 계산을 늘리지만,
+이미 복원한 key·value를 head별로 캐시하는 방식보다 head당 계산은 늘지만,
 memory-bound인 decode에서는 그 늘어난 계산이 놀던 연산 장치를 채우는 셈이다.
 
 다만 이 intensity는 head 수에 비례한다.
 Head가 256개라면 약 480으로 ridge point를 넘어 decode attention이 계산에 막힌다.
-앞 주차에서 본 Kimi K2가 query head를 64개로 줄인 것도 긴 문맥에서 head 수에 비례해 늘어나는 inference FLOPs 때문이었다.[^kimi]
+앞 주차에서 본 Kimi K2는 query head를 64개로 줄여 이 값이 약 120이다.
+128K 문맥에서 head를 두 배로 늘리면 inference FLOPs가 83% 느는 데 비해 loss 개선은 작았기 때문이다.[^kimi]
 
 ### 3-3. Prefill
 
-Prefill에서는 선형층과 attention 모두 intensity를 높일 여지가 있다.
-선형층은 decode에서 본 것처럼 토큰 $n$개에 가중치를 재사용하고,
-attention도 query $n$개가 같은 key·value를 재사용할 수 있다.
+Prefill에서는 attention도 query $n$개가 같은 key·value를 재사용할 수 있어 intensity를 높일 여지가 있다.
 다만 점수 행렬을 HBM에 썼다가 다시 읽으면 $n^2$ 크기의 이동이 더해져 intensity가 낮아진다.
 서베이의 층별 분석(Llama 2 7B, A6000 GPU, batch 1, 길이 2,048)이 이를 보여 준다.[^survey]
 Prefill의 투영 행렬곱은 intensity가 1,024–1,215로 compute-bound였지만,
@@ -222,64 +222,67 @@ FlashAttention은 이 중간 행렬을 SRAM 안에서 처리해 그 이동을 �
 <Callout type="example">
 2,048토큰 프롬프트 하나를 prefill한다고 하자.
 선형층의 계산은 $2N\cdot n=2\times8.03\times10^9\times2048\approx32.9$ TFLOP이다.
-Causal attention은 앞쪽 토큰만 보므로 점수 계산과 가중합을 합쳐 query head 하나에 약 $2n^2d_{\text{head}}$ FLOPs이고(전체 문맥이면 $4n^2d_{\text{head}}$, causal이면 그 절반),
-head 32개와 층 32개에서 약 1.1 TFLOP이다.
+점수 계산과 가중합에는 query head 하나에 $4n^2d_{\text{head}}$ FLOPs가 들지만, causal attention은 앞쪽 토큰만 보므로 그 절반인 약 $2n^2d_{\text{head}}$ FLOPs다.
+Head 32개와 층 32개를 곱하면 약 1.1 TFLOP이다.
 합하면 약 34 TFLOP이고, 989 TFLOP/s로 나누면 **34 ms**다.
-옮길 데이터는 가중치 16.1 GB, 선형층의 activation 약 11 GB,
+점수 행렬은 FlashAttention처럼 SRAM 안에서 처리한다고 보자.
+그러면 옮길 데이터는 가중치 16.1 GB, 선형층의 activation 약 11.3 GB,
 attention이 Q·K·V를 읽고 출력을 쓰는 약 1.3 GB로 모두 약 28.7 GB이고, 3.35 TB/s로 약 8.6 ms가 걸린다.
-선형층의 activation은 어휘 출력층까지 모든 가중치 행렬에서 앞의 $2b(d_{\text{in}}+d_{\text{out}})$ bytes를 더한 값으로,
+선형층의 activation은 모든 가중치 행렬(층마다 Q·K·V·출력 투영과 FFN의 세 행렬, 그리고 어휘 출력층)에서 앞의 $2b(d_{\text{in}}+d_{\text{out}})$ bytes를 더한 값으로,
 토큰 하나에 약 5.5 MB다.
 새로 쓸 KV cache는 K·V 투영의 출력이라 이 안에 이미 들어 있다.
-계산 시간이 네 배쯤 길어(intensity 약 1,200) compute-bound이고, TTFT의 하한은 약 34 ms다.
-실제 kernel이 peak의 50%를 낸다면 약 70 ms가 된다.
+계산 시간이 네 배쯤 길어(intensity 약 1,200) compute-bound다.
+$n=2{,}048$에서는 선형층의 행렬 하나하나와 attention이 모두 ridge point를 넘으므로, 연산마다 하한을 구해 더해도 계산 항의 합과 같다.
+그래서 TTFT의 하한은 약 34 ms다.
+실제 kernel이 peak의 50%를 낸다면 약 69 ms가 된다.
 </Callout>
 
 ## 4. Batching과 그 한계
 
 ### 4-1. Batch 크기에 따른 decode 스텝
 
-앞 노트에서 요청을 묶으면 처리량이 오르고 TPOT가 늘어난다고 했다.
-시간의 하한으로 그 크기를 계산해 보자.
+요청을 묶으면 처리량이 오르고 TPOT가 늘어난다는 관계를 시간의 하한으로 계산해 보자.
 모든 요청의 문맥이 2,048토큰이라고 가정한다.
-요청 하나의 KV cache는 $2048\times128\ \text{KiB}\approx0.27$ GB다(1 KiB는 1,024 bytes, 1 GB는 $10^9$ bytes).
+요청 하나의 KV cache는 $2048\times128\ \text{KiB}\approx0.27$ GB다(1 KiB는 1,024 bytes).
 
-한 스텝에서 읽는 데이터는 가중치 16.06 GB에 요청마다 KV cache 0.27 GB가 더해지고,
+한 스텝에 읽는 데이터는 가중치 16.06 GB에 요청당 KV cache 0.27 GB를 더한 양이고,
 계산은 요청마다 선형층 $2N\approx16.1$ GFLOP과 attention 약 1.1 GFLOP이다.
 Attention의 값은 query head 하나, 층 하나의 $4sd_{\text{head}}=4\cdot2048\cdot128$ FLOPs에 query head 32개와 층 32개를 곱한 것이다.
 Activation의 읽기·쓰기는 같은 방식으로 세면 batch 192에서도 약 1 GB라 뺐다.
-스텝 시간은 선형층과 attention의 하한을 따로 구해 더했다.
+스텝 시간은 선형층과 attention의 하한을 따로 구해 더했고, 전체 intensity는 스텝 전체의 FLOPs를 읽는 bytes로 나눈 값이다.
 
 | batch $b$ | 읽는 데이터 | 읽기 시간 | 계산 시간 | 전체 intensity | 스텝 시간(TPOT 하한) | 처리량 상한 |
 |---|---|---|---|---|---|---|
 | 1 | 16.3 GB | 4.9 ms | 0.02 ms | 1.0 | 4.9 ms | 205 토큰/s |
 | 16 | 20.4 GB | 6.1 ms | 0.28 ms | 13.5 | 6.1 ms | 2,630 토큰/s |
 | 64 | 33.2 GB | 9.9 ms | 1.1 ms | 33 | 9.9 ms | 6,450 토큰/s |
-| 192 | 67.6 GB | 20.2 ms | 3.3 ms | 49 | 20.2 ms | 9,510 토큰/s |
+| 192 | 67.6 GB | 20.2 ms | 3.3 ms | 49 | 20.2 ms | 9,520 토큰/s |
 
 Batch를 1에서 192로 늘리면 스텝 시간은 약 4배가 되지만 처리량은 약 46배가 된다.
 가중치 16 GB를 한 번 읽어 192개 요청에 나누어 쓰기 때문이다.
-앞 노트에서 말한 지연과 처리량의 맞교환이 이 표의 마지막 두 열이다.
+앞에서 본 지연과 처리량의 맞교환이 표의 마지막 두 열에 나타난다.
 
-그런데 표의 모든 행에서 스텝 시간이 읽기 시간과 같다.
+표의 모든 행에서 스텝 시간이 읽기 시간과 같다.
 선형층과 attention이 모두 memory-bound라는 뜻이다.
 그래서 이 batch 범위에서는 두 연산을 합친 전체 intensity로 점을 찍어도 시간이 같다.
+
 Batch 192에서도 전체 intensity는 49로 ridge point 295에 한참 못 미친다.
-선형층만 보면 intensity는 약 192, activation 이동까지 세면 약 180까지 오른다.
-그런데도 전체가 49에 머무는 것은 KV cache를 읽는 데이터가 batch에 비례해 함께 늘기 때문이다.
+선형층만 보면 intensity는 가중치만 셀 때 192, activation 이동까지 세면 약 180이다.
+전체가 49에 머무는 것은 KV cache를 읽는 데이터가 batch에 비례해 함께 늘기 때문이다.
 Batch 192에서 읽는 67.6 GB 가운데 51.5 GB가 KV cache다.
 Batch를 키울수록 읽는 데이터에서 KV cache의 비중이 커지고, 앞에서 본 것처럼 그 부분의 intensity는 4에 묶여 있다.
 
 ### 4-2. KV cache 용량의 벽
 
 표를 batch 192에서 멈춘 것은 KV cache 공간 때문이다.
-앞 노트의 가정에서 H100 한 대에 KV cache용으로 남는 공간은 약 53.5 GB였다.
+앞에서 본 메모리 예산에서 H100 한 대에 KV cache용으로 남는 공간은 약 53.5 GB였다.
 요청당 0.27 GB이면 약 199개가 상한이다.
 선형층만이라도 ridge point에 닿게 하려면 요청 약 330개를 묶어야 하는데, 그 전에 메모리가 바닥난다.
 330은 모든 선형층을 합친 intensity $2Nb/(2N+Ab)$가 295가 되는 $b$다.
-분자는 FLOPs이고, 분모의 $2N$은 BF16 가중치의 bytes, $A\approx5.5$ MB는 토큰당 activation bytes다.<Sidenote>Activation 이동을 빼면 선형층의 intensity는 정확히 b라서 b=295에서 ridge point에 닿는다. 행렬 하나씩 activation까지 세면 FFN은 약 325, Q·출력 투영은 약 345, 출력이 작은 K·V 투영은 약 460에서 닿는다.</Sidenote>
+분자는 FLOPs이고, 분모의 $2N$은 BF16 가중치의 bytes, $A\approx5.5$ MB는 토큰당 activation bytes다.<Sidenote>Activation 이동을 빼면 선형층의 intensity는 정확히 $b$라서 $b=295$에서 ridge point에 닿는다.</Sidenote>
 
 문맥이 길수록 벽은 더 가깝다.
-문맥이 8,192토큰이면 KV cache가 요청당 1.07 GB라 49개, 32,768토큰이면 12개에서 멈춘다.
+앞에서 본 메모리 예산처럼 문맥이 8,192토큰이면 batch는 49개에서 멈추고, 32,768토큰이면 12개다.
 그때 스텝마다 읽는 데이터의 대부분은 KV cache다.
 그래서 긴 문맥의 decode에서는 가중치 bytes보다 KV cache bytes를 줄이는 기법이 처리량을 더 직접 늘린다.
 이 계산이 KV cache 관리의 동기이고, GQA·MLA가 서빙에서 중요한 이유다.
@@ -287,8 +290,8 @@ Batch를 키울수록 읽는 데이터에서 KV cache의 비중이 커지고, �
 <Callout type="intuition">
 식당 주방으로 비유해 보자.
 요리사(연산 장치)는 아주 빠르고, 냉장고(HBM)에서 재료를 나르는 통로(대역폭)는 좁다.
-공용 양념(가중치)은 한 번 꺼내 오면 여러 접시에 쓸 수 있으니 주문을 많이 받을수록 이득이다.
-그런데 손님마다 따로 보관하는 재료(KV cache)도 있다.
+공용 재료(가중치)는 한 번 꺼내 오면 여러 접시에 쓸 수 있으니 주문을 많이 받을수록 이득이다.
+한편 손님마다 따로 보관하는 재료(KV cache)도 있다.
 주문이 늘면 그 재료를 나르는 일도 같이 늘고, 냉장고 칸이 다 차면 주문을 더 받을 수 없다.
 비유가 놓치는 점도 있다.
 실제 GPU는 재료를 나르는 일과 요리를 동시에 하므로,
@@ -303,17 +306,17 @@ Batch를 키울수록 읽는 데이터에서 KV cache의 비중이 커지고, �
 ### 5-1. MFU
 
 **MFU**는 앞 주차에 학습 효율을 잴 때 본 지표다.[^palm]
-처리한 토큰 수에 토큰당 이론 FLOPs를 곱한 값, 곧 모델이 실제로 낸 FLOP/s를 peak FLOP/s로 나눈다.
+초당 처리한 토큰 수에 토큰당 이론 FLOPs를 곱한 값, 곧 모델이 실제로 낸 FLOP/s를 peak FLOP/s로 나눈다.
 학습에서는 토큰당 $6N$을 썼지만 inference는 forward만 하므로 토큰당 $2N$이다.
 여기서는 GPU 한 대 기준이라 분모에 GPU 수를 곱하지 않는다.
 
 $$
-\text{MFU}=\frac{\text{처리한 tokens/s}\times2N}{\text{peak FLOP/s}}
+\text{MFU}=\frac{\text{처리한 토큰/s}\times2N}{\text{peak FLOP/s}}
 $$
 
 Compute-bound인 prefill의 효율은 MFU로 본다.
-앞의 prefill 예처럼 2,048토큰 프롬프트를 70 ms에 prefill했다면 처리 속도는 초당 약 29,300토큰이고 MFU는 $\frac{29300\times2\times8.03\times10^9}{989\times10^{12}}\approx48\%$다.
-이 값은 attention의 FLOPs를 분자에 넣지 않은 근사라서, attention까지 넣은 연산 비율 약 49%보다 조금 낮게 나온다.
+앞의 prefill 예처럼 2,048토큰 프롬프트를 69 ms에 prefill했다면 처리 속도는 초당 약 29,700토큰이고 MFU는 $\frac{29700\times2\times8.03\times10^9}{989\times10^{12}}\approx48\%$다.
+이 값은 attention의 FLOPs를 분자에 넣지 않은 근사라서, attention FLOPs까지 넣어 계산한 활용률 약 50%보다 조금 낮게 나온다.
 
 ### 5-2. MBU
 
@@ -327,14 +330,13 @@ $$
 $$
 
 분자는 한 스텝에 읽어야 하는 데이터를 실제 스텝 시간으로 나눈 달성 대역폭이다.
-같은 글의 측정에서는 모델을 H100 두 대에 나누어 올리고 입력 512토큰, batch 1로 돌렸을 때 MBU가 약 60%였다.[^mbu]
-측정한 모델의 이름은 밝히지 않았다.
+같은 글의 측정에서는 Llama 2 70B를 FP16(16-bit floating point)으로 H100 두 대에 나누어 올리고 입력 512토큰, batch 1로 돌렸을 때 MBU가 약 60%였다.[^mbu]
 
 <Callout type="example">
 Llama 3 8B를 H100 한 대에서 batch 1, 문맥 2,048토큰으로 돌렸더니 TPOT가 8.0 ms였다고 하자.
 한 스텝에 읽어야 하는 데이터는 16.33 GB이므로 달성 대역폭은 $16.33\ \text{GB}/8.0\ \text{ms}\approx2.04$ TB/s, MBU는 $2.04/3.35\approx61\%$다.
 Batch 1의 하한 4.9 ms에 비해 약 1.6배 느리다.
-나머지 39%를 쓰지 못한 원인으로는 kernel 자체의 대역폭 활용 부족, 작은 kernel을 여러 번 띄우는 비용, 층 사이의 동기화를 꼽을 수 있다.
+대역폭의 나머지 39%를 쓰지 못한 원인으로는 kernel 안의 메모리 접근이 대역폭을 다 채우지 못하는 것, 작은 kernel을 여러 번 띄우는 비용, 층 사이의 동기화를 꼽을 수 있다.
 어느 쪽인지는 profiler로 나누어 본다.
 </Callout>
 
@@ -346,27 +348,25 @@ Batch를 키워 연산 쪽이 병목이 되면 MBU만으로는 효율을 판단�
 
 ## 6. Roofline 위의 최적화 기법
 
-시간의 하한 식은 inference 최적화 기법을 한 틀로 분류해 준다.
-각 기법은 한 스텝의 FLOPs와 bytes 가운데 한 항을 줄이거나,
-같은 bytes로 더 많은 일을 하게 해 점을 오른쪽으로 옮기거나,
-메모리 용량의 벽을 밀어 batch를 키우거나,
-저정밀 연산으로 지붕 자체를 높이거나,
-점은 그대로 두고 실제 성능을 지붕에 가깝게 올린다.
+시간의 하한 식으로 inference 최적화 기법을 한 틀에서 나눌 수 있다.
+어떤 기법은 한 스텝의 FLOPs와 bytes 가운데 한 항을 줄이고, 어떤 기법은 같은 bytes로 더 많은 일을 해 점을 오른쪽으로 옮긴다.
+메모리 용량의 벽을 밀어 batch를 키우는 기법과 저정밀 연산으로 지붕 자체를 높이는 기법도 있다.
+점은 그대로 두고 실제 성능만 지붕에 가깝게 올리는 기법도 있다.
 
 | 기법 | Roofline에서의 효과 |
 |---|---|
 | Batching | 가중치 bytes를 여러 요청에 나누어 선형층의 점을 오른쪽으로 옮긴다 |
 | GQA·MLA | Decode attention의 bytes를 줄여 intensity를 $g$ 또는 그 이상으로 올린다 |
-| KV cache 관리 | 낭비와 중복을 없애 같은 메모리에 더 큰 batch를 넣는다. Eviction은 읽는 KV cache bytes도 줄인다 |
-| 양자화(quantization) | 가중치와 KV cache bytes를 줄여 memory-bound 스텝을 직접 줄인다. 하드웨어가 지원하는 저정밀 연산은 peak도 높인다 |
+| KV cache 관리 | 낭비와 중복을 없애 같은 메모리에 더 큰 batch를 넣는다. 중요도가 낮은 과거 토큰의 KV를 지우는 eviction은 읽는 KV cache bytes도 줄인다 |
+| 양자화(quantization) | 가중치와 KV cache bytes가 줄어 memory-bound 스텝이 바로 빨라진다. 하드웨어가 지원하는 저정밀 연산은 peak도 높인다 |
 | Pruning·low-rank·distillation | 모델을 작게 만들어 FLOPs와 bytes를 함께 줄인다. 비구조적(unstructured) pruning은 희소 형식과 kernel이 있어야 효과가 난다 |
 | Speculative decoding | 가중치를 한 번 읽어 토큰 여러 개를 검증해 decode의 점을 오른쪽으로 옮긴다 |
-| Kernel fusion·tiling | 중간값의 HBM 왕복과 재읽기를 없애 bytes를 줄이고 점을 오른쪽으로 옮긴다 |
+| Kernel fusion·tiling | 중간값의 HBM 왕복과 재읽기를 없애 점을 오른쪽으로 옮긴다 |
 | 작업 분배·실행 중첩 같은 그 밖의 kernel 최적화 | FLOPs와 bytes는 그대로라 점은 제자리이고, 실제 성능을 지붕에 가깝게 올린다 |
 
 같은 기법도 스텝이 어느 지붕 아래 있느냐에 따라 효과가 다르다.
-예를 들어 계산은 BF16으로 두고 가중치만 INT4(4-bit 정수)로 저장하면 batch 1 스텝에서 읽을 가중치가 16 GB에서 약 4 GB로 준다.
-KV cache 0.27 GB를 더해도, scale 같은 부가 정보와 복원 계산을 빼면 하한이 약 1.3 ms로 내려간다.
+예를 들어 계산은 BF16으로 두고 가중치만 INT4(4-bit 정수)로 저장하면 batch 1 스텝에서 읽을 가중치가 16 GB에서 약 4 GB로 줄어든다.
+여기에 KV cache 0.27 GB를 더해도 하한은 약 1.3 ms로, BF16일 때의 4.9 ms의 4분의 1쯤이다(scale 같은 부가 정보와 복원 계산은 뺀 값).
 계산량은 그대로이므로 compute-bound인 prefill에는 효과가 작다.
 
 [^roofline]: Williams, S., Waterman, A., & Patterson, D. (2009). Roofline: An Insightful Visual Performance Model for Multicore Architectures. *Communications of the ACM*, 52(4), 65–76. [doi:10.1145/1498765.1498785](https://doi.org/10.1145/1498765.1498785).
