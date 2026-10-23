@@ -4,8 +4,8 @@ week: 6
 order: 2
 ---
 
-앞에서 inference의 비용을 bytes와 FLOPs(floating-point operations)로 계산했고,
-Llama 3 8B의 가중치를 BF16(bfloat16) 16 GB에서 INT4(4-bit integer) 약 4 GB로 줄이기만 해도 batch 1 decode 스텝의 하한이 4.9 ms에서 약 1.3 ms로 내려가는 것을 보았다.
+앞에서 inference의 비용을 bytes와 FLOPs(floating-point operations)로 계산했다.
+가중치를 BF16(bfloat16)에서 INT4(4-bit integer)로 저장하기만 해도 batch 1 decode 스텝의 하한이 4분의 1쯤으로 내려갔다.
 이제 모델 쪽에서 그 비용을 줄이는 방법으로 넘어간다.
 첫 주제는 숫자 하나를 저장하는 bytes를 줄이는 <strong>양자화(quantization)</strong>다.
 
@@ -63,7 +63,7 @@ GPTQ 논문은 이때 group마다 두는 scale과 zero-point 같은 부가 정�
 Llama 3 8B의 가중치를 group 128의 INT4로 저장하고 group마다 16-bit scale 하나만 둔다면 원소당 $4+16/128=4.125$ bits로,
 zero-point를 두지 않은 만큼 위의 약 0.15 bits보다 조금 작다.
 파라미터 8.03B개에 곱하면 약 4.1 GB로, BF16의 16.1 GB에서 약 4분의 1이 된다.
-앞에서 계산한 메모리 예산대로 H100 한 대에 올리면 KV(key-value) cache에 쓸 공간이 약 12 GB 늘어난다.
+앞에서 계산한 H100 한 대의 메모리 예산에서는 KV(key-value) cache에 쓸 공간이 약 12 GB 늘어난다.
 </Callout>
 
 ### 1-3. Scale을 정하는 시점
@@ -188,7 +188,7 @@ $\alpha=0.5$이면 $s_j=\sqrt{64}/\sqrt{0.25}=8/0.5=16$이다.
 <Figure src="https://arxiv.org/html/2211.10438v7/aw-dist-long.png" alt="SmoothQuant 논문의 Figure 4. OPT-13B 한 층의 activation과 가중치 크기를 3차원으로 그린 네 그림이다. 첫째, 원래 activation은 몇몇 channel에서 값이 70에 이르는 빨간 벽처럼 솟아 있고 나머지는 2 이하로 낮다. 둘째, smoothing 후 activation은 모든 channel이 10 이하로 고르다. 셋째, 원래 가중치는 전체가 평평하다. 넷째, smoothing 후 가중치는 일부 입력 channel에 작은 봉우리가 생겼지만 여전히 낮다. 위쪽 화살표는 양자화의 어려움을 activation에서 가중치로 옮긴다는 뜻이다." caption="SmoothQuant 전후의 activation(왼쪽 두 그림)과 가중치(오른쪽 두 그림). Activation의 outlier channel이 평평해지는 대신 가중치에 작은 봉우리가 생긴다." source="Xiao et al. (2023), Figure 4 · CC BY 4.0" hero />
 
 이렇게 모든 선형층의 행렬곱을 INT8로 하면서도 정확도를 유지했고,
-A100 80GB에서 FasterTransformer로 잰 context(prefill) 단계에서 최대 1.56배 빨라지고 메모리를 약 2배 줄였으며,
+A100 80GB에서 NVIDIA의 추론 라이브러리 FasterTransformer로 잰 context(prefill) 단계에서 최대 1.56배 빨라지고 메모리를 약 2배 줄였으며,
 OPT-175B를 GPU 8대 대신 4대로 비슷하거나 더 짧은 지연에 돌렸다.[^smoothquant]
 원논문의 PyTorch 구현 비교에서는 LLM.int8()이 대부분의 경우 FP16보다 느렸다.
 

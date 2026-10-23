@@ -83,8 +83,9 @@ vLLM의 설정 인자는 지금까지 본 개념과 거의 일대일로 대응�
 실험 결과를 보고할 때는 기본값에 기대지 말고 실제 값을 함께 적는다.
 
 설정을 바꾼 효과는 서버가 내보내는 지표로 확인한다.
-vLLM은 앞 주차에 본 서버 내부 지표 가운데 KV cache 사용률(`vllm:kv_cache_usage_perc`), prefix cache를 조회한 토큰 수와 적중한 토큰 수(`vllm:prefix_cache_queries`, `vllm:prefix_cache_hits`),
-실행·대기 요청 수(`vllm:num_requests_running`, `vllm:num_requests_waiting`)를 Prometheus 형식으로 노출한다.[^vllm-metrics]
+앞 주차에 본 서버 내부 지표는 vLLM에서 Prometheus 형식으로 나온다.[^vllm-metrics]
+KV cache 사용률은 `vllm:kv_cache_usage_perc`, prefix cache 적중률은 조회한 토큰 수와 적중한 토큰 수(`vllm:prefix_cache_queries`, `vllm:prefix_cache_hits`),
+실행·대기 요청 수는 `vllm:num_requests_running`, `vllm:num_requests_waiting`으로 본다.
 
 ## 3. SGLang
 
@@ -111,12 +112,12 @@ scheduler가 **한 batch 앞서** 다음 batch의 준비를 하게 해 CPU 작�
 다음 batch에 들어갈 토큰은 아직 GPU에서 계산 중이므로,
 그 자리를 미리 표시해 둔 future token으로 준비를 진행하고 CUDA event로 실행 순서를 맞춘다.
 
-같은 버전은 엔진을 여러 개 띄울 때의 문제도 다뤘다.
+같은 버전은 엔진을 여러 개 띄울 때 앞에서 본 cache-aware routing을 cache-aware load balancer로 구현했다.
 엔진 인스턴스마다 radix tree가 따로 있으므로, 요청을 돌아가며 나누면 같은 prefix를 가진 요청이 여러 인스턴스에 흩어져 cache 적중률이 떨어진다.
-Cache-aware load balancer는 각 인스턴스의 radix tree를 근사한 나무를 유지하며 prefix가 가장 많이 맞을 인스턴스로 요청을 보낸다.
+이 load balancer는 각 인스턴스의 radix tree를 근사한 나무를 유지하며 prefix가 가장 많이 맞을 인스턴스로 요청을 보낸다.
 같은 크기의 긴 공통 prefix 그룹이 여럿인 workload에서 이 방식은 v0.3보다 cache 적중률을 3.8배 높여 처리량을 최대 1.9배 늘렸다.[^sglang-v04]
-DeepSeek 계열의 MLA(multi-head latent attention)는 KV head가 하나뿐이라, attention을 TP로 나누면 GPU마다 같은 KV cache를 복제해 메모리를 낭비한다.
-Data parallel attention은 attention 부분을 GPU마다 다른 요청을 맡는 data parallelism으로 돌려 이 복제를 없애고, 그만큼 batch를 키운다.
+앞에서 본 것처럼 DeepSeek 계열의 MLA(multi-head latent attention)는 attention을 TP로 나누면 latent KV cache가 GPU마다 복제된다.
+Data parallel attention은 attention 부분만 GPU마다 다른 요청을 맡는 data parallelism으로 돌려 이 복제를 없애고, 그만큼 batch를 키운다.
 
 ### 3-2. 설정과 튜닝
 
@@ -129,11 +130,11 @@ SGLang의 설정도 같은 개념에 대응한다.[^sglang-args]
 `--attention-backend`는 attention kernel(FlashInfer, FlashAttention, Triton 등),
 `--speculative-algorithm`은 speculative decoding의 draft 방식이다.
 실행 순서의 기본값은 도착한 순서대로인 `fcfs`(first come, first served)이고,
-`lpm`(longest prefix match)을 고르면 cache와 일치하는 prefix가 긴 요청부터 처리한다.
+`lpm`(longest prefix match)을 고르면 앞에서 본 cache-aware scheduling처럼 cache와 일치하는 prefix가 긴 요청부터 처리한다.
 다만 대기 요청이 128개를 넘으면 prefix 비교와 정렬 비용을 아끼려고 `fcfs`로 돌아가고, prefix cache를 끈 경우에도 `fcfs`를 쓴다.[^sglang-policy]
 
 SGLang의 튜닝 문서는 offline batch inference에서 처리량을 높이려면 **batch를 크게 만드는 것이 가장 중요하다**고 요약한다.[^sglang-tune]
-작은 batch에서는 가중치 읽기가 병목이라는 roofline 분석과 같은 결론이다.
+작은 batch에서는 가중치 읽기가 병목이라는 앞 주차 roofline 분석과 같은 결론이다.
 문서는 서버 로그의 KV cache 사용률이 0.9를 넘으면 메모리를 잘 쓰고 있다고 보고,
 대기 요청이 쌓였는데도 0.9 아래에 머물면 서버가 새 요청을 너무 보수적으로 받아들이는 것이라고 본다.
 메모리가 모자라면 prefill에서는 조각 크기를, decode에서는 동시 요청 수를 줄이라고 권한다.

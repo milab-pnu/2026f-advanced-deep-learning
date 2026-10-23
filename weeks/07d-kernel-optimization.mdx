@@ -135,13 +135,13 @@ Dao 등의 Flash-Decoding은 나눌 방향을 하나 더 만들었다.
 </figure>
 
 <Callout type="example">
-FlashAttention의 online softmax 예시를 다시 쓰자.
+앞 주차 FlashAttention의 online softmax 예시를 다시 쓰자.
 Query 하나의 점수가 $[1,2,3,0]$, value가 $[10,20,30,40]$이고 정답 출력은 약 26.21이었다.
 그때는 thread block 하나가 두 블록을 차례로 처리하며 통계를 고쳐 나갔다.
 Flash-Decoding은 두 조각을 동시에 계산한다.
 조각 1($[1,2]$)은 부분 출력 약 17.31과 $\text{LSE}_1=\log(e^{1}+e^{2})\approx2.313$을,
 조각 2($[3,0]$)는 부분 출력 약 30.47과 $\text{LSE}_2=\log(e^{3}+e^{0})\approx3.049$를 각자 낸다.
-LSE는 앞에서 들고 다닌 최댓값 $m$과 지수 합 $\ell$을 한 값으로 접은 것으로, $m+\log\ell$과 같다(조각 1이면 $2+\log1.368$).
+LSE는 online softmax에서 들고 다닌 최댓값 $m$과 지수 합 $\ell$을 한 값으로 접은 것으로, $m+\log\ell$과 같다(조각 1이면 $2+\log1.368$).
 Reduce는 각 조각의 비중을 $e^{\text{LSE}_i}$에 비례하게 잡는다.
 공통 기준 3을 빼 $e^{2.313-3}\approx0.503$과 $e^{3.049-3}\approx1.050$을 비중으로 쓰면 $(0.503\times17.31+1.050\times30.47)/1.553\approx26.21$로,
 정답과 같다.
@@ -252,7 +252,7 @@ Scale을 읽는 비용 같은 부가 비용은 뺀 근사다.
 Marlin의 실측은 A10에서 72k×18k 행렬로 쟀다.
 Batch 16–32까지는 scale 저장분을 감안한 이상값 3.87배에 가깝게 냈고,
 batch 128에서는 1.5배 정도로 줄었다.[^marlin]
-vLLM에 넣은 end-to-end 측정에서는 RTX A6000의 Llama-2-7B serving에서 TPOT가 FP16 대비 약 2.8배 짧아졌다.
+vLLM에 넣은 end-to-end 측정에서는 RTX A6000으로 Llama-2-7B를 서빙할 때 TPOT가 FP16 대비 약 2.8배 짧아졌다.
 
 ### 3-3. MoE의 grouped GEMM
 

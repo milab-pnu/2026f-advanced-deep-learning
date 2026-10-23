@@ -6,7 +6,7 @@ order: 3
 
 앞 노트의 양자화는 파라미터 하나를 적은 bits로 저장했다.
 이 노트는 **파라미터의 수 자체**를 줄이는 방법을 다룬다.
-앞에서 본 roofline의 하한 식으로 보면 파라미터를 줄이는 일은 읽을 가중치의 bytes와 할 FLOPs(floating-point operations)를 함께 줄인다.
+앞에서 본 roofline의 하한 식으로 보면, 파라미터를 줄이면 읽을 가중치 bytes와 계산할 FLOPs(floating-point operations)가 함께 준다.
 남은 가중치가 GPU(graphics processing unit)의 kernel이 빠르게 처리할 수 있는 모양으로 남는다면,
 memory-bound인 decode에서는 가중치를 읽는 시간이, compute-bound인 prefill에서는 연산 시간이 줄고,
 남는 GPU 메모리는 KV(key-value) cache에 돌아간다.
@@ -196,7 +196,7 @@ NVIDIA는 Ampere GPU부터 하드웨어가 직접 가속할 수 있는 희소성
 연속된 원소 4개마다 적어도 2개를 0으로 두는 **2:4 sparsity**다.
 Sparse Tensor Core는 남은 값과 그 위치(남은 값마다 2 bits)만 읽어,
 dense 행렬곱보다 최대 두 배의 연산 속도를 낸다.[^nvidia24]
-앞에서 roofline을 그릴 때 H100 SXM의 사양표가 16-bit 연산을 sparsity 기준으로 1,979 TFLOP/s라 적는다고 했던 그 값이다.[^h100]
+앞에서 roofline을 그릴 때 H100 SXM의 사양표가 16-bit 연산을 sparsity 기준으로 1,979 TFLOP/s라 적는다고 했는데, 바로 이 가속을 가정한 값이다(앞 노트의 FP8(8-bit floating point) dense 값과는 숫자만 같다).[^h100]
 
 2:4는 비구조적 pruning보다 제약이 강해 품질 손실이 크다.
 SparseGPT로 OPT-175B를 2:4로 지우면 perplexity가 8.35에서 8.74로 조금 늘었지만,
@@ -208,7 +208,7 @@ One-shot 방법은 작은 보정 데이터에서 근사한 중요도로 마스�
 Fang 등의 MaskLLM은 가중치는 고정한 채 어떤 2개를 남길지를 학습 데이터에서 end-to-end로 학습한다.[^maskllm]
 LLaMA-2 7B에서 마스크를 2,000스텝 학습하는 데 A100 GPU 1,280시간이 들었지만,
 WikiText-2 perplexity를 SparseGPT의 10.42에서 6.72(dense 5.12)로 낮추었다.
-A6000·batch 1의 TensorRT-LLM에서 2:4 모델의 처리량은 7B가 1.36–1.41배, 13B가 1.50–1.57배였다.[^maskllm]
+A6000·batch 1에서 NVIDIA의 서빙 라이브러리 TensorRT-LLM으로 잰 2:4 모델의 처리량은 7B가 1.36–1.41배, 13B가 1.50–1.57배였다.[^maskllm]
 사양표에 못 미치는 주된 까닭은 두 가지다.
 행렬곱 외의 연산은 그대로이고,
 memory-bound인 작은 batch의 decode에서는 연산 속도보다 읽는 bytes가 시간을 정하는데,
@@ -289,7 +289,7 @@ Head와 FFN channel만 지운 모델은 지운 직후에는 embedding 차원까�
 
 후속 보고서는 같은 방법으로 Llama 3.1 8B에서 층을 절반으로 줄인 모델과 너비를 줄인 모델을 만들었다.[^minitron-practice]
 원래 학습 데이터가 없어서 teacher를 distillation 데이터에 먼저 맞추는 teacher correction도 더했다.
-H100 한 대의 TensorRT-LLM(FP8, 8-bit floating point)에서 여러 입출력 길이로 잰 평균 처리량은 원래 8B보다 깊이를 줄인 모델이 2.7배, 너비를 줄인 모델이 1.8배 높았다.
+H100 한 대에서 TensorRT-LLM을 FP8로 돌려 여러 입출력 길이로 잰 평균 처리량은 원래 8B보다 깊이를 줄인 모델이 2.7배, 너비를 줄인 모델이 1.8배 높았다.
 작은 모델에 두 배 큰 batch를 준 비교라 그 이득도 섞여 있다.
 깊이 pruning은 순차로 계산할 층 수 자체를 줄여 속도 이득이 크고,
 너비 pruning은 base 모델의 MMLU가 더 높아 품질이 낫다는 맞교환이다.
@@ -307,7 +307,7 @@ Meta의 Llama 3.2 1B와 3B는 pruning과 distillation을 함께 썼다.
 Llama 3.1 8B를 구조적으로 한 번에 pruning하고,
 사전학습 단계에서 Llama 3.1 8B와 70B의 logit을 토큰별 목표로 넣어 distillation으로 성능을 되살렸다.[^llama32]
 
-앞에서 inference 수요가 크면 작은 모델을 오래 학습하는 편이 전체 비용에서 유리하다고 했다.
+앞에서 학습 계산과 inference 계산을 견주며, inference 수요가 크면 작은 모델을 오래 학습하는 편이 전체 비용에서 유리하다고 했다.
 큰 모델을 한 번 학습해 두고 거기서 여러 크기의 작은 모델을 pruning과 distillation으로 뽑아내는 방식은,
 그 작은 모델들을 각각 처음부터 오래 학습하는 비용까지 줄인다.
 

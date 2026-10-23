@@ -6,7 +6,7 @@ order: 0
 
 앞 주차에는 inference의 비용을 계산하고, 모델을 작게 만들어 그 비용을 줄이는 방법을 보았다.
 이번 주는 모델 대신 서빙 시스템 쪽에서 비용을 줄인다.
-출발점은 H100 SXM GPU(graphics processing unit) 한 대에 Llama 3 8B를 올려 본 메모리 계산과 roofline 분석이다.
+출발점은 H100 SXM GPU(graphics processing unit) 한 대에 Llama 3 8B를 BF16(bfloat16) 가중치 그대로 올려 본 메모리 계산과 roofline 분석이다.
 두 계산은 같은 결론에 닿았다.
 Batch를 키워 처리량(throughput)을 올리려 하면 선형층이 ridge point에 닿기 전에 KV(key-value) cache 공간이 먼저 모자란다.
 vLLM 기본 설정에서 activation·작업 공간을 약 4 GB로 가정하면 KV cache에 약 53.5 GB가 남고,
@@ -224,7 +224,7 @@ GPU 메모리에 둘 KV cache를 더 줄이는 방법은 크게 세 갈래다.
 토큰 하나를 더 적은 byte로 저장하는 양자화(quantization), 저장할 토큰 수를 줄이는 eviction, GPU 밖의 더 큰 저장소로 옮기는 offloading이다.
 양자화와 eviction은 GPU에 둘 크기와 스텝마다 읽을 양을 함께 줄이고,
 offloading은 GPU 밖의 용량을 빌려 GPU에 둘 크기만 줄인다.
-양자화는 앞 주차에 KV cache 양자화로 보았으니, 여기서는 eviction과 offloading을 본다.
+KV cache 양자화는 앞 주차에 보았으니, 여기서는 eviction과 offloading을 본다.
 
 ### 4-1. Eviction
 
