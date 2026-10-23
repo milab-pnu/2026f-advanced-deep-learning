@@ -64,7 +64,7 @@ vLLM 팀은 V1이 여러 스텝을 한 번에 scheduling하는 multi-step schedu
 
 ### 2-2. 주요 설정
 
-vLLM의 설정 인자는 앞에서 본 개념과 거의 일대일로 대응한다.[^vllm-args][^vllm-opt]
+vLLM의 설정 인자는 지금까지 본 개념과 거의 일대일로 대응한다.[^vllm-args][^vllm-opt]
 
 | 인자 | 기본값 | 무엇을 정하나 |
 |---|---|---|
@@ -83,7 +83,7 @@ vLLM의 설정 인자는 앞에서 본 개념과 거의 일대일로 대응한�
 실험 결과를 보고할 때는 기본값에 기대지 말고 실제 값을 함께 적는다.
 
 설정을 바꾼 효과는 서버가 내보내는 지표로 확인한다.
-vLLM은 KV cache 사용률(`vllm:kv_cache_usage_perc`), prefix cache를 조회한 토큰 수와 적중한 토큰 수(`vllm:prefix_cache_queries`, `vllm:prefix_cache_hits`),
+vLLM은 앞 주차에 본 서버 내부 지표 가운데 KV cache 사용률(`vllm:kv_cache_usage_perc`), prefix cache를 조회한 토큰 수와 적중한 토큰 수(`vllm:prefix_cache_queries`, `vllm:prefix_cache_hits`),
 실행·대기 요청 수(`vllm:num_requests_running`, `vllm:num_requests_waiting`)를 Prometheus 형식으로 노출한다.[^vllm-metrics]
 
 ## 3. SGLang
@@ -188,7 +188,7 @@ Concurrency를 고정하면 응답이 느려질 때 새 요청도 늦게 들어�
 Goodput을 잴 때도 정의를 구분한다.
 `vllm bench serve`의 `--goodput` 옵션에 TTFT와 TPOT의 목표치를 밀리초로 주면,
 그 부하에서 목표를 모두 지킨 요청 수를 측정 시간으로 나눈 값을 보고한다.[^vllm-bench-src]
-앞 주차에서 본 DistServe의 goodput은 SLO 달성률 목표(예: 90%)를 지키면서 GPU 한 대가 감당할 수 있는 **최대 요청률**이었다.
+앞에서 본 DistServe의 goodput은 SLO 달성률 목표(예: 90%)를 지키면서 GPU 한 대가 감당할 수 있는 **최대 요청률**이었다.
 이 값을 얻으려면 요청률을 바꿔 가며 여러 번 재고, 달성률이 목표 아래로 떨어지기 직전의 요청률을 찾아야 한다.
 
 <Callout type="example">

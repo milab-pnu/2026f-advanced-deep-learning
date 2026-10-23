@@ -1,10 +1,13 @@
 ---
 title: "KV cache management"
-week: 6
-order: 2
+week: 7
+order: 0
 ---
 
-앞에서 H100 SXM GPU(graphics processing unit) 한 대에 Llama 3 8B를 올려 본 메모리 계산과 roofline 분석은 같은 결론에 닿았다.
+앞 주차에는 inference의 비용을 계산하고, 모델을 작게 만들어 그 비용을 줄이는 방법을 보았다.
+이번 주는 모델 대신 서빙 시스템 쪽에서 비용을 줄인다.
+출발점은 H100 SXM GPU(graphics processing unit) 한 대에 Llama 3 8B를 올려 본 메모리 계산과 roofline 분석이다.
+두 계산은 같은 결론에 닿았다.
 Batch를 키워 처리량(throughput)을 올리려 하면 선형층이 ridge point에 닿기 전에 KV(key-value) cache 공간이 먼저 모자란다.
 vLLM 기본 설정에서 activation·작업 공간을 약 4 GB로 가정하면 KV cache에 약 53.5 GB가 남고,
 토큰당 128 KiB라서 요청마다 8,192토큰까지 자란다면 49개까지 들어간다고 어림했다.<Sidenote>이 노트에서 KiB·MiB·GiB는 $2^{10}$·$2^{20}$·$2^{30}$ bytes이고, MB·GB·TB는 $10^6$·$10^9$·$10^{12}$ bytes다.</Sidenote>
@@ -129,7 +132,7 @@ Kwon 등은 멈춘 요청의 블록을 다루는 두 방법을 비교했다.
 멈춘 요청의 블록을 CPU(central processing unit) 메모리로 옮겨 두었다가 다시 가져오는 swapping과,
 블록을 버리고 나중에 다시 prefill해 KV cache를 재계산하는 recomputation이다.
 Recomputation은 이미 생성한 토큰까지 프롬프트처럼 한 번에 prefill하므로 원래의 decode보다 훨씬 빠를 수 있다.[^vllm]
-앞에서 본 것처럼 decode는 스텝마다 가중치를 다시 읽지만, prefill은 한 번 읽은 가중치를 여러 토큰에 쓴다.
+앞 주차에 본 것처럼 decode는 스텝마다 가중치를 다시 읽지만, prefill은 한 번 읽은 가중치를 여러 토큰에 쓴다.
 실험에서는 블록이 작을수록 CPU와 GPU 사이의 작은 전송이 많아져 swapping이 불리했고,
 블록이 크면 swapping이 유리했다.
 OPT-13B로 ShareGPT 요청을 처리한 실험에서 16–64토큰 블록은 두 방법의 end-to-end 성능이 비슷했다.[^vllm]
@@ -148,7 +151,7 @@ prefix가 같으면 그 부분의 KV cache도 같다.
 
 <Callout type="example">
 2,048토큰짜리 시스템 프롬프트를 모든 요청 앞에 붙이는 서비스를 생각하자.
-앞에서 본 2,048토큰 prefill처럼 이 프롬프트의 prefill은 약 34 TFLOP(tera floating-point operation)이라,
+앞 주차에 본 2,048토큰 prefill처럼 이 프롬프트의 prefill은 약 34 TFLOP(tera floating-point operation)이라,
 H100 SXM의 peak를 모두 내도 약 34 ms, 절반을 내면 약 69 ms가 든다.
 이 프롬프트의 KV cache는 $2{,}048\times128\ \text{KiB}\approx268\ \text{MB}$다.
 시스템 프롬프트를 한 번만 계산해 두고 재사용하면 요청마다 수십 ms의 prefill을 건너뛰어 TTFT(time to first token)가 짧아지고,
@@ -156,7 +159,7 @@ H100 SXM의 peak를 모두 내도 약 34 ms, 절반을 내면 약 69 ms가 든�
 </Callout>
 
 이렇게 이미 계산한 prefix의 KV cache를 다른 요청에서 찾아 쓰는 것이 **prefix caching**이다.
-앞에서 본 서버 지표의 prefix cache 적중률(hit rate)은 프롬프트 토큰 가운데 cache에서 찾은 토큰의 비율로, 이 재사용의 정도를 잰다.[^vllm-metrics]
+앞 주차에 본 서버 지표의 prefix cache 적중률(hit rate)은 프롬프트 토큰 가운데 cache에서 찾은 토큰의 비율로, 이 재사용의 정도를 잰다.[^vllm-metrics]
 적중률이 높을수록 prefill 계산이 줄어 TTFT가 짧아지고 batch를 더 키울 수 있어 처리량도 오르지만,
 출력이 길어 decode가 시간을 지배하는 작업에서는 전체 지연과 처리량의 개선이 작다.[^sglang]
 Cache를 찾는 방법에 따라 두 가지 설계가 있다.
@@ -216,12 +219,12 @@ SGLang 원논문은 요청을 처리하는 순서만 바꿔도 적중률이 크�
 
 Paging과 prefix 재사용으로 낭비와 중복을 없애도,
 남은 KV cache는 여전히 토큰 하나에 128 KiB씩 문맥 길이에 비례해 자란다.
-앞에서 본 roofline 분석에서처럼 문맥이 길고 batch가 크면 decode 스텝에서 이 KV cache를 읽는 시간이 가중치를 읽는 시간보다 커진다.
+앞 주차 roofline 분석에서처럼 문맥이 길고 batch가 크면 decode 스텝에서 이 KV cache를 읽는 시간이 가중치를 읽는 시간보다 커진다.
 GPU 메모리에 둘 KV cache를 더 줄이는 방법은 크게 세 갈래다.
-토큰 하나를 더 적은 byte로 저장하는 양자화(quantization) 같은 방법, 저장할 토큰 수를 줄이는 eviction 같은 방법, GPU 밖의 더 큰 저장소로 옮기는 offloading이다.
+토큰 하나를 더 적은 byte로 저장하는 양자화(quantization), 저장할 토큰 수를 줄이는 eviction, GPU 밖의 더 큰 저장소로 옮기는 offloading이다.
 양자화와 eviction은 GPU에 둘 크기와 스텝마다 읽을 양을 함께 줄이고,
 offloading은 GPU 밖의 용량을 빌려 GPU에 둘 크기만 줄인다.
-여기서는 양자화를 빼고 eviction과 offloading을 본다.
+양자화는 앞 주차에 KV cache 양자화로 보았으니, 여기서는 eviction과 offloading을 본다.
 
 ### 4-1. Eviction
 
@@ -375,9 +378,9 @@ Recurrent 층은 사정이 더 까다롭다.
 상태가 지금까지의 모든 토큰을 고정 크기 하나로 압축한 값이라,
 나중 시점의 상태만으로는 중간 시점의 상태를 바로 얻을 수 없다.
 재사용하려면 그 시점의 상태가 따로 저장돼 있어야 한다.
-앞에서 본 것처럼 엔진은 긴 프롬프트의 prefill을 여러 번에 나누어 처리할 수 있다.
+앞 주차에 본 것처럼 엔진은 긴 프롬프트의 prefill을 여러 번에 나누어 처리할 수 있다.
 vLLM은 prefix caching을 켜면 recurrent 층에 기본으로 `align` 모드를 쓰는데,[^vllm-cacheconfig]
-이 모드는 recurrent 상태를 scheduler가 forward 한 번에 처리하는 스텝의 끝에서만 기록한다.
+이 모드는 recurrent 상태를 엔진이 forward 한 번에 처리하는 스텝의 끝에서만 기록한다.
 그래서 prefill 조각이 블록 경계에서 끝나도록 잘라(프롬프트의 마지막 조각은 예외) 스텝이 끝나는 경계에서 상태를 저장한다.[^vllm-sched]
 한 스텝이 블록 여러 개에 걸치면 그 사이 경계의 상태는 남지 않고,
 재사용도 상태가 저장된 블록 경계까지만 한다.[^vllm-mamba]

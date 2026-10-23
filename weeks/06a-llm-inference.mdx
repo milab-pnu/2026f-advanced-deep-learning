@@ -6,7 +6,7 @@ order: 0
 
 지금까지는 모델을 만드는 과정을 보았다.
 구조를 정하고, 대량의 텍스트로 사전학습하고, SFT(supervised fine-tuning)와 강화학습(reinforcement learning, RL)으로 다듬었다.
-이번 주는 그렇게 만든 모델을 실제로 돌리는 단계인 inference와 그 **비용**을 다룬다.
+이번 주는 그렇게 만든 모델을 실제로 돌리는 단계인 inference의 **비용**과, 모델을 작게 만들어 그 비용을 줄이는 방법을 다룬다.
 학습 비용은 모델을 만들 때 한 번 들지만 inference 비용은 모델이 쓰이는 동안 계속 든다.
 이 비용은 사용자에게는 응답 지연으로, 서비스를 운영하는 쪽에는 GPU(graphics processing unit) 시간, 곧 돈으로 드러난다.
 

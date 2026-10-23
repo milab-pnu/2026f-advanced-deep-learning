@@ -1,12 +1,12 @@
 ---
 title: "Pruning, low-rank, distillation"
-week: 7
-order: 1
+week: 6
+order: 3
 ---
 
 앞 노트의 양자화는 파라미터 하나를 적은 bits로 저장했다.
 이 노트는 **파라미터의 수 자체**를 줄이는 방법을 다룬다.
-앞 주차의 하한 식으로 보면 파라미터를 줄이는 일은 읽을 가중치의 bytes와 할 FLOPs(floating-point operations)를 함께 줄인다.
+앞에서 본 roofline의 하한 식으로 보면 파라미터를 줄이는 일은 읽을 가중치의 bytes와 할 FLOPs(floating-point operations)를 함께 줄인다.
 남은 가중치가 GPU(graphics processing unit)의 kernel이 빠르게 처리할 수 있는 모양으로 남는다면,
 memory-bound인 decode에서는 가중치를 읽는 시간이, compute-bound인 prefill에서는 연산 시간이 줄고,
 남는 GPU 메모리는 KV(key-value) cache에 돌아간다.
@@ -196,7 +196,7 @@ NVIDIA는 Ampere GPU부터 하드웨어가 직접 가속할 수 있는 희소성
 연속된 원소 4개마다 적어도 2개를 0으로 두는 **2:4 sparsity**다.
 Sparse Tensor Core는 남은 값과 그 위치(남은 값마다 2 bits)만 읽어,
 dense 행렬곱보다 최대 두 배의 연산 속도를 낸다.[^nvidia24]
-앞 주차에서 H100 SXM의 사양표가 16-bit 연산을 sparsity 기준으로 1,979 TFLOP/s라 적는다고 했던 그 값이다.[^h100]
+앞에서 roofline을 그릴 때 H100 SXM의 사양표가 16-bit 연산을 sparsity 기준으로 1,979 TFLOP/s라 적는다고 했던 그 값이다.[^h100]
 
 2:4는 비구조적 pruning보다 제약이 강해 품질 손실이 크다.
 SparseGPT로 OPT-175B를 2:4로 지우면 perplexity가 8.35에서 8.74로 조금 늘었지만,
@@ -307,7 +307,7 @@ Meta의 Llama 3.2 1B와 3B는 pruning과 distillation을 함께 썼다.
 Llama 3.1 8B를 구조적으로 한 번에 pruning하고,
 사전학습 단계에서 Llama 3.1 8B와 70B의 logit을 토큰별 목표로 넣어 distillation으로 성능을 되살렸다.[^llama32]
 
-앞 주차에서 inference 수요가 크면 작은 모델을 오래 학습하는 편이 전체 비용에서 유리하다고 했다.
+앞에서 inference 수요가 크면 작은 모델을 오래 학습하는 편이 전체 비용에서 유리하다고 했다.
 큰 모델을 한 번 학습해 두고 거기서 여러 크기의 작은 모델을 pruning과 distillation으로 뽑아내는 방식은,
 그 작은 모델들을 각각 처음부터 오래 학습하는 비용까지 줄인다.
 
@@ -352,7 +352,7 @@ SVD-LLM은 whitening만으로 8.50, 분해한 두 행렬을 LoRA로 하나씩 �
 그래도 학습된 가중치를 사후에 분해하는 방식은 원래 품질을 지키며 줄일 수 있는 비율이 아직 작다.
 20% 압축에서도 perplexity가 원래보다 꽤 높다.
 Low-rank 구조를 처음부터 모델에 넣고 학습하는 길도 있다.
-앞에서 본 MLA(multi-head latent attention)는 key와 value를 저차원 latent로 압축하는 low-rank 구조를 처음부터 학습한 예다.
+앞 주차에서 본 MLA(multi-head latent attention)는 key와 value를 저차원 latent로 압축하는 low-rank 구조를 처음부터 학습한 예다.
 
 [^survey]: Zhu, X., Li, J., Liu, Y., Ma, C., & Wang, W. (2024). A Survey on Model Compression for Large Language Models. *Transactions of the Association for Computational Linguistics*, 12, 1556–1577. [arXiv:2308.07633v4](https://arxiv.org/abs/2308.07633v4).
 

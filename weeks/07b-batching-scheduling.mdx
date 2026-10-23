@@ -1,11 +1,11 @@
 ---
 title: "Batching and scheduling"
-week: 6
-order: 3
+week: 7
+order: 1
 ---
 
-Roofline 분석에서 Llama 3 8B의 decode를 batch 1에서 192로 키우면 스텝 시간은 약 4배가 되지만 처리량(throughput)은 약 46배 늘어난다고 계산했다.
-그다음에는 그 batch를 담을 KV(key-value) cache 공간을 낭비 없이 쓰는 방법을 보았다.
+앞 주차 roofline 분석에서 Llama 3 8B의 decode를 batch 1에서 192로 키우면 스텝 시간은 약 4배가 되지만 처리량(throughput)은 약 46배 늘어난다고 계산했다.
+앞에서는 그 batch를 담을 KV(key-value) cache 공간을 낭비 없이 쓰는 방법을 보았다.
 그런데 roofline 분석은 batch 크기와 모든 요청의 문맥 길이(2,048토큰)를 고정해 두고 계산했다.
 실제 요청은 서로 다른 시각에 도착하고 입력 길이도 출력 길이도 제각각이라,
 batch의 구성과 문맥 길이가 스텝마다 바뀐다.
@@ -53,7 +53,7 @@ Batch의 구성이 반복마다 바뀌므로 이를 **continuous batching**이�
 Orca는 이를 **selective batching**으로 풀었다.
 선형층, LayerNorm(layer normalization), 덧셈처럼 토큰마다 독립인 연산에서는 batch 안의 모든 토큰을 요청 구분 없이 한 줄로 이어 붙여 큰 행렬 하나로 계산한다.
 반면 attention은 같은 요청의 토큰끼리만 계산해야 하므로 요청별로 나누어 처리한 뒤 다시 합친다.[^orca]
-이 구분은 앞에서 본 roofline 분석에서 선형층과 attention을 나눈 것과 같다.
+이 구분은 앞 주차 roofline 분석에서 선형층과 attention을 나눈 것과 같다.
 가중치를 공유하는 선형층은 묶을수록 arithmetic intensity가 오르지만,
 decode의 attention은 묶어도 요청마다 자기 KV cache를 따로 읽으므로 intensity가 그대로다.
 
@@ -100,7 +100,7 @@ vLLM은 FCFS에서는 실행 목록에 가장 늦게 들어온 요청을 멈추�
 공간이 나면 그 요청을 가장 먼저 다시 실행하므로 도착 순서가 대체로 유지된다.
 우선순위 정책에서는 우선순위가 가장 낮은 요청을 멈추고, 원래의 우선순위와 도착 시각에 따라 대기열에 다시 넣는다.[^vllm-sched]
 
-앞에서 본 서버 내부 지표로 KV cache 공간 부족을 의심했다면, vLLM이 내보내는 선점 횟수로 확인할 수 있다.[^vllm-opt]
+앞 주차에 본 서버 내부 지표로 KV cache 공간 부족을 의심했다면, vLLM이 내보내는 선점 횟수로 확인할 수 있다.[^vllm-opt]
 선점이 잦으면 다시 계산하는 비용이 쌓여 요청들의 지연이 늘어날 수 있다.
 vLLM 문서는 이때 GPU 메모리 사용 비율(`gpu_memory_utilization`)을 높이거나,
 동시 요청 수(`max_num_seqs`)나 반복당 토큰 수 상한(`max_num_batched_tokens`)을 줄이거나,
@@ -120,7 +120,7 @@ vLLM 문서는 이때 GPU 메모리 사용 비율(`gpu_memory_utilization`)을 �
 Roofline의 하한 모형으로 계산해 보자.
 Llama 3 8B를 BF16(bfloat16, 원소당 2 bytes)으로 H100 SXM 한 대에서 서빙하며, 문맥 2,048토큰인 요청 64개를 decode하고 있다고 하자.
 H100 SXM의 최대 성능은 BF16 dense 연산 기준 초당 약 989 TFLOP(floating-point operation $10^{12}$번)이고, 메모리 대역폭은 초당 3.35 TB다.
-Roofline 분석에서 구한 대로 한 반복은 약 9.9 ms다(가중치 읽기 약 4.8 ms와 KV cache 읽기 약 5.1 ms).
+앞 주차 roofline 분석에서 구한 대로 한 반복은 약 9.9 ms다(가중치 읽기 약 4.8 ms와 KV cache 읽기 약 5.1 ms).
 여기에 8,192토큰 프롬프트의 prefill이 같은 반복에 들어오면 계산량이 약 150 TFLOP로 늘어, 연산마다 하한을 구해 더하면 그 반복은 약 157 ms가 된다.
 토큰 8,256개(프롬프트 8,192개와 decode 64개)를 처리하는 선형층이 약 133 TFLOP로 약 134 ms를 차지한다.
 Prefill의 causal attention은 약 18 TFLOP로 약 18 ms이고, 둘 다 compute-bound다.
@@ -163,7 +163,7 @@ SLO를 지키며 감당할 수 있는 최대 요청률(capacity)이 vLLM보다 M
 앞 예시의 8,192토큰 프롬프트를 반복마다 토큰 예산 안에서 나누어 넣는다고 하자.
 기존 요청 64개는 그동안 끝나지 않고 문맥도 2,048토큰에 머문다고 가정한다.
 예산이 256토큰이면 decode 64개를 넣고 남은 192토큰을 prefill 조각에 쓴다.
-앞에서 본 것처럼 토큰 수가 모델 차원보다 훨씬 적으면 BF16 선형층의 intensity는 함께 처리하는 토큰 수와 거의 같다.
+앞 주차 roofline 분석에서 본 것처럼 토큰 수가 모델 차원보다 훨씬 적으면 BF16 선형층의 intensity는 함께 처리하는 토큰 수와 거의 같다.
 토큰이 256개면 intensity가 ridge point(약 295 FLOP/byte)보다 낮아, 여전히 가중치 읽기가 선형층의 시간을 정한다.
 그래서 한 반복은 선형층의 가중치 읽기 약 4.8 ms, decode 64개의 KV cache 읽기 약 5.1 ms, 조각의 attention을 더한 값이다.
 조각의 attention 시간은 계산과 KV cache 읽기 가운데 오래 걸리는 쪽으로 잡는다.
@@ -207,7 +207,7 @@ Prefill GPU가 프롬프트를 처리해 첫 토큰과 KV cache를 만들어 dec
 DistServe는 A100 GPU 32대에서 OPT 모델로 실험해, 챗봇 workload(ShareGPT)에서는 DeepSpeed-MII보다 최대 7.4배 높은 요청률을 처리했고,
 요약 workload(LongBench, OPT-66B)에서는 vLLM이 지킬 수 있는 SLO보다 12.6배 엄격한 SLO도 지켰다고 보고했다.[^distserve]
 7.4배를 잰 요청률은 단순 처리량이 아니라, 요청의 90% 이상이 SLO를 지키는 조건에서 GPU 한 대당 감당할 수 있는 최대 요청률,
-곧 앞에서 본 goodput이다.
+곧 앞 주차에 본 goodput이다.
 
 같은 시기 Patel 등의 Splitwise도 두 단계를 다른 기계로 나누었다.[^splitwise]
 Splitwise는 하드웨어 비용에 주목했다.
@@ -264,7 +264,7 @@ Attention은 KV head 단위로 나누므로, $t$가 KV head 수보다 크면 KV 
 
 <Callout type="example">
 Llama 3 8B를 H100 두 대로 서빙한다고 하자.
-메모리는 앞에서 KV cache 공간을 셀 때와 같이 계산한다(`gpu_memory_utilization` 기본값 0.92로 사용 가능 메모리 73.6 GB, 작업 공간 4 GB 가정).
+메모리는 앞 주차에 KV cache 공간을 셀 때와 같이 계산한다(`gpu_memory_utilization` 기본값 0.92로 사용 가능 메모리 73.6 GB, 작업 공간 4 GB 가정).
 복제본 두 개라면 GPU마다 KV cache에 약 53.5 GB, 합해서 약 107 GB가 남고, 문맥 2,048토큰인 batch 1의 decode 스텝 하한은 GPU 한 대일 때와 같은 약 4.9 ms다.
 TP=2라면 GPU마다 가중치가 8 GB만 차지해, KV cache에 약 61.6 GB, 합해서 약 123 GB가 남는다.
 GPU마다 읽는 가중치와 KV cache가 절반이라, 통신을 빼면 스텝 하한이 약 2.4 ms로 준다.
@@ -305,7 +305,7 @@ Gupta 등의 Lynx는 이를 실측으로 보였다.[^lynx]
 저자들은 H200에서 ShareGPT 요청으로 Qwen3-30B-A3B(활성 파라미터 약 3B, 전체 약 30B)의 p99 decode 지연을 쟀다.
 이 지연은 batch 1에서는 Qwen3-4B dense 모델과 비슷했지만, batch가 커지면서 Qwen3-32B dense 모델에 가까워졌다.
 
-앞의 roofline으로 보면, 거의 모든 expert를 읽게 된 뒤에는 batch를 더 키워도 읽는 가중치는 그대로이고 토큰당 계산은 작다.
+앞 주차 roofline으로 보면, 거의 모든 expert를 읽게 된 뒤에는 batch를 더 키워도 읽는 가중치는 그대로이고 토큰당 계산은 작다.
 그래서 연산 쪽이 병목이 되기 전까지 처리량은 batch와 함께 늘어난다.
 토큰당 계산이 적다는 MoE의 이점은, 메모리가 넉넉해 batch를 dense 모델이 연산 병목에 이를 만큼 키울 수 있는 서빙에서 총 파라미터가 비슷한 dense 모델과 견줄 때 드러난다.
 메모리가 작은 환경에서는 쓰지 않는 expert까지 모두 올려 두는 비용이 먼저 드러나, 같은 활성 파라미터의 작은 dense 모델이 더 다루기 쉬울 수 있다.
@@ -313,7 +313,7 @@ Gupta 등의 Lynx는 이를 실측으로 보였다.[^lynx]
 ### 4-3. Expert parallelism
 
 Batch를 키워 모든 expert를 읽게 되어도 문제가 남는다.
-앞에서 본 roofline으로 보면 expert 하나의 행렬곱은 **그 expert로 routing된 토큰 수**만큼만 가중치를 재사용한다.
+Expert 하나의 행렬곱은 **그 expert로 routing된 토큰 수**만큼만 가중치를 재사용한다.
 토큰 하나가 고르는 expert 수에 비해 전체 expert가 많을수록(활성 비율 $k/E$가 작을수록) 토큰이 잘게 흩어져, batch 전체가 커도 expert 하나가 받는 토큰은 적다.
 
 <Callout type="example">

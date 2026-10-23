@@ -1,16 +1,13 @@
 ---
 title: "Quantization"
-week: 7
-order: 0
+week: 6
+order: 2
 ---
 
-앞 주차는 inference의 비용을 bytes와 FLOPs(floating-point operations)로 계산하고, 그 비용을 시스템 쪽에서 줄이는 방법을 보았다.
-이번 주는 모델과 계산 쪽으로 넘어간다.
+앞에서 inference의 비용을 bytes와 FLOPs(floating-point operations)로 계산했고,
+Llama 3 8B의 가중치를 BF16(bfloat16) 16 GB에서 INT4(4-bit integer) 약 4 GB로 줄이기만 해도 batch 1 decode 스텝의 하한이 4.9 ms에서 약 1.3 ms로 내려가는 것을 보았다.
+이제 모델 쪽에서 그 비용을 줄이는 방법으로 넘어간다.
 첫 주제는 숫자 하나를 저장하는 bytes를 줄이는 <strong>양자화(quantization)</strong>다.
-Roofline 분석에서 보았듯 가중치를 적은 bits로 저장하면 memory-bound인 decode 스텝의 하한이 바로 내려간다.
-Llama 3 8B의 가중치를 BF16(bfloat16) 16 GB에서 INT4(4-bit integer) 약 4 GB로 줄이면,
-앞 주차 예시(H100 SXM, 문맥 2,048토큰, KV(key-value) cache는 BF16 그대로)에서 batch 1 스텝의 하한이 4.9 ms에서 약 1.3 ms가 된다.
-연산 자체를 낮은 정밀도로 하면 roofline에서 연산의 지붕도 높아진다.
 
 문제는 정밀도를 낮추면 오차가 생긴다는 점이다.
 LLM(large language model)에서는 그 오차가 특히 다루기 어려운 모양으로 나타나고,
@@ -21,7 +18,7 @@ Gong 등의 저비트 LLM 서베이는 숫자 형식과 실행 방식, 양자화
 
 ### 1-1. 균일 양자화
 
-앞서 mixed precision 학습에서 FP32(32-bit floating point)와 BF16 같은 부동소수점 형식을 보았다.
+앞 주차 mixed precision 학습에서 FP32(32-bit floating point)와 BF16 같은 부동소수점 형식을 보았다.
 양자화는 실숫값을 더 적은 bits로 표현할 수 있는 값의 집합(격자)에 대응시킨다.
 가장 기본적인 균일 양자화는 등간격의 정수 격자를 쓴다.
 간격(scale) $s$와 영점(zero-point) $z$로 실숫값 $x$를 $b$-bit 정수로 바꾸고,
@@ -66,7 +63,7 @@ GPTQ 논문은 이때 group마다 두는 scale과 zero-point 같은 부가 정�
 Llama 3 8B의 가중치를 group 128의 INT4로 저장하고 group마다 16-bit scale 하나만 둔다면 원소당 $4+16/128=4.125$ bits로,
 zero-point를 두지 않은 만큼 위의 약 0.15 bits보다 조금 작다.
 파라미터 8.03B개에 곱하면 약 4.1 GB로, BF16의 16.1 GB에서 약 4분의 1이 된다.
-앞 주차 예시의 H100 한 대라면 KV cache에 쓸 공간이 약 12 GB 늘어난다.
+앞에서 계산한 메모리 예산대로 H100 한 대에 올리면 KV(key-value) cache에 쓸 공간이 약 12 GB 늘어난다.
 </Callout>
 
 ### 1-3. Scale을 정하는 시점
@@ -362,12 +359,12 @@ MoE 가중치가 전체 파라미터의 90% 이상을 차지하므로 116.8B 파
 ## 5. KV cache 양자화
 
 양자화는 가중치만이 아니라 KV cache에도 쓴다.
-KV cache 크기 식의 원소당 bytes $p$를 줄이면 같은 메모리에 더 많은 토큰이 들어가고,
+앞에서 본 KV cache 크기 식에서 원소당 바이트 수를 줄이면 같은 메모리에 더 많은 토큰이 들어가고,
 긴 문맥의 decode에서 스텝을 지배하는 KV cache 읽기도 줄어든다.
 vLLM은 KV cache를 FP8로 저장하는 옵션을 제공한다.
 Scale은 텐서 전체에 하나를 두는 것이 기본이고 보정 데이터로 정하기를 권장한다.
 Attention head마다 scale을 두려면 Flash Attention backend와 llm-compressor의 보정 과정이 필요하다.[^vllm-fp8]
-Llama 3 8B라면 토큰당 128 KiB가 64 KiB로 줄어, 앞 주차 예시의 53.5 GB에 약 816,000토큰이 들어간다(scale 같은 부가 정보 제외).
+Llama 3 8B라면 토큰당 128 KiB가 64 KiB로 줄어, 앞에서 구한 KV cache 공간 53.5 GB에 약 816,000토큰이 들어간다(scale 같은 부가 정보 제외).
 요청 길이가 같다면 같은 메모리로 약 두 배의 batch를 받을 수 있고, 긴 문맥에서는 스텝마다 읽는 KV cache bytes도 거의 절반이 된다.
 
 더 낮은 비트로 가면 어떤 축으로 묶어 scale을 둘지가 중요해진다.
