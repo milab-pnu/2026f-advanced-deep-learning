@@ -6,12 +6,11 @@ order: 3
 
 Roofline 분석에서 Llama 3 8B의 decode를 batch 1에서 192로 키우면 스텝 시간은 약 4배가 되지만 처리량(throughput)은 약 46배 늘어난다고 계산했다.
 그다음에는 그 batch를 담을 KV(key-value) cache 공간을 낭비 없이 쓰는 방법을 보았다.
-그런데 roofline 분석의 batch 계산은 한 스텝의 batch 크기와 모든 요청의 문맥 길이(2,048토큰)를 고정해 두고 계산했다.
+그런데 roofline 분석은 batch 크기와 모든 요청의 문맥 길이(2,048토큰)를 고정해 두고 계산했다.
 실제 요청은 서로 다른 시각에 도착하고 입력 길이도 출력 길이도 제각각이라,
 batch의 구성과 문맥 길이가 스텝마다 바뀐다.
 이런 요청들을 어떤 단위로 묶고, 어떤 순서로 실행할 것인가?
 이 노트는 Zhen 등의 inference serving 서베이[^survey]를 지도로 삼아 그 질문에 답해 온 계보를 따라간다.
-요청을 묶는 단위, 대기열의 순서와 선점, prefill과 decode의 간섭, 여러 GPU(graphics processing unit)에 걸친 서빙과 MoE(mixture of experts)의 batch 순서로 본다.
 
 ## 1. Batching의 단위
 
@@ -35,17 +34,17 @@ Batch는 가장 긴 요청이 끝나는 400스텝 동안 자리 4개를 차지�
 </Callout>
 
 RL(reinforcement learning) 학습에서 응답을 생성하는 rollout도 같은 문제를 겪는다.
-응답 길이가 수천에서 수만 토큰까지 퍼져 있어, 가장 늦게 끝나는 응답 하나가 batch 전체를 붙잡는다.
+긴 추론을 생성하는 RL에서는 응답 길이의 편차가 커서, 먼저 끝난 응답의 자리가 가장 늦게 끝나는 응답을 기다리며 빈다.
 Olmo 3 보고서는 RL 생성의 평균 길이가 14,628토큰이고 최대가 32K토큰이므로,
 static batching이었다면 계산의 최대 54%가 낭비되었을 것이라고 추산했다.[^olmo3]
-같은 보고서의 설정 표에 적힌 최대 길이 32,768토큰으로 다시 계산하면 약 55%다.
+낭비 비율은 1에서 평균 길이를 최대 길이로 나눈 값을 뺀 것이므로, 같은 보고서의 설정 표에 적힌 최대 길이 32,768토큰을 넣으면 약 55%다.
 
 ### 1-2. 반복 단위 scheduling
 
 Orca는 scheduling의 단위를 요청에서 <strong>반복(iteration)</strong>으로 바꿨다.[^orca]
 Scheduler는 모델이 batch를 한 번 처리할 때마다 결과를 받는다.
 이 한 번의 실행이 반복이고, 앞 예시와 roofline 분석에서 말한 스텝과 같다.
-그 사이에 끝난 요청은 바로 batch에서 빼서 돌려주고, 도착한 요청은 다음 반복부터 batch에 넣는다.
+그 사이에 끝난 요청은 바로 batch에서 빼서 돌려주고, 새로 도착한 요청은 지금 반복이 끝나면 다음 반복의 batch에 뽑힐 수 있다.
 Batch의 구성이 반복마다 바뀌므로 이를 **continuous batching**이라고도 부른다.
 기다리는 요청이 있고 메모리와 batch 상한이 허용하면 끝난 자리에 바로 새 요청이 들어가므로, 앞 예시의 빈 칸이 줄어든다.
 
@@ -58,20 +57,22 @@ Orca는 이를 **selective batching**으로 풀었다.
 가중치를 공유하는 선형층은 묶을수록 arithmetic intensity가 오르지만,
 decode의 attention은 묶어도 요청마다 자기 KV cache를 따로 읽으므로 intensity가 그대로다.
 
-Orca는 GPT-3 175B에서 토큰당 지연(지연을 생성 토큰 수로 나눈 값)의 중앙값을 같은 190 ms 수준으로 맞췄을 때,
+Orca는 A100 16대에 GPT-3 175B 구성의 모델을 올리고 길이를 무작위로 뽑은 합성 요청을 흘려보냈다.
+토큰당 지연(지연을 생성 토큰 수로 나눈 값)의 중앙값을 같은 190 ms 수준으로 맞췄을 때,
 FasterTransformer보다 처리량이 36.9배 높았다고 보고했다.[^orca]
 이후 vLLM과 SGLang을 비롯한 주요 서빙 엔진은 반복 단위 scheduling을 기본으로 쓴다.
-앞에서 본 PagedAttention과 prefix caching은 이렇게 쉼 없이 바뀌는 batch의 KV cache를 관리하는 장치다.
+앞에서 본 PagedAttention은 요청이 수시로 들고 나며 길이도 늘어나는 이런 batch에서 KV cache를 같은 크기의 블록으로 나누어 배정해 낭비를 요청당 블록 하나 안으로 묶는 장치이고,
+prefix caching은 그 블록을 요청 사이에 재사용해 같은 prefix의 prefill을 건너뛰게 하는 장치다.
 
 ## 2. 대기열과 선점
 
 ### 2-1. 실행 순서
 
 반복 단위 scheduling에서는 반복마다 batch에 넣을 요청을 새로 고른다.
-GPU가 감당할 수 있는 것보다 많은 요청이 오면 일부는 기다려야 하므로, 누구를 먼저 넣을지가 반복마다 내려야 하는 결정이 된다.
+GPU(graphics processing unit)가 감당할 수 있는 것보다 많은 요청이 오면 일부는 기다려야 하므로, 누구를 먼저 넣을지가 반복마다 내려야 하는 결정이 된다.
 어떤 요청을 먼저 실행할지 정하는 일이 inter-request scheduling이다.[^survey]
 가장 흔한 기본값은 도착 순서대로 처리하는 FCFS(first come first served)다.
-공정하지만, 앞에 긴 요청이 있으면 뒤의 짧은 요청까지 오래 기다리는 head-of-line blocking이 생긴다.
+도착 순서를 지킨다는 점에서는 공정하지만, 요청이 몰릴 때 앞에 긴 요청이 있으면 뒤의 짧은 요청까지 오래 기다리는 head-of-line blocking이 생길 수 있다.
 짧은 작업을 먼저 하는 정책은 평균 대기를 줄인다.
 하지만 출력 길이는 생성이 끝나야 알 수 있으므로, 이 정책을 쓰려면 길이를 예측해야 한다.
 요청을 보낼 때 붙인 우선순위 값의 순서로 실행하는 정책도 있다.[^vllm-sched]
@@ -80,29 +81,30 @@ Prefix caching의 적중률도 실행 순서에 달려 있다.
 같은 prefix를 가진 요청들이 멀리 떨어져 처리되면 그 사이에 cache가 지워질 수 있기 때문이다.
 SGLang은 대기 중인 요청 가운데 cache와 겹치는 prefix가 긴 것부터 처리하는 cache-aware scheduling을 제안했다.
 요청 묶음이 미리 정해져 있고 cache가 가장 긴 요청을 담을 만큼 크다면,
-이 순서는 앞에서 본 RadixAttention의 radix tree를 깊이 우선으로 훑는 것과 같고 cache 적중률을 최대로 만든다.[^sglang]
-깊이 우선으로 훑으면 같은 prefix를 가진 요청을 연달아 처리하므로, 공유 prefix의 KV cache를 한 번만 계산하면 되기 때문이다.
+이 순서는 그 요청들의 프롬프트로 만든 radix tree를 깊이 우선으로 훑는 것과 같고, 프롬프트 토큰 기준 cache 적중률을 최대로 만든다.[^sglang]
+깊이 우선으로 훑으면 같은 prefix를 가진 요청을 연달아 처리하므로 공유 prefix의 KV cache를 한 번만 계산하면 된다.
 요청이 계속 도착하고 출력 길이도 미리 모르는 실제 서빙에서는 이 순서가 최대 적중률을 보장하지 않는다.
 SGLang은 현재 이 정책을 선택 사항으로 두고, 기본값으로는 FCFS를 쓴다.[^sglang-args]
 
 짧은 작업 우선이나 prefix 우선처럼 순서를 바꾸는 정책에서는 뒤로 밀린 요청이 계속 선택되지 못하는 기아(starvation)가 생길 수 있다.
-그래서 오래 기다린 요청의 순위를 올리는 공정성 장치가 함께 필요하다.
+SGLang 논문도 cache-aware scheduling이 기아를 낳을 수 있다고 밝히고, 공정성 scheduling 기법과의 결합은 후속 과제로 남겼다.[^sglang]
 
 ### 2-2. 선점
 
 앞에서 본 선점(preemption)은 KV cache 블록이 바닥날 때 실행 중인 요청 일부를 멈추고 그 블록을 회수한다.
 멈춘 요청의 KV cache는 CPU(central processing unit) 메모리로 옮겨 두거나(swapping) 버렸다가 다시 계산한다(recomputation).
 vLLM은 현재 구조(V1)에서 recomputation의 부담이 더 작다며 이를 기본으로 쓴다.[^vllm-opt]
+
 어느 요청을 멈출지도 정책으로 정한다.
 vLLM은 FCFS에서는 실행 목록에 가장 늦게 들어온 요청을 멈추고 대기열 맨 앞에 되돌린다.
 공간이 나면 그 요청을 가장 먼저 다시 실행하므로 도착 순서가 대체로 유지된다.
 우선순위 정책에서는 우선순위가 가장 낮은 요청을 멈추고, 원래의 우선순위와 도착 시각에 따라 대기열에 다시 넣는다.[^vllm-sched]
-선점이 잦으면 recomputation 비용과 그 요청의 지연이 함께 커진다.
-vLLM 문서는 이때 GPU 메모리 사용 비율(`gpu_memory_utilization`)을 높이거나,
-동시 요청 수(`max_num_seqs`)나 반복당 토큰 수 상한(`max_num_batched_tokens`)을 줄이거나,
-GPU를 더 써서 KV cache 공간을 늘리라고 권한다.[^vllm-opt]
 
 앞에서 본 서버 내부 지표로 KV cache 공간 부족을 의심했다면, vLLM이 내보내는 선점 횟수로 확인할 수 있다.[^vllm-opt]
+선점이 잦으면 다시 계산하는 비용이 쌓여 요청들의 지연이 늘어날 수 있다.
+vLLM 문서는 이때 GPU 메모리 사용 비율(`gpu_memory_utilization`)을 높이거나,
+동시 요청 수(`max_num_seqs`)나 반복당 토큰 수 상한(`max_num_batched_tokens`)을 줄이거나,
+모델을 더 많은 GPU에 나눠 올려 GPU당 KV cache 공간을 늘리는 방법(대신 통신과 지연 부담이 따른다)을 제안한다.[^vllm-opt]
 반대로 KV cache에 여유가 있는데 대기 요청이 쌓인다면 동시 요청 수나 반복당 토큰 수 상한이 너무 작지 않은지, 계산이 병목인지 살핀다.
 
 ## 3. Prefill과 decode의 간섭
@@ -117,8 +119,8 @@ GPU를 더 써서 KV cache 공간을 늘리라고 권한다.[^vllm-opt]
 <Callout type="example">
 Roofline의 하한 모형으로 계산해 보자.
 Llama 3 8B를 BF16(bfloat16, 원소당 2 bytes)으로 H100 SXM 한 대에서 서빙하며, 문맥 2,048토큰인 요청 64개를 decode하고 있다고 하자.
-H100 SXM은 초당 989 TFLOP(floating-point operation $10^{12}$번)을 계산하고, 메모리에서 초당 3.35 TB를 읽는다.
-이때 한 반복은 약 9.9 ms다.
+H100 SXM의 최대 성능은 BF16 dense 연산 기준 초당 약 989 TFLOP(floating-point operation $10^{12}$번)이고, 메모리 대역폭은 초당 3.35 TB다.
+Roofline 분석에서 구한 대로 한 반복은 약 9.9 ms다(가중치 읽기 약 4.8 ms와 KV cache 읽기 약 5.1 ms).
 여기에 8,192토큰 프롬프트의 prefill이 같은 반복에 들어오면 계산량이 약 150 TFLOP로 늘어, 연산마다 하한을 구해 더하면 그 반복은 약 157 ms가 된다.
 토큰 8,256개(프롬프트 8,192개와 decode 64개)를 처리하는 선형층이 약 133 TFLOP로 약 134 ms를 차지한다.
 Prefill의 causal attention은 약 18 TFLOP로 약 18 ms이고, 둘 다 compute-bound다.
@@ -146,25 +148,26 @@ Decode만 하는 반복은 memory-bound라 연산 장치가 논다.
 여기에 prefill 조각을 섞으면 조각이 연산 장치를 채우고, decode는 조각을 계산하려고 읽어 온 가중치를 함께 쓴다.
 원논문은 이를 decode가 prefill 조각에 얹힌다(piggyback)고 표현했다.
 LLaMA-13B를 A6000에서 조각 256토큰으로 돌린 실험에서는, 섞인 반복이 prefill 조각만 실행할 때보다 늘어난 시간을 decode의 몫으로 잡았다.
-이렇게 잰 decode 토큰 하나의 시간은 decode만 하는 batch의 최대 약 10분의 1로 줄었다.[^sarathi]
+이렇게 잰 decode 토큰 하나의 시간은 decode만 하는 batch에서보다 최대 약 10배 짧았다.[^sarathi]
 
 후속 Sarathi-Serve는 이를 scheduler로 일반화했다.[^sarathi-serve]
 반복마다 처리할 토큰 수의 상한, 곧 토큰 예산을 SLO(service-level objective)에 맞춰 정하고,
 진행 중인 decode를 먼저 넣은 뒤 남는 예산만큼 prefill 조각을 채운다.
 이렇게 하면 긴 prefill이 진행 중인 decode의 반복 사이에 끼어 다음 토큰이 크게 늦어지는 일(generation stall)을 막는다.
 다만 함께 넣은 조각만큼 각 반복은 길어질 수 있다.
-Mistral-7B를 A100 한 대에서 돌릴 때 vLLM보다 최대 2.6배,
-Yi-34B를 A100 두 대에서 돌릴 때 최대 3.7배 많은 요청을 SLO 안에서 처리했다.[^sarathi-serve]
-여기서 SLO는 토큰 사이 간격의 p99 상한이다.
+Mistral-7B를 A100 한 대에서, Yi-34B를 A100 두 대에 나누어 돌렸을 때,
+SLO를 지키며 감당할 수 있는 최대 요청률(capacity)이 vLLM보다 Mistral-7B에서 2.6배, Yi-34B에서 최대 3.7배 높았다.[^sarathi-serve]
+여기서 SLO는 ITL의 99번째 백분위수(p99)에 둔 상한이고, 3.7배는 이 상한을 엄격하게 잡았을 때의 값이다.
 
 <Callout type="example">
 앞 예시의 8,192토큰 프롬프트를 반복마다 토큰 예산 안에서 나누어 넣는다고 하자.
 기존 요청 64개는 그동안 끝나지 않고 문맥도 2,048토큰에 머문다고 가정한다.
 예산이 256토큰이면 decode 64개를 넣고 남은 192토큰을 prefill 조각에 쓴다.
-앞에서 본 것처럼 BF16 선형층의 intensity는 함께 처리하는 토큰 수와 거의 같다.
+앞에서 본 것처럼 토큰 수가 모델 차원보다 훨씬 적으면 BF16 선형층의 intensity는 함께 처리하는 토큰 수와 거의 같다.
 토큰이 256개면 intensity가 ridge point(약 295 FLOP/byte)보다 낮아, 여전히 가중치 읽기가 선형층의 시간을 정한다.
 그래서 한 반복은 선형층의 가중치 읽기 약 4.8 ms, decode 64개의 KV cache 읽기 약 5.1 ms, 조각의 attention을 더한 값이다.
-조각의 attention 시간은 계산 하한(조각의 각 토큰이 앞 조각들과 조각 안의 앞 토큰을 보는 계산)과 앞 조각들의 KV cache를 다시 읽는 하한 가운데 큰 쪽이다.
+조각의 attention 시간은 계산과 KV cache 읽기 가운데 오래 걸리는 쪽으로 잡는다.
+계산은 조각의 각 토큰이 앞 조각들과 조각 안의 앞 토큰을 보는 양이고, 읽기는 앞 조각들의 KV cache다.
 앞 조각이 쌓여 attention이 길어져도 가장 긴 반복은 약 10.7 ms로, decode만 할 때의 9.9 ms와 거의 같다.
 대신 프롬프트를 다 처리하려면 43번(8,192/192의 올림)의 반복, 약 440 ms가 걸린다.
 예산을 키우면 선형층이 compute-bound가 되어 반복이 길어지는 대신 prefill이 빨리 끝난다.
@@ -177,11 +180,11 @@ Yi-34B를 A100 두 대에서 돌릴 때 최대 3.7배 많은 요청을 SLO 안�
 | 예산 256토큰 | 43 | 약 11 ms | 약 440 ms |
 
 예산이 작을수록 기존 사용자의 ITL이 고르고, 클수록 새 사용자의 TTFT가 짧다.
-표의 값은 연산마다 roofline의 하한을 구해 더한 이상적인 값이고, 선형층의 activation 이동은 뺐다.
+이 예시와 표의 값은 선형층 계산을 토큰마다 2×(전체 파라미터 수) FLOP으로 잡고 연산마다 roofline의 하한을 구해 더한 이상적인 값이며, 선형층의 activation 이동은 뺐다.
 </Callout>
 
 vLLM은 가능한 구성에서는 chunked prefill을 기본으로 켜 두고,
-대기 중인 decode를 모두 넣은 뒤 `max_num_batched_tokens`, 곧 앞의 토큰 예산에서 남는 만큼 prefill을 넣는다.
+진행 중인 decode를 모두 넣은 뒤 `max_num_batched_tokens`, 곧 앞의 토큰 예산에서 남는 만큼 prefill을 넣는다.
 문서도 이 값을 작게 잡으면 ITL이, 크게 잡으면 TTFT와 처리량이 좋아진다고 안내한다.[^vllm-opt]
 
 ### 3-3. Prefill과 decode의 분리
@@ -193,42 +196,46 @@ DistServe는 두 가지를 지적했다.[^distserve]
 조각마다 앞 조각들의 KV cache를 다시 읽어야 하는 비용도 붙는다.
 둘째, 두 단계가 같은 GPU에 있으면 GPU 수와 병렬화 방식도 같아야 한다.
 그런데 두 단계는 지켜야 할 지표도 병목도 다르다.
-DistServe는 prefill의 목표를 TTFT로, decode의 목표를 요청마다 토큰 하나를 만드는 평균 시간인 TPOT(time per output token)로 잡았다.
+DistServe는 prefill의 목표를 TTFT로, decode의 목표를 요청마다 첫 토큰 이후의 출력 토큰 하나를 만드는 평균 시간인 TPOT(time per output token)로 잡았다.
 그 분석에서 compute-bound인 prefill은 요청률에 따라 맞는 병렬화가 달랐다.
 요청률이 낮을 때는 층 안의 연산을 여러 GPU에 나누어 실행 시간을 줄이는 편이, 요청률이 높아지면 층을 구간으로 나누어 여러 요청을 흘려보내는 편이 유리했다.
 반면 memory-bound인 decode는 batch를 크게 모으는 것이 먼저였다.[^distserve]
 
 DistServe의 해법은 prefill과 decode를 **다른 GPU에서** 실행하는 분리(disaggregation)다.
-Prefill GPU가 프롬프트를 처리해 만든 KV cache를 decode GPU로 보내면, decode GPU는 그것을 받아 토큰을 생성한다.
+Prefill GPU가 프롬프트를 처리해 첫 토큰과 KV cache를 만들어 decode GPU로 보내면, decode GPU는 그것을 받아 이어지는 토큰을 하나씩 생성한다.
 두 단계가 서로를 방해하지 않고, 각 단계에 맞는 GPU 수와 병렬화를 따로 고를 수 있다.
-DistServe는 챗봇 workload(ShareGPT)에서 DeepSpeed-MII보다 최대 7.4배 높은 요청률을 처리했고,
+DistServe는 A100 GPU 32대에서 OPT 모델로 실험해, 챗봇 workload(ShareGPT)에서는 DeepSpeed-MII보다 최대 7.4배 높은 요청률을 처리했고,
 요약 workload(LongBench, OPT-66B)에서는 vLLM이 지킬 수 있는 SLO보다 12.6배 엄격한 SLO도 지켰다고 보고했다.[^distserve]
-이 요청률은 요청의 90% 이상이 SLO를 지키는 조건에서 GPU 한 대가 감당한 값,
+7.4배를 잰 요청률은 단순 처리량이 아니라, 요청의 90% 이상이 SLO를 지키는 조건에서 GPU 한 대당 감당할 수 있는 최대 요청률,
 곧 앞에서 본 goodput이다.
 
 같은 시기 Patel 등의 Splitwise도 두 단계를 다른 기계로 나누었다.[^splitwise]
 Splitwise는 하드웨어 비용에 주목했다.
 Decode가 memory-bound인 범위에서는 최신 GPU의 연산 능력보다 메모리 용량과 대역폭이 중요하므로,
 decode를 더 싸고 전력을 덜 쓰는 GPU에 맡길 수 있다는 것이다.
-Patel 등은 실측 profile을 바탕으로 한 cluster simulation에서, 같은 비용과 전력 예산으로 처리량을 2.35배 높이거나, 20% 낮은 비용으로 1.4배의 처리량을 낼 수 있다고 보고했다.[^splitwise]
+Patel 등은 실측 profile로 만든 cluster simulator에 실제 서비스의 요청 기록을 넣어,
+SLO를 지키면서 두 단계를 나누지 않은 기존 설계보다 같은 비용과 전력으로 2.35배,
+또는 20% 낮은 비용으로 최대 1.4배의 처리량을 낼 수 있다고 요약했다.[^splitwise]
 
 분리의 대가는 KV cache의 전송이다.
-OPT-66B(64층, 폭 9,216, 원소당 2 bytes)에서 512토큰 요청 하나의 KV cache는 약 1.2 GB(1.125 GiB)이고, DistServe는 이를 1.13 GB로 적었다.[^distserve]
+OPT-66B(64층, 모델 차원 9,216, 원소당 2 bytes)에서 512토큰 요청 하나의 KV cache는 약 1.2 GB(1.125 GiB)이고, DistServe는 이를 1.13 GB로 적었다.[^distserve]
 앞 주차 학습 병렬화에서 본 H100 서버의 대역폭으로 치면,
 이 양을 옮기는 데 노드 안 NVLink(한 방향 약 450 GB/s)로는 약 2.7 ms, 노드 밖 연결(한 방향 50 GB/s)로는 약 24 ms가 걸린다.
-요청마다 이만큼 옮기려면 빠른 연결이 필요하다.
-DistServe는 노드 사이 대역폭이 부족한 환경에서 두 단계가 모두 층을 몇 구간으로 나누어 여러 노드에 걸칠 때,
-같은 층 구간을 맡은 prefill GPU와 decode GPU를 한 노드에 두어 KV cache를 NVLink로 옮겼다.
+필요한 대역폭은 요청률에 비례한다.
+DistServe는 초당 10건이면 초당 11.3 GB, 곧 약 90 Gbps를 옮겨야 전송이 지연에 드러나지 않는다고 계산했다.[^distserve]
+
+노드 사이 대역폭이 부족하고 두 단계가 모두 층을 구간으로 나누어 여러 노드에 걸친다면,
+DistServe는 같은 층 구간을 맡은 prefill GPU와 decode GPU를 한 노드에 둔다.
+그러면 KV cache는 NVLink로만 오간다.
 OPT-175B와 ShareGPT에서 전송은 전체 지연의 0.1% 미만이었다.[^distserve]
 Splitwise는 긴 프롬프트에서 prefill이 층 하나를 끝낼 때마다 그 층의 KV cache를 비동기로 보내 계산과 전송을 겹쳤다.
 기계 두 대에서 batching 없이 코딩 서비스의 실제 요청 기록(trace)을 돌렸을 때 전송이 늘린 지연은 전체의 0.8%였다.[^splitwise]
-앞에서 KV cache offloading으로 본 Mooncake는 여기에 분산 KV cache pool을 더한 구조로,
-prefill pool과 decode pool 사이에서 KV cache를 저장하고 옮긴다.[^mooncake]
+앞에서 KV cache offloading으로 본 Mooncake는 prefill과 decode를 다른 cluster로 나누고 분산 KV cache pool을 더한 구조다.
+재사용할 KV cache는 pool에서 prefill 인스턴스로 불러오고, prefill이 만든 KV cache는 decode 인스턴스로 바로 흘려보낸다.[^mooncake]
 
 <Callout type="note">
-분리하면 두 지연 지표와 단계별 자원을 따로 조정할 수 있다.
+분리하면 TTFT와 ITL, 그리고 단계별 자원을 따로 조정할 수 있다.
 이것이 처리량 이득으로 이어지는지는 구성과 workload에 달려 있다.
-앞의 DistServe가 보고한 7.4배도 처리량이 아니라 goodput으로 잰 값이다.
 vLLM 문서는 자체 disaggregated prefill이 처리량을 높이지는 않으며,
 TTFT와 ITL을 따로 조정하고 ITL의 꼬리를 줄이는 데 목적이 있다고 밝힌다.
 같은 목적을 적절한 조각 크기로 달성할 수도 있지만,
@@ -242,13 +249,13 @@ TTFT와 ITL을 따로 조정하고 ITL의 꼬리를 줄이는 데 목적이 있�
 분리에서도 각 단계는 GPU 여러 대를 쓸 수 있고, 큰 모델은 애초에 GPU 한 대에 들어가지 않는다.
 GPU가 여러 대일 때 가장 단순한 방법은 모델을 GPU마다 통째로 올린 복제본(replica)을 여러 개 띄우고 요청을 나누어 보내는 것이다.
 앞 주차 학습 병렬화에서 본 DP(data parallelism)를 서빙에 쓰는 셈이다.
-학습과 달리 gradient를 맞출 일이 없어 복제본 사이에는 통신이 없고, 처리량이 GPU 수에 거의 비례해 는다.
+학습과 달리 gradient를 맞출 일이 없어 복제본 사이에는 통신이 없으므로, 요청이 복제본에 고르게 나뉘면 처리량은 이상적으로 GPU 수에 비례해 는다.
 대신 요청 하나의 실행 시간은 GPU 한 대일 때와 같고, 모델이 GPU 한 대에 들어가야 이 방법을 쓸 수 있다.
 복제본마다 prefix cache가 따로 있으므로 같은 prefix의 요청을 어느 복제본으로 보내느냐에 따라 적중률이 달라진다.
 Cache가 맞는 복제본과 덜 붐비는 복제본이 다를 때 둘을 함께 따져 요청을 보내는 방식이 cache-aware routing이다.[^sglang-v04]
 
 앞 주차 학습 병렬화에서 본 TP(tensor parallelism)는 한 층의 가중치를 $t$개 GPU에 나눈다.
-GPU마다 읽는 가중치가 $1/t$로 줄어, memory-bound인 decode 스텝은 이상적으로 $t$배 빨라진다.
+$t$가 KV head 수 이하이면 GPU마다 읽는 가중치와 KV cache가 모두 $1/t$로 줄어, memory-bound인 decode 스텝은 통신을 빼면 이상적으로 $t$배 빨라진다.
 가중치가 차지하던 메모리도 GPU마다 $1/t$로 줄어 그만큼 KV cache를 더 담는다.
 대가는 층마다 GPU 사이에서 결과를 모으는 all-reduce 통신이고,
 그래서 TP는 대개 NVLink로 연결된 한 노드 안에서 쓴다.
@@ -257,8 +264,8 @@ Attention은 KV head 단위로 나누므로, $t$가 KV head 수보다 크면 KV 
 
 <Callout type="example">
 Llama 3 8B를 H100 두 대로 서빙한다고 하자.
-메모리는 앞에서 KV cache 공간을 셀 때와 같이 계산한다(vLLM 기본값 92%로 사용 가능 메모리 73.6 GB, 작업 공간 4 GB 가정).
-복제본 두 개라면 GPU마다 KV cache에 약 53.5 GB, 합해서 약 107 GB가 남고, 문맥 2,048토큰인 batch 1의 decode 스텝 하한은 그대로 4.9 ms다.
+메모리는 앞에서 KV cache 공간을 셀 때와 같이 계산한다(`gpu_memory_utilization` 기본값 0.92로 사용 가능 메모리 73.6 GB, 작업 공간 4 GB 가정).
+복제본 두 개라면 GPU마다 KV cache에 약 53.5 GB, 합해서 약 107 GB가 남고, 문맥 2,048토큰인 batch 1의 decode 스텝 하한은 GPU 한 대일 때와 같은 약 4.9 ms다.
 TP=2라면 GPU마다 가중치가 8 GB만 차지해, KV cache에 약 61.6 GB, 합해서 약 123 GB가 남는다.
 GPU마다 읽는 가중치와 KV cache가 절반이라, 통신을 빼면 스텝 하한이 약 2.4 ms로 준다.
 요청 $R$개를 함께 처리할 때도 GPU마다 읽는 KV cache는 두 구성 모두 요청 $R/2$개분이고, 가중치만 TP=2 쪽이 절반이다.
@@ -269,16 +276,16 @@ GPU마다 읽는 가중치와 KV cache가 절반이라, 통신을 빼면 스텝 
 PP(pipeline parallelism)도 학습에서처럼 층을 몇 개의 stage로 나누어 GPU마다 stage 하나씩 맡긴다.
 요청 하나는 stage를 차례로 지나므로 지연은 줄지 않는다.
 대신 통신이 stage 경계에서만 일어나 느린 연결에서도 쓸 수 있고, 여러 batch를 흘려보내면 모든 GPU가 함께 일한다.
-vLLM 문서는 한 노드 안에서는 TP를, 여러 노드에 걸칠 때는 노드 안의 TP와 노드 사이의 PP를 함께 쓰라고 권한다.
-NVLink가 없는 GPU에서는 PP가 나을 수 있다고도 적는다.[^vllm-parallel]
+vLLM 문서는 모델이 GPU 한 대에 들어가지 않을 때, 한 노드에 들어가면 TP를, 여러 노드에 걸쳐야 하면 노드 안의 TP와 노드 사이의 PP를 함께 쓰라고 권한다.
+NVLink가 없는 GPU에서는 통신 부담이 적은 PP가 TP보다 처리량에 나을 수 있다고도 적는다.[^vllm-parallel]
 
 ### 4-2. MoE의 활성 expert
 
-MoE 모델에서는 batch가 커질수록 decode 스텝이 읽는 가중치도 함께 늘어난다.
+MoE(mixture of experts) 모델에서는 batch가 커질수록 decode 스텝이 읽는 가중치도 함께 늘어나다가, 거의 모든 expert를 읽게 되면 더 늘지 않는다.
 앞 주차 MoE에서 보았듯 토큰마다 계산은 선택된 expert만 하므로, 토큰당 FLOPs는 활성 파라미터 크기의 dense 모델과 비슷하다.
 하지만 메모리에는 모든 expert를 올려 두어야 한다.
 
-Decode 스텝에서 읽는 가중치는 batch 안의 토큰이 **하나라도 고른 expert 전부**다.
+Decode 스텝에서 MoE 층이 읽는 expert 가중치는 batch 안의 토큰이 **하나라도 고른 expert 전부**다.
 각 토큰이 다른 토큰과 무관하게 $E$개 expert 가운데 $k$개를 균등한 확률로 고른다고 가정하자.
 토큰 하나가 특정 expert를 고르지 않을 확률은 $(E-k)/E$이고, 토큰 $b$개가 모두 그 expert를 고르지 않을 확률은 그 $b$제곱이다.
 따라서 토큰 $b$개가 활성화하는 expert 수의 기댓값 $n_{\text{act}}(b)$는 다음과 같다.[^moesd]
@@ -295,36 +302,39 @@ batch의 토큰이 수십 개만 되어도 거의 모든 expert를 읽는다.
 </Callout>
 
 Gupta 등의 Lynx는 이를 실측으로 보였다.[^lynx]
-H200에서 ShareGPT 요청으로 잰 Qwen3-30B-A3B(활성 파라미터 약 3B, 전체 약 30B)의 99번째 백분위수(p99) decode 지연은 batch 1에서는 Qwen3-4B dense 모델과 비슷했지만,
-batch가 커지면서 Qwen3-32B dense 모델에 가까워졌다.
+저자들은 H200에서 ShareGPT 요청으로 Qwen3-30B-A3B(활성 파라미터 약 3B, 전체 약 30B)의 p99 decode 지연을 쟀다.
+이 지연은 batch 1에서는 Qwen3-4B dense 모델과 비슷했지만, batch가 커지면서 Qwen3-32B dense 모델에 가까워졌다.
+
 앞의 roofline으로 보면, 거의 모든 expert를 읽게 된 뒤에는 batch를 더 키워도 읽는 가중치는 그대로이고 토큰당 계산은 작다.
 그래서 연산 쪽이 병목이 되기 전까지 처리량은 batch와 함께 늘어난다.
-토큰당 계산이 적다는 MoE의 이점은, 메모리가 넉넉해 batch를 크게 키울 수 있는 서빙에서 총 파라미터가 비슷한 dense 모델과 견줄 때 드러난다.
+토큰당 계산이 적다는 MoE의 이점은, 메모리가 넉넉해 batch를 dense 모델이 연산 병목에 이를 만큼 키울 수 있는 서빙에서 총 파라미터가 비슷한 dense 모델과 견줄 때 드러난다.
 메모리가 작은 환경에서는 쓰지 않는 expert까지 모두 올려 두는 비용이 먼저 드러나, 같은 활성 파라미터의 작은 dense 모델이 더 다루기 쉬울 수 있다.
 
 ### 4-3. Expert parallelism
 
 Batch를 키워 모든 expert를 읽게 되어도 문제가 남는다.
 앞에서 본 roofline으로 보면 expert 하나의 행렬곱은 **그 expert로 routing된 토큰 수**만큼만 가중치를 재사용한다.
-Expert가 많을수록 토큰이 잘게 흩어져, batch 전체가 커도 expert 하나가 받는 토큰은 적다.
+토큰 하나가 고르는 expert 수에 비해 전체 expert가 많을수록(활성 비율 $k/E$가 작을수록) 토큰이 잘게 흩어져, batch 전체가 커도 expert 하나가 받는 토큰은 적다.
 
 <Callout type="example">
 앞 주차 MoE에서 보았듯 DeepSeek-V3는 처음 세 dense 층을 뺀 MoE 층마다 routed expert 256개 가운데 8개를 고른다.[^dsv3]
 모든 expert를 가진 DP 복제본 하나가 decode 스텝마다 토큰 64개를 처리하고 토큰이 expert에 고르게 나뉜다면,
 expert 하나에 평균 $64\times8/256=2$개의 토큰이 간다.
 앞에서 본 선형층의 intensity로 치면 약 2이므로, 가중치를 읽는 시간이 스텝을 지배한다.
-복제본 하나가 담을 수 있는 요청 수는 KV cache 공간에 묶여 있으므로,
-expert 하나가 받는 토큰 수를 키우려면 여러 복제본의 토큰을 같은 expert로 모아야 한다.
+복제본 하나가 동시에 담을 수 있는 요청 수는 KV cache 공간과 지연 목표에 묶여 있으므로,
+expert 하나가 받는 토큰 수를 크게 키우려면 여러 복제본의 토큰을 같은 expert로 모아야 한다.
 </Callout>
 
 앞 주차 학습 병렬화에서 본 EP(expert parallelism)가 이렇게 모으는 방법이다.
 MoE 층의 expert를 GPU마다 나누어 두고, attention은 DP 복제본으로 둔 채 여러 복제본의 토큰을 해당 expert가 있는 GPU로 보낸다.
+
 DeepSeek-V3는 prefill과 decode를 나누어 배포하고, 두 단계에 서로 다른 규모의 EP를 쓴다.[^dsv3]
 Prefill은 GPU 32개 단위에서 MoE 층에 EP=32를 쓰고,
 decode는 GPU 320개 단위에서 EP=320을 써서 GPU마다 expert 하나만 둔다.
 그 가운데 GPU 64개는 shared expert와, 부하가 몰리는 expert를 복제한 redundant expert를 맡는다.
 두 단계 모두 attention에는 앞 주차에서 본 SP(sequence parallelism)를 곁들인 TP=4를 쓰고, 이를 prefill에서는 DP=8, decode에서는 DP=80으로 복제한다.
-보고서는 TP를 4로 작게 둔 이유로 TP 통신 부담을 든다.[^dsv3]
+
+보고서는 prefill 단계의 배포 구성을 설명하며 TP를 4로 작게 두면 TP 통신 부담이 줄어든다고 적는다.[^dsv3]
 작은 TP와 큰 DP는 KV cache의 복제도 줄인다.
 앞 주차에서 본 MLA(multi-head latent attention)는 모든 head가 latent 하나를 함께 읽어 KV head가 하나인 셈이므로, attention을 TP로 나누면 그 latent KV cache가 GPU마다 복제되기 때문이다.[^sglang-v04]
 vLLM 문서도 MLA를 쓰는 DeepSeek 같은 MoE 모델에는 attention 층에 DP를 쓰는 편이 유리할 수 있다고 안내한다.[^vllm-dp]
@@ -334,13 +344,13 @@ DP=80의 attention 복제본 80개가 처리한 토큰이 모두 같은 expert G
 160토큰이어도 intensity는 ridge point보다 낮다.
 보고서도 expert 하나가 받는 토큰은 대개 256개 이내이고 병목은 메모리 접근이라고 적는다.[^dsv3]
 이 구조에서는 토큰을 expert GPU로 보내고 결과를 되받는 all-to-all 통신이 비용으로 남는다.
-학습에서 EP가 겪던 통신 문제와 같다.
+학습에서 EP가 겪던 것과 같은 종류의 통신이고, DeepSeek-V3는 decode에서 그 지연을 줄이려고 InfiniBand 위의 직접 point-to-point 전송을 쓴다.[^dsv3]
 
-앞의 계산은 routing이 고르다고 가정했지만, 실제로는 토큰이 일부 expert에 쏠린다.
-MoE 층은 가장 많은 토큰을 받은 GPU가 끝나야 다음 층으로 넘어가므로, 앞 주차 MoE에서 본 expert 쏠림이 서빙에서는 곧 지연이 된다.
+앞의 계산은 routing이 고르다고 가정했지만, 실제로는 토큰이 일부 expert에 크게 쏠릴 수 있다.[^vllm-ep]
+MoE 층은 모든 GPU가 층마다 맞춰 진행하므로 가장 많은 토큰을 받은 GPU가 끝나야 다음 층으로 넘어가고, 앞 주차 MoE에서 본 expert 쏠림이 서빙에서는 곧 지연이 된다.[^vllm-dp]
 vLLM의 EPLB(expert parallel load balancer)는 forward마다 expert 부하를 모아 주기적으로 expert를 GPU 사이에 다시 배치하고,
-일부를 redundant expert로 복제해 부하를 고르게 맞춘다.
-그 대가로 복제한 expert가 GPU 메모리를 차지해 KV cache 공간이 줄고, expert 가중치를 옮기는 비용이 든다.[^vllm-ep]
+설정하면 부하가 몰리는 expert를 redundant expert로 복제해 부하를 고르게 맞춘다.
+그 대가로 복제한 expert가 GPU 메모리를 차지해 KV cache 공간이 줄고, 재배치할 때 expert 가중치를 GPU 사이에 옮겨야 한다.[^vllm-ep]
 
 [^survey]: Zhen, R., Li, J., Ji, Y., et al. (2025). Taming the Titans: A Survey of Efficient LLM Inference Serving. *Proceedings of the 18th International Natural Language Generation Conference (INLG 2025)*, 522–541. [arXiv:2504.19720](https://arxiv.org/abs/2504.19720).
 
