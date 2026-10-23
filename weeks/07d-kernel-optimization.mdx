@@ -157,8 +157,8 @@ A100에서 batch 1, query head 16개로 잰 미시 벤치마크에서는 attenti
 부분 결과를 HBM에 썼다가 reduce kernel이 다시 읽어야 하고, kernel이 하나 늘어난다.
 Batch × head만으로 이미 SM이 꽉 찬다면 더 쪼개도 얻는 것이 적다.
 vLLM의 초기 PagedAttention kernel이 이 선택을 그대로 보여 준다.
-시퀀스를 512토큰 단위로 나누어 계산하고 reduce kernel로 합치는 V2와 나누지 않는 V1이 있었는데,
-최대 길이가 8,192토큰 이하이면서 시퀀스가 512토큰 조각 하나에 들어가거나 `num_seqs × num_heads`가 512를 넘어 thread block이 이미 충분할 때는 V1을 골랐다.[^vllm-pa]
+시퀀스를 512토큰 단위로 나누어 계산하고 reduce kernel로 합치는 v2 kernel과 나누지 않는 v1 kernel이 있었는데,
+최대 길이가 8,192토큰 이하이면서 시퀀스가 512토큰 조각 하나에 들어가거나 `num_seqs × num_heads`가 512를 넘어 thread block이 이미 충분할 때는 v1 kernel을 골랐다.[^vllm-pa]
 
 ### 2-3. 흩어진 KV cache와 FlashInfer
 
