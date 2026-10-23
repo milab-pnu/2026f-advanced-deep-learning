@@ -364,7 +364,7 @@ MoE 가중치가 전체 파라미터의 90% 이상을 차지하므로 116.8B 파
 vLLM은 KV cache를 FP8로 저장하는 옵션을 제공한다.
 Scale은 텐서 전체에 하나를 두는 것이 기본이고 보정 데이터로 정하기를 권장한다.
 Attention head마다 scale을 두려면 Flash Attention backend와 llm-compressor의 보정 과정이 필요하다.[^vllm-fp8]
-Llama 3 8B라면 토큰당 128 KiB가 64 KiB로 줄어, 앞에서 구한 KV cache 공간 53.5 GB에 약 816,000토큰이 들어간다(scale 같은 부가 정보 제외).
+Llama 3 8B라면 토큰당 128 KiB가 64 KiB로 줄어, 가중치를 BF16으로 둔 앞의 메모리 예산에서 KV cache에 남은 53.5 GB에 약 816,000토큰이 들어간다(scale 같은 부가 정보 제외).
 요청 길이가 같다면 같은 메모리로 약 두 배의 batch를 받을 수 있고, 긴 문맥에서는 스텝마다 읽는 KV cache bytes도 거의 절반이 된다.
 
 더 낮은 비트로 가면 어떤 축으로 묶어 scale을 둘지가 중요해진다.

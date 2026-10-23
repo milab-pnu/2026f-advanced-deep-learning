@@ -4,7 +4,7 @@ week: 7
 order: 2
 ---
 
-앞에서 본 batching은 여러 요청을 한 스텝에 묶어 decode에서 놀던 연산 능력을 채웠다.
+앞에서 본 batching은 여러 요청을 한 스텝에 묶어 decode에서 놀던 연산 능력을 더 많이 쓰게 했다.
 앞 주차 roofline 분석에서 보았듯 선형층의 arithmetic intensity가 함께 처리하는 토큰 수와 거의 같기 때문이다.
 그런데 요청이 적으면 묶을 것이 없다.
 요청 하나만 decode하는 스텝은 Llama 3 8B라면 BF16(bfloat16) 가중치 16 GB를 읽어 토큰 하나에만 쓴다.

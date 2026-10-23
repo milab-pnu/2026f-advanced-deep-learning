@@ -34,7 +34,7 @@ GPU는 수많은 연산 장치를 SM(streaming multiprocessor)이라는 단위�
 kernel은 일을 thread block 단위로 쪼개 SM들에 나누어 준다.
 Thread block 하나는 한 SM에서 실행되며, 그 안의 thread는 32개씩 warp로 묶여 같은 명령을 함께 실행한다.
 H100 SXM에는 SM이 132개 있고, SM마다 최대 228 KB의 shared memory가 있다.[^hopper]
-앞 주차 FlashAttention에서 SRAM(static random-access memory)이라 부른 칩 안의 작고 빠른 메모리가 이것이다.
+FlashAttention에서 SRAM(static random-access memory)이라 부른 칩 안의 작고 빠른 메모리가 이것이다.
 
 이 구조에서 kernel이 하드웨어를 다 쓰려면 두 가지가 필요하다.
 첫째, **모든 SM에 일이 돌아가야** 한다.
@@ -169,7 +169,7 @@ Attention kernel은 block table을 따라 그 블록들을 찾아 읽어야 하�
 prefix caching으로 여러 요청이 일부 블록을 공유한다.
 
 Ye 등의 FlashInfer는 이런 경우를 하나의 틀로 다룬다.[^flashinfer]
-먼저 page table을 **block-sparse 행렬**로 본다.
+먼저 block table(FlashInfer는 page table이라 부른다)을 **block-sparse 행렬**로 본다.
 행은 query, 열은 KV cache의 블록이고, 어떤 query가 어떤 블록을 읽는지가 0이 아닌 칸이다.
 PagedAttention의 흩어진 블록,
 여러 요청이 공유하는 prefix, 요청마다 다른 길이가 모두 이 형식 하나로 표현된다.
