@@ -242,9 +242,9 @@ TTFT와 ITL을 따로 조정하고 ITL의 꼬리를 줄이는 데 목적이 있�
 실제로는 그 크기를 찾기 어렵다는 점도 함께 적는다.[^vllm-disagg]
 </Callout>
 
-## 4. 여러 GPU에 걸친 서빙
+## 4. 여러 GPU 서빙과 MoE
 
-### 4-1. 복제본, tensor parallelism, pipeline parallelism
+### 4-1. 모델 복제와 분할
 
 분리에서도 각 단계는 GPU 여러 대를 쓸 수 있고, 큰 모델은 애초에 GPU 한 대에 들어가지 않는다.
 GPU가 여러 대일 때 가장 단순한 방법은 모델을 GPU마다 통째로 올린 복제본(replica)을 여러 개 띄우고 요청을 나누어 보내는 것이다.

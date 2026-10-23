@@ -17,6 +17,7 @@ RL 학습 시스템은 처리량(throughput)을 높이되, 그 대가로 생기�
 한 스텝은 프롬프트 배치에 대해 (1) 응답을 생성하고, (2) 검증기나 reward model로 보상을 매기고,
 (3) 정책의 forward·backward로 gradient를 계산해 갱신하고,
 (4) 갱신된 가중치를 생성 쪽에 반영하는 네 단계다.
+앞에서 본 on-policy distillation이라면 (2)에서 보상 대신 teacher가 학생 응답의 토큰마다 log 확률을 계산한다.
 (4)는 엔진과 학습기가 가중치를 따로, 또는 다른 병렬화 방식으로 들고 있기 때문에 붙는 단계다.
 이 노트에서 "스텝"은 이 네 단계의 한 반복을 가리킨다.
 스텝은 optimizer 갱신 한 번이나 decode 한 번보다 큰 단위다.
@@ -132,7 +133,7 @@ Fu 등의 AReaL이 이 설계를 따른다.[^areal]
 최종 정확도는 비슷하거나 조금 높았다.[^areal]
 앞 주차 SFT(supervised fine-tuning)에서 본 Olmo 3도 vLLM으로 돌리는 생성 worker와 학습기를 분리한 비동기 구조를 쓴다.[^olmo3]
 
-### 3-2. 대기열·그룹 구성·staleness
+### 3-2. Staleness·대기열·그룹 구성
 
 겹치기의 대가는 **staleness**다.
 Staleness는 응답을 학습에 쓰는 시점의 정책 버전에서 그 응답을 만든 정책 버전(생성 도중 가중치가 바뀌면 생성을 시작한 버전)을 뺀 값이다.

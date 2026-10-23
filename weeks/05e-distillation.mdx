@@ -16,9 +16,9 @@ order: 4
 | 고정된 응답(teacher 응답이나 정답) | teacher 응답을 정답처럼 학습 | 고정된 응답 위에서 teacher 분포를 맞춤 |
 | 학생이 응답을 만듦 | 학생이 뽑은 토큰에서 teacher와 학생의 log 확률 차이를 신호로 씀 | 학생 응답 위에서 teacher 분포를 맞춤 |
 
-## 1. Teacher 출력의 모방
+## 1. 고정된 응답의 distillation
 
-### 1-1. Soft target과 응답 기반 distillation
+### 1-1. Soft target과 sequence-level KD
 
 Distillation은 Hinton 등이 2015년에 이미지 분류와 음성 인식 모델로 정리한 개념이다.[^hinton]
 이미지 분류에서 출발해 보자.
@@ -130,7 +130,7 @@ teacher가 다른 후보를 얼마나 그럴듯하게 보았는지는 전해지�
 앞에서 본 soft target처럼 고정된 응답 위에서 teacher 분포 전체를 맞추면 이 둘째 한계는 풀린다.
 그러나 감독은 여전히 고정된 응답의 prefix에서만 주어지므로, 학생이 스스로 만든 prefix에서는 감독을 받지 못하고 첫째 한계는 남는다.
 
-## 2. 학생 문맥의 distillation
+## 2. 학생 응답의 distillation
 
 ### 2-1. GKD의 학습 절차
 
@@ -338,7 +338,7 @@ Teacher 여럿의 신호로 학생 하나를 학습하는 multi-teacher distilla
 여러 영역을 한 번에 RL하면 영역 사이에 간섭이 생길 수 있고, 차례로 RL하면 앞 영역을 잊을 수 있으며,
 가중치를 평균하면 각 영역의 성능이 떨어질 수 있다.[^mopd]
 
-### 3-2. 영역별 teacher로의 라우팅
+### 3-2. 영역별 teacher 라우팅
 
 Ma 등의 MOPD(multi-teacher on-policy distillation)는 이 문제를 on-policy distillation으로 푼다.[^mopd]
 절차는 세 단계다.

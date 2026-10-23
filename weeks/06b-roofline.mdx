@@ -11,9 +11,9 @@ Yuan 등의 서베이는 LLM(large language model) inference의 기법들을 이
 이 노트는 같은 분석을 Llama 3 8B와 H100 SXM으로 해 보고,
 prefill과 decode의 두 병목을 TTFT(time to first token)와 TPOT(time per output token)의 하한, 처리량(throughput)의 상한이라는 숫자로 바꾼다.
 
-## 1. 연산 속도와 메모리 대역폭
+## 1. 연산과 데이터 이동
 
-### 1-1. GPU의 두 가지 한계
+### 1-1. 연산 속도와 메모리 대역폭
 
 앞 주차에서 FlashAttention을 볼 때 GPU 메모리를 두 층으로 나누었다.
 칩 바깥의 크고 느린 HBM(high-bandwidth memory)과,
@@ -136,7 +136,7 @@ Williams 등은 대역폭 지붕을 사양값이 아니라 microbenchmark로 잰
 계산 항이 크면 FLOPs를 줄이거나 더 빠른 연산 형식을 쓰고,
 데이터 항이 크면 한 번 읽은 데이터를 더 많이 재사용하는 식으로 옮기는 bytes를 줄인다.
 
-## 3. Transformer 연산의 위치
+## 3. Roofline 위의 Transformer 연산
 
 이제 그림에 찍은 Llama 3 8B의 점들이 어디서 왔는지 계산해 보자.
 이 모델은 32층이고, 모델 차원 $d=4096$, FFN(feed-forward network) 폭 14,336, 어휘(vocabulary) 약 128K, query head 32개, KV head 8개, head 차원 128이다.[^llama3]
