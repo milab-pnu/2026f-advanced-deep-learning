@@ -6,7 +6,7 @@ order: 3
 
 앞 노트의 양자화는 파라미터 하나를 적은 bits로 저장했다.
 이 노트는 **파라미터의 수 자체**를 줄이는 방법을 다룬다.
-앞에서 본 roofline의 하한 식으로 보면, 파라미터를 줄이면 읽을 가중치 bytes와 계산할 FLOPs(floating-point operations)가 함께 준다.
+앞에서 구한 roofline의 하한 식에 넣어 보면, 파라미터 수가 줄 때 읽을 가중치 bytes와 계산할 FLOPs(floating-point operations)도 함께 줄어든다.
 남은 가중치가 GPU(graphics processing unit)의 kernel이 빠르게 처리할 수 있는 모양으로 남는다면,
 memory-bound인 decode에서는 가중치를 읽는 시간이, compute-bound인 prefill에서는 연산 시간이 줄고,
 남는 GPU 메모리는 KV(key-value) cache에 돌아간다.

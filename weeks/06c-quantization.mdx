@@ -6,7 +6,7 @@ order: 2
 
 앞에서 inference의 비용을 bytes와 FLOPs(floating-point operations)로 계산했다.
 가중치를 BF16(bfloat16)에서 INT4(4-bit integer)로 저장하기만 해도 batch 1 decode 스텝의 하한이 4분의 1쯤으로 내려갔다.
-이제 모델 쪽에서 그 비용을 줄이는 방법으로 넘어간다.
+이제 모델을 작게 만들어 그 비용을 줄이는 방법으로 넘어간다.
 첫 주제는 숫자 하나를 저장하는 bytes를 줄이는 <strong>양자화(quantization)</strong>다.
 
 문제는 정밀도를 낮추면 오차가 생긴다는 점이다.
