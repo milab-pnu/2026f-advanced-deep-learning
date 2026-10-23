@@ -109,8 +109,8 @@ $$
 <Figure src="https://arxiv.org/html/2409.16694v3/fig_matmul_process.png" alt="Gong 등의 서베이 Figure 5. (a)는 가중치를 미리 양자화해 4-bit 값 8개를 32-bit 정수 하나에 묶어 두는 준비 과정으로, 32-bit 원소 대비 저장 공간이 약 8배 줄어든다. (b)는 weight-only 양자화의 실행 흐름이다. 묶인 가중치를 GPU 메모리에서 레지스터로 읽어 와 FP16으로 되돌린(dequantize) 뒤, FP16 activation과 함께 FP16 행렬곱 kernel로 계산한다. 왼쪽 시간축에서 가중치를 읽는 구간은 빨라지고 되돌리는 구간은 느려진다. (c)는 weight와 activation을 모두 양자화하는 흐름으로, activation도 레지스터에서 4-bit로 양자화한 뒤 정수 행렬곱 kernel로 계산하고 결과만 FP16으로 바꾼다." caption="Weight-only 양자화(b)는 가중치를 읽는 시간을 줄이는 대신 kernel 안에서 가중치를 되돌리는 시간이 들고, weight-activation 양자화(c)는 행렬곱 자체를 낮은 정밀도의 연산 장치로 한다." source="Gong et al. (2025), Figure 5 · CC BY 4.0" hero />
 
 두 방식이 줄이는 비용은 다르다.
-Roofline으로 보면 weight-only는 읽는 가중치 bytes를 줄일 뿐 계산량은 그대로이고,
-오히려 되돌리는 계산이 더해진다.
+앞에서 roofline으로 보았듯 weight-only는 읽는 가중치 bytes를 줄일 뿐 계산량은 그대로이고,
+여기에 되돌리는 계산이 더해진다.
 그래서 가중치 읽기가 스텝을 지배하는 decode, 특히 batch가 작을 때 효과가 크다.
 Weight-activation 양자화는 행렬곱을 BF16보다 빠른 저정밀 연산 장치로 하므로,
 긴 prefill처럼 행렬곱이 compute-bound인 경우에도 빨라질 수 있다.
@@ -320,7 +320,7 @@ outlier가 섞인 분포에서는 정수 격자보다 손상이 적을 수 있�
 16-bit로 학습한 GPT-3 6.7B를 가중치는 channel별, activation은 텐서별 scale로 보정해 사후 양자화했을 때 WikiText-103 perplexity가 16-bit 8.51, INT8 10.29, E4M3 8.41이었다.[^fp8]
 
 FP8의 다른 장점은 하드웨어 지원이다.
-H100 SXM의 FP8 Tensor Core는 dense 기준 약 1,979 TFLOP/s로 BF16의 두 배다.[^h100]
+H100 SXM의 FP8 Tensor Core는 dense 기준 약 1,979 TFLOP/s로 BF16의 두 배다(앞에서 본 BF16의 sparsity 기준 값과 숫자만 같다).[^h100]
 Roofline에서 연산의 지붕이 두 배로 높아지는 셈이라,
 긴 prefill처럼 행렬곱이 compute-bound인 경우의 이론 상한이 두 배가 된다.
 

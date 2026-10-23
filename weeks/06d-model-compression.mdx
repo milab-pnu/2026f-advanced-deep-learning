@@ -196,7 +196,7 @@ NVIDIA는 Ampere GPU부터 하드웨어가 직접 가속할 수 있는 희소성
 연속된 원소 4개마다 적어도 2개를 0으로 두는 **2:4 sparsity**다.
 Sparse Tensor Core는 남은 값과 그 위치(남은 값마다 2 bits)만 읽어,
 dense 행렬곱보다 최대 두 배의 연산 속도를 낸다.[^nvidia24]
-앞에서 roofline을 그릴 때 H100 SXM의 사양표가 16-bit 연산을 sparsity 기준으로 1,979 TFLOP/s라 적는다고 했는데, 바로 이 가속을 가정한 값이다(앞 노트의 FP8(8-bit floating point) dense 값과는 숫자만 같다).[^h100]
+앞에서 roofline을 그릴 때 H100 SXM의 사양표가 16-bit 연산을 sparsity 기준으로 1,979 TFLOP/s라 적는다고 했는데, 바로 이 가속을 가정한 값이다.[^h100]
 
 2:4는 비구조적 pruning보다 제약이 강해 품질 손실이 크다.
 SparseGPT로 OPT-175B를 2:4로 지우면 perplexity가 8.35에서 8.74로 조금 늘었지만,
@@ -289,7 +289,7 @@ Head와 FFN channel만 지운 모델은 지운 직후에는 embedding 차원까�
 
 후속 보고서는 같은 방법으로 Llama 3.1 8B에서 층을 절반으로 줄인 모델과 너비를 줄인 모델을 만들었다.[^minitron-practice]
 원래 학습 데이터가 없어서 teacher를 distillation 데이터에 먼저 맞추는 teacher correction도 더했다.
-H100 한 대에서 TensorRT-LLM을 FP8로 돌려 여러 입출력 길이로 잰 평균 처리량은 원래 8B보다 깊이를 줄인 모델이 2.7배, 너비를 줄인 모델이 1.8배 높았다.
+H100 한 대에서 TensorRT-LLM을 FP8(8-bit floating point)로 돌려 여러 입출력 길이로 잰 평균 처리량은 원래 8B보다 깊이를 줄인 모델이 2.7배, 너비를 줄인 모델이 1.8배 높았다.
 작은 모델에 두 배 큰 batch를 준 비교라 그 이득도 섞여 있다.
 깊이 pruning은 순차로 계산할 층 수 자체를 줄여 속도 이득이 크고,
 너비 pruning은 base 모델의 MMLU가 더 높아 품질이 낫다는 맞교환이다.

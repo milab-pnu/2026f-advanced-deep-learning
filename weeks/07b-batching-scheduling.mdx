@@ -61,7 +61,7 @@ Orca는 A100 16대에 GPT-3 175B 구성의 모델을 올리고 길이를 무작�
 토큰당 지연(지연을 생성 토큰 수로 나눈 값)의 중앙값을 같은 190 ms 수준으로 맞췄을 때,
 FasterTransformer보다 처리량이 36.9배 높았다고 보고했다.[^orca]
 이후 vLLM과 SGLang을 비롯한 주요 서빙 엔진은 반복 단위 scheduling을 기본으로 쓴다.
-앞에서 본 PagedAttention과 prefix caching도 요청이 수시로 들고 나며 길이가 늘어나는 이런 batch를 전제로, KV cache를 블록 단위로 배정하고 재사용한다.
+앞에서 본 PagedAttention과 prefix caching은 이렇게 요청이 수시로 들고 나며 길이가 늘어나는 batch를 전제로, KV cache를 필요한 만큼씩 내주고 같은 prefix는 요청 사이에 재사용한다.
 
 ## 2. 대기열과 선점
 
