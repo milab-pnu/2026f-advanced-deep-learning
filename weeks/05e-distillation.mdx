@@ -1,20 +1,15 @@
 ---
 title: "Distillation"
-week: 99
+week: 8
 order: 4
 ---
 
-앞에서 본 RL(reinforcement learning)은 비싸다.
-추론 모델의 RL에서는 응답 하나가 수천 토큰에 이르기도 하고, 학습 중에 그런 응답을 계속 생성하고 채점해야 한다.
-이미 좋은 행동을 익힌 모델이 있다면, 다른 모델이 그 모델에게서 직접 배우게 할 수 있다.
-<strong>Distillation(지식 증류)</strong>은 teacher 모델의 출력이나 출력 분포로 학생 모델을 학습하는 방법이다.[^survey]
-이 노트는 distillation 방법을 두 축으로 나눈다.
-하나는 학습할 응답(문맥)을 **누가 만드는가**이고, 다른 하나는 응답의 위치마다 teacher에게서 **무엇을 받는가**다.
+import distillerKd from "./assets/week05-distiller-kd.png";
+import distillerLicense from "./assets/distiller-LICENSE.txt?url";
+import seqkdFig from "./assets/week05-seqkd-overview.png";
 
-| | 위치마다 토큰 하나에 대한 정보 | 위치마다 분포 전체 |
-|---|---|---|
-| 고정된 응답(teacher 응답이나 정답) | teacher 응답을 정답처럼 학습 | 고정된 응답 위에서 teacher 분포를 맞춤 |
-| 학생이 응답을 만듦 | 학생이 뽑은 토큰에서 teacher와 학생의 log 확률 차이를 신호로 씀 | 학생 응답 위에서 teacher 분포를 맞춤 |
+이미 좋은 행동을 익힌 모델이 있다면, 다른 모델이 그 모델에게서 직접 배우게 할 수 있다.
+<strong>Distillation(지식 증류)</strong>은 teacher 모델의 출력이나 출력 분포로 student 모델을 학습하는 방법이다.[^survey]
 
 ## 1. 고정된 응답의 distillation
 
@@ -23,17 +18,16 @@ order: 4
 Distillation은 Hinton 등이 2015년에 이미지 분류와 음성 인식 모델로 정리한 개념이다.[^hinton]
 이미지 분류에서 출발해 보자.
 분류 모델은 클래스마다 로짓(logit) $z_i$를 내고 softmax로 확률을 만든다.
-정답 라벨로 학습할 때의 목표는 정답 클래스에만 1을 둔 one-hot 벡터(hard target)다.
+정답 라벨로 학습할 때의 목표는 정답 클래스에만 1을 둔 one-hot 벡터(**hard target**)다.
 그런데 학습을 마친 모델은 오답 클래스에도 작은 확률을 나눠 주고, 그 크기는 오답마다 크게 다르다.
 개 사진의 로짓이 (개, 고양이, 자동차) = (6, 3, 0)이면 softmax 확률은 0.950, 0.047, 0.0024다.
 고양이가 자동차보다 20배쯤 그럴듯하다는 이 비율에는,
 개가 자동차보다 고양이와 더 닮았다는 모델의 판단이 담겨 있다.
 One-hot 라벨에는 이런 정보가 없다.
-Hinton 등은 큰 모델(또는 앙상블)이 내는 이 분포 전체를 <strong>soft target</strong>으로 삼아 작은 학생 모델을 학습하면,
+Hinton 등은 큰 모델이 내는 이 분포 전체를 <strong>soft target</strong>으로 삼아 작은 student 모델을 학습하면,
 큰 모델이 일반화하는 방식까지 옮길 수 있다고 보았다.
 
-문제는 teacher가 정답 클래스에 확률을 거의 다 몰아줄 때 생긴다.
-그러면 오답 확률이 0에 가까워져 cross-entropy 손실에 거의 영향을 주지 못한다.
+다만 teacher가 정답 클래스에 확률을 거의 다 몰아주면 오답 확률이 0에 가까워져 손실에 거의 드러나지 않는다.
 그래서 softmax에 temperature $\tau$를 넣는다.
 
 $$
@@ -48,37 +42,44 @@ $\tau=1$이면 보통의 softmax이고, $\tau$를 키우면 로짓 차이가 $\t
 | 1 | 0.950 | 0.047 | 0.0024 |
 | 4 | 0.590 | 0.279 | 0.132 |
 
-$\tau=4$에서는 두 오답의 확률이 손실에 의미 있게 기여할 만큼 커져, 고양이가 자동차보다 그럴듯하다는 정보가 학생에게 전달된다.
-두 오답의 비율은 20배쯤에서 $e^{3/4}\approx2.1$배로 줄지만 순서는 그대로다.
-학생도 같은 $\tau$로 분포를 만들어 맞추므로, soft 항만 보면 학생 분포가 teacher와 같을 때 손실이 가장 작고, 그때 학생의 두 오답 로짓 차이도 teacher와 같은 3이다.
+$\tau=4$에서는 두 오답의 확률이 손실에 의미 있게 기여할 만큼 커져, 고양이가 자동차보다 그럴듯하다는 정보가 student에게 전달된다.
 
 학습 손실은 두 cross-entropy의 가중합이다.
-하나는 teacher가 높은 $\tau$로 만든 soft target과 학생이 같은 $\tau$로 만든 분포 사이의 cross-entropy이고,
-다른 하나는 정답 라벨과 학생의 $\tau=1$ 분포 사이의 보통 cross-entropy다.
+하나는 teacher가 높은 $\tau$로 만든 soft target과 student가 같은 $\tau$로 만든 분포 사이의 cross-entropy(distillation loss)이고,
+다른 하나는 정답 라벨과 student의 $\tau=1$ 분포 사이의 보통 cross-entropy(student loss)다.
+
+<Figure src={distillerKd.src} alt="Knowledge distillation의 학습 구조. 입력 x가 위의 teacher model(Layer 1부터 m까지)과 아래의 student model(Layer 1부터 n까지)에 함께 들어간다. Teacher 출력은 Softmax(T = t)를 거쳐 soft labels가 된다. Student 출력은 두 갈래로 나뉘어, Softmax(T = t)를 거친 soft predictions는 soft labels와 함께 distillation loss를 계산하는 Loss Fn으로 가고, Softmax(T = 1)을 거친 hard prediction은 정답인 hard label y와 함께 student loss를 계산하는 Loss Fn으로 간다." caption="Knowledge distillation. 그림의 T = t가 본문의 τ다." source="Intel Labs, Neural Network Distiller 문서" />
+
+그림은 Distiller 저장소의 Apache-2.0 라이선스(<a href={distillerLicense}>전문</a>)에 따라 수정 없이 실었다.
 
 $$
 \mathcal{L}=\alpha\,\tau^2\,\mathrm{CE}\big(p^{(\tau)}_T,\,p^{(\tau)}_S\big)+(1-\alpha)\,\mathrm{CE}\big(\mathbf{e}_c,\,p^{(1)}_S\big)
 $$
 
-$p^{(\tau)}_T$와 $p^{(\tau)}_S$는 teacher(T)와 학생(S)이 temperature $\tau$로 만든 분포, $\mathbf{e}_c$는 정답 클래스 $c$의 one-hot 벡터다.
+$p^{(\tau)}_T$와 $p^{(\tau)}_S$는 teacher(T)와 student(S)가 temperature $\tau$로 만든 분포, $\mathbf{e}_c$는 정답 클래스 $c$의 one-hot 벡터다.
 $\mathrm{CE}(p,q)=-\sum_i p_i\log q_i$는 목표 분포 $p$에 대한 예측 분포 $q$의 cross-entropy이고, $\alpha\in[0,1]$은 두 항의 혼합 가중치다.
+구현에서는 soft 항을 KL(Kullback–Leibler) divergence $\mathrm{KL}\big(p^{(\tau)}_T\,\|\,p^{(\tau)}_S\big)=\sum_i p^{(\tau)}_{T,i}\log\big(p^{(\tau)}_{T,i}/p^{(\tau)}_{S,i}\big)$로 쓰는 경우가 많다.
+이 값은 soft 항의 cross-entropy에서 teacher 분포의 엔트로피를 뺀 것이다.
+Teacher의 엔트로피는 student와 무관한 상수라 두 형태의 gradient는 같고, 손실 값만 상수만큼 다르다.
 
-학생 로짓 $z_i$에 대한 soft 항의 gradient는 $\big(p^{(\tau)}_{S,i}-p^{(\tau)}_{T,i}\big)/\tau$이고, $\tau$가 크면 두 분포가 모두 평평해져 그 차이도 대략 $1/\tau$로 줄어든다.
+Student 로짓 $z_i$에 대한 soft 항의 gradient는 $\big(p^{(\tau)}_{S,i}-p^{(\tau)}_{T,i}\big)/\tau$이고, $\tau$가 크면 두 분포가 모두 평평해져 그 차이도 대략 $1/\tau$로 줄어든다.
 그래서 soft 항의 gradient는 대략 $1/\tau^2$로 작아진다.
 Soft 항의 $\tau^2$는 이를 보정해, $\tau$를 바꿔도 두 항의 상대적 비중이 거의 유지되게 한다.[^hinton]
 
 언어 모델은 매 위치에서 어휘 전체를 클래스로 하는 다음 토큰 분류를 하므로 이 방식을 그대로 옮길 수 있다.
-Kim과 Rush는 2016년 신경망 기계번역에서 KD(knowledge distillation)를 단어 수준과 문장 수준으로 나눴다.[^seqkd]
-<strong>Word-level KD</strong>는 정답 번역문의 각 위치에서 학생의 다음 단어 분포를 teacher의 분포에 맞춘다.
+2016년 기계번역에서 KD(knowledge distillation)를 단어 수준과 문장 수준으로 나눴다.[^seqkd]
+<strong>Word-level KD</strong>는 정답 번역문의 각 위치에서 student의 다음 단어 분포를 teacher의 분포에 맞춘다.
 앞의 분류 distillation을 토큰마다 반복하는 셈이라, teacher의 확률 분포에 접근할 수 있어야 한다.
 
 그런데 이 방식이 옮기는 것은 위치마다의 국소적인 단어 분포일 뿐, teacher가 문장 전체를 어떻게 만드는지는 직접 옮기지 않는다.
-Kim과 Rush는 이 때문에 학생이 문장 수준에서도 teacher를 따라 하게 하려 했다.
+이 때문에 student가 문장 수준에서도 teacher를 따라 하게 하려 했다.
 <strong>Sequence-level KD</strong>(SeqKD)는 문장 전체에 대한 teacher의 분포를 맞추려 한다.
 가능한 문장은 지수적으로 많아 이 분포를 그대로 계산할 수 없다.
-그래서 분포를 확률이 가장 높은 문장 하나로 대신하고, 그 문장도 정확히 찾기 어려워 teacher의 빔 서치(beam search)로 근사해 찾는다.
-결국 학습 데이터의 입력마다 teacher가 번역문을 생성하고, 학생은 그 번역문을 정답처럼 보통의 cross-entropy로 학습한다.
+그래서 분포를 teacher가 빔 서치(beam search)로 찾은 가장 그럴듯한 문장 하나로 대신한다.
+학습 데이터의 입력마다 teacher가 번역문을 생성하고, student는 그 번역문을 정답처럼 보통의 cross-entropy로 학습한다.
 SeqKD만 쓴다면 teacher의 확률 분포 없이, teacher가 생성한 텍스트만으로 학습할 수 있다.
+
+<Figure src={seqkdFig.src} alt="Kim과 Rush의 두 distillation 방식. 왼쪽 Word-Level Knowledge Distillation에서는 정답 문장 E C D의 위치마다, Student Network의 다음 단어 분포(노란 막대)가 점선으로 Teacher Network의 분포(노란 막대)와 Ground Truth의 one-hot(회색 칸)에 함께 연결된다. 오른쪽 Sequence-Level Knowledge Distillation에서는 Teacher Network가 빔 서치로 후보 문장 A C F, E C E, E F E C를 만들고, 가장 위의 A C F가 점선 화살표를 따라 Student Network의 학습 목표가 된다. Student는 A, C, F 위치마다 그 단어 하나에 확률을 둔 목표를 학습한다." caption="Word-level KD와 sequence-level KD." source="Kim & Rush (2016), Figure 1" />
 
 ### 1-2. 추론 응답의 전달
 
@@ -95,8 +96,8 @@ Qwen2.5-32B base model을 이 데이터로 SFT만 해도,
 앞에서 본 Yue 등의 비교에서는 시도 횟수를 크게 늘리면 RLVR 모델이 base model에 뒤처졌지만,
 R1에서 distillation한 7B 모델은 한 수학 벤치마크에서 시도 횟수를 늘려도 계속 base model보다 많은 문제를 풀었다.[^yue]
 
-Teacher나 사람이 미리 만든 고정된 응답 위에서 학생을 학습하는 방식을 **off-policy distillation**이라고 부른다.
-앞 주차 DPO(direct preference optimization)에서 본 off-policy의 정의대로, 학습 데이터를 만든 정책(teacher나 사람)과 학습되는 정책(학생)이 다르기 때문이다.
+Teacher나 사람이 미리 만든 고정된 응답 위에서 student를 학습하는 방식을 **off-policy distillation**이라고 부른다.
+앞 주차 DPO(direct preference optimization)에서 본 off-policy의 정의대로, 학습 데이터를 만든 정책(teacher나 사람)과 학습되는 정책(student)이 다르기 때문이다.
 응답 기반 distillation도, word-level KD처럼 고정된 응답 위에서 teacher 분포를 맞추는 방식도 여기에 든다.
 
 Off-policy distillation의 효과는 데이터가 충분히 다룬 영역에 머물기 쉽다.
@@ -109,7 +110,7 @@ Distillation 모델에 대해 보고한 결과도 수학·코드·과학 추론 
 
 데이터 범위 말고도 응답 기반 distillation에는 한계가 둘 있다.
 첫째는 앞 주차 SFT에서 본 **노출 편향**(exposure bias)이다.
-학생은 teacher가 올바르게 써 내려간 prefix(현재 토큰을 예측할 때 주어지는 앞선 문맥) 뒤의 다음 토큰만 배운다.
+Student는 teacher가 올바르게 써 내려간 prefix(현재 토큰을 예측할 때 주어지는 앞선 문맥) 뒤의 다음 토큰만 배운다.
 그래서 생성할 때 스스로 틀린 토큰을 쓰면 학습 때 본 적 없는 문맥에서 이어 써야 하고, 그 오류가 다음 오류를 부른다.
 응답이 긴 추론 모델에서는 오류가 이어질 단계가 많아 이 누적이 더 커질 수 있다.
 Song과 Zheng의 서베이는 이 현상을 모방 학습(imitation learning)의 이론으로 설명한다.[^survey]
@@ -119,7 +120,7 @@ $t$번째 단계에서 처음 틀리면 남은 $L-t$ 단계를 본 적 없는 �
 단계마다 확률 $\epsilon$로 생기는 이 손해를 모든 $t$에 걸쳐 더하면 약 $\epsilon L^2/2$, 곧 $\epsilon L^2$에 비례하는 크기가 된다.
 
 Ross 등의 DAgger(dataset aggregation)는 학습자가 실제로 방문한 상태에서 expert의 행동을 모아 학습을 반복하는 절차다.
-LLM에서는 학생이 만든 prefix에서 teacher의 감독을 받는다는 뜻이다.
+LLM에서는 student가 만든 prefix에서 teacher의 감독을 받는다는 뜻이다.
 저자들은 적절한 학습 알고리즘을 쓰면, 이 절차로 학습자가 방문한 상태에서 잰 오류율을 기준으로 이 누적을 $L$에 비례하는 수준으로 묶을 수 있음을 보였다.[^dagger]
 다만 이 보장이 실제 품질로 이어지려면 학습자가 방문한 상태에서도 expert가 좋은 행동을 알려 준다는 가정이 필요하다.[^survey]
 
@@ -128,43 +129,43 @@ LLM에서는 학생이 만든 prefix에서 teacher의 감독을 받는다는 뜻
 그러나 각 위치의 정답은 teacher가 실제로 쓴 토큰 하나뿐이라,
 teacher가 다른 후보를 얼마나 그럴듯하게 보았는지는 전해지지 않는다.
 앞에서 본 soft target처럼 고정된 응답 위에서 teacher 분포 전체를 맞추면 이 둘째 한계는 풀린다.
-그러나 감독은 여전히 고정된 응답의 prefix에서만 주어지므로, 학생이 스스로 만든 prefix에서는 감독을 받지 못하고 첫째 한계는 남는다.
+그러나 감독은 여전히 고정된 응답의 prefix에서만 주어지므로, student가 스스로 만든 prefix에서는 감독을 받지 못하고 첫째 한계는 남는다.
 
-## 2. 학생 응답의 distillation
+## 2. Student 응답의 distillation
 
 ### 2-1. GKD의 학습 절차
 
 Agarwal 등의 GKD(generalized knowledge distillation)는 학습과 생성 사이의 문맥 불일치를 겨냥한다.[^gkd]
-기본 형태에서는 학생이 직접 생성한 응답의 각 위치에서, 학생의 다음 토큰 분포를 teacher의 분포에 맞춘다.
-이렇게 학생 문맥에서 teacher의 감독을 받는 방식을 **on-policy distillation**이라고 부른다.
-학생 문맥에서 배우므로 노출 편향이 줄고, 위치마다 분포 전체를 받으므로 토큰 하나의 정보만 받는 한계도 풀린다.
+기본 형태에서는 student가 직접 생성한 응답의 각 위치에서, student의 다음 토큰 분포를 teacher의 분포에 맞춘다.
+이렇게 student 문맥에서 teacher의 감독을 받는 방식을 **on-policy distillation**이라고 부른다.
+Student 문맥에서 배우므로 노출 편향이 줄고, 위치마다 분포 전체를 받으므로 토큰 하나의 정보만 받는 한계도 풀린다.
 앞에서 본 outcome 보상 RL은 응답 끝에 스칼라 보상 하나를 주지만, 여기서는 신호가 토큰마다 온다.
-다만 학생이 응답을 생성하는 프롬프트는 학습 데이터에서 오므로, 그 프롬프트가 다루지 않은 영역까지 효과가 넓어진다는 보장은 on-policy distillation에도 없다.
+다만 student가 응답을 생성하는 프롬프트는 학습 데이터에서 오므로, 그 프롬프트가 다루지 않은 영역까지 효과가 넓어진다는 보장은 on-policy distillation에도 없다.
 
-학생 응답만 쓰는 GKD의 한 반복은 다음과 같다.
+Student 응답만 쓰는 GKD의 한 반복은 다음과 같다.
 
-1. 현재 학생이 프롬프트마다 응답을 생성한다.
-2. 생성한 응답 전체를 teacher와 학생에 한 번에 입력해, 응답의 위치마다 두 모델의 다음 토큰 분포를 계산한다.[^tm]
-3. 위치별 divergence를 응답 길이와 배치로 평균해 손실을 만들고 학생만 갱신한다.
-   학생이 바뀌면 생성될 응답도 달라지지만 그 효과는 미분하지 않고, 생성한 응답을 고정된 입력으로 본다.
-4. 1로 돌아가 갱신된 학생으로 새 응답을 만든다.
+1. 현재 student가 프롬프트마다 응답을 생성한다.
+2. 생성한 응답 전체를 teacher와 student에 한 번에 입력해, 응답의 위치마다 두 모델의 다음 토큰 분포를 계산한다.[^tm]
+3. 위치별 divergence를 응답 길이와 배치로 평균해 손실을 만들고 student만 갱신한다.
+   Student가 바뀌면 생성될 응답도 달라지지만 그 효과는 미분하지 않고, 생성한 응답을 고정된 입력으로 본다.
+4. 1로 돌아가 갱신된 student로 새 응답을 만든다.
 
-GKD는 학습 문맥 가운데 학생이 생성한 응답의 비율 $\lambda$도 조절한다.
-$\lambda=1$이면 위의 절차대로 학생 응답만 쓰는 on-policy 방식이다.
+GKD는 학습 문맥 가운데 student가 생성한 응답의 비율 $\lambda$도 조절한다.
+$\lambda=1$이면 위의 절차대로 student 응답만 쓰는 on-policy 방식이다.
 $\lambda=0$이면 고정된 응답(정답이나 teacher 응답) 위에서만 teacher 분포를 맞춘다.
 GKD 논문은 이 경우를 supervised KD라 부르며, 앞에서 본 word-level KD와 같은 방식이다.
 그 사이 값은 둘을 섞는다.
-T5-XL(약 3B) teacher를 77M–800M 크기의 T5 학생으로 distillation한 실험에서, on-policy GKD는 요약·번역·산술 추론 모두에서 supervised KD와 SeqKD를 앞섰다.[^gkd]
+T5-XL(약 3B) teacher를 77M–800M 크기의 T5 student로 distillation한 실험에서, on-policy GKD는 요약·번역·산술 추론 모두에서 supervised KD와 SeqKD를 앞섰다.[^gkd]
 
-On-policy distillation에서 teacher는 응답을 생성하지 않으므로, 긴 응답을 한 토큰씩 생성하는 비용은 작은 학생이 진다.[^tm]
-대신 on-policy distillation은 학습 스텝마다 학생이 새로 생성하고 teacher가 다시 계산해야 한다.
+On-policy distillation에서 teacher는 응답을 생성하지 않으므로, 긴 응답을 한 토큰씩 생성하는 비용은 작은 student가 진다.[^tm]
+대신 on-policy distillation은 학습 스텝마다 student가 새로 생성하고 teacher가 다시 계산해야 한다.
 Teacher 응답을 한 번 만들어 재사용하는 off-policy distillation과 달리, 학습하는 동안 teacher를 계속 띄워 두는 비용이 든다.
 
 ### 2-2. Divergence의 선택
 
 GKD에서 고르는 또 하나는 위치별 손실에 쓰는 divergence다.
-한 위치에서 teacher와 학생의 다음 토큰 분포를, 앞 주차 RLHF(reinforcement learning from human feedback)에서 본 정책 표기를 따라 $\pi_T$, $\pi_S$라 하자.
-KL(Kullback–Leibler) divergence에는 방향이 둘 있다.
+한 위치에서 teacher와 student의 다음 토큰 분포를, 앞 주차 RLHF(reinforcement learning from human feedback)에서 본 정책 표기를 따라 $\pi_T$, $\pi_S$라 하자.
+KL divergence에는 방향이 둘 있다.
 
 $$
 \mathrm{KL}(\pi_T\,\|\,\pi_S)=\sum_v\pi_T(v)\log\frac{\pi_T(v)}{\pi_S(v)},\qquad
@@ -173,53 +174,52 @@ $$
 
 $v$는 어휘의 토큰이다.
 왼쪽이 forward KL, 오른쪽이 reverse KL이다.
-둘 다 두 분포의 log 확률비를 더하는데, forward KL은 teacher의 확률로, reverse KL은 학생의 확률로 가중한다.
-Forward KL은 soft target의 cross-entropy $\mathrm{CE}(\pi_T,\pi_S)$에서 teacher의 엔트로피를 뺀 값이다.
-Teacher의 엔트로피는 학생과 무관한 상수이므로, forward KL을 줄이는 것은 soft target의 cross-entropy를 줄이는 것과 같다.
+둘 다 두 분포의 log 확률비를 더하는데, forward KL은 teacher의 확률로, reverse KL은 student의 확률로 가중한다.
+Forward KL은 앞의 soft 항을 KL로 쓴 것과 같은 방향이라, 이를 줄이는 것은 soft target의 cross-entropy를 줄이는 것과 같다.
 그래서 GKD 논문이 supervised KD의 divergence로 forward KL을 쓴 것은 word-level KD의 cross-entropy를 쓰는 것과 같다.
 GKD는 이 둘을 하나의 계수로 보간하는 generalized Jensen–Shannon divergence도 고를 수 있게 했다.
 
-GKD 저자들에 따르면, forward KL을 줄이려면 학생이 teacher 분포의 지지 집합(support, 확률이 0보다 큰 토큰들)을 모두 덮어야 한다.
+GKD 저자들에 따르면, forward KL을 줄이려면 student가 teacher 분포의 지지 집합(support, 확률이 0보다 큰 토큰들)을 모두 덮어야 한다.
 $\pi_T(v)>0$인 토큰에서 $\pi_S(v)$가 0에 가까우면 log 확률비가 커지기 때문이다.
-그래서 용량이 훨씬 작은 학생은 teacher가 낮은 확률을 준 토큰에까지 확률을 나눠 주게 되고, 샘플링으로 생성하면 질 낮은 문장을 만들기 쉽다.
-Reverse KL을 줄이면 학생은 teacher가 높은 확률을 준 토큰에 확률을 모은다(mode-seeking).
-Reverse KL은 학생의 확률로 가중하므로, teacher가 낮게 본 토큰에 학생이 확률을 주면 크게 벌받지만
-teacher가 확률을 준 토큰을 학생이 버려도($\pi_S(v)\approx0$) 그 항은 거의 0이다.
+그래서 용량이 훨씬 작은 student는 teacher가 낮은 확률을 준 토큰에까지 확률을 나눠 주게 되고, 샘플링으로 생성하면 질 낮은 문장을 만들기 쉽다.
+Reverse KL을 줄이면 student는 teacher가 높은 확률을 준 토큰에 확률을 모은다(mode-seeking).
+Reverse KL은 student의 확률로 가중하므로, teacher가 낮게 본 토큰에 student가 확률을 주면 크게 벌받지만
+teacher가 확률을 준 토큰을 student가 버려도($\pi_S(v)\approx0$) 그 항은 거의 0이다.
 이 성질 덕에 앞의 품질 문제는 줄일 수 있지만 다양성이 줄어드는 경향이 있다.
-학생이 teacher를 그대로 표현할 수 있으면 두 방향 모두 같은 답($\pi_S=\pi_T$)에서 0이 되므로, 이 차이는 학생이 teacher를 다 따라 하지 못할 때 드러난다.
+Student가 teacher를 그대로 표현할 수 있으면 두 방향 모두 같은 답($\pi_S=\pi_T$)에서 0이 되므로, 이 차이는 student가 teacher를 다 따라 하지 못할 때 드러난다.
 
 토큰 넷의 작은 예로 보자(설명을 위해 정한 가상 확률, KL은 자연로그로 계산).
 Teacher는 좋은 토큰 a, d에 0.48씩, 나쁜 토큰 b, c에 0.02씩 준다.
-학생은 두 가지 모양만 낼 수 있다고 하자.
+Student는 두 가지 모양만 낼 수 있다고 하자.
 
 | 분포 (a, b, c, d) | forward KL | reverse KL |
 |---|---|---|
 | teacher (0.48, 0.02, 0.02, 0.48) | 0 | 0 |
-| 학생, 한 봉우리 (0.94, 0.02, 0.02, 0.02) | 1.203 | 0.568 |
-| 학생, 고르게 퍼짐 (0.25, 0.25, 0.25, 0.25) | 0.525 | 0.937 |
+| student, 한 봉우리 (0.94, 0.02, 0.02, 0.02) | 1.203 | 0.568 |
+| student, 고르게 퍼짐 (0.25, 0.25, 0.25, 0.25) | 0.525 | 0.937 |
 
-Forward KL은 나쁜 토큰 둘에 합쳐 0.5를 준 퍼진 학생을 더 낫다고 보고, reverse KL은 좋은 토큰 d를 버린 한 봉우리 학생을 더 낫다고 본다.
+Forward KL은 나쁜 토큰 둘에 합쳐 0.5를 준 퍼진 student를 더 낫다고 보고, reverse KL은 좋은 토큰 d를 버린 한 봉우리 student를 더 낫다고 본다.
 앞의 것이 품질 저하, 뒤의 것이 다양성 감소다.
 
-T5-small 학생을 on-policy로 distillation한 요약 task 실험에서도 reverse KL 쪽으로 갈수록 생성의 다양성이 줄었다.
+T5-small student를 on-policy로 distillation한 요약 task 실험에서도 reverse KL 쪽으로 갈수록 생성의 다양성이 줄었다.
 높은 temperature로 샘플링하면 mode-seeking 쪽의 품질이 더 높았고, temperature를 낮추면 divergence 사이의 품질 차이가 좁아졌다.
 저자들은 최적의 divergence가 task에 따라 다른 것으로 보인다고 했다.[^gkd]
-다양성이 줄면 학생의 응답이 프롬프트마다 풀이 전략 하나로 몰려, 앞에서 본 long CoT의 커버리지($\mathrm{pass}@k$)가 줄 수 있다.[^survey]
+다양성이 줄면 student의 응답이 프롬프트마다 풀이 전략 하나로 몰려, 앞에서 본 long CoT의 커버리지($\mathrm{pass}@k$)가 줄 수 있다.[^survey]
 그래서 divergence를 고를 때는 $\mathrm{pass}@1$과 $\mathrm{pass}@k$를 함께 본다.
 
 ### 2-3. 전체 분포와 표본 토큰의 학습
 
-어휘 전체의 분포를 맞추려면 teacher가 응답의 모든 위치에서 어휘 크기만큼의 확률을 학생 쪽에 넘겨야 해서, 그 저장과 전송이 비싸다.[^survey]
+어휘 전체의 분포를 맞추려면 teacher가 응답의 모든 위치에서 어휘 크기만큼의 확률을 student 쪽에 넘겨야 해서, 그 저장과 전송이 비싸다.[^survey]
 예를 들어 어휘가 약 15만 개이고 응답이 8천 토큰이면 확률 값만 약 12억 개이고, 값마다 2바이트로 잡아도 약 2.4 GB다(설명을 위해 정한 크기).
 RL 학습 루프는 원래 토큰마다 log 확률 하나만 다룬다.
-그래서 학생이 실제로 뽑은 토큰 하나로 reverse KL을 추정하는 방식을 쓰기도 한다.
+그래서 student가 실제로 뽑은 토큰 하나로 reverse KL을 추정하는 방식을 쓰기도 한다.
 이 노트에서는 이를 표본 토큰 방식이라 부른다.
-학생의 표본으로 평균하는 값이 reverse KL이므로, 앞에서 본 다양성 감소도 함께 따라올 수 있다.
+Student의 표본으로 평균하는 값이 reverse KL이므로, 앞에서 본 다양성 감소도 함께 따라올 수 있다.
 
 <Callout type="example">
-**학생 문맥의 한 위치에서 받는 신호.** 학생이 12 × 15를 계산하며 `12 × 15 = 12 × 10 + 12 × 5 = 120 + `까지 썼고,
+**Student 문맥의 한 위치에서 받는 신호.** Student가 12 × 15를 계산하며 `12 × 15 = 12 × 10 + 12 × 5 = 120 + `까지 썼고,
 다음 토큰 후보가 `50`, `60`, `70` 셋뿐이라고 하자.
-이 위치에서 학생은 $\pi_S=(0.6,\,0.3,\,0.1)$을, 같은 문맥을 본 teacher는 $\pi_T=(0.1,\,0.8,\,0.1)$을 준다(설명을 위해 정한 가상 확률).
+이 위치에서 student는 $\pi_S=(0.6,\,0.3,\,0.1)$을, 같은 문맥을 본 teacher는 $\pi_T=(0.1,\,0.8,\,0.1)$을 준다(설명을 위해 정한 가상 확률).
 Reverse KL은
 
 $$
@@ -227,10 +227,10 @@ $$
 $$
 
 이다(자연로그, 소수 셋째 자리까지 반올림).
-손실을 줄이는 방향은 학생이 틀린 `50`의 확률을 내리고 맞는 `60`의 확률을 올리는 것이다.
-세 후보를 모두 더하는 대신, 학생이 실제로 뽑은 토큰 하나의 $\log\pi_T-\log\pi_S$를 보상처럼 쓸 수도 있다.
+손실을 줄이는 방향은 student가 틀린 `50`의 확률을 내리고 맞는 `60`의 확률을 올리는 것이다.
+세 후보를 모두 더하는 대신, student가 실제로 뽑은 토큰 하나의 $\log\pi_T-\log\pi_S$를 보상처럼 쓸 수도 있다.
 `50`을 뽑았다면 $\log0.1-\log0.6\approx-1.792$, `60`이면 $\log0.8-\log0.3\approx+0.981$, `70`이면 0이고,
-학생의 확률로 평균하면
+Student의 확률로 평균하면
 
 $$
 0.6(-1.792)+0.3(0.981)+0.1(0)\approx-0.781
@@ -238,17 +238,17 @@ $$
 
 로 reverse KL의 부호를 바꾼 값이 된다.
 토큰 하나로 얻은 값은 이 평균의 표본 하나라서, 어휘 전체의 분포를 주고받는 비용을 표본 잡음으로 바꾼 셈이다.
-이 신호는 응답 기반 distillation처럼 정답 토큰 하나를 알려 주는 것이 아니라, 학생이 고른 토큰을 teacher가 얼마나 그럴듯하게 보는지를 알려 준다.
+이 신호는 응답 기반 distillation처럼 정답 토큰 하나를 알려 주는 것이 아니라, student가 고른 토큰을 teacher가 얼마나 그럴듯하게 보는지를 알려 준다.
 
-학생이 실제로 `50`을 써서 최종 답 170을 냈다면, 응답 끝에 한 번 오는 outcome 보상은 0점만 줄 뿐 어느 토큰이 틀렸는지 알려 주지 않는다.
+Student가 실제로 `50`을 써서 최종 답 170을 냈다면, 응답 끝에 한 번 오는 outcome 보상은 0점만 줄 뿐 어느 토큰이 틀렸는지 알려 주지 않는다.
 토큰별 신호는 오류가 생긴 바로 그 `50`에 큰 음수를 준다.
 </Callout>
 
 Gu 등의 MiniLLM은 문장 전체의 reverse KL을 줄이는 policy gradient를 유도하고, 각 토큰의 $\log\pi_T-\log\pi_S$를 한 단계의 보상으로 정의했다.[^minillm]
 Thinking Machines Lab은 2025년 글에서 이 추정을 기존 RL 학습 루프에 그대로 끼워 넣었다.[^tm]
 아래 식에서 $x$는 프롬프트, $y_t$는 응답의 $t$번째 토큰, $y_{<t}$는 그 앞의 응답 토큰이다.
-학습 중인 학생의 분포 $\pi_S$를 파라미터 $\theta$로 나타내 $\pi_\theta$로 쓴다.
-학생이 응답을 생성할 때 각 토큰의 log 확률을 기록해 둔다.
+학습 중인 student의 분포 $\pi_S$를 파라미터 $\theta$로 나타내 $\pi_\theta$로 쓴다.
+Student가 응답을 생성할 때 각 토큰의 log 확률을 기록해 둔다.
 이 값을 낸 생성 시점의 정책은 앞에서 본 GRPO(group relative policy optimization)의 옛 정책 $\pi_{\theta_{\mathrm{old}}}$다.
 Teacher에게도 같은 토큰들의 log 확률을 물어, 토큰별 advantage를 다음처럼 정해 둔다.
 
@@ -274,7 +274,7 @@ $A_t$는 상수로 두어 $\theta$로 미분하지 않는다.[^tinker]
 <Details summary="기대 gradient가 reverse KL의 gradient와 같은 이유">
 한 위치에서 $\pi=\pi_\theta$로 줄여 쓴다.
 $\rho_t=1$인 점에서는 $\pi_{\theta_{\mathrm{old}}}=\pi_\theta$이므로, $A(v)=\log\pi_T(v)-\log\pi(v)$로 쓰고 상수로 고정한다.
-이때 손실 $-\rho_t A_t$의 gradient는 $-A(y_t)\nabla\log\pi(y_t)$이고, 학생이 뽑는 토큰에 대해 기대값을 취하면
+이때 손실 $-\rho_t A_t$의 gradient는 $-A(y_t)\nabla\log\pi(y_t)$이고, student가 뽑는 토큰에 대해 기대값을 취하면
 
 $$
 -\sum_v\pi(v)\nabla\log\pi(v)\,\big(\log\pi_T(v)-\log\pi(v)\big)=\sum_v\nabla\pi(v)\,\big(\log\pi(v)-\log\pi_T(v)\big)
@@ -293,34 +293,34 @@ Reference model $\pi_{\mathrm{ref}}$ 자리에 teacher를 두고, penalty 계수
 
 앞 주차 RLHF에서 본 누적 보상 $G_t$는 그 토큰부터 응답 끝까지의 값을 더하지만, 이 advantage는 그 위치의 값만 쓴다.
 그래서 지금 고른 토큰이 뒤 위치들의 KL에 미치는 영향은 들어가지 않는다.
-GKD에서 학생 응답을 고정된 입력으로 본 것과 같은 근사다.
+GKD에서 student 응답을 고정된 입력으로 본 것과 같은 근사다.
 MiniLLM은 뒤 위치의 신호까지 누적해 반영했지만,[^minillm] Thinking Machines Lab은 이렇게 누적해 봐도 실험에서 도움이 되지 않았다고 보고했다.[^tm]
 
 방식에 따라 teacher에게서 받아야 하는 것도 다르다.
 응답 기반 distillation은 앞에서 본 SeqKD처럼 teacher의 응답 텍스트만 있으면 된다.
 위치마다 teacher의 확률을 쓰는 나머지 방식에는 전제가 하나 있다.
-Teacher와 학생이 같은 tokenizer를 써서 같은 토큰 ID가 같은 문자열을 가리켜야 한다.
+Teacher와 student가 같은 tokenizer를 써서 같은 토큰 ID가 같은 문자열을 가리켜야 한다.
 같은 계열 모델끼리 distillation하면 문제가 없지만,
 다른 계열의 teacher를 쓰려면 응답 텍스트로 distillation하거나 어휘를 맞추는 별도의 장치가 필요하다.[^survey]
-이 전제만 맞으면 표본 토큰 방식에는 학생이 뽑은 토큰들에 대한 teacher의 log 확률만 있으면 된다.
-가중치가 공개되지 않아도, 학생 응답을 넣으면 토큰마다 teacher의 log 확률을 돌려주는 API(application programming interface)가 있으면 충분하다.
+이 전제만 맞으면 표본 토큰 방식에는 student가 뽑은 토큰들에 대한 teacher의 log 확률만 있으면 된다.
+가중치가 공개되지 않아도, student 응답을 넣으면 토큰마다 teacher의 log 확률을 돌려주는 API(application programming interface)가 있으면 충분하다.
 GKD처럼 어휘 전체의 분포를 맞추거나 상위 몇 개 후보의 분포만 맞추려면 그 토큰들의 확률에 모두 접근해야 한다.
 
 ### 2-4. 추론 모델의 적용과 비용
 
 앞 주차 pre-training에서 본 Qwen3는 작은 모델을 큰 teacher에게서 distillation해 post-training했다.[^qwen3]
 Qwen3는 긴 사고 과정을 쓴 뒤 답하는 thinking 모드와 바로 답하는 non-thinking 모드를 한 모델에서 지원한다.
-먼저 off-policy 단계에서는 teacher 모델들이 두 모드로 만든 응답으로 학생을 SFT해, 기본 추론과 모드 전환을 익히게 했다.
-다음 on-policy 단계에서는 학생이 생성한 응답에서 teacher 로짓과의 KL divergence를 줄였다.
-서베이는 off-policy로 학생을 teacher 분포 가까이 데려온 뒤 on-policy로 다듬는 두 단계를 업계의 흔한 방식으로 정리한다.
-학생의 초기 정책이 teacher 분포에서 너무 멀면 on-policy 단계가 실패하거나 쓸모없는 rollout만 만들 수 있기 때문이다.[^survey]
+먼저 off-policy 단계에서는 teacher 모델들이 두 모드로 만든 응답으로 student를 SFT해, 기본 추론과 모드 전환을 익히게 했다.
+다음 on-policy 단계에서는 student가 생성한 응답에서 teacher 로짓과의 KL divergence를 줄였다.
+서베이는 off-policy로 student를 teacher 분포 가까이 데려온 뒤 on-policy로 다듬는 두 단계를 업계의 흔한 방식으로 정리한다.
+Student의 초기 정책이 teacher 분포에서 너무 멀면 on-policy 단계가 실패하거나 쓸모없는 rollout만 만들 수 있기 때문이다.[^survey]
 
 같은 off-policy 단계를 거친 Qwen3-8B에서 출발해 비교하면,
 on-policy distillation은 보고된 수학·코드·일반 벤치마크 모두에서 RL보다 점수가 높았고 GPU(graphics processing unit) 시간은 약 10분의 1이었다.[^qwen3]
 AIME 2024·2025의 $\mathrm{pass}@64$는 RL 뒤에는 출발점과 같았지만 on-policy distillation 뒤에는 조금 올라, 이 실험에서는 커버리지가 줄지 않았다.[^qwen3]
 다만 보고서가 KL의 방향을 밝히지 않아, 앞에서 본 reverse KL과 다양성의 관계를 이 결과로 확인할 수는 없다.
 또 이 비교는 수학·코드 프롬프트만 썼다.[^qwen3]
-두 결과 모두 같은 학생 checkpoint에서 출발한 학습의 비용이므로, teacher를 만드는 RL 비용은 따로 든다고 보아야 한다.
+두 결과 모두 같은 student checkpoint에서 출발한 학습의 비용이므로, teacher를 만드는 RL 비용은 따로 든다고 보아야 한다.
 
 ## 3. Multi-teacher distillation
 
@@ -328,7 +328,7 @@ AIME 2024·2025의 $\mathrm{pass}@64$는 RL 뒤에는 출발점과 같았지만 
 
 지금까지는 teacher가 하나였다.
 능력이 영역별 전문 모델에 나뉘어 있으면, 그것을 한 모델에 합치는 문제가 따로 생긴다.
-Teacher 여럿의 신호로 학생 하나를 학습하는 multi-teacher distillation은, 영역별 전문 teacher들의 능력을 학생 하나에 모으는 데도 쓸 수 있다.
+Teacher 여럿의 신호로 student 하나를 학습하는 multi-teacher distillation은, 영역별 전문 teacher들의 능력을 student 하나에 모으는 데도 쓸 수 있다.
 
 앞에서 본 R1은 추론과 일반 task를 한 모델에 담으려고 네 단계를 거쳤고, 그 가운데 뒤의 두 단계에서 추론 데이터와 일반 task 데이터를 섞어 학습했다.[^r1]
 여기에 앞에서 본 agentic RL의 도구 사용까지 더하면 영역마다 필요한 학습이 더 갈라진다.
@@ -345,13 +345,13 @@ Ma 등의 MOPD(multi-teacher on-policy distillation)는 이 문제를 on-policy 
 
 1. 일반 SFT로 공통 출발점을 만든다(실험에서는 Qwen3-30B-A3B-Base를 SFT한 모델).
 2. 그 출발점에서 영역마다 별도의 RL로 전문 teacher를 만든다(수학은 정답을 검증하는 RL, 소프트웨어 공학은 실행 sandbox 안의 agentic RL 등).
-3. 같은 출발점의 학생이 프롬프트마다 응답을 생성하면, 그 프롬프트의 영역에 맞는 **고정된** teacher가 토큰별 reverse KL 신호를 준다.
+3. 같은 출발점의 student가 프롬프트마다 응답을 생성하면, 그 프롬프트의 영역에 맞는 **고정된** teacher가 토큰별 reverse KL 신호를 준다.
 
 Teacher들은 서로 독립이라 병렬로 만들 수 있다.
-그 가중치를 평균해 합치는 대신, 학생이 프롬프트의 영역마다 그 영역 teacher의 출력 분포를 따른다.
+그 가중치를 평균해 합치는 대신, student가 프롬프트의 영역마다 그 영역 teacher의 출력 분포를 따른다.
 
 <figure>
-<svg viewBox="0 0 600 404" role="img" aria-label="MOPD의 세 단계. 왼쪽의 공통 출발점(base model을 일반 SFT한 모델)에서 점선 화살표가 가운데의 세 teacher(수학, 지시 따르기, 소프트웨어 공학)와 오른쪽의 학생으로 나간다. 세 teacher는 각각 영역별 RL로 학습한 뒤 고정된다. 학생은 프롬프트 x에 대해 응답 y를 직접 생성하고, 실선 화살표로 응답을 라우터에 보내며, 라우터는 x의 영역에 맞는 teacher 하나에 그 응답을 전달한다. 그 teacher에서 학생으로 돌아오는 굵은 화살표가 응답의 토큰마다 계산한 reverse KL 신호다. 범례는 점선을 초기화, 가는 실선을 학생 응답의 전달, 굵은 실선을 teacher의 토큰별 신호로 표시한다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 600 404" role="img" aria-label="MOPD의 세 단계. 왼쪽의 공통 출발점(base model을 일반 SFT한 모델)에서 점선 화살표가 가운데의 세 teacher(수학, 지시 따르기, 소프트웨어 공학)와 오른쪽의 student로 나간다. 세 teacher는 각각 영역별 RL로 학습한 뒤 고정된다. Student는 프롬프트 x에 대해 응답 y를 직접 생성하고, 실선 화살표로 응답을 라우터에 보내며, 라우터는 x의 영역에 맞는 teacher 하나에 그 응답을 전달한다. 그 teacher에서 student로 돌아오는 굵은 화살표가 응답의 토큰마다 계산한 reverse KL 신호다. 범례는 점선을 초기화, 가는 실선을 student 응답의 전달, 굵은 실선을 teacher의 토큰별 신호로 표시한다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
 <text x="300" y="24" font-size="16" text-anchor="middle" fill="#0f172a" font-weight="600">MOPD의 세 단계</text>
 <rect x="12" y="146" width="116" height="60" rx="8" fill="#f8fafc" stroke="#0f172a"/>
 <text x="70" y="171" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">1. 공통 출발점</text>
@@ -369,7 +369,7 @@ Teacher들은 서로 독립이라 병렬로 만들 수 있다.
 <text x="420" y="181" font-size="14" text-anchor="middle" fill="#0f172a">라우터</text>
 <text x="420" y="216" font-size="13" text-anchor="middle" fill="#64748b">x의 영역</text>
 <rect x="476" y="120" width="112" height="112" rx="8" fill="#f8fafc" stroke="#0f172a" stroke-width="2"/>
-<text x="532" y="144" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">3. 학생</text>
+<text x="532" y="144" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">3. Student</text>
 <text x="532" y="166" font-size="13" text-anchor="middle" fill="#64748b">x를 받아 y 생성</text>
 <text x="532" y="184" font-size="13" text-anchor="middle" fill="#64748b">y의 토큰마다</text>
 <text x="532" y="202" font-size="13" text-anchor="middle" fill="#64748b">teacher 신호로</text>
@@ -385,24 +385,24 @@ Teacher들은 서로 독립이라 병렬로 만들 수 있다.
 <path d="M376 62 C460 62 532 62 532 111" stroke="#0f172a" stroke-width="2.5" fill="none"/><polygon points="532,120 527,111 537,111" fill="#0f172a"/>
 <text x="454" y="50" font-size="13" text-anchor="middle" fill="#0f172a">토큰별 reverse KL 신호</text>
 <text x="300" y="376" font-size="14" text-anchor="middle" fill="#64748b">점선: 출발점에서 초기화 · 굵은 실선: 선택된 teacher의 토큰별 신호(수학 예시)</text>
-<text x="300" y="396" font-size="14" text-anchor="middle" fill="#64748b">가는 실선: 학생 응답의 전달과 라우팅(흐린 선은 선택되지 않은 경로)</text>
+<text x="300" y="396" font-size="14" text-anchor="middle" fill="#64748b">가는 실선: student 응답의 전달과 라우팅(흐린 선은 선택되지 않은 경로)</text>
 </svg>
-<figcaption>MOPD의 세 단계. 영역별 teacher를 같은 출발점에서 병렬로 만들고, 학생은 자기가 생성한 응답의 토큰마다 프롬프트 영역에 맞는 teacher가 주는 신호로 학습한다. 그림은 수학 프롬프트가 수학 teacher로 라우팅된 경우를 진하게, 나머지 경로를 흐리게 보인다. 라우터는 학습되는 모듈이 아니라, 프롬프트가 속한 영역의 teacher를 고르는 단계다.</figcaption>
+<figcaption>MOPD의 세 단계. 영역별 teacher를 같은 출발점에서 병렬로 만들고, student는 자기가 생성한 응답의 토큰마다 프롬프트 영역에 맞는 teacher가 주는 신호로 학습한다. 그림은 수학 프롬프트가 수학 teacher로 라우팅된 경우를 진하게, 나머지 경로를 흐리게 보인다. 라우터는 학습되는 모듈이 아니라, 프롬프트가 속한 영역의 teacher를 고르는 단계다.</figcaption>
 </figure>
 
 셋째 단계의 기본 구현은 앞에서 본 표본 토큰 방식이다.
-Teacher와 학생의 log 확률 차이를 토큰별 advantage로 쓴다.
+Teacher와 student의 log 확률 차이를 토큰별 advantage로 쓴다.
 저자들은 분산이 더 낮을 것으로 보고 teacher의 상위 64개 후보 위에서 분포를 맞추는 변형도 실험했다.
 앞의 곱셈 예시에서 표본 하나 대신 세 후보를 모두 더한 것과 같은 발상이다.
-그러나 teacher와 학생이 같은 출발점에서 나온 이 설정에서는 두 방식의 학습 곡선이 거의 겹쳤고, 상위 64개 변형의 성능은 기본 구현과 비슷하거나 조금 낮았다.[^mopd]
+그러나 teacher와 student가 같은 출발점에서 나온 이 설정에서는 두 방식의 학습 곡선이 거의 겹쳤고, 상위 64개 변형의 성능은 기본 구현과 비슷하거나 조금 낮았다.[^mopd]
 
-Teacher와 학생이 모두 같은 출발점에서 나오므로 크기 차이가 없고,
-teacher가 학생보다 나은 점은 자기 영역에서 RL을 더 받았다는 것뿐이다.
+Teacher와 student가 모두 같은 출발점에서 나오므로 크기 차이가 없고,
+teacher가 student보다 나은 점은 자기 영역에서 RL을 더 받았다는 것뿐이다.
 그래서 학습 초기부터 두 분포가 가깝다.
-저자들이 수학 teacher를 더 큰 Qwen3-235B-A22B로 바꾸자 초기 토큰별 KL이 약 5배로 커졌고, 학생의 수학 성능은 오히려 떨어졌다.[^mopd]
-이 실험에서는 더 큰 teacher보다 학생과 분포가 가까운 teacher가 나았다.
+저자들이 수학 teacher를 더 큰 Qwen3-235B-A22B로 바꾸자 초기 토큰별 KL이 약 5배로 커졌고, student의 수학 성능은 오히려 떨어졌다.[^mopd]
+이 실험에서는 더 큰 teacher보다 student와 분포가 가까운 teacher가 나았다.
 
-MOPD의 학생은 수학·지시 따르기·소프트웨어 공학 세 영역 모두에서 출발점과 teacher 사이 격차의 91–95%를 메웠다.
+MOPD의 student는 수학·지시 따르기·소프트웨어 공학 세 영역 모두에서 출발점과 teacher 사이 격차의 91–95%를 메웠다.
 출발점을 0, 영역별 teacher를 1로 두고 정규화한 점수를 세 영역에서 평균해도 MOPD가 혼합 RL·순차 RL·응답 기반 distillation·teacher 가중치 병합보다 높았다.
 지시 따르기와 소프트웨어 공학에서는 혼합 RL보다 훨씬 적은 학습 샘플로 teacher 수준에 도달했다(전문 teacher를 만드는 비용은 뺀 비교다).
 저자들은 그 이유로, 토큰마다 오는 조밀한 신호가 응답당 한 번 오는 보상보다 표본 효율이 높다는 점을 든다.[^mopd]
@@ -411,21 +411,21 @@ MOPD의 학생은 수학·지시 따르기·소프트웨어 공학 세 영역 �
 
 On-policy distillation은 off-policy의 문제를 줄여 주지만 여전히 실패할 수 있다.
 서베이가 원인별로 묶은 실패 가운데 하나는 **틀린 prefix의 함정**(flawed prefix trap)이다.[^survey]
-학생이 이미 틀린 prefix를 만들면, teacher도 학습 때 그런 문맥을 거의 보지 못했으므로 그 뒤의 다음 토큰 분포를 믿기 어렵다.
+Student가 이미 틀린 prefix를 만들면, teacher도 학습 때 그런 문맥을 거의 보지 못했으므로 그 뒤의 다음 토큰 분포를 믿기 어렵다.
 앞의 곱셈 예시에서 틀린 `50` 한 토큰은 teacher가 바로 짚을 수 있다.
-그러나 학생이 `120 + 50 = 170`까지 써 버린 뒤에는 teacher가 틀린 값을 이어받아 계산을 계속할지, 오류를 고치는 문장을 낼지부터 분명하지 않다.
-어느 쪽이 학생에게 좋은 신호인지도 알 수 없다.
+그러나 student가 `120 + 50 = 170`까지 써 버린 뒤에는 teacher가 틀린 값을 이어받아 계산을 계속할지, 오류를 고치는 문장을 낼지부터 분명하지 않다.
+어느 쪽이 student에게 좋은 신호인지도 알 수 없다.
 앞에서 본 DAgger의 가정이 깨지는 지점이 여기다.
 
-학생에게 너무 어려운 프롬프트에서 초반 오류가 반복되고 teacher가 그런 문맥에 믿을 만한 감독을 주지 못하면,
+Student에게 너무 어려운 프롬프트에서 초반 오류가 반복되고 teacher가 그런 문맥에 믿을 만한 감독을 주지 못하면,
 학습 신호가 잡음에 묻힐 수 있다.
-그래서 서베이는 학습을 시작하기 전에 목표 프롬프트에서 학생의 정답률부터 확인하고, 거의 풀지 못하면 쉬운 문제부터 학습하도록 권한다.[^survey]
+그래서 서베이는 학습을 시작하기 전에 목표 프롬프트에서 student의 정답률부터 확인하고, 거의 풀지 못하면 쉬운 문제부터 학습하도록 권한다.[^survey]
 
-MOPD에서 같은 출발점이 아닌 더 큰 teacher로 바꾸자 오히려 나빠진 것은 학생과 teacher의 분포가 멀 때의 실패 사례다.
-저자들은 학생이 teacher가 낮은 확률을 주는 영역에서 주로 벌점 신호를 받아 한 모드로 좁아졌다고 설명했고, 틀린 prefix를 원인으로 따로 분리해 확인하지는 않았다.
-Qwen3가 off-policy 단계로 학생을 teacher 분포 가까이 먼저 데려온 것과 MOPD가 학생과 같은 출발점의 teacher를 쓴 것도 이 거리를 줄이는 선택이다.
+MOPD에서 같은 출발점이 아닌 더 큰 teacher로 바꾸자 오히려 나빠진 것은 student와 teacher의 분포가 멀 때의 실패 사례다.
+저자들은 student가 teacher가 낮은 확률을 주는 영역에서 주로 벌점 신호를 받아 한 모드로 좁아졌다고 설명했고, 틀린 prefix를 원인으로 따로 분리해 확인하지는 않았다.
+Qwen3가 off-policy 단계로 student를 teacher 분포 가까이 먼저 데려온 것과 MOPD가 student와 같은 출발점의 teacher를 쓴 것도 이 거리를 줄이는 선택이다.
 
-Distillation은 어느 방식이든 teacher의 분포를 목표로 삼으므로, 학생은 대체로 teacher의 능력 범위에 묶이고 teacher의 약점도 함께 배울 수 있다.[^survey]
+Distillation은 어느 방식이든 teacher의 분포를 목표로 삼으므로, student는 대체로 teacher의 능력 범위에 묶이고 teacher의 약점도 함께 배울 수 있다.[^survey]
 적합한 teacher가 없거나 teacher를 넘어서야 하면 사람이 쓴 응답이나 검증 보상 같은 다른 감독 신호가 필요하다.
 
 [^survey]: Song, M., & Zheng, M. (2026). A Survey of On-Policy Distillation for Large Language Models. [arXiv:2604.00626v4](https://arxiv.org/abs/2604.00626v4).
