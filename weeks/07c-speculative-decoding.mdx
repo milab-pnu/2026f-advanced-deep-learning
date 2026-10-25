@@ -336,7 +336,7 @@ goodput을 보며 추측 길이를 실행 중에 바꾸는 제어 방식을 제�
 앞 주차에 본 goodput, 곧 SLO(service-level objective)를 지키는 최대 요청률과는 다른 정의다.
 vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-bound 상황에서 ITL(inter-token latency)을 줄이는 기능으로 설명한다.[^vllm-spec]
 
-측정할 때는 앞 주차에서 본 ITL과 TPOT(time per output token)의 차이를 기억한다.
+측정할 때는 ITL과 TPOT(time per output token)가 서로 달라진다는 점에 주의한다.
 한 번의 forward에서 토큰 여러 개가 함께 나오면 ITL은 도착 간격만 기록하고 TPOT는 그 시간을 토큰 수로 나누므로,
 토큰당 속도는 TPOT로 비교하고, 출력 사이의 대기 간격은 ITL 분포로 본다.
 출력 분포가 보존된다는 보장도 수학적으로는 정확하지만,

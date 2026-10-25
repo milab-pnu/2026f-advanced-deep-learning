@@ -10,56 +10,47 @@ order: 0
 학습 비용은 모델을 만들 때 한 번 들지만 inference 비용은 모델이 쓰이는 동안 계속 든다.
 이 비용은 사용자에게는 응답 지연으로, 서비스를 운영하는 쪽에는 GPU(graphics processing unit) 시간, 곧 돈으로 드러난다.
 
-Zhou 등은 LLM(large language model) inference의 효율을 다룬 서베이에서 이 비용을 계산량·메모리 접근·메모리 사용량의 세 축으로 나누었다.[^survey]
-이 노트는 그 비용이 왜 커지는지 보고, 생성을 성격이 다른 두 단계로 나누어 본 뒤 비용을 재는 지표를 정리하고,
-GPU 한 대의 메모리에 무엇이 얼마나 들어가는지 계산한다.
+Zhou 등은 LLM(large language model) inference의 효율을 다룬 서베이에서 이 비용을 계산량, 메모리 접근, 메모리 사용량으로 나누었다.[^survey]
+이 노트는 먼저 inference의 계산량이 왜 커지는지 보고,
+생성의 두 단계가 각각 계산과 메모리 접근 가운데 어디에 막히는지 본 뒤,
+비용을 재는 지표를 정리하고, 마지막으로 GPU 한 대의 메모리에 무엇이 얼마나 들어가는지 계산한다.
 
 기준 모델은 지금까지 써 온 **Llama 3 8B**(층 수 $L=32$, query head 32개, KV(key-value) head 8개, head 차원 $d_h=128$)다.[^llama3]
-이 노트의 Llama 3는 보고서를 따라 Llama 3.1 판을 가리킨다.
-이 판은 사전학습의 마지막 단계에서 긴 시퀀스로 학습하고,[^llama3]
-공식 구현에서는 앞 주차 위치 인코딩에서 본 RoPE(rotary position embedding) 조정을 더해 128K 문맥을 지원한다.[^llama-code]
+이 노트의 Llama 3는 보고서를 따라 최대 128K 토큰 문맥을 지원하는 Llama 3.1 판을 가리킨다.
 
 ## 1. Inference 비용이 커지는 이유
 
-### 1-1. 학습 계산과 inference 계산
+### 1-1. 학습 비용과 inference 비용
 
-앞 주차 scaling law에서 본 Chinchilla는 **학습 계산 예산**이 정해졌을 때 loss를 가장 낮추는 모델 크기와 토큰 수를 찾았다.
+앞 주차 scaling law에서 본 Chinchilla는 **학습 compute 예산**이 정해졌을 때 loss를 가장 낮추는 모델 크기와 토큰 수를 찾았다.
 이 기준에는 학습이 끝난 뒤 그 모델을 얼마나 쓸지가 들어 있지 않다.
-Sardana 등은 이 기준에 inference 비용을 더했다.[^sardana]
-파라미터 $N$개인 모델을 $D_{\text{tr}}$ 토큰으로 학습하는 데는 약 $6ND_{\text{tr}}$ FLOPs(floating-point operations)가,
-학습 뒤 $D_{\text{inf}}$ 토큰(입력과 출력의 합)을 처리하는 데는 약 $2ND_{\text{inf}}$ FLOPs가 든다.<Sidenote>계수 2와 6은 forward가 토큰당 약 $2N$, backward까지 더한 학습이 약 $6N$ FLOPs를 쓴다는 근사이고, $N$은 Kaplan 등과 달리 embedding까지 넣은 전체 파라미터 수다.[^chinchilla]</Sidenote>
-Sardana 등은 같은 목표 loss에 도달하고 예상 inference 수요를 처리한다는 조건에서 이 둘의 합을 최소화하는 $N$과 $D_{\text{tr}}$을 다시 구했다.
+
+파라미터 $N$개인 모델의 forward는 토큰당 약 $2N$ FLOPs(floating-point operations)이고, backward까지 더한 학습은 약 $6N$ FLOPs다.
+그래서 $D_{\text{tr}}$ 토큰으로 학습하는 데는 약 $6ND_{\text{tr}}$ FLOPs가,
+학습 뒤 $D_{\text{inf}}$ 토큰(입력과 출력의 합)을 처리하는 데는 forward만 하므로 약 $2ND_{\text{inf}}$ FLOPs가 든다.
 
 <Callout type="example">
 두 식이 같아지는 지점은 $6ND_{\text{tr}}=2ND_{\text{inf}}$, 곧 $D_{\text{inf}}=3D_{\text{tr}}$이다.
-$N$이 약분되므로 모델 크기와 상관없이,
-inference로 처리한 토큰이 학습 토큰의 세 배를 넘으면 inference 계산이 학습 계산보다 커진다.
+모델 크기와 상관없이, inference로 처리한 토큰이 학습 토큰의 세 배를 넘으면 inference 계산이 학습 계산보다 커진다.
 약 15조 토큰으로 학습한 Llama 3 8B라면 그 지점이 약 45조 토큰이다.[^llama31-card]
-하루 처리량이 10억 토큰이면 45,000일, 1,000억 토큰이면 450일, 1조 토큰이면 45일 만에 이 지점에 이른다.
-이 근사는 문맥 길이에 비례하는 attention 점수·가중합 계산을 빼고, 하드웨어 활용률 차이 없이 FLOPs로만 비교한 것이다.
+하루 처리량이 10억 토큰이면 45,000일, 1조 토큰이면 45일 만에 이 지점에 이른다.
 </Callout>
 
-Sardana 등은 inference 비용까지 넣으면,
-요청이 약 10억 건 이상 예상될 때 Chinchilla 기준의 compute-optimal보다 **작은 모델을 더 오래 학습**하는 편이 전체 비용에서 유리하다고 결론지었다.[^sardana]
-Llama 3의 작은 모델도 같은 선택을 했다.
-개발팀은 405B 모델을 학습 예산에 대해 거의 compute-optimal한 크기로 정했지만,
-더 작은 모델은 "compute-optimal보다 훨씬 오래" 학습했다.
-그 결과 같은 inference 예산에서 compute-optimal 모델보다 성능이 좋았다고 밝혔다.[^llama3]
+Sardana 등은 이 두 비용의 합을 최소화하도록 Chinchilla의 계산을 다시 했다.
+요청이 약 10억 건 이상 예상되면 compute-optimal보다 **작은 모델을 더 오래 학습**하는 편이 전체 비용에서 유리했다.[^sardana]
+Llama 3의 작은 모델도 이런 선택을 했다.[^llama3]
 파라미터당 학습 토큰은 Chinchilla 70B가 20개(1.4조 토큰),[^chinchilla]
-Llama 3 8B가 약 1,900개(약 15조 토큰)로 90배 넘게 차이 난다.
+Llama 3 8B가 약 1,900개(약 15조 토큰)로 90배 넘게 많다.
 
 ### 1-2. 늘어나는 생성 길이
 
 Inference가 다루는 토큰의 양도 늘고 있다.
 앞 주차에서 본 추론 모델(reasoning model)은 답을 내기 전에 수천 토큰에 이르는 long CoT(long chain of thought)를 생성한다.[^r1]
-정확도를 높이려고 앞 주차에서 본 self-consistency처럼 같은 문제에 응답을 여러 개 뽑아 다수결로 답을 고르는 방법도 쓴다.
+정확도를 높이려고 self-consistency처럼 같은 문제에 응답을 여러 개 뽑아 다수결로 답을 고르기도 한다.
 도구 결과를 받을 때마다 문맥 뒤에 붙여 다음 행동을 생성하는 agent는,
 기록을 요약하거나 잘라 내지 않는 한 턴이 이어질수록 문맥이 길어진다.
-같은 모델이라도 한 요청이 처리하는 토큰이 많아지면 앞의 $D_{\text{inf}}$가 그만큼 빨리 쌓인다.
-문맥이 길어지면 새 토큰 하나가 attention에서 읽을 과거 key·value가 늘어 토큰당 비용도 커진다.
-
-GRPO(group relative policy optimization)처럼 문제마다 응답을 여러 개 생성해 학습하는 RL도 학습 스텝마다 이런 생성을 대량으로 한다.
-응답이 길면 생성이 스텝 시간의 큰 몫을 차지해, 생성 속도가 학습 속도에도 크게 영향을 준다.
+요청 하나가 처리하는 토큰이 많아지면 앞의 $D_{\text{inf}}$가 그만큼 빨리 쌓인다.
+게다가 문맥이 길수록 새 토큰 하나가 attention에서 읽을 과거 key·value가 많아 토큰당 비용도 커진다.
 
 ### 1-3. 순차 생성의 비효율
 
@@ -76,11 +67,11 @@ $$
 
 $p_\theta$는 파라미터가 $\theta$인 모델이 앞 토큰들을 보고 내놓는 다음 토큰 분포다.
 토큰을 하나씩 생성하므로 출력 토큰 $m$개를 만들려면 모델 전체를 $m$번 차례로 실행해야 한다.
-앞 주차에서 본 KV cache를 쓰면 첫 번째를 뺀 나머지는 새 토큰 하나만 계산하는 forward다.
+앞 주차에서 본 KV cache가 앞 토큰들의 key·value를 저장해 두므로, 첫 forward 뒤로는 매번 새 토큰 하나만 넣는 forward가 된다.
 GPU는 큰 행렬곱을 한꺼번에 처리할 때 효율이 높은데,
-토큰 하나짜리 forward로는 그 능력을 다 쓰기 어렵다.
-그래서 한 번에 묶어 처리하는 요청이 적으면 같은 FLOPs라도 토큰을 하나씩 만드는 생성은 학습보다 GPU 시간이 더 들 수 있다.
-그러면 앞에서 구한, inference가 학습을 넘어서는 지점도 GPU 시간으로 따지면 더 일찍 온다.[^sardana]
+토큰 하나짜리 forward는 행렬곱이 작아 그 능력을 다 쓰지 못한다.
+그래서 한 번에 묶어 처리하는 요청이 적으면, 같은 FLOPs라도 생성은 학습보다 GPU 시간이 더 들기 쉽다.
+앞에서 구한 "inference가 학습을 넘어서는 지점"도 GPU 시간으로 따지면 그만큼 더 일찍 온다.[^sardana]
 
 ## 2. Prefill과 decode
 
@@ -89,31 +80,49 @@ GPU는 큰 행렬곱을 한꺼번에 처리할 때 효율이 높은데,
 KV cache를 쓰는 생성 요청은 성격이 다른 두 단계로 나뉜다.
 앞 주차 KV cache 구조에서 본 prefill과 decode다.[^survey]
 
-**Prefill.** 프롬프트의 토큰 $n$개를 함께 처리해(기본 형태에서는 forward 한 번) 모든 층의 key·value를 KV cache에 쓰고, 첫 출력 토큰을 고른다.
-$n$개 위치가 함께 계산되므로 학습의 forward와 비슷하게 큰 행렬곱이 된다.
+**Prefill.** 프롬프트의 토큰 $n$개를 한 번의 forward로 함께 처리해 모든 층의 key·value를 KV cache에 쓰고, 첫 출력 토큰을 고른다.
+$n$개 토큰이 함께 계산되므로 학습의 forward처럼 큰 행렬곱이 된다.
 
 **Decode.** 그다음부터는 직전에 고른 토큰 하나만 입력해 다음 토큰을 고른다.
-스텝마다 새 위치 하나의 key·value를 cache 뒤에 붙이고, cache 전체를 읽어 attention을 계산한다.
+스텝마다 새 토큰의 key·value를 cache 뒤에 붙이고, cache 전체를 읽어 attention을 계산한다.
 이 과정을 종료 토큰이 나오거나 최대 길이에 이를 때까지 반복한다.
 
 <Callout type="example">
 입력 1,000토큰에 출력 200토큰인 요청을 생각하자.
-Prefill은 forward 한 번에 1,000개 위치를 처리하고 첫 출력 토큰을 낸다.
+Prefill은 forward 한 번에 1,000개 토큰을 처리하고 첫 출력 토큰을 낸다.
 나머지 199개 토큰은 decode forward 199번으로 하나씩 나온다.
-처리한 위치 수로는 1,000 대 199로 prefill이 다섯 배 많지만,
+처리한 토큰 수로는 1,000 대 199로 prefill이 다섯 배 많지만,
 forward 횟수로는 1 대 199로 decode가 거의 전부다.
-두 단계는 위치 하나에 드는 계산은 비슷해도 forward 한 번에 담긴 일의 양이 크게 다르다.
+토큰 하나에 드는 계산은 두 단계가 비슷하지만, forward 한 번에 담긴 일의 양은 크게 다르다.
 </Callout>
 
 ### 2-2. 단계마다 다른 병목
 
+GPU에서 계산하려면 데이터를 칩 바깥의 HBM(high-bandwidth memory)에서 칩 안의 연산 장치로 읽어 와야 한다.
 앞 주차 FlashAttention에서 보았듯 칩 안의 SRAM(static random-access memory)은 작아서 8B 모델의 가중치를 담아 둘 수 없다.
-그래서 가중치는 forward 한 번마다 칩 바깥의 HBM(high-bandwidth memory)에서 연산 장치로 다시 읽어 와야 한다.
-프롬프트가 어느 정도 길면 prefill은 그렇게 읽은 가중치를 $n$개 위치에 함께 쓰므로, 읽는 시간보다 계산하는 시간이 길어진다.[^distserve]
+그래서 forward를 한 번 할 때마다 가중치 전체를 HBM에서 다시 읽어 온다.
+GPU는 읽기와 계산을 겹쳐 진행하므로, forward 한 번의 시간은 대략 **읽는 시간**과 **계산하는 시간** 가운데 긴 쪽이 정한다.
+
+Prefill은 한 번 읽은 가중치를 $n$개 토큰에 함께 쓴다.
+프롬프트가 어느 정도 길면 계산하는 시간이 읽는 시간보다 길어진다.[^distserve]
 이런 단계를 계산이 병목이라는 뜻에서 **compute-bound**라 부른다.
-Decode는 같은 가중치를 읽어 위치 하나에만 쓴다.
-여러 요청의 decode를 한 forward로 묶더라도 그 수가 적으면 계산은 금방 끝나고 시간 대부분이 가중치와 KV cache를 읽는 데 든다.
+Decode는 같은 가중치를 다 읽어 와서 토큰 하나에만 쓴다.
+계산은 금방 끝나고 시간 대부분이 가중치와 KV cache를 읽는 데 든다.
 이런 단계는 **memory-bound**다.
+
+<Callout type="example">
+Llama 3 8B의 BF16(bfloat16) 가중치는 약 16 GB다.
+H100 SXM은 HBM에서 초당 3.35 TB를 읽고, BF16 행렬곱을 초당 약 $989\times10^{12}$ FLOPs(989 TFLOP/s, sparsity를 쓰지 않는 dense 연산 기준)까지 계산한다.[^h100][^hopper]
+가중치를 한 번 읽는 데는 $16\ \text{GB}/3.35\ \text{TB/s}\approx4.8$ ms가 걸린다.
+토큰 하나의 forward 계산량은 $2N\approx16$ GFLOPs($N\approx8.03\times10^9$)이므로, 계산은 $16\ \text{GFLOPs}/989\ \text{TFLOP/s}\approx0.016$ ms면 끝난다.
+Decode 한 스텝은 읽는 데 4.8 ms, 계산하는 데 0.016 ms라서 연산 장치는 시간의 99% 이상을 기다린다.
+1,000토큰을 prefill하면 계산이 1,000배인 16 ms로 늘지만 가중치는 여전히 한 번만 읽으므로, 이번에는 계산이 더 오래 걸린다.
+두 시간이 같아지는 것은 토큰 약 300개를 함께 처리할 때다.
+여기서는 attention 계산과 KV cache 읽기를 빼고, 계산과 읽기가 사양값의 최대 속도로 완전히 겹친다고 단순화했다.
+</Callout>
+
+여러 요청의 decode 스텝을 한 forward로 묶는 **batching**을 하면, 한 번 읽은 가중치를 여러 토큰에 쓸 수 있어 연산 장치가 기다리는 시간이 줄어든다.
+다만 요청마다 KV cache는 따로 읽어야 하므로 묶은 수만큼 읽는 양도 함께 는다.
 
 같은 모델, 같은 요청 안에서도 병목이 단계마다 다르다는 점이 inference 최적화의 출발점이다.
 그래서 prefill에는 계산을 줄이거나 여러 GPU에 나누는 방법이,
@@ -132,7 +141,6 @@ decode에는 읽어 올 데이터를 줄이거나 한 번 읽은 가중치를 �
 - <strong>TTFT(time to first token)</strong>는 요청을 보낸 시점부터 첫 출력 토큰을 받을 때까지의 시간이다.
   클라이언트 쪽에서 재므로 prefill 시간 말고도 요청이 서버 대기열에서 기다린 시간,
   토크나이즈 같은 전처리 시간, 네트워크 왕복 시간이 함께 들어간다.
-  추론 모델이 long CoT를 스트리밍하지 않으면 그 토큰을 만드는 decode 시간도 TTFT에 들어간다.[^vllm-bench]
 - <strong>ITL(inter-token latency)</strong>는 이웃한 두 출력이 도착하는 간격이다.
   요청 하나에서 간격이 여러 개 나오므로 모든 간격을 모아 분포로 본다.
 - <strong>E2E(end-to-end) latency</strong>는 요청을 보낸 시점부터 마지막 토큰까지의 시간이다.
@@ -175,14 +183,8 @@ decode에는 읽어 올 데이터를 줄이거나 한 번 읽은 가중치를 �
 <figcaption>요청 하나의 지연 지표. 0.25초에 첫 토큰, 6.22초에 200번째 토큰이 도착한 요청을 축척 없이 그렸다. 토큰 하나가 막대 하나이며, 가운데 토큰과 TTFT에 들어가는 대기·네트워크 시간은 생략했다. vLLM 벤치마크 문서의 정의를 바탕으로 직접 구성했다.[^vllm-bench]</figcaption>
 </figure>
 
-토큰이 하나씩 도착하면 한 요청의 TPOT는 그 요청 ITL들의 평균과 같지만, 한 번에 여러 토큰이 도착하면 달라진다.
-Speculative decoding이 그런 경우다.
-작은 모델 같은 별도 수단으로 다음 토큰 여러 개를 미리 추측해 두고,
-원래 모델의 forward 한 번으로 검증해 맞은 토큰을 한꺼번에 내놓는다.
-첫 토큰 뒤에 토큰 네 개가 60 ms 간격으로 두 개씩 도착했다고 하자.
-ITL은 도착한 출력 사이의 간격만 기록하므로 60 ms가 두 번 남고,
-TPOT는 120 ms를 토큰 네 개로 나눈 30 ms다.
-vLLM 문서는 같은 이름의 지표라도 도구마다 정의가 다를 수 있으니, 이름보다 측정 시점과 식을 비교하라고 권한다.[^vllm-bench]
+토큰이 하나씩 도착하면 한 요청의 TPOT는 그 요청 ITL들의 평균과 같다.
+TPOT는 요청마다 평균 속도 하나를, ITL은 간격 하나하나의 분포를 보여 준다는 점이 다르다.
 
 ### 3-2. 서버 전체의 처리량
 
@@ -194,15 +196,17 @@ vLLM 문서는 같은 이름의 지표라도 도구마다 정의가 다를 수 �
 <Callout type="example">
 60초 동안 요청 300개가 각각 200토큰을 생성했다면 output token throughput은 초당 1,000토큰이다.
 이때 요청마다 TPOT가 앞 그림의 요청처럼 30 ms라면 사용자 한 명이 보는 속도는 초당 약 33토큰이다.
-같은 길이의 요청이 고르게 들어온다면 초당 5건이 도착해 각각 약 6초($199\times30$ ms) 동안 decode된다.
-도착률에 머무는 시간을 곱하면(Little's law) 어느 순간에나 평균 약 30개 요청이 함께 decode된다.
-서버 처리량이 사용자 한 명이 보는 속도의 30배쯤인 것도 이 때문이다.
+서버 처리량이 사용자 한 명이 보는 속도의 30배쯤인 이유는 여러 요청이 동시에 decode되기 때문이다.
+같은 길이의 요청이 고르게 들어온다면 초당 5건이 도착하고, 각 요청은 약 6초($199\times30$ ms) 동안 decode된다.
+초당 5건씩 들어와 6초씩 머무르므로 어느 순간에나 약 $5\times6=30$개 요청이 함께 decode되고 있다.
+평균 동시 요청 수가 도착률과 머무는 시간의 곱이라는 이 관계를 Little's law라 한다.
 </Callout>
 
 처리량과 지연은 대체로 한쪽을 얻으면 다른 쪽을 내주는 관계다.
 함께 decode하는 요청(앞 예에서 약 30개)을 늘리면 한 번 읽은 가중치를 여러 요청에 쓰므로 처리량이 오른다.
-대신 스텝마다 요청별 KV cache를 따로 읽어야 하므로,
-요청 수와 문맥이 늘어 이 읽기가 커지거나 계산이 한계에 가까워지면 요청 하나의 TPOT가 길어진다.
+대신 decode 한 스텝이 길어진다.
+요청마다 KV cache를 따로 읽어야 하고, 묶은 토큰이 많아지면 계산도 한계에 가까워지기 때문이다.
+스텝이 길어지면 요청 하나의 TPOT도 길어진다.
 
 ### 3-3. SLO와 goodput
 
@@ -212,15 +216,16 @@ vLLM 문서는 같은 이름의 지표라도 도구마다 정의가 다를 수 �
 대화형 서비스라면 "TTFT 1초 이하, TPOT 50 ms 이하"처럼 두 단계에 각각 목표를 둘 수 있다.
 
 지연 지표는 평균만으로 보지 않는다.
-요청마다 입력 길이가 다르고,
-들어온 시점과 앞선 요청들이 자원을 얼마나 오래 쓰는지에 따라 기다리는 시간도 달라지므로,
-부하가 높을수록 같은 서버에서도 TTFT가 넓게 퍼진다.
+같은 서버에서도 요청마다 TTFT가 크게 다르기 때문이다.
+입력 길이가 요청마다 다르고, 언제 들어왔는지와 앞선 요청들이 자원을 얼마나 오래 쓰는지에 따라 기다리는 시간도 달라진다.
+부하가 높을수록 이 차이가 커진다.
 그래서 중앙값(p50)과 함께 p90·p99 같은 꼬리 백분위수를 보고,
 SLO도 "요청의 90%가 TTFT 1초 이하"처럼 백분위수로 정할 수 있다.
 
 LLM 서빙 시스템 DistServe를 제안한 Zhong 등은 SLO를 지키며 처리할 수 있는 요청률을 **goodput**이라 부르고 서빙의 최적화 목표로 삼았다.
-Goodput은 TTFT·TPOT 목표를 모두 지킨 요청의 비율(SLO 달성률)이 목표치(예: 90%) 이상으로 유지되는 최대 요청률을,
-투입한 GPU 수로 나눠 GPU 한 대당으로 나타낸 값이다.[^distserve]
+TTFT·TPOT 목표를 모두 지킨 요청의 비율을 SLO 달성률이라 하면,
+goodput은 SLO 달성률이 목표치(예: 90%) 이상으로 유지되는 최대 요청률이다.
+GPU를 여러 대 쓰는 시스템끼리 비교하려고 이 값을 GPU 수로 나눠 한 대당으로 나타낸다.[^distserve]
 
 <Callout type="example">
 다음은 교육용으로 만든 수치다.
@@ -255,21 +260,21 @@ Llama 3 8B를 GPU 한 대에 올려 그 숫자를 계산해 보자.
 
 가중치 메모리는 파라미터 수에 원소당 바이트 수를 곱한 값이다.
 앞 주차 FFN(feed-forward network)에서 공식 설정으로 셌듯이, embedding까지 포함한 Llama 3 8B의 파라미터는 약 8.03B개다.
-BF16(bfloat16)은 원소당 2 bytes이므로 가중치는 약 16.1 GB다.
+BF16은 원소당 2 bytes이므로 가중치는 약 16.1 GB다.
 앞 주차 mixed precision 학습에서는 gradient, FP32(32-bit floating point) master weight, Adam 모멘트까지 파라미터당 16 bytes가 들었지만,
 inference에는 이들이 없으므로 이 16.1 GB가 모델 상태의 전부다.
 
 이 값은 요청 수나 문맥 길이와 상관없이 고정이다.
 줄이는 방향은 크게 두 가지다.
 하나는 원소당 바이트 수를 줄이는 양자화(quantization)다.
-모든 가중치를 4비트 정수(INT4)로 둔다고 단순화하면 약 4 GB이고,
-실제로는 값 묶음마다 범위를 맞추는 scale 같은 부가 정보와 16비트로 남겨 두는 부분(흔히 embedding과 출력층)이 더해진다.
+모든 가중치를 4-bit 정수(INT4)로 둔다고 단순화하면 약 4 GB이고,
+실제로는 값 묶음마다 범위를 맞추는 scale 같은 부가 정보와 16-bit로 남겨 두는 부분(흔히 embedding과 출력층)이 더해진다.
 다른 하나는 저장할 파라미터 수 자체를 줄이는 압축이다.
-head나 채널 같은 구조 단위로 가중치를 덜어내는 구조적 pruning, 행렬을 작은 행렬의 곱으로 바꾸는 low-rank factorization, 더 작은 모델로 옮기는 distillation이 여기에 든다.
+head나 channel 같은 구조 단위로 가중치를 덜어내는 structured pruning, 행렬을 작은 행렬의 곱으로 바꾸는 low-rank factorization, 더 작은 모델로 옮기는 distillation이 여기에 든다.
 
 ### 4-2. KV cache
 
-Llama 3 8B처럼 모든 층이 전체 문맥에 attention하는 모델에서 KV cache는 층마다, KV head마다, 지금까지의 모든 위치에 대해 key와 value 벡터를 하나씩 저장한다.
+Llama 3 8B처럼 모든 층이 전체 문맥에 attention하는 모델에서 KV cache는 층마다, KV head마다, 지금까지의 모든 토큰에 대해 key와 value 벡터를 하나씩 저장한다.
 앞 주차 KV cache 구조에서 센 원소 수에 원소당 바이트 수 $b$를 곱하면 토큰 하나의 크기가 나온다($n_{kv}$는 KV head 수).
 
 $$
@@ -300,13 +305,11 @@ Query head마다 KV head를 따로 두는 MHA(multi-head attention)였다면 토
 가중치와 KV cache 말고도 실행 중의 activation과 작업 공간이 필요하다.
 학습과 비교하면 activation의 비중은 작다.
 Backward가 없어 층의 중간 결과를 다음 층으로 넘기면 버릴 수 있기 때문이다.
-다만 아주 긴 프롬프트를 한 번에 prefill하면 그 순간의 중간 텐서가 커진다.
-그래서 vLLM은 시작할 때 한 스텝에 처리할 최대 토큰 수로 시험 forward를 돌려 activation의 최고치를 재고 그만큼을 미리 빼 두며,[^vllm-worker]
-이보다 긴 프롬프트는 그 한도로 잘라 여러 스텝에 나누어 prefill한다.[^vllm-opt]
+vLLM은 엔진을 시작할 때 시험 forward를 돌려 activation의 최고치를 재고, 가중치와 그만큼을 뺀 나머지를 KV cache 공간으로 잡는다.[^vllm-worker]
 
 <Callout type="example">
 메모리 80 GB인 H100 SXM 한 대에 vLLM을 띄운다.
-vLLM은 기본적으로 GPU 메모리의 92%를 쓰므로 사용할 수 있는 공간은 약 73.6 GB다.[^vllm-args]<Sidenote>80 GB는 사양표의 명목 용량을 $10^{9}$ bytes 단위로 그대로 쓴 보수적 어림이고, 실제 장치가 보고하는 총량은 이보다 조금 크다.</Sidenote>
+vLLM은 기본적으로 GPU 메모리의 92%를 쓰므로 사용할 수 있는 공간은 약 73.6 GB다.[^vllm-args]
 여기서 가중치 16.1 GB와 실행 중의 activation·작업 공간 약 4 GB를 뺀다고 가정하면 KV cache에 약 53.5 GB가 남는다.
 토큰당 128 KiB이므로
 
@@ -331,24 +334,24 @@ GPU의 연산이 포화되기 전까지는 요청을 많이 묶을수록 처리�
 
 [^llama3]: Llama Team, AI @ Meta. (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
 
-[^llama-code]: Meta. (2024). llama-models: Llama 3 reference implementation. *GitHub*. [model.py](https://github.com/meta-llama/llama-models/blob/0e0b8c519242d5833d8c11bffc1232b77ad7f301/models/llama3/model.py).
+[^llama31-card]: Meta. (2024). Llama 3.1 Model Card. *llama-models*. [GitHub](https://github.com/meta-llama/llama-models/blob/0e0b8c519242d5833d8c11bffc1232b77ad7f301/models/llama3_1/MODEL_CARD.md).
 
 [^sardana]: Sardana, N., Portes, J., Doubov, S., & Frankle, J. (2024). Beyond Chinchilla-Optimal: Accounting for Inference in Language Model Scaling Laws. *ICML 2024*. [arXiv:2401.00448](https://arxiv.org/abs/2401.00448).
-
-[^llama31-card]: Meta. (2024). Llama 3.1 Model Card. *llama-models*. [GitHub](https://github.com/meta-llama/llama-models/blob/0e0b8c519242d5833d8c11bffc1232b77ad7f301/models/llama3_1/MODEL_CARD.md).
 
 [^chinchilla]: Hoffmann, J., Borgeaud, S., Mensch, A., et al. (2022). Training Compute-Optimal Large Language Models. *NeurIPS 2022*. [arXiv:2203.15556](https://arxiv.org/abs/2203.15556).
 
 [^r1]: Guo, D., et al. (2025). DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning. *Nature*, 645(8081), 633–638. [doi:10.1038/s41586-025-09422-z](https://doi.org/10.1038/s41586-025-09422-z).
 
-[^vllm-bench]: vLLM Project. (2026). Benchmark CLI. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/benchmarking/cli/).
-
 [^distserve]: Zhong, Y., Liu, S., Chen, J., Hu, J., Zhu, Y., Liu, X., Jin, X., & Zhang, H. (2024). DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving. *OSDI 2024*. [arXiv:2401.09670](https://arxiv.org/abs/2401.09670).
+
+[^h100]: NVIDIA. NVIDIA H100 GPU. *NVIDIA 제품 사양*. [nvidia.com](https://www.nvidia.com/en-us/data-center/h100/).
+
+[^hopper]: Andersch, M., Palmer, G., Krashinsky, R., Stam, N., Mehta, V., Brito, G., & Ramaswamy, S. (2022). NVIDIA Hopper Architecture In-Depth. *NVIDIA Technical Blog*. [developer.nvidia.com](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/).
+
+[^vllm-bench]: vLLM Project. (2026). Benchmark CLI. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/benchmarking/cli/).
 
 [^vllm-metrics]: vLLM Project. (2026). Metrics. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/metrics/).
 
-[^vllm-args]: vLLM Project. (2026). Engine Arguments. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/configuration/engine_args/).
-
 [^vllm-worker]: vLLM Project. (2026). gpu_worker.py. *GitHub*. [github.com](https://github.com/vllm-project/vllm/blob/db9527a46873454610df6dbedf79a36d6bf1a7f6/vllm/v1/worker/gpu_worker.py).
 
-[^vllm-opt]: vLLM Project. (2026). Optimization and Tuning. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/configuration/optimization/).
+[^vllm-args]: vLLM Project. (2026). Engine Arguments. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/configuration/engine_args/).
