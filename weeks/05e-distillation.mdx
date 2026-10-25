@@ -79,30 +79,29 @@ SeqKD만 쓴다면 teacher의 확률 분포 없이, teacher가 생성한 텍스�
 
 <Figure src={seqkdFig.src} alt="Kim과 Rush의 두 distillation 방식. 왼쪽 Word-Level Knowledge Distillation에서는 정답 문장 E C D의 위치마다, Student Network의 다음 단어 분포(노란 막대)가 점선으로 Teacher Network의 분포(노란 막대)와 Ground Truth의 one-hot(회색 칸)에 함께 연결된다. 오른쪽 Sequence-Level Knowledge Distillation에서는 Teacher Network가 빔 서치로 후보 문장 A C F, E C E, E F E C를 만들고, 가장 위의 A C F가 점선 화살표를 따라 Student Network의 학습 목표가 된다. Student는 A, C, F 위치마다 그 단어 하나에 확률을 둔 목표를 학습한다." caption="Word-level KD와 sequence-level KD." source="Kim & Rush (2016), Figure 1" />
 
-### 1-2. 추론 응답의 전달
+### 1-2. 응답 기반 distillation과 추론 모델
 
-이 노트에서는 LLM(large language model)에서 teacher가 생성한 응답 텍스트를 정답처럼 학습하는 방식을 **응답 기반 distillation**이라고 부른다.
-SeqKD의 발상을 이어받은 방식이다.
+LLM(large language model)에서는 SeqKD처럼 teacher가 생성한 응답 텍스트를 정답처럼 학습하는 방식이 널리 쓰인다.
+이 노트에서는 이를 **응답 기반 distillation**이라고 부른다.
 앞 주차 SFT(supervised fine-tuning)에서 본 Alpaca도 teacher가 만든 응답으로 학습한 모델이다.
-
-추론 모델에서는 빔 서치 출력 하나 대신 teacher가 샘플링한 long CoT(long chain of thought) 응답을 쓴다.
-DeepSeek-R1도 앞에서 본 RLVR(reinforcement learning with verifiable rewards)의 R1 파이프라인에서, RL을 거친 모델로 응답을 여러 개 생성해 정답만 남기는 rejection sampling으로 추론 distillation 데이터를 만들었다.
-Qwen2.5-32B base model을 이 데이터로 SFT만 해도,
-같은 base model에 R1-Zero 방식의 대규모 RL을 직접 한 것보다 수학·과학·코드 벤치마크 점수가 모두 높았다(AIME 2024의 $\mathrm{pass}@1$이 distillation 72.6%, 직접 RL 47.0%).[^r1]
-저자들은 강한 모델을 작은 모델로 distillation하면 결과가 좋은 반면, 작은 모델에 대규모 RL을 직접 돌리면 계산이 매우 많이 들고 그래도 distillation에 못 미칠 수 있다고 결론지었다.
-다만 인간 지능의 경계를 넘어서려면 더 강한 base model과 더 큰 규모의 RL이 여전히 필요할 수 있다고 덧붙였다.
-앞에서 본 Yue 등의 비교에서는 시도 횟수를 크게 늘리면 RLVR 모델이 base model에 뒤처졌지만,
-R1에서 distillation한 7B 모델은 한 수학 벤치마크에서 시도 횟수를 늘려도 계속 base model보다 많은 문제를 풀었다.[^yue]
-
-Teacher나 사람이 미리 만든 고정된 응답 위에서 student를 학습하는 방식을 **off-policy distillation**이라고 부른다.
+이처럼 teacher나 사람이 미리 만든 고정된 응답 위에서 student를 학습하는 방식을 **off-policy distillation**이라고 부른다.
 앞 주차 DPO(direct preference optimization)에서 본 off-policy의 정의대로, 학습 데이터를 만든 정책(teacher나 사람)과 학습되는 정책(student)이 다르기 때문이다.
 응답 기반 distillation도, word-level KD처럼 고정된 응답 위에서 teacher 분포를 맞추는 방식도 여기에 든다.
 
-Off-policy distillation의 효과는 데이터가 충분히 다룬 영역에 머물기 쉽다.
+추론 모델에서는 빔 서치 출력 하나 대신 teacher가 샘플링한 long CoT(long chain of thought) 응답을 쓴다.
+DeepSeek-R1의 distillation 데이터는 앞에서 본 RLVR(reinforcement learning with verifiable rewards) 파이프라인의 셋째 단계 SFT 데이터와 같은 약 80만 개다.
+그중 추론 데이터 약 60만 개는 추론 RL을 마친 중간 checkpoint로 응답을 여러 개 생성해 정답만 남기는 rejection sampling으로 만들었다.
+Qwen2.5-32B base model을 이 데이터로 SFT만 해도,
+같은 base model에 R1-Zero 방식의 대규모 RL을 직접 한 것보다 수학·과학·코드 벤치마크 점수가 모두 높았다(AIME 2024의 $\mathrm{pass}@1$이 distillation 72.6%, 직접 RL 47.0%).[^r1]
+저자들은 강한 모델을 작은 모델로 distillation하면 결과가 좋은 반면, 작은 모델에 대규모 RL을 직접 돌리면 계산이 매우 많이 들고 그래도 distillation에 못 미칠 수 있다고 결론지었다.
+앞에서 본 Yue 등의 비교에서는 시도 횟수를 크게 늘리면 RLVR 모델이 base model에 뒤처졌지만,
+R1에서 distillation한 7B 모델은 한 수학 벤치마크에서 시도 횟수를 늘려도 계속 base model보다 많은 문제를 풀었다.
+저자들은 distillation이 teacher에게서 base model에 없던 추론 패턴을 들여온다고 해석했다.[^yue]
+
+Distillation의 효과는 학습 데이터가 충분히 다룬 영역에 머물기 쉽다.
 Gudibande 등은 ChatGPT의 출력으로 SFT한 모델이 문체는 닮았지만, 모방 데이터가 충분히 다루지 않은 task에서는 ChatGPT와의 격차가 거의 줄지 않았다고 보고했다.[^imitation]
-앞의 R1 결과도 이 범위 안에서 나온 것이다.
-R1의 distillation 데이터는 앞에서 본 R1 파이프라인의 셋째 단계 SFT 데이터와 같은 약 80만 개이고, 그 가운데 약 60만 개가 추론 데이터였다.
-Distillation 모델에 대해 보고한 결과도 수학·코드·과학 추론 벤치마크뿐이라, 다른 영역의 효과는 이 결과로 알 수 없다.[^r1]
+R1의 distillation 데이터도 4분의 3이 추론 데이터였고, distillation 모델에 대해 보고한 결과는 수학·코드·과학 추론 벤치마크뿐이다.
+그래서 다른 영역의 효과는 이 결과로 알 수 없다.[^r1]
 
 ### 1-3. 문맥 불일치와 감독 정보의 한계
 
