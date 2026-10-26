@@ -142,7 +142,7 @@ Decode만 하는 반복은 memory-bound라 연산 장치가 논다.
 LLaMA-13B를 A6000에서 조각 256토큰으로 돌린 실험에서, 이렇게 얹힌 decode 토큰 하나에 드는 시간은 decode만 하는 batch에서보다 최대 약 10배 짧았다.[^sarathi]
 
 후속 Sarathi-Serve는 이를 scheduler로 일반화했다.[^sarathi-serve]
-반복마다 처리할 토큰 수의 상한, 곧 토큰 예산을 SLO(service-level objective)에 맞춰 정하고,
+반복마다 처리할 토큰 수의 상한, 곧 토큰 예산을 SLO(service-level objective), 곧 서비스가 정해 둔 지연 목표에 맞춰 정하고,
 진행 중인 decode를 먼저 넣은 뒤 남는 예산만큼 prefill 조각을 채운다.
 이렇게 하면 긴 prefill이 진행 중인 decode의 반복 사이에 끼어 다음 토큰이 크게 늦어지는 일(generation stall)을 막는다.
 다만 함께 넣은 조각만큼 각 반복은 길어질 수 있다.
@@ -250,7 +250,7 @@ Attention은 KV head 단위로 나누므로, $t$가 KV head 수보다 크면 KV 
 
 <Callout type="example">
 Llama 3 8B를 H100 두 대로 서빙한다고 하자.
-메모리는 GPU 한 대일 때와 같이 GPU마다 쓸 수 있는 73.6 GB에서 가중치와 작업 공간(약 4 GB)을 빼서 계산한다.
+메모리는 GPU 한 대일 때와 같이 GPU마다 쓸 수 있는 73.6 GB에서 가중치와 workspace(약 4 GB)를 빼서 계산한다.
 복제본 두 개라면 GPU마다 KV cache에 약 53.5 GB, 합해서 약 107 GB가 남고, 문맥 2,048토큰인 batch 1의 decode 스텝 하한은 GPU 한 대일 때와 같은 약 4.9 ms다.
 TP=2라면 GPU마다 가중치가 8 GB만 차지해, KV cache에 약 61.6 GB, 합해서 약 123 GB가 남는다.
 GPU마다 읽는 가중치와 KV cache가 절반이라, 통신을 빼면 스텝 하한이 약 2.4 ms로 준다.

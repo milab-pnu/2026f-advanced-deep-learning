@@ -6,48 +6,22 @@ order: 0
 
 지금까지는 LLM(large language model)을 학습하는 과정을 공부하였다.
 지금부터는 실제로 사용하는 단계인 inference에 대해 공부한다.
-학습 비용은 만들 때 한 번 들지만 inference 비용은 쓰이는 동안 계속 든다.
+Reasoning model의 긴 CoT(chain of thought)나 agent처럼 요청 하나가 처리하는 토큰도 늘고 있어
+inference 시 비용 효율화는 더욱 요구된다.[^r1]
 
-Inference의 비용을 계산량, 메모리 접근, 메모리 사용량으로 나누었다.[^survey]
-기준 모델은 지금까지 써 온 Llama 3 8B(층 수 $L=32$, query head 32개, KV(key-value) head 8개, head 차원 $d_h=128$, 최대 토큰 수 128K)다.[^llama3]
+Inference 비용은 다음 세 가지로 나누어 접근한다.[^survey]
 
-## 1. Inference 비용이 커지는 이유
+- **Computational cost**: 계산 자체의 양으로, FLOPs(floating-point operations)로 센다.
+- **Memory access cost**: 가중치나 KV cache 같은 데이터를 메모리에서 연산 장치로 읽어 오고 결과를 다시 쓰는 데 드는 비용이다.
+- **Memory usage**: 가중치와 KV cache 등이 GPU(graphics processing unit) 메모리를 차지하는 양이다.
 
-### 1-1. 학습 비용과 inference 비용
+Computational cost와 memory access cost는 생성의 두 단계가 각각 어디에 막히는지로, memory usage는 GPU 메모리에 무엇이 얼마나 들어가는지로 다룬다.
+기준 모델은 지금까지 써 온 Llama 3 8B(층 수 $L=32$, query head 32개, KV(key-value) head 8개, head 차원 $d_h=128$, 최대 문맥 128K 토큰)다.[^llama3]
 
-Chinchilla 연구는 **학습 compute 예산**이 정해졌을 때 loss를 가장 낮추는 모델 크기와 토큰 수를 찾았다.
-이 기준에는 학습이 끝난 뒤 그 모델을 얼마나 쓸지가 들어 있지 않다.
+## 1. Prefill과 decode
 
-파라미터 $N$개인 모델의 forward는 토큰당 약 $2N$ FLOPs(floating-point operations)이고, backward까지 더한 학습은 약 $6N$ FLOPs다.
-그래서 $D_{\text{tr}}$ 토큰으로 학습하는 데는 약 $6ND_{\text{tr}}$ FLOPs가,
-학습 뒤 $D_{\text{inf}}$ 토큰(입력과 출력의 합)을 처리하는 데는 forward만 하므로 약 $2ND_{\text{inf}}$ FLOPs가 든다.
+### 1-1. Autoregressive 생성
 
-<Callout type="example">
-두 식이 같아지는 지점은 $6ND_{\text{tr}}=2ND_{\text{inf}}$, 곧 $D_{\text{inf}}=3D_{\text{tr}}$이다.
-모델 크기와 상관없이, inference로 처리한 토큰이 학습 토큰의 세 배를 넘으면 inference 계산이 학습 계산보다 커진다.
-약 15조 토큰으로 학습한 Llama 3 8B라면 그 지점이 약 45조 토큰이다.[^llama31-card]
-하루 처리량이 10억 토큰이면 45,000일, 1조 토큰이면 45일 만에 이 지점에 이른다.
-</Callout>
-
-Sardana 등은 이 두 비용의 합을 최소화하도록 Chinchilla의 계산을 다시 했다.
-요청이 약 10억 건 이상 예상되면 compute-optimal보다 **작은 모델을 더 오래 학습**하는 편이 전체 비용에서 유리했다.[^sardana]
-Llama 3의 작은 모델도 이런 선택을 했다.[^llama3]
-파라미터당 학습 토큰은 Chinchilla 70B가 20개(1.4조 토큰),[^chinchilla]
-Llama 3 8B가 약 1,900개(약 15조 토큰)로 90배 넘게 많다.
-
-### 1-2. 늘어나는 생성 길이
-
-Inference가 다루는 토큰의 양도 늘고 있다.
-추론 모델(reasoning model)은 답을 내기 전에 수천 토큰에 이르는 long CoT(long chain of thought)를 생성한다.[^r1]
-정확도를 높이려고 self-consistency처럼 같은 문제에 응답을 여러 개 뽑아 다수결로 답을 고르기도 한다.
-도구 결과를 받을 때마다 문맥 뒤에 붙여 다음 행동을 생성하는 agent는,
-기록을 요약하거나 잘라 내지 않는 한 턴이 이어질수록 문맥이 길어진다.
-요청 하나가 처리하는 토큰이 많아지면 앞의 $D_{\text{inf}}$가 그만큼 빨리 쌓인다.
-게다가 문맥이 길수록 새 토큰 하나가 attention에서 읽을 과거 key·value가 많아 토큰당 비용도 커진다.
-
-### 1-3. 순차 생성의 비효율
-
-토큰 수만이 문제는 아니다.
 학습은 teacher forcing으로 정답 문장을 입력에 넣고 causal mask로 각 위치가 자기와 왼쪽만 보게 하므로,
 길이 $n$인 시퀀스의 모든 위치를 한 번의 forward로 처리하고 각 위치의 loss를 병렬로 구한다.
 생성은 정답 문장이 없으니 그럴 수 없다.
@@ -59,18 +33,12 @@ x_{n+2}\sim p_\theta(\cdot\mid x_{1:n+1}),\qquad\dots
 $$
 
 $p_\theta$는 파라미터가 $\theta$인 모델이 앞 토큰들을 보고 내놓는 다음 토큰 분포다.
+이렇게 앞 토큰들을 조건으로 한 토큰씩 차례로 생성하는 방식을 autoregressive 생성이라 한다.
 토큰을 하나씩 생성하므로 출력 토큰 $m$개를 만들려면 모델 전체를 $m$번 차례로 실행해야 한다.
-KV cache가 앞 토큰들의 key·value를 저장해 두므로, 첫 forward 뒤로는 매번 새 토큰 하나만 넣는 forward가 된다.
-GPU는 큰 행렬곱을 한꺼번에 처리할 때 효율이 높은데,
-토큰 하나짜리 forward는 행렬곱이 작아 그 능력을 다 쓰지 못한다.
-그래서 한 번에 묶어 처리하는 요청이 적으면, 같은 FLOPs라도 생성은 학습보다 GPU 시간이 더 들기 쉽다.
-앞에서 구한 "inference가 학습을 넘어서는 지점"도 GPU 시간으로 따지면 그만큼 더 일찍 온다.[^sardana]
+이때 앞 토큰들의 key·value를 매번 다시 계산하지 않도록 저장해 두는 것이 KV cache다.
+KV cache를 쓰면 생성 요청은 성격이 다른 두 단계, prefill과 decode로 나뉜다.[^survey]
 
-## 2. Prefill과 decode
-
-### 2-1. 두 단계의 역할
-
-KV cache를 쓰는 생성 요청은 성격이 다른 두 단계, prefill과 decode로 나뉜다.[^survey]
+### 1-2. 두 단계의 역할
 
 **Prefill.** 프롬프트의 토큰 $n$개를 한 번의 forward로 함께 처리해 모든 층의 key·value를 KV cache에 쓰고, 첫 출력 토큰을 고른다.
 $n$개 토큰이 함께 계산되므로 학습의 forward처럼 큰 행렬곱이 된다.
@@ -78,6 +46,91 @@ $n$개 토큰이 함께 계산되므로 학습의 forward처럼 큰 행렬곱이
 **Decode.** 그다음부터는 직전에 고른 토큰 하나만 입력해 다음 토큰을 고른다.
 스텝마다 새 토큰의 key·value를 cache 뒤에 붙이고, cache 전체를 읽어 attention을 계산한다.
 이 과정을 종료 토큰이 나오거나 최대 길이에 이를 때까지 반복한다.
+
+<figure>
+<svg viewBox="0 0 600 300" role="img" aria-label="KV cache를 쓰는 생성 과정을 12초마다 반복하는 애니메이션. Prefill에서는 프롬프트 토큰 The, cat, sat, on 네 개가 함께 Transformer를 한 번 지나고, 네 토큰의 key·value가 KV cache 네 칸에 한꺼번에 저장된 뒤, 다음 위치에 첫 출력 토큰 the가 나온다. Decode 1에서는 the 하나만 Transformer에 들어가 key·value 다섯째 칸을 덧붙이고, 자기 칸을 포함한 cache 다섯 칸을 모두 읽은 뒤 다음 위치에 mat를 낸다. Decode 2에서는 mat 하나만 들어가 여섯째 칸을 덧붙이고 cache 여섯 칸을 읽은 뒤 마침표를 낸다. 마지막에는 종료 토큰이 나올 때까지 이를 반복하며 cache가 토큰마다 한 칸씩 길어진다고 적힌다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <defs>
+    <marker id="kvanim-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/></marker>
+    <marker id="kvanim-read" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#ea580c"/></marker>
+    <marker id="kvanim-out" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8"/></marker>
+  </defs>
+  <g><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.3333;1" values="1;0;0"/>
+    <text x="300" y="24" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Prefill: 프롬프트 네 토큰을 forward 한 번에</text>
+    <text x="300" y="46" font-size="13" text-anchor="middle" fill="#64748b">네 토큰의 key·value를 한꺼번에 계산해 KV cache에 쓰고, 첫 토큰을 낸다</text>
+  </g>
+  <g><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.3333;0.5833;1" values="0;1;0;0"/>
+    <text x="300" y="24" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Decode 1: 직전 토큰 하나만 forward</text>
+    <text x="300" y="46" font-size="13" text-anchor="middle" fill="#64748b">새 key·value 한 칸을 덧붙이고, cache 5칸 전체를 읽어 attention한다</text>
+  </g>
+  <g><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.5833;0.8333;1" values="0;1;0;0"/>
+    <text x="300" y="24" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Decode 2: 직전 토큰 하나만 forward</text>
+    <text x="300" y="46" font-size="13" text-anchor="middle" fill="#64748b">새 key·value 한 칸을 덧붙이고, cache 6칸 전체를 읽어 attention한다</text>
+  </g>
+  <g><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.8333;1" values="0;1;1"/>
+    <text x="300" y="24" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">종료 토큰이 나올 때까지 decode를 반복</text>
+    <text x="300" y="46" font-size="13" text-anchor="middle" fill="#64748b">KV cache는 토큰마다 한 칸씩 길어진다</text>
+  </g>
+  <text x="14" y="90" font-size="13" fill="#64748b">토큰</text>
+  <text x="14" y="220" font-size="13" fill="#64748b">KV cache</text>
+  <g><rect x="93" y="70" width="54" height="30" rx="4" fill="#e2e8f0" stroke="#0f172a"/><text x="120" y="90" font-size="14" text-anchor="middle" fill="#0f172a">The</text></g>
+  <g><rect x="157" y="70" width="54" height="30" rx="4" fill="#e2e8f0" stroke="#0f172a"/><text x="184" y="90" font-size="14" text-anchor="middle" fill="#0f172a">cat</text></g>
+  <g><rect x="221" y="70" width="54" height="30" rx="4" fill="#e2e8f0" stroke="#0f172a"/><text x="248" y="90" font-size="14" text-anchor="middle" fill="#0f172a">sat</text></g>
+  <g><rect x="285" y="70" width="54" height="30" rx="4" fill="#e2e8f0" stroke="#0f172a"/><text x="312" y="90" font-size="14" text-anchor="middle" fill="#0f172a">on</text></g>
+  <g><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.2583;1" values="0;1;1"/><rect x="349" y="70" width="54" height="30" rx="4" fill="#dbeafe" stroke="#1d4ed8"/><text x="376" y="90" font-size="14" text-anchor="middle" fill="#1e3a8a">the</text></g>
+  <g><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.5083;1" values="0;1;1"/><rect x="413" y="70" width="54" height="30" rx="4" fill="#dbeafe" stroke="#1d4ed8"/><text x="440" y="90" font-size="14" text-anchor="middle" fill="#1e3a8a">mat</text></g>
+  <g><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.7583;1" values="0;1;1"/><rect x="477" y="70" width="54" height="30" rx="4" fill="#dbeafe" stroke="#1d4ed8"/><text x="504" y="90" font-size="14" text-anchor="middle" fill="#1e3a8a">.</text></g>
+  <line x1="112" y1="101" x2="112" y2="127" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvanim-arrow)"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.0833;0.3000;1" values="0;1;0;0"/></line>
+  <line x1="176" y1="101" x2="176" y2="127" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvanim-arrow)"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.0833;0.3000;1" values="0;1;0;0"/></line>
+  <line x1="240" y1="101" x2="240" y2="127" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvanim-arrow)"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.0833;0.3000;1" values="0;1;0;0"/></line>
+  <line x1="304" y1="101" x2="304" y2="127" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvanim-arrow)"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.0833;0.3000;1" values="0;1;0;0"/></line>
+  <line x1="368" y1="101" x2="368" y2="127" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvanim-arrow)"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.3500;0.5500;1" values="0;1;0;0"/></line>
+  <line x1="432" y1="101" x2="432" y2="127" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvanim-arrow)"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.6000;0.8000;1" values="0;1;0;0"/></line>
+  <line x1="384" y1="129" x2="384" y2="103" stroke="#1d4ed8" stroke-width="2" marker-end="url(#kvanim-out)"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.2417;0.3167;1" values="0;1;0;0"/></line>
+  <line x1="448" y1="129" x2="448" y2="103" stroke="#1d4ed8" stroke-width="2" marker-end="url(#kvanim-out)"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.4917;0.5667;1" values="0;1;0;0"/></line>
+  <line x1="512" y1="129" x2="512" y2="103" stroke="#1d4ed8" stroke-width="2" marker-end="url(#kvanim-out)"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.7417;0.8167;1" values="0;1;0;0"/></line>
+  <rect x="90" y="130" width="444" height="40" rx="6" fill="#ffffff" stroke="#0f172a"/>
+  <rect x="90" y="130" width="444" height="40" rx="6" fill="#fde68a" stroke="#0f172a"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.1083;0.2750;1" values="0;1;0;0"/></rect>
+  <rect x="90" y="130" width="444" height="40" rx="6" fill="#fde68a" stroke="#0f172a"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.3667;0.5250;1" values="0;1;0;0"/></rect>
+  <rect x="90" y="130" width="444" height="40" rx="6" fill="#fde68a" stroke="#0f172a"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.6167;0.7750;1" values="0;1;0;0"/></rect>
+  <text x="312" y="155" font-size="14" text-anchor="middle" fill="#0f172a">Transformer (모든 층)</text>
+  <line x1="120" y1="171" x2="120" y2="197" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvanim-arrow)"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.1667;0.2500;1" values="0;1;0;0"/></line>
+  <line x1="184" y1="171" x2="184" y2="197" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvanim-arrow)"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.1667;0.2500;1" values="0;1;0;0"/></line>
+  <line x1="248" y1="171" x2="248" y2="197" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvanim-arrow)"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.1667;0.2500;1" values="0;1;0;0"/></line>
+  <line x1="312" y1="171" x2="312" y2="197" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvanim-arrow)"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.1667;0.2500;1" values="0;1;0;0"/></line>
+  <line x1="376" y1="171" x2="376" y2="197" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvanim-arrow)"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.3917;0.4583;1" values="0;1;0;0"/></line>
+  <line x1="440" y1="171" x2="440" y2="197" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvanim-arrow)"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.6417;0.7083;1" values="0;1;0;0"/></line>
+  <rect x="93" y="200" width="54" height="30" rx="4" fill="#bbf7d0" stroke="#15803d"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.1833;1" values="0;1;1"/></rect>
+  <rect x="157" y="200" width="54" height="30" rx="4" fill="#bbf7d0" stroke="#15803d"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.1833;1" values="0;1;1"/></rect>
+  <rect x="221" y="200" width="54" height="30" rx="4" fill="#bbf7d0" stroke="#15803d"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.1833;1" values="0;1;1"/></rect>
+  <rect x="285" y="200" width="54" height="30" rx="4" fill="#bbf7d0" stroke="#15803d"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.1833;1" values="0;1;1"/></rect>
+  <rect x="349" y="200" width="54" height="30" rx="4" fill="#bbf7d0" stroke="#15803d"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.4083;1" values="0;1;1"/></rect>
+  <rect x="413" y="200" width="54" height="30" rx="4" fill="#bbf7d0" stroke="#15803d"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.6583;1" values="0;1;1"/></rect>
+  <g><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.4417;0.5250;1" values="0;1;0;0"/>
+    <rect x="91" y="198" width="58" height="34" rx="5" fill="none" stroke="#ea580c" stroke-width="3"/>
+    <rect x="155" y="198" width="58" height="34" rx="5" fill="none" stroke="#ea580c" stroke-width="3"/>
+    <rect x="219" y="198" width="58" height="34" rx="5" fill="none" stroke="#ea580c" stroke-width="3"/>
+    <rect x="283" y="198" width="58" height="34" rx="5" fill="none" stroke="#ea580c" stroke-width="3"/>
+    <rect x="347" y="198" width="58" height="34" rx="5" fill="none" stroke="#ea580c" stroke-width="3"/>
+    <line x1="248" y1="197" x2="248" y2="173" stroke="#ea580c" stroke-width="2" marker-end="url(#kvanim-read)"/>
+    <text x="248" y="250" font-size="13" text-anchor="middle" fill="#c2410c">cache 5칸 읽기</text>
+  </g>
+  <g><animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.6917;0.7750;1" values="0;1;0;0"/>
+    <rect x="91" y="198" width="58" height="34" rx="5" fill="none" stroke="#ea580c" stroke-width="3"/>
+    <rect x="155" y="198" width="58" height="34" rx="5" fill="none" stroke="#ea580c" stroke-width="3"/>
+    <rect x="219" y="198" width="58" height="34" rx="5" fill="none" stroke="#ea580c" stroke-width="3"/>
+    <rect x="283" y="198" width="58" height="34" rx="5" fill="none" stroke="#ea580c" stroke-width="3"/>
+    <rect x="347" y="198" width="58" height="34" rx="5" fill="none" stroke="#ea580c" stroke-width="3"/>
+    <rect x="411" y="198" width="58" height="34" rx="5" fill="none" stroke="#ea580c" stroke-width="3"/>
+    <line x1="280" y1="197" x2="280" y2="173" stroke="#ea580c" stroke-width="2" marker-end="url(#kvanim-read)"/>
+    <text x="280" y="250" font-size="13" text-anchor="middle" fill="#c2410c">cache 6칸 읽기</text>
+  </g>
+  <rect x="24" y="274" width="16" height="16" rx="3" fill="#e2e8f0" stroke="#0f172a"/><text x="46" y="287" font-size="13" fill="#0f172a">프롬프트 토큰</text>
+  <rect x="148" y="274" width="16" height="16" rx="3" fill="#dbeafe" stroke="#1d4ed8"/><text x="170" y="287" font-size="13" fill="#0f172a">생성된 토큰</text>
+  <rect x="262" y="274" width="16" height="16" rx="3" fill="#bbf7d0" stroke="#15803d"/><text x="284" y="287" font-size="13" fill="#0f172a">저장된 key·value</text>
+  <rect x="404" y="274" width="16" height="16" rx="3" fill="none" stroke="#ea580c" stroke-width="3"/><text x="426" y="287" font-size="13" fill="#0f172a">이번 스텝에 읽는 cache</text>
+</svg>
+<figcaption>KV cache를 쓰는 생성 과정(12초마다 반복). Prefill은 프롬프트 네 토큰을 forward 한 번에 처리해 KV cache 네 칸을 한꺼번에 채우고, 다음 위치에 첫 토큰을 낸다. Decode는 스텝마다 직전 토큰 하나만 넣어 그 토큰의 key·value 한 칸을 덧붙이고, 주황으로 표시한 cache 전체를 읽어 attention을 계산한 뒤 다음 토큰을 낸다. 칸 하나에는 실제로 모든 층의 key·value가 들어간다.</figcaption>
+</figure>
 
 <Callout type="example">
 입력 1,000토큰에 출력 200토큰인 요청을 생각하자.
@@ -88,7 +141,7 @@ forward 횟수로는 1 대 199로 decode가 거의 전부다.
 토큰 하나에 드는 계산은 두 단계가 비슷하지만, forward 한 번에 담긴 일의 양은 크게 다르다.
 </Callout>
 
-### 2-2. 단계마다 다른 병목
+## 2. 단계마다 다른 병목
 
 GPU에서 계산하려면 데이터를 칩 바깥의 HBM(high-bandwidth memory)에서 칩 안의 연산 장치로 읽어 와야 한다.
 칩 안의 SRAM(static random-access memory)은 작아서 8B 모델의 가중치를 담아 둘 수 없다.
@@ -106,7 +159,7 @@ Decode는 같은 가중치를 다 읽어 와서 토큰 하나에만 쓴다.
 Llama 3 8B의 BF16(bfloat16) 가중치는 약 16 GB다.
 H100 SXM은 HBM에서 초당 3.35 TB를 읽고, BF16 행렬곱을 초당 약 $989\times10^{12}$ FLOPs(989 TFLOP/s, sparsity를 쓰지 않는 dense 연산 기준)까지 계산한다.[^h100][^hopper]
 가중치를 한 번 읽는 데는 $16\ \text{GB}/3.35\ \text{TB/s}\approx4.8$ ms가 걸린다.
-토큰 하나의 forward 계산량은 $2N\approx16$ GFLOPs($N\approx8.03\times10^9$)이므로, 계산은 $16\ \text{GFLOPs}/989\ \text{TFLOP/s}\approx0.016$ ms면 끝난다.
+토큰 하나의 forward는 파라미터마다 곱셈과 덧셈을 한 번씩 하므로 계산량이 약 $2N\approx16$ GFLOPs(파라미터 수 $N\approx8.03\times10^9$)이고, 계산은 $16\ \text{GFLOPs}/989\ \text{TFLOP/s}\approx0.016$ ms면 끝난다.
 Decode 한 스텝은 읽는 데 4.8 ms, 계산하는 데 0.016 ms라서 연산 장치는 시간의 99% 이상을 기다린다.
 1,000토큰을 prefill하면 계산이 1,000배인 16 ms로 늘지만 가중치는 여전히 한 번만 읽으므로, 이번에는 계산이 더 오래 걸린다.
 두 시간이 같아지는 것은 토큰 약 300개를 함께 처리할 때다.
@@ -173,16 +226,91 @@ Decode 한 스텝은 읽는 데 4.8 ms, 계산하는 데 0.016 ms라서 연산 �
 <figcaption>H100 SXM에서 Llama 3 8B의 forward 한 번. 두 단계 모두 HBM에서 가중치 16 GB를 한 번 읽지만, prefill은 그 가중치로 토큰 1,000개를 함께 계산하고 decode는 토큰 하나만 계산한다. 연산 장치 안의 칸은 토큰 수를 나타내는 표시일 뿐 실제 개수가 아니다. 아래 막대는 앞 예시의 계산값을 같은 축척으로 그린 것이며, attention 계산과 KV cache를 읽고 쓰는 시간은 뺐다.</figcaption>
 </figure>
 
-여러 요청의 decode 스텝을 한 forward로 묶는 **batching**을 하면, 한 번 읽은 가중치를 여러 토큰에 쓸 수 있어 연산 장치가 기다리는 시간이 줄어든다.
-다만 요청마다 KV cache는 따로 읽어야 하므로 묶은 수만큼 읽는 양도 함께 는다.
-
 같은 모델, 같은 요청 안에서도 병목이 단계마다 다르다는 점이 inference 최적화의 출발점이다.
 그래서 prefill에는 계산을 줄이거나 여러 GPU에 나누는 방법이,
 decode에는 읽어 올 데이터를 줄이거나 한 번 읽은 가중치를 여러 토큰에 함께 쓰는 방법이 주로 효과를 낸다.
 
-## 3. 성능 지표
+Decode에서 가중치를 여러 토큰에 함께 쓰는 대표적인 방법은 여러 요청의 decode 스텝을 한 forward로 묶는 **batching**이다.
+가중치를 한 번 읽어 여러 요청의 토큰을 계산하므로 연산 장치가 기다리는 시간이 줄어든다.
+다만 요청마다 KV cache는 따로 읽어야 하므로 묶은 수만큼 읽는 양도 함께 는다.
 
-### 3-1. 요청 하나의 지연
+## 3. Memory usage
+
+Batching으로 묶은 요청은 저마다 KV cache를 GPU 메모리에 두어야 한다.
+그래서 얼마나 많이 묶을 수 있는지는 메모리가 정한다.
+KV cache에 쓸 수 있는 공간은 엔진이 쓰도록 잡아 둔 GPU 메모리에서 가중치, activation, workspace(계산 중에 잠시 쓰는 버퍼)를 빼고 남은 만큼이다.
+Llama 3 8B를 GPU 한 대에 올려 그 숫자를 계산해 보자.
+
+### 3-1. 가중치
+
+가중치 메모리는 파라미터 수에 원소당 바이트 수를 곱한 값이다.
+Embedding까지 포함한 Llama 3 8B의 파라미터는 약 8.03B개이고, BF16은 원소당 2 bytes이므로 가중치는 약 16.1 GB다.
+학습과 달리 gradient나 optimizer 상태가 없으므로 이 값이 모델 상태의 전부이고, 요청 수나 문맥 길이와 상관없이 고정이다.
+
+이 값을 줄이는 방향은 두 가지다.
+하나는 원소당 바이트 수를 줄이는 양자화(quantization)다.
+모든 가중치를 4-bit 정수(INT4)로 둔다고 단순화하면 약 4 GB가 된다.
+다른 하나는 pruning, low-rank factorization, distillation처럼 파라미터 수 자체를 줄이는 압축이다.
+
+### 3-2. KV cache
+
+Llama 3 8B처럼 모든 층이 전체 문맥에 attention하는 모델에서 KV cache는 층마다, KV head마다, 지금까지의 모든 토큰에 대해 key와 value 벡터를 하나씩 저장한다.
+토큰 하나에 저장하는 원소 수에 원소당 바이트 수 $b$를 곱하면 토큰당 크기가 나온다($n_{kv}$는 KV head 수).
+
+$$
+\frac{\text{KV cache}}{\text{토큰}}
+=\underbrace{2}_{K,\,V}\cdot L\cdot n_{kv}\cdot d_h\cdot b
+=2\cdot32\cdot8\cdot128\cdot2\ \text{bytes}
+=131{,}072\ \text{bytes}=128\ \text{KiB}
+$$
+
+KiB(kibibyte)는 $2^{10}$ bytes, GiB(gibibyte)는 $2^{30}$ bytes로, $10^{9}$ bytes인 GB와 다르다.
+
+요청 하나의 KV cache는 이 값에 그 요청의 길이(입력과 지금까지의 출력 토큰 수의 합)를 곱한 만큼으로 잡는다.
+요청끼리 공유하는 부분이 없다면 서버 전체의 KV cache는 동시에 처리 중인 요청 길이의 합에 비례한다.
+
+| 상황 | KV cache | 가중치(BF16, 16.1 GB) 대비 |
+|---|---|---|
+| 8,192토큰 요청 1개 | 1 GiB (1.07 GB) | 약 0.07배 |
+| 131,072토큰 요청 1개 | 16 GiB (17.2 GB) | 약 1.07배 |
+| 8,192토큰 요청 32개 | 32 GiB (34.4 GB) | 약 2.1배 |
+
+최대 문맥인 128K(131,072)토큰을 채운 요청 하나만으로도 KV cache가 가중치만큼 커지고,
+요청을 많이 묶으면 가중치를 쉽게 넘어선다.
+그나마 Llama 3 8B는 query head 네 개가 KV head 하나를 함께 쓰는 GQA(grouped-query attention)다.
+Query head마다 KV head를 따로 두는 MHA(multi-head attention)였다면 토큰당 512 KiB로 이 표의 네 배였다.
+
+### 3-3. 동시에 처리할 수 있는 요청 수
+
+가중치와 KV cache 말고도 실행 중의 activation과 workspace가 필요하다.
+학습과 달리 backward가 없어 층의 중간 결과를 다음 층으로 넘기면 버릴 수 있으므로 activation의 비중은 작다.
+vLLM 같은 서빙 엔진은 시작할 때 더미 입력으로 forward를 한 번 돌려(profile run) activation 메모리의 peak를 재고, 가중치와 그만큼을 뺀 나머지를 KV cache 공간으로 잡는다.[^vllm-worker]
+
+<Callout type="example">
+메모리 80 GB인 H100 SXM 한 대에 vLLM을 띄운다.
+vLLM은 기본적으로 GPU 메모리의 92%를 쓰므로 사용할 수 있는 공간은 약 73.6 GB다.[^vllm-args]
+여기서 가중치 16.1 GB와 실행 중의 activation과 workspace 약 4 GB를 뺀다고 가정하면 KV cache에 약 53.5 GB가 남는다.
+토큰당 128 KiB이므로
+
+$$
+\frac{53.5\times10^{9}\ \text{bytes}}{131{,}072\ \text{bytes/토큰}}\approx408{,}000\ \text{토큰}
+$$
+
+이다.
+요청마다 8,192토큰까지 자란다면 동시에 49개, 131,072토큰까지 자란다면 3개만 들어간다.
+</Callout>
+
+이 계산에서 세 가지를 읽을 수 있다.
+첫째, 이 설정에서 GPU 한 대가 동시에 처리할 수 있는 요청 수의 상한은 **KV cache가 들어갈 공간**이 정한다.
+연산이 포화되기 전까지는 요청을 많이 묶을수록 처리량이 오르므로, 처리량의 상한도 이 공간에 묶인다.
+둘째, 요청이 최종적으로 몇 토큰까지 자랄지는 생성이 끝나기 전에는 알 수 없다.
+요청마다 최대 길이만큼 공간을 미리 잡아 두면 실제로 짧게 끝나는 요청의 몫이 낭비되고,
+너무 적게 잡으면 생성 도중 공간이 모자란다.
+셋째, prefix를 공유하지 않으면 같은 시스템 프롬프트를 가진 요청들이 그 부분의 KV cache를 따로따로 저장하는 낭비도 생긴다.
+
+## 4. 성능 지표
+
+### 4-1. 요청 하나의 지연
 
 사용자는 응답이 스트리밍될 때 두 가지를 체감한다.
 첫 글자가 뜨기까지의 대기와, 그 뒤 글자가 흘러나오는 속도다.
@@ -238,7 +366,11 @@ decode에는 읽어 올 데이터를 줄이거나 한 번 읽은 가중치를 �
 토큰이 하나씩 도착하면 한 요청의 TPOT는 그 요청 ITL들의 평균과 같다.
 TPOT는 요청마다 평균 속도 하나를, ITL은 간격 하나하나의 분포를 보여 준다는 점이 다르다.
 
-### 3-2. 서버 전체의 처리량
+지연 지표는 평균만으로 보지 않는다.
+같은 서버에서도 입력 길이, 도착 시점, 앞선 요청이 자원을 얼마나 오래 쓰는지에 따라 요청마다 지연이 크게 다르고, 부하가 높을수록 이 차이가 커진다.
+그래서 중앙값(p50)과 함께 p90·p99 같은 tail percentile을 본다.
+
+### 4-2. 서버 전체의 처리량
 
 서비스를 운영하는 쪽은 서버가 단위 시간에 얼마나 많은 일을 하는지, 곧 처리량(throughput)을 본다.
 **Output token throughput**은 측정 시간 동안 생성한 출력 토큰 수를 시간으로 나눈 값이고,
@@ -255,40 +387,10 @@ TPOT는 요청마다 평균 속도 하나를, ITL은 간격 하나하나의 분�
 </Callout>
 
 처리량과 지연은 대체로 한쪽을 얻으면 다른 쪽을 내주는 관계다.
-함께 decode하는 요청(앞 예에서 약 30개)을 늘리면 한 번 읽은 가중치를 여러 요청에 쓰므로 처리량이 오른다.
-대신 decode 한 스텝이 길어진다.
-요청마다 KV cache를 따로 읽어야 하고, 묶은 토큰이 많아지면 계산도 한계에 가까워지기 때문이다.
-스텝이 길어지면 요청 하나의 TPOT도 길어진다.
+함께 decode하는 요청을 늘리면 처리량은 오르지만,
+요청마다 KV cache를 따로 읽고 계산도 늘어 decode 한 스텝, 곧 요청 하나의 TPOT가 길어진다.
 
-### 3-3. SLO와 goodput
-
-처리량만 보면 요청을 많이 묶어 지연이 나빠져도 숫자는 오히려 좋아질 수 있다.
-그래서 서비스는 지연의 목표치,
-곧 <strong>SLO(service-level objective)</strong>를 정해 두고 그 목표를 지킨 처리량을 본다.
-대화형 서비스라면 "TTFT 1초 이하, TPOT 50 ms 이하"처럼 두 단계에 각각 목표를 둘 수 있다.
-
-지연 지표는 평균만으로 보지 않는다.
-같은 서버에서도 요청마다 TTFT가 크게 다르기 때문이다.
-입력 길이가 요청마다 다르고, 언제 들어왔는지와 앞선 요청들이 자원을 얼마나 오래 쓰는지에 따라 기다리는 시간도 달라진다.
-부하가 높을수록 이 차이가 커진다.
-그래서 중앙값(p50)과 함께 p90·p99 같은 꼬리 백분위수를 보고,
-SLO도 "요청의 90%가 TTFT 1초 이하"처럼 백분위수로 정할 수 있다.
-
-LLM 서빙 시스템 DistServe를 제안한 Zhong 등은 SLO를 지키며 처리할 수 있는 요청률을 **goodput**이라 부르고 서빙의 최적화 목표로 삼았다.
-TTFT·TPOT 목표를 모두 지킨 요청의 비율을 SLO 달성률이라 하면,
-goodput은 SLO 달성률이 목표치(예: 90%) 이상으로 유지되는 최대 요청률이다.
-GPU를 여러 대 쓰는 시스템끼리 비교하려고 이 값을 GPU 수로 나눠 한 대당으로 나타낸다.[^distserve]
-
-<Callout type="example">
-다음은 교육용으로 만든 수치다.
-TTFT 1초·TPOT 50 ms라는 앞의 SLO를 두고 GPU 한 대에 보내는 요청률을 바꿔 가며 측정했다고 하자.
-초당 4건에서는 요청의 97%가, 초당 5건에서는 92%가 두 목표를 모두 지켰고,
-초당 6건에서는 대기열이 쌓여 TTFT가 늘면서 81%로 떨어졌다.
-90% 목표라면 시험한 요청률 가운데 goodput은 초당 5건이다.
-초당 6건을 보내면 받는 요청은 늘지만 다섯 건 중 한 건 가까이는 사용자에게 너무 늦다.
-</Callout>
-
-### 3-4. 서버 내부 지표
+### 4-3. 서버 내부 지표
 
 지연과 처리량이 결과라면, 그 원인을 보여 주는 서버 내부의 상태가 있다.
 vLLM 같은 서빙 엔진은 다음 값을 지표나 로그로 보여 준다.[^vllm-metrics]
@@ -299,98 +401,15 @@ vLLM 같은 서빙 엔진은 다음 값을 지표나 로그로 보여 준다.[^v
 | Prefix cache 적중률 | 새 요청의 프롬프트 토큰 가운데 다시 계산하지 않고 이전 요청의 KV cache를 재사용한 비율. 시스템 프롬프트처럼 앞부분(prefix)이 같은 요청이 많을수록 높고, 높을수록 prefill 계산이 준다 |
 | 실행·대기 요청 수 | 대기 요청이 쌓이면 TTFT가 길어진다 |
 
-예를 들어 TTFT의 꼬리가 길어졌는데 KV cache 사용률이 1 근처이고 대기 요청이 쌓여 있다면,
+예를 들어 TTFT의 p99가 길어졌는데 KV cache 사용률이 1 근처이고 대기 요청이 쌓여 있다면,
 계산이 느려서라기보다 KV cache 공간이 모자라 새 요청이 들어가지 못하는 상황을 먼저 의심할 수 있다.
-
-## 4. 메모리 예산
-
-앞에서 KV cache 공간이 모자라면 새 요청을 받지 못한다고 했다.
-그 공간은 엔진이 쓰도록 잡아 둔 GPU 메모리에서 가중치와 activation·작업 공간(계산 중에 잠시 쓰는 버퍼)을 빼고 남은 만큼이다.
-Llama 3 8B를 GPU 한 대에 올려 그 숫자를 계산해 보자.
-
-### 4-1. 가중치
-
-가중치 메모리는 파라미터 수에 원소당 바이트 수를 곱한 값이다.
-공식 설정으로 세면 embedding까지 포함한 Llama 3 8B의 파라미터는 약 8.03B개다.
-BF16은 원소당 2 bytes이므로 가중치는 약 16.1 GB다.
-Mixed precision 학습에는 gradient, FP32(32-bit floating point) master weight, Adam 모멘트까지 파라미터당 16 bytes가 들지만,
-inference에는 이들이 없으므로 이 16.1 GB가 모델 상태의 전부다.
-
-이 값은 요청 수나 문맥 길이와 상관없이 고정이다.
-줄이는 방향은 크게 두 가지다.
-하나는 원소당 바이트 수를 줄이는 양자화(quantization)다.
-모든 가중치를 4-bit 정수(INT4)로 둔다고 단순화하면 약 4 GB이고,
-실제로는 값 묶음마다 범위를 맞추는 scale 같은 부가 정보와 16-bit로 남겨 두는 부분(흔히 embedding과 출력층)이 더해진다.
-다른 하나는 저장할 파라미터 수 자체를 줄이는 압축이다.
-head나 channel 같은 구조 단위로 가중치를 덜어내는 structured pruning, 행렬을 작은 행렬의 곱으로 바꾸는 low-rank factorization, 더 작은 모델로 옮기는 distillation이 여기에 든다.
-
-### 4-2. KV cache
-
-Llama 3 8B처럼 모든 층이 전체 문맥에 attention하는 모델에서 KV cache는 층마다, KV head마다, 지금까지의 모든 토큰에 대해 key와 value 벡터를 하나씩 저장한다.
-토큰 하나에 저장하는 원소 수에 원소당 바이트 수 $b$를 곱하면 토큰당 크기가 나온다($n_{kv}$는 KV head 수).
-
-$$
-\frac{\text{KV cache}}{\text{토큰}}
-=\underbrace{2}_{K,\,V}\cdot L\cdot n_{kv}\cdot d_h\cdot b
-=2\cdot32\cdot8\cdot128\cdot2\ \text{bytes}
-=131{,}072\ \text{bytes}=128\ \text{KiB}
-$$
-
-KiB(kibibyte)는 $2^{10}$ bytes, GiB(gibibyte)는 $2^{30}$ bytes로, $10^{9}$ bytes인 GB와 다르다.
-
-요청 하나의 KV cache는 이 값에 그 요청의 길이(입력과 지금까지의 출력 토큰 수의 합)를 곱한 만큼으로 잡는다.
-요청끼리 공유하는 부분이 없다면 서버 전체의 KV cache는 동시에 처리 중인 요청 길이의 합에 비례한다.
-
-| 상황 | KV cache | 가중치(BF16, 16.1 GB) 대비 |
-|---|---|---|
-| 8,192토큰 요청 1개 | 1 GiB (1.07 GB) | 약 0.07배 |
-| 131,072토큰 요청 1개 | 16 GiB (17.2 GB) | 약 1.07배 |
-| 8,192토큰 요청 32개 | 32 GiB (34.4 GB) | 약 2.1배 |
-
-Llama 3가 지원하는 최대 문맥인 128K(131,072)토큰을 채운 요청 하나만으로도 KV cache가 가중치만큼 커지고,[^llama3]
-요청을 많이 묶으면 가중치를 쉽게 넘어선다.
-Llama 3 8B는 query head 네 개가 KV head 하나를 함께 쓰는 GQA(grouped-query attention)다.
-Query head마다 KV head를 따로 두는 MHA(multi-head attention)였다면 토큰당 512 KiB로 이 표의 네 배였다.
-
-### 4-3. 동시에 처리할 수 있는 요청 수
-
-가중치와 KV cache 말고도 실행 중의 activation과 작업 공간이 필요하다.
-학습과 비교하면 activation의 비중은 작다.
-Backward가 없어 층의 중간 결과를 다음 층으로 넘기면 버릴 수 있기 때문이다.
-vLLM은 엔진을 시작할 때 시험 forward를 돌려 activation의 최고치를 재고, 가중치와 그만큼을 뺀 나머지를 KV cache 공간으로 잡는다.[^vllm-worker]
-
-<Callout type="example">
-메모리 80 GB인 H100 SXM 한 대에 vLLM을 띄운다.
-vLLM은 기본적으로 GPU 메모리의 92%를 쓰므로 사용할 수 있는 공간은 약 73.6 GB다.[^vllm-args]
-여기서 가중치 16.1 GB와 실행 중의 activation·작업 공간 약 4 GB를 뺀다고 가정하면 KV cache에 약 53.5 GB가 남는다.
-토큰당 128 KiB이므로
-
-$$
-\frac{53.5\times10^{9}\ \text{bytes}}{131{,}072\ \text{bytes/토큰}}\approx408{,}000\ \text{토큰}
-$$
-
-이다.
-요청마다 8,192토큰까지 자란다면 동시에 49개, 131,072토큰까지 자란다면 3개만 들어간다.
-</Callout>
-
-이 계산에서 세 가지를 읽을 수 있다.
-첫째, 이 설정에서 GPU 한 대가 동시에 처리할 수 있는 요청 수의 상한은 **KV cache가 들어갈 공간**이 정한다.
-GPU의 연산이 포화되기 전까지는 요청을 많이 묶을수록 처리량이 오르므로, 처리량의 상한도 이 공간에 묶인다.
-실제로는 SLO나 엔진의 동시 요청 제한에 먼저 걸릴 수도 있다.
-둘째, 요청이 최종적으로 몇 토큰까지 자랄지는 생성이 끝나기 전에는 알 수 없다.
-요청마다 최대 길이만큼 공간을 미리 잡아 두면 실제로 짧게 끝나는 요청의 몫이 낭비되고,
-너무 적게 잡으면 생성 도중 공간이 모자란다.
-셋째, prefix를 공유하지 않으면 같은 시스템 프롬프트를 가진 요청들이 그 부분의 KV cache를 따로따로 저장하는 낭비도 생긴다.
 
 [^survey]: Zhou, Z., Ning, X., Hong, K., et al. (2024). A Survey on Efficient Inference for Large Language Models. [arXiv:2404.14294v3](https://arxiv.org/abs/2404.14294v3).
 
 [^llama3]: Llama Team, AI @ Meta. (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
 
-[^llama31-card]: Meta. (2024). Llama 3.1 Model Card. *llama-models*. [GitHub](https://github.com/meta-llama/llama-models/blob/0e0b8c519242d5833d8c11bffc1232b77ad7f301/models/llama3_1/MODEL_CARD.md).
 
-[^sardana]: Sardana, N., Portes, J., Doubov, S., & Frankle, J. (2024). Beyond Chinchilla-Optimal: Accounting for Inference in Language Model Scaling Laws. *ICML 2024*. [arXiv:2401.00448](https://arxiv.org/abs/2401.00448).
 
-[^chinchilla]: Hoffmann, J., Borgeaud, S., Mensch, A., et al. (2022). Training Compute-Optimal Large Language Models. *NeurIPS 2022*. [arXiv:2203.15556](https://arxiv.org/abs/2203.15556).
 
 [^r1]: Guo, D., et al. (2025). DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning. *Nature*, 645(8081), 633–638. [doi:10.1038/s41586-025-09422-z](https://doi.org/10.1038/s41586-025-09422-z).
 

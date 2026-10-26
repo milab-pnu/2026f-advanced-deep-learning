@@ -9,7 +9,7 @@ Inference 비용은 모델을 작게 만들어서도 줄일 수 있지만,
 출발점은 H100 SXM GPU(graphics processing unit) 한 대에 Llama 3 8B를 BF16(bfloat16) 가중치 그대로 올려 본 메모리 계산과 roofline 분석이다.
 두 계산은 같은 결론에 닿았다.
 Batch를 키워 처리량(throughput)을 올리려 하면 선형층이 ridge point에 닿기 전에 KV(key-value) cache 공간이 먼저 모자란다.
-GPU 메모리에서 가중치와 작업 공간을 빼면 KV cache에 약 53.5 GB가 남고,
+GPU 메모리에서 가중치와 workspace를 빼면 KV cache에 약 53.5 GB가 남고,
 토큰당 128 KiB라서 요청마다 8,192토큰까지 자란다면 49개까지 들어간다고 어림했다.<Sidenote>이 노트에서 KiB·MiB·GiB는 $2^{10}$·$2^{20}$·$2^{30}$ bytes이고, MB·GB·TB는 $10^6$·$10^9$·$10^{12}$ bytes다.</Sidenote>
 그런데 이 계산은 공간을 한 칸도 낭비하지 않는다고 가정했고,
 여러 요청이 같은 앞부분(prefix)을 가져도 요청마다 따로 저장한다고 셈했다.

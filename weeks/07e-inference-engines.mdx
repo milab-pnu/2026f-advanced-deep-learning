@@ -65,7 +65,7 @@ vLLM의 설정 인자는 지금까지 본 개념과 거의 일대일로 대응�
 
 | 인자 | 기본값 | 무엇을 정하나 |
 |---|---|---|
-| `--gpu-memory-utilization` | 0.92 | 엔진이 쓸 GPU 메모리 비율. 가중치와 작업 공간을 뺀 나머지가 KV cache |
+| `--gpu-memory-utilization` | 0.92 | 엔진이 쓸 GPU 메모리 비율. 가중치와 workspace를 뺀 나머지가 KV cache |
 | `--max-num-seqs` | GPU에 따라 다름 | 동시에 실행할 요청 수의 상한 |
 | `--max-num-batched-tokens` | GPU와 사용 방식에 따라 다름 | 반복당 토큰 예산. 작으면 ITL(inter-token latency), 크면 TTFT(time to first token)와 처리량에 유리 |
 | `--enable-prefix-caching` | 지원하는 모델에서 켜짐 | Prefix 재사용 |

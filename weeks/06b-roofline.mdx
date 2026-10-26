@@ -228,7 +228,7 @@ Head 32개와 층 32개를 곱하면 약 1.1 TFLOP이다.
 
 요청을 묶으면 처리량이 오르고 TPOT가 늘어난다는 관계를 시간의 하한으로 계산해 보자.
 모든 요청의 문맥이 2,048토큰이라고 가정한다.
-앞에서 본 메모리 예산의 토큰당 KV cache 128 KiB로 세면 요청 하나의 KV cache는 $2048\times128\ \text{KiB}\approx0.27$ GB다(1 KiB는 1,024 bytes).
+앞에서 계산한 토큰당 KV cache 128 KiB로 세면 요청 하나의 KV cache는 $2048\times128\ \text{KiB}\approx0.27$ GB다(1 KiB는 1,024 bytes).
 
 한 스텝에 읽는 데이터는 가중치 16.06 GB에 요청당 KV cache 0.27 GB를 더한 양이고,
 계산은 요청마다 선형층 $2N\approx16.1$ GFLOP과 attention 약 1.1 GFLOP($4sd_{\text{head}}$에 query head 32개와 층 32개를 곱한 값)이다.
@@ -255,13 +255,13 @@ Batch를 키울수록 읽는 데이터에서 KV cache의 비중이 커지고, �
 ### 4-2. KV cache 용량의 벽
 
 표를 batch 192에서 멈춘 것은 KV cache 공간 때문이다.
-앞에서 본 메모리 예산에서 H100 한 대에 KV cache용으로 남는 공간은 약 53.5 GB였다.
+앞의 memory usage 계산에서 H100 한 대에 KV cache용으로 남는 공간은 약 53.5 GB였다.
 요청당 0.27 GB이면 약 199개가 상한이다.
 선형층의 intensity는 묶은 요청 수와 거의 같으므로, 선형층만이라도 ridge point에 닿으려면 요청 300개 이상을 묶어야 한다.
 그 전에 메모리가 바닥난다.
 
 문맥이 길수록 벽은 더 가깝다.
-앞에서 본 메모리 예산처럼 문맥이 8,192토큰이면 batch는 49개에서 멈추고, 32,768토큰이면 12개다.
+앞의 memory usage 계산처럼 문맥이 8,192토큰이면 batch는 49개에서 멈추고, 32,768토큰이면 12개다.
 그때 스텝마다 읽는 데이터의 대부분은 KV cache다.
 그래서 긴 문맥의 decode에서는 가중치 bytes보다 KV cache bytes를 줄이는 기법이 처리량을 더 직접 늘린다.
 이 계산이 KV cache 관리의 동기이고, GQA·MLA가 서빙에서 중요한 이유다.
