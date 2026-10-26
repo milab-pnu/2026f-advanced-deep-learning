@@ -288,6 +288,34 @@ H100 한 대에서 TensorRT-LLM을 FP8(8-bit floating point)로 돌려 여러 �
 깊이 pruning은 순차로 계산할 층 수 자체를 줄여 속도 이득이 크고,
 너비 pruning은 base 모델의 MMLU가 더 높아 품질이 낫다는 맞교환이다.
 
+### 3-3. 토큰마다 다른 깊이
+
+깊이 pruning은 모든 입력에서 같은 층을 지운다.
+그런데 다음 토큰을 맞히기 어려운 정도는 토큰마다 다르다.
+"The United States of" 다음의 "America"처럼 쉬운 토큰은 앞쪽 몇 층만으로 맞힐 수 있지만,
+계산 결과처럼 어려운 토큰에는 모든 층이 필요할 수 있다(설명을 위한 예).
+그래서 층을 미리 지우지 않고, 토큰마다 몇 층까지 계산할지 실행 중에 정하는 방법이 나왔다.
+
+Schuster 등의 CALM(Confident Adaptive Language Modeling)은 decoder의 층마다 지금까지의 hidden state로 다음 토큰을 예측해 보고,
+그 confidence가 기준을 넘으면 남은 층을 건너뛰고 그 자리에서 토큰을 낸다(early exit).[^calm]
+Confidence로는 예측 분포에서 가장 큰 확률과 두 번째 확률의 차이 등을 쓴다.
+이때 건너뛴 층에는 그 토큰의 key·value가 없어, 뒤 토큰이 그 층에서 attention할 수 없다.
+CALM은 멈춘 층의 hidden state를 건너뛴 층들에 그대로 복사하고, 각 층이 이 값으로 자기 key·value를 계산하게 했다.
+Decoder가 8층인 T5로 요약·번역·질의응답을 batch 1로 돌렸을 때 최대 약 3배 빨라졌다.[^calm]
+
+이 이득은 여러 요청을 묶는 서빙에서는 얻기 어렵다.
+Del Corro 등은 SkipDecode를 제안하며 두 가지 문제를 짚었다.[^skipdecode]
+첫째, batch 안의 토큰들이 서로 다른 층에서 멈추면 스텝은 가장 늦게 멈추는 토큰이 끝날 때까지 이어진다.
+Roofline으로 보면 이득은 더 작다.
+Decode는 memory-bound라 스텝의 시간은 대부분 가중치를 읽는 데 들고,
+batch 안의 토큰 하나라도 어떤 층을 계산하면 그 층의 가중치는 읽어야 하므로, 일부 토큰이 일찍 멈춰도 읽는 bytes는 거의 줄지 않는다.
+둘째, 뒤 토큰이 앞 토큰보다 깊이 계산하면, 앞 토큰이 건너뛴 층의 key·value를 다시 계산해야 한다.
+SkipDecode는 같은 위치의 토큰은 batch 전체가 같은 수의 층을 계산하고, 그 수가 생성이 진행될수록 줄어들게 정해 두 문제를 피했다.
+대신 토큰마다 깊이를 고른다는 장점은 그만큼 사라진다.
+
+앞쪽 층만으로 낸 토큰을 바로 쓰지 않고 추측으로 삼아, 전체 모델이 여러 토큰을 한 번에 검증하게 할 수도 있다.
+이것이 self-speculative decoding이고, 전체 모델이 검증하므로 품질은 원래 모델 그대로다.
+
 ## 4. Distillation과 작은 모델
 
 Distillation은 지운 모델을 되살리는 데만 쓰이지 않는다.
@@ -369,6 +397,10 @@ SVD-LLM은 8.50, 분해한 두 행렬을 LoRA로 미세조정하면 7.73이었�
 [^minitron]: Muralidharan, S., Turuvekere Sreenivas, S., Joshi, R., et al. (2024). Compact Language Models via Pruning and Knowledge Distillation. *NeurIPS 2024*. [arXiv:2407.14679](https://arxiv.org/abs/2407.14679).
 
 [^minitron-practice]: Turuvekere Sreenivas, S., Muralidharan, S., Joshi, R., et al. (2024). LLM Pruning and Distillation in Practice: The Minitron Approach. [arXiv:2408.11796](https://arxiv.org/abs/2408.11796).
+
+[^calm]: Schuster, T., Fisch, A., Gupta, J., Dehghani, M., Bahri, D., Tran, V. Q., Tay, Y., & Metzler, D. (2022). Confident Adaptive Language Modeling. *NeurIPS 2022*. [arXiv:2207.07061](https://arxiv.org/abs/2207.07061).
+
+[^skipdecode]: Del Corro, L., Del Giorno, A., Agarwal, S., Yu, B., Awadallah, A., & Mukherjee, S. (2023). SkipDecode: Autoregressive Skip Decoding with Batching and Caching for Efficient LLM Inference. [arXiv:2307.02628](https://arxiv.org/abs/2307.02628).
 
 [^gemma2]: Gemma Team. (2024). Gemma 2: Improving Open Language Models at a Practical Size. [arXiv:2408.00118](https://arxiv.org/abs/2408.00118).
 

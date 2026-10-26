@@ -230,12 +230,12 @@ Paging과 prefix 재사용으로 낭비와 중복을 없애도,
 남은 KV cache는 여전히 토큰 하나에 약 131 KB씩 문맥 길이에 비례해 자란다.
 Roofline 분석에서처럼 문맥이 길고 batch가 크면 decode 스텝에서 이 KV cache를 읽는 시간이 가중치를 읽는 시간보다 커진다.
 GPU 메모리에 둘 KV cache를 더 줄이는 방법은 크게 세 갈래다.
-토큰 하나를 더 적은 byte로 저장하는 양자화(quantization), 저장할 토큰 수를 줄이는 eviction, GPU 밖의 더 큰 저장소로 옮기는 offloading이다.
-양자화와 eviction은 GPU에 둘 크기와 스텝마다 읽을 양을 함께 줄이고,
+토큰 하나를 더 적은 byte로 저장하는 양자화(quantization), 저장할 토큰 수를 줄이는 eviction과 merging, GPU 밖의 더 큰 저장소로 옮기는 offloading이다.
+양자화와 eviction·merging은 GPU에 둘 크기와 스텝마다 읽을 양을 함께 줄이고,
 offloading은 GPU 밖의 용량을 빌려 GPU에 둘 크기만 줄인다.
-여기서는 KV cache 양자화를 빼고 eviction과 offloading을 본다.
+여기서는 KV cache 양자화를 빼고 eviction·merging과 offloading을 본다.
 
-### 4-1. Eviction
+### 4-1. Eviction과 merging
 
 여기서 말하는 eviction은 실행 중인 요청이 attention할 과거 토큰의 key·value를 지워, 그 요청이 볼 문맥 자체를 줄인다.
 앞의 prefix caching에서 내보낸 블록은 어느 요청도 쓰지 않는 cache였고,
@@ -259,7 +259,12 @@ H2O는 LLaMA-13B의 XSUM 요약 같은 task에서 full cache와 비슷한 성능
 512토큰 프롬프트에 32토큰을 생성하는 설정에서 줄어든 cache만큼 batch를 144에서 728로 키울 수 있었다.
 생성 길이와 데이터를 바꾼 네 설정에서 처리량은 H2O를 쓰지 않은 FlexGen의 1.6–2.2배였다(보고된 처리량으로 계산).
 
-H2O는 생성하면서 스텝마다 지울 토큰을 고른다.
+점수를 세지 않고 위치만으로 남길 토큰을 정할 수도 있다.
+Xiao 등의 StreamingLLM은 처음 몇 토큰(보통 4개)과 최근 토큰의 key·value만 남긴다.[^streamingllm]
+처음 토큰들은 내용과 상관없이 큰 attention 가중치를 받는 attention sink라서, 이것까지 지우면 softmax의 분모가 크게 바뀌어 출력이 무너지기 때문이다.
+다만 가운데 토큰은 중요해도 지워지므로, StreamingLLM은 긴 문맥을 기억하게 하는 방법이 아니라 학습한 길이보다 길게 생성을 이어 가게 하는 방법이다.
+
+H2O와 StreamingLLM은 생성하면서 스텝마다 지울 토큰을 정한다.
 Li 등은 SnapKV를 제안하며, 이런 기존 방법이 주로 생성 중에 덧붙는 KV cache를 줄이는 데 맞춰져 있어 프롬프트 KV cache의 압축을 놓친다고 지적했다.[^snapkv]
 긴 문서를 넣고 짧게 답하는 요약이나 문서 질의응답에서는 cache의 대부분이 프롬프트 몫이고,
 그 부분은 prefill이 끝나는 순간 이미 다 만들어져 있다.
@@ -302,9 +307,41 @@ H2O처럼 생성 중에 head마다 다른 토큰을 지우면 같은 칸 안에�
 SnapKV처럼 prefill 직후 head마다 같은 수의 위치를 골라 한 번 압축하면,
 head마다 남은 key·value를 차례로 새 블록에 채워 넣을 수 있다.
 
+어떤 토큰을 고르든, eviction은 지운 토큰의 정보를 그대로 버린다.
+Zhang 등은 CaM(cache merging)을 제안하며 이 점을 짚었다.[^cam]
+Attention 출력은 value를 attention 가중치로 더한 $o=\sum_k A_kV_k$이므로,
+토큰 $i$의 key·value를 지우면 출력에서 $A_iV_i$만큼이 빠진다.
+남기는 토큰이 적을수록 이렇게 빠지는 몫이 커져 품질이 떨어진다.
+
+CaM은 지울 토큰의 value를 버리지 않고 남는 토큰의 value에 더해 둔다.
+남는 토큰들의 attention 가중치가 그대로라고 보면, 남는 토큰 $j$의 value를
+
+$$
+V_j\leftarrow V_j+\frac{A_i}{A_j}V_i
+$$
+
+로 바꿀 때 $A_jV_j$ 항이 정확히 $A_iV_i$만큼 커져, 지금 스텝의 출력이 지우기 전과 같다.
+예를 들어 $A_i=0.1$, $A_j=0.2$라면 $V_j$에 $0.5\,V_i$를 더한다.
+Key는 합치지 않고 버린다.
+
+문제는 다음 스텝부터다.
+Query가 바뀌면 $A_i$와 $A_j$의 비도 바뀌는데, 앞으로의 attention 가중치는 미리 알 수 없다.
+그래서 CaM은 토큰 하나에 몰아 더하는 대신 최근 토큰 $m$개에 $V_i/m$씩 고르게 나누어 더한다.
+연속된 토큰 여러 개의 평균 attention은 토큰 하나의 attention보다 스텝에 따라 덜 흔들린다는 관찰에 기댄 것이다.
+또 지울 토큰의 누적 attention 점수가 최근 토큰들의 평균보다 작을수록 낮은 확률로만 합쳐,
+합친 쪽의 오차가 그냥 지울 때보다 커지는 경우를 줄인다.
+
+CaM은 지울 토큰을 고르는 방법이 아니라 기존 eviction 위에 얹는 방법이다.
+KV cache를 20%만 남긴 LLaMA-7B에서 H2O에 CaM을 더하면,
+zero-shot 정확도가 OpenBookQA에서 22.8에서 27.6으로, COPA에서 47.0에서 56.0으로 올랐다.[^cam]
+
+합치는 축을 토큰이 아니라 층으로 잡을 수도 있다.
+Liu 등의 MiniCache는 모델의 중간 이후 층에서 이웃한 두 층의 key·value가 비슷하다는 관찰에서 출발해,
+두 층의 벡터를 크기와 방향으로 나누고 방향은 하나로 합쳐 저장하며 크기만 층마다 따로 둔다.[^minicache]
+
 <Callout type="warning">
-실행 중인 요청의 eviction은 손실이 있는 압축이다.
-지운 토큰의 key·value는 처음부터 다시 prefill하지 않는 한, 나중에 그 토큰이 다시 중요해져도 되살릴 수 없다.
+실행 중인 요청의 eviction과 merging은 손실이 있는 압축이다.
+지우거나 합친 토큰의 key·value는 처음부터 다시 prefill하지 않는 한, 나중에 그 토큰이 다시 중요해져도 되살릴 수 없다.
 앞의 품질 결과도 특정 모델과 task에서 잰 것이다.
 압축 뒤에 다른 질문이 이어지는 대화처럼 어떤 토큰이 나중에 필요할지 prefill 시점에 알기 어려운 작업에서는 품질을 직접 확인한다.
 </Callout>
@@ -424,7 +461,13 @@ Attention 층은 블록이 512토큰이라서, recurrent 층은 상태가 512토
 
 [^h2o]: Zhang, Z., Sheng, Y., Zhou, T., et al. (2023). H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. *NeurIPS 2023*. [arXiv:2306.14048](https://arxiv.org/abs/2306.14048).
 
+[^streamingllm]: Xiao, G., Tian, Y., Chen, B., Han, S., & Lewis, M. (2024). Efficient Streaming Language Models with Attention Sinks. *ICLR 2024*. [arXiv:2309.17453](https://arxiv.org/abs/2309.17453).
+
 [^snapkv]: Li, Y., Huang, Y., Yang, B., et al. (2024). SnapKV: LLM Knows What You are Looking for Before Generation. *NeurIPS 2024*. [arXiv:2404.14469](https://arxiv.org/abs/2404.14469).
+
+[^cam]: Zhang, Y., Du, Y., Luo, G., Zhong, Y., Zhang, Z., Liu, S., & Ji, R. (2024). CaM: Cache Merging for Memory-efficient LLMs Inference. *ICML 2024*, PMLR 235, 58840–58850. [proceedings.mlr.press](https://proceedings.mlr.press/v235/zhang24n.html).
+
+[^minicache]: Liu, A., Liu, J., Pan, Z., He, Y., Haffari, G., & Zhuang, B. (2024). MiniCache: KV Cache Compression in Depth Dimension for Large Language Models. *NeurIPS 2024*. [arXiv:2405.14366](https://arxiv.org/abs/2405.14366).
 
 
 [^lmcache]: Liu, Y., Cheng, Y., Yao, J., et al. (2025). LMCache: An Efficient KV Cache Layer for Enterprise-Scale LLM Inference. [arXiv:2510.09665](https://arxiv.org/abs/2510.09665).
