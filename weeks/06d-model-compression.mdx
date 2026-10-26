@@ -4,7 +4,7 @@ week: 6
 order: 3
 ---
 
-앞에서 본 양자화는 파라미터 하나를 적은 bits로 저장했다.
+양자화는 파라미터 하나를 적은 bits로 저장한다.
 이 노트는 **파라미터의 수 자체**를 줄이는 방법을 다룬다.
 파라미터가 줄면 읽을 가중치 bytes와 계산할 FLOPs(floating-point operations)가 함께 줄어든다.
 그러면 memory-bound인 decode에서는 가중치를 읽는 시간이, compute-bound인 prefill에서는 연산 시간이 줄고,
@@ -13,7 +13,7 @@ order: 3
 지운 결과가 그런 모양을 갖추기는 생각보다 어렵다.
 
 방법은 세 갈래다.
-학습된 모델에서 덜 중요한 가중치를 지우는 pruning, 가중치 행렬을 작은 행렬의 곱으로 바꾸는 low-rank factorization, 큰 모델(teacher)의 출력 분포를 목표로 작은 모델을 학습하는 distillation이다.
+학습된 모델에서 덜 중요한 가중치를 지우는 pruning, 큰 모델(teacher)의 출력 분포를 목표로 작은 모델을 학습하는 distillation, 가중치 행렬을 작은 행렬의 곱으로 바꾸는 low-rank factorization이다.
 실제로는 이 셋이 섞인다.
 Pruning으로 줄인 모델의 품질을 distillation으로 되살리는 것은 최근 작은 모델을 만들 때 널리 쓰이는 방법이 되었다.
 Zhu 등의 LLM(large language model) 압축 서베이도 pruning, distillation, low-rank factorization을 압축의 주요 갈래로 정리한다.[^survey]
@@ -50,7 +50,7 @@ $$
 
 $\lVert X_j\rVert_2$는 calibration 데이터의 모든 토큰에서 입력 channel $j$의 값을 모은 벡터의 크기다.
 출력마다(행마다) 점수가 낮은 가중치를 지우고, 남은 가중치는 그대로 둔다.
-이렇게 하는 까닭은 양자화에서 본 activation outlier에 있다.
+이렇게 하는 까닭은 activation outlier에 있다.
 큰 activation이 들어오는 channel의 가중치는 크기가 작아도 출력에 큰 영향을 준다.
 
 <Callout type="example">
@@ -111,7 +111,7 @@ GPU에서 같은 이득을 내기는 어렵다.
   <rect x="126" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
   <rect x="144" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
   <rect x="162" y="114" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
-  <text x="108" y="156" font-size="11" text-anchor="middle" fill="#64748b">위치와 상관없이 50%</text>
+  <text x="108" y="156" font-size="13" text-anchor="middle" fill="#64748b">위치와 상관없이 50%</text>
   <text x="300" y="48" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">2:4 semi-structured</text>
   <rect x="228" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
   <rect x="246" y="60" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
@@ -146,7 +146,7 @@ GPU에서 같은 이득을 내기는 어렵다.
   <rect x="336" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
   <rect x="354" y="114" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
   <line x1="300" y1="54" x2="300" y2="138" stroke="#0f172a" stroke-width="2" stroke-dasharray="4 3"/>
-  <text x="300" y="156" font-size="11" text-anchor="middle" fill="#64748b">원소 4개마다 0이 아닌 값 2개 이하</text>
+  <text x="300" y="156" font-size="13" text-anchor="middle" fill="#64748b">원소 4개마다 0이 아닌 값 2개 이하</text>
   <text x="492" y="48" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">Structured</text>
   <rect x="420" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
   <rect x="438" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
@@ -181,10 +181,10 @@ GPU에서 같은 이득을 내기는 어렵다.
   <rect x="528" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
   <rect x="546" y="114" width="18" height="18" fill="#f8fafc" stroke="#94a3b8"/>
   <rect x="420" y="60" width="72" height="72" fill="none" stroke="#0f172a" stroke-width="2"/>
-  <text x="492" y="156" font-size="11" text-anchor="middle" fill="#64748b">열(channel) 단위로 제거</text>
-  <text x="108" y="176" font-size="11" text-anchor="middle" fill="#0f172a">GPU 가속: 특수 kernel 필요</text>
-  <text x="300" y="176" font-size="11" text-anchor="middle" fill="#0f172a">GPU 가속: Sparse Tensor Core</text>
-  <text x="492" y="176" font-size="11" text-anchor="middle" fill="#0f172a">GPU 가속: 일반 dense kernel</text>
+  <text x="492" y="156" font-size="13" text-anchor="middle" fill="#64748b">열(channel) 단위로 제거</text>
+  <text x="108" y="176" font-size="13" text-anchor="middle" fill="#0f172a">GPU 가속: 특수 kernel 필요</text>
+  <text x="300" y="176" font-size="13" text-anchor="middle" fill="#0f172a">GPU 가속: Sparse Tensor Core</text>
+  <text x="492" y="176" font-size="13" text-anchor="middle" fill="#0f172a">GPU 가속: 일반 dense kernel</text>
 </svg>
 <figcaption>같은 비율을 지워도 남은 가중치의 배치에 따라 GPU에서 얻는 속도가 다르다. 진한 칸이 남은 가중치다.</figcaption>
 </figure>
@@ -195,7 +195,7 @@ NVIDIA는 Ampere GPU부터 하드웨어가 직접 가속할 수 있는 sparsity 
 연속된 원소 4개마다 적어도 2개를 0으로 두는 **2:4 sparsity**다.
 Sparse Tensor Core는 남은 값과 그 위치(남은 값마다 2 bits)만 읽어,
 dense 행렬곱보다 최대 두 배의 연산 속도를 낸다.[^nvidia24]
-앞에서 roofline을 그릴 때 H100 SXM의 사양표가 16-bit 연산을 sparsity 기준으로 1,979 TFLOP/s라 적는다고 했는데, 바로 이 가속을 가정한 값이다.[^h100]
+NVIDIA 사양표에 적힌 H100 SXM의 16-bit 연산 성능 1,979 TFLOP/s도 이 가속을 가정한 값이다.[^h100]
 
 2:4는 unstructured pruning보다 제약이 강해 품질 손실이 크다.
 SparseGPT로 OPT-175B를 2:4로 지우면 perplexity가 8.35에서 8.74로 조금 늘었지만,
@@ -213,6 +213,9 @@ MaskLLM 논문이 A6000·batch 1에서 NVIDIA의 서빙 라이브러리 TensorRT
 첫째, 행렬곱 외의 연산은 빨라지지 않는다.
 둘째, memory-bound인 작은 batch의 decode에서는 연산 속도보다 읽는 bytes가 시간을 정한다.
 그런데 2:4는 위치 정보를 함께 저장하므로 FP16(16-bit floating point) 가중치의 bytes를 절반이 아니라 약 44%만 줄인다.[^nvidia24]
+값 4개에 64 bits가 들던 것이 남은 값 2개(32 bits)와 위치(4 bits)를 합한 36 bits가 되기 때문이다.
+그래서 읽는 bytes로만 따지면 행렬곱이 빨라지는 상한은 64/36, 약 1.8배다.
+실제 kernel은 이 상한에도 못 미쳐, Wanda 논문이 batch 1에서 잰 LLaMA-65B 선형층의 행렬곱은 1.54–1.63배 빨라졌다.[^wanda]
 
 ## 3. Structured pruning
 
@@ -265,10 +268,10 @@ Distillation의 word-level KD(knowledge distillation)처럼, 같은 문맥을 �
 위치마다 student의 다음 토큰 분포가 teacher의 분포를 따르도록 KL(Kullback–Leibler) divergence를 줄일 수도 있다.
 그러면 정답 토큰 하나만이 아니라 다른 후보 토큰이 얼마나 그럴듯한지까지 student에게 전해진다.
 
-NVIDIA의 Minitron은 이 distillation으로 회복 학습을 하고,
-줄이기와 회복을 체계화했다.[^minitron]
-
-<Figure src="https://arxiv.org/html/2407.14679v2/minitron_overview2.png" alt="Minitron의 Figure 2. 1단계는 학습된 LLM으로, embedding, Transformer block(layer norm, attention, layer norm, MLP(multi-layer perceptron, 곧 FFN)), 마지막 층으로 이루어져 있다. 2단계는 embedding 차원(Emb1–4), attention head(Head1–4), MLP channel(CH1–4)마다 중요도를 추정한다. 3단계는 그 중요도로 순위를 매기고, 4단계는 순위가 낮은 것을 잘라 Emb4·Emb2, Head3·Head1·Head4, CH1·CH4만 남긴다. 5단계는 원래 모델에서 잘라 낸 모델로 distillation해 품질을 되살린다. 가운데의 초록 화살표는 이 과정을 반복한다는 뜻이다." caption="Minitron의 pruning과 distillation 과정. 차원·head·channel의 중요도를 추정해 순위가 낮은 것을 잘라 내고, 원래 모델을 teacher로 distillation하는 과정을 반복한다." source="Muralidharan et al. (2024), Figure 2 · CC BY 4.0" hero />
+NVIDIA의 Minitron은 줄이기와 이 distillation 회복을 하나의 절차로 묶었다.
+작은 calibration 데이터로 forward pass만 돌려 얻은 activation으로 층·attention head·FFN channel·embedding 차원의 중요도를 추정하고,
+중요도가 낮은 것부터 너비와 깊이를 잘라 낸 뒤,
+원래 모델을 teacher로 삼아 distillation으로 품질을 되살린다.[^minitron]
 
 Minitron은 Nemotron-4 15B의 너비(embedding 차원, head, FFN channel)를 줄여 8B와 4B 모델을 만들고(층 수는 32 그대로),
 원래 학습 데이터의 3% 미만으로 distillation해 품질을 되살렸다.
@@ -293,7 +296,7 @@ Distillation은 지운 모델을 되살리는 데만 쓰이지 않는다.
 Google의 Gemma 2는 2B와 9B 모델을 이렇게 사전학습했다.[^gemma2]
 다음 토큰을 예측한다는 점은 그대로이고 목표 분포만 바뀐다.
 2B 모델을 500B 토큰으로 학습한 비교 실험에서 세 벤치마크의 평균이 처음부터 학습하면 60.3, 7B 모델로부터 distillation하면 67.7이었다.
-실제 2B와 9B 모델은 이론이 예측하는 compute-optimal 양의 수십 배인 2T와 8T 토큰으로 학습했다.
+실제 2B와 9B 모델은 Chinchilla scaling law가 예측하는 compute-optimal 학습 토큰 수의 수십 배인 2T와 8T 토큰으로 학습했다.
 Meta의 Llama 3.2 1B와 3B는 pruning과 distillation을 함께 썼다.
 Llama 3.1 8B를 구조적으로 한 번에 pruning하고,
 사전학습 단계에서 Llama 3.1 8B와 70B의 logit을 토큰별 목표로 넣어 distillation으로 성능을 되살렸다.[^llama32]
@@ -322,12 +325,12 @@ FLOPs가 절반이 되어도 실제 지연은 그만큼 줄지 않을 수 있다
 문제는 LLM의 가중치가 낮은 rank에 잘 들어맞지 않는다는 점이다.
 Yuan 등의 ASVD(activation-aware singular value decomposition) 실험에서 LLaMA-7B의 파라미터를 SVD로 5%만 줄여도 WikiText-2 perplexity가 5.68에서 2,800으로 무너졌다.[^asvd]
 가중치의 오차를 최소화하는 SVD가 층 출력의 오차를 최소화하지는 않기 때문이다.
-양자화에서 본 activation outlier가 있으면,
+Activation outlier가 있으면,
 가중치에서 작아 보이는 오차도 큰 activation과 곱해져 출력에서 크게 드러난다.
 
 ### 5-2. Activation을 고려한 분해
 
-해법은 pruning과 양자화에서 보았던 것과 같다.
+해법은 Wanda나 AWQ(activation-aware weight quantization)와 같다.
 가중치만이 아니라 입력 activation의 통계를 함께 본다.
 ASVD는 activation의 크기로 만든 대각 행렬 $S$를 가중치에 곱한 $WS$를 SVD로 분해한 뒤 $S^{-1}$을 다시 곱해,
 큰 activation이 들어오는 방향을 우선 보존한다.
@@ -340,9 +343,6 @@ SVD-LLM은 8.50, 분해한 두 행렬을 LoRA로 미세조정하면 7.73이었�
 
 그래도 학습된 가중치를 사후에 분해하는 방식은 원래 품질을 지키며 줄일 수 있는 비율이 아직 작다.
 20% 압축에서도 perplexity가 원래보다 꽤 높다.
-Low-rank 구조를 처음부터 모델에 넣고 학습하는 길도 있다.
-MLA(multi-head latent attention)는 key와 value를 저차원 latent로 압축하는 low-rank 구조를 처음부터 학습한 예다.
-Key·value 투영을 embedding 차원에서 작은 차원 $d_c$로 내리는 행렬 $V$와 head별 key·value로 다시 올리는 행렬 $U$의 곱 $UV$로 두고 학습하므로, 투영의 rank가 $d_c$를 넘지 않는다(DeepSeek-V3에서 $d_c=512$).[^dsv3]
 
 [^survey]: Zhu, X., Li, J., Liu, Y., Ma, C., & Wang, W. (2024). A Survey on Model Compression for Large Language Models. *Transactions of the Association for Computational Linguistics*, 12, 1556–1577. [arXiv:2308.07633v4](https://arxiv.org/abs/2308.07633v4).
 
@@ -352,7 +352,7 @@ Key·value 투영을 embedding 차원에서 작은 차원 $d_c$로 내리는 행
 
 [^nvidia24]: Mishra, A., Albericio Latorre, J., Pool, J., et al. (2021). Accelerating Sparse Deep Neural Networks. [arXiv:2104.08378](https://arxiv.org/abs/2104.08378).
 
-[^h100]: NVIDIA. NVIDIA H100 Tensor Core GPU. *NVIDIA 제품 사양*. [nvidia.com](https://www.nvidia.com/en-us/data-center/h100/).
+[^h100]: NVIDIA. (2023). NVIDIA H100 Tensor Core GPU Architecture (V1.04). *NVIDIA Whitepaper*. [resources.nvidia.com](https://resources.nvidia.com/en-us-hopper-architecture/nvidia-h100-tensor-c).
 
 [^maskllm]: Fang, G., Yin, H., Muralidharan, S., et al. (2024). MaskLLM: Learnable Semi-Structured Sparsity for Large Language Models. *NeurIPS 2024*. [arXiv:2409.17481](https://arxiv.org/abs/2409.17481).
 
@@ -377,7 +377,5 @@ Key·value 투영을 embedding 차원에서 작은 차원 $d_c$로 내리는 행
 [^sardana]: Sardana, N., Portes, J., Doubov, S., & Frankle, J. (2024). Beyond Chinchilla-Optimal: Accounting for Inference in Language Model Scaling Laws. *ICML 2024*. [arXiv:2401.00448](https://arxiv.org/abs/2401.00448).
 
 [^asvd]: Yuan, Z., Shang, Y., Song, Y., et al. (2023). ASVD: Activation-aware Singular Value Decomposition for Compressing Large Language Models. [arXiv:2312.05821](https://arxiv.org/abs/2312.05821).
-
-[^dsv3]: DeepSeek-AI. (2024). DeepSeek-V3 Technical Report. [arXiv:2412.19437](https://arxiv.org/abs/2412.19437).
 
 [^svdllm]: Wang, X., Zheng, Y., Wan, Z., & Zhang, M. (2025). SVD-LLM: Truncation-aware Singular Value Decomposition for Large Language Model Compression. *ICLR 2025*. [arXiv:2403.07378](https://arxiv.org/abs/2403.07378).

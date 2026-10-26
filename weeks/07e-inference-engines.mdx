@@ -9,18 +9,19 @@ order: 4
 KV(key-value) cache manager가 블록을 내주고 prefix cache를 찾고,
 kernel이 필요하면 양자화(quantization)한 가중치로 계산하고, 경우에 따라 draft가 다음 토큰을 추측한다.
 이 모두를 한 프로그램 안에서 맞물려 돌리는 것이 **inference engine**이다.
-이 노트는 대표적인 공개 엔진인 vLLM과 SGLang이 앞의 기법들을 어떻게 묶는지 보고,
+Park 등은 오픈소스와 상용 엔진 25개를 살펴보고, 엔진들이 쓰는 최적화를 batching, 병렬화, 압축, caching, attention 등으로 분류했다.[^survey]
+이 노트는 그 가운데 대표적인 공개 엔진인 vLLM과 SGLang이 앞의 기법들을 어떻게 묶는지 보고,
 엔진의 성능을 재는 절차로 inference 주제를 마무리한다.
 
-Park 등은 오픈소스와 상용 엔진 25개를 살펴보고, 엔진들이 쓰는 최적화를 batching, 병렬화, 압축, caching, attention 등으로 분류했다.[^survey]
-
 ## 1. 엔진의 구성
+
+### 1-1. 요청의 처리 경로
 
 요청 하나가 엔진 안에서 거치는 길은 엔진마다 이름이 달라도 대체로 같다.
 
 1. <strong>API(application programming interface) 서버</strong>가 HTTP(hypertext transfer protocol) 요청을 받아 프롬프트를 토큰으로 바꾸고,
    생성된 토큰을 다시 텍스트로 되돌려(detokenize) 스트리밍한다.
-2. **Scheduler**가 대기열의 요청 가운데 이번 반복에 넣을 것과 각 요청에서 처리할 토큰 수를 정하고,
+2. **Scheduler**가 대기열의 요청 가운데 이번 스텝에 넣을 것과 각 요청에서 처리할 토큰 수를 정하고,
    블록이 모자라면 실행 중인 요청 하나를 골라 선점(preemption)해 블록을 비운다.
 3. **KV cache manager**가 요청에 블록을 배정·해제하고, 일치하는 prefix의 블록을 찾아 재사용한다.
 4. **Model runner**가 batch의 입력 텐서를 준비하고,
@@ -28,11 +29,21 @@ Park 등은 오픈소스와 상용 엔진 25개를 살펴보고, 엔진들이 �
 5. **Sampler**가 일반 decode에서는 마지막 위치의 logits로 다음 토큰을 고르고,
    speculative decoding에서는 추측한 토큰 위치들의 logits로 각 토큰의 수락 여부를 정한다.
 
-앞에서 kernel launch를 볼 때처럼 GPU(graphics processing unit) 실행은 decode 스텝당 수 ms에 끝난다.
-그래서 kernel 제출뿐 아니라 다음 스텝의 scheduling과 입력 텐서 준비 같은 CPU(central processing unit) 쪽 작업이 늦어져도 GPU에 빈 구간이 생긴다.
-최근 엔진 설계의 상당 부분이 이 CPU 쪽 시간을 GPU 실행과 겹치는 데 쓰이는 이유다.
-GPU가 스텝 N을 실행하는 동안 CPU가 스텝 N+1의 scheduling과 입력 준비를 미리 해 두는 방식이 대표적이고,
-vLLM은 이를 async scheduling이라 부른다.[^vllm-mrv2]
+### 1-2. CPU overhead
+
+GPU(graphics processing unit) 실행은 decode 스텝당 수 ms에 끝난다.
+그래서 kernel launch뿐 아니라 다음 스텝의 scheduling과 입력 텐서 준비 같은 CPU(central processing unit) 쪽 작업이 늦어져도 GPU에 빈 구간이 생긴다.
+SGLang 팀은 최적화하지 않은 엔진이 시간의 절반까지를 이런 CPU 작업에 쓸 수 있다고 보았다.[^sglang-v04]
+
+해법은 두 갈래로 나뉜다.
+하나는 CPU 작업 자체를 줄이는 것이다.
+API 서버의 일과 scheduling을 다른 프로세스로 떼어 겹쳐 돌리고, 스텝마다 입력 텐서를 새로 만들지 않고 바뀐 부분만 고치는 vLLM V1의 설계가 이쪽이다.
+다른 하나는 남은 CPU 작업을 GPU 실행 뒤에 숨기는 것이다.
+GPU가 스텝 N을 실행하는 동안 CPU가 스텝 N+1의 scheduling과 입력 준비를 미리 해 둔다.
+SGLang은 v0.4에서 이런 scheduler를 도입했는데,
+다음 batch에 들어갈 토큰은 아직 GPU에서 계산 중이므로 그 자리를 미리 표시해 두고 준비를 진행한다.[^sglang-v04]
+vLLM은 같은 방식을 async scheduling이라 부르며,[^vllm-mrv2]
+v0.31.0에서는 호환되지 않는 설정이 아니면 기본으로 켠다.[^vllm-config]
 
 <Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.31.0/docs/assets/design/model_runner_v2/async_sched.png" alt="Async scheduling의 실행 타임라인. 가로축은 시간이고, 위 줄은 Scheduler, 아래는 Worker의 CPU 줄과 GPU 줄이다. GPU 줄에는 Execute step N, N+1, N+2가 빈틈없이 이어진다. GPU가 Execute step N을 실행하는 동안 Scheduler가 Schedule step N+1을, Worker CPU가 Prepare step N+1을 끝내고, 화살표가 Prepare step N+1에서 Execute step N+1로 이어진다. 같은 패턴이 N+2, N+3에서 되풀이된다." caption="Async scheduling. GPU가 스텝 N을 실행하는 동안 CPU가 스텝 N+1을 scheduling하고 입력을 준비한다. 그래서 GPU 줄의 실행 구간 사이에 CPU를 기다리는 빈 구간이 생기지 않는다." source="vLLM Project (v0.31.0), Model Runner V2 설계 문서 · Apache-2.0" />
 
@@ -43,25 +54,20 @@ vLLM은 이를 async scheduling이라 부른다.[^vllm-mrv2]
 vLLM은 PagedAttention 논문과 함께 공개된 엔진이다.
 2025년의 V1 구조 개편은 코드 단순화, 최적화 통합과 함께 **CPU overhead를 거의 없애는 것**을 주요 목표로 삼았다.[^vllm-v1]
 
-<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.31.0/docs/assets/design/arch_overview/v1_process_architecture_tp4.png" alt="vLLM V1의 프로세스 구조(GPU 4대, TP=4). 왼쪽의 API Server가 HTTP 요청을 받아 입력 처리, 토큰화, 스트리밍을 맡고, ZMQ로 가운데의 Engine Core와 양방향으로 통신한다. Engine Core는 scheduler와 KV cache manager를 맡는다. Engine Core에서 오른쪽의 GPU Worker 0–3 네 개로 화살표가 나가며, 각 worker는 GPU 하나에서 모델 실행(forward)을 맡는다. 아래에 프로세스가 모두 6개(API Server 1, Engine Core 1, GPU Worker 4)라고 적혀 있다." caption="vLLM V1의 프로세스 구조. 토큰화와 스트리밍(API Server), scheduling과 KV cache 관리(Engine Core), 모델 실행(GPU Worker)이 서로 다른 프로세스에서 돈다." source="vLLM Project (v0.31.0), Architecture Overview 문서 · Apache-2.0" />
-
 V1의 주요 설계는 다음과 같다.[^vllm-v1][^vllm-arch]
 
 - **프로세스 분리.** Scheduling과 GPU worker의 모델 실행 조율만 맡는 Engine Core를 별도 프로세스의 반복문으로 두고,
   토큰화·detokenize·스트리밍은 API 서버 프로세스가 맡아 겹쳐 실행한다.
-  GPU 네 대에 TP(tensor parallelism)로 나눠 띄우면 API 서버 하나, Engine Core 하나, GPU worker 넷의 프로세스 여섯 개가 뜬다.
+  모델 실행은 GPU마다 하나씩 뜨는 GPU worker 프로세스가 맡는다.
 - **단계 구분이 없는 scheduler.** Scheduler의 결정은 "요청마다 이번에 처리할 토큰 수"라는 하나의 표에 담기고,
-  그 합이 반복당 토큰 예산을 넘지 않게 정해진다.
+  그 합이 스텝당 토큰 예산을 넘지 않게 정해진다.
   새 요청의 prefill 조각도, 기존 요청의 decode 한 토큰도,
   speculative decoding으로 검증할 토큰 여러 개도 모두 같은 형식이다.
-  그래서 앞에서 본 chunked prefill도 별도 단계 없이 이 형식 안에서 처리된다.
+  그래서 chunked prefill도 별도 단계 없이 이 형식 안에서 처리된다.
 - **부담이 거의 없는 prefix caching.** Hash 기반 prefix caching을 다시 구현해,
   vLLM 팀의 측정에서 cache 적중률이 0%여도 처리량(throughput) 감소가 1% 미만이었고, 그래서 기본으로 켰다.
-- **Persistent batch와 CUDA graph.** 이어지는 두 스텝의 batch는 요청 몇 개가 들어오거나 끝나는 것 말고는 거의 같다.
-  그래서 block table처럼 큰 입력 텐서를 스텝마다 새로 만들지 않고, 이전 스텝의 텐서를 그대로 둔 채 바뀐 행만 고친다.[^vllm-mrv2]
-  `torch.compile`과 구간별 CUDA graph를 쓴다.
-
-<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.31.0/docs/assets/design/model_runner_v2/persistent_batch_v1.png" alt="Persistent Batch in V1이라는 제목 아래 Block Table 세 개가 화살표로 이어진다. 첫 표는 위에서부터 Req C, Req A, Req B가 한 행씩 차지하고 아래 두 행이 비어 있다. D joins 화살표 뒤의 두 번째 표에서는 비어 있던 넷째 행에 Req D가 들어간다. A finishes 화살표 뒤의 세 번째 표에서는 Req A가 빠진 둘째 행으로 Req D가 옮겨 가 Req C, Req D, Req B 순서가 되고 아래 두 행이 비어 있다." caption="V1의 persistent batch. 요청마다 행 하나를 차지하는 입력 텐서(여기서는 block table)를 스텝 사이에 유지한다. 요청 D가 들어오면 빈 행에 D를 쓰고, 요청 A가 끝나면 D를 A의 행으로 옮겨 빈 행 없이 채운다. 스텝마다 텐서 전체를 다시 만들지 않고 바뀐 행만 고치므로 CPU 시간이 줄어든다." source="vLLM Project (v0.31.0), Model Runner V2 설계 문서 · Apache-2.0" wide />
+- **Persistent batch.** 이어지는 두 스텝의 batch는 요청 몇 개가 들어오거나 끝나는 것 말고는 거의 같다.
+  그래서 block table처럼 큰 입력 텐서를 스텝마다 새로 만들지 않고, 이전 스텝의 텐서를 그대로 둔 채 바뀐 부분만 고쳐 CPU 시간을 줄인다.[^vllm-mrv2]
 
 vLLM 팀은 V1의 처리량이 V0보다 최대 1.7배 높다고 보고했다.[^vllm-v1]
 이 비교에서는 여러 decode 스텝을 한 번에 scheduling해 CPU 부담을 나누던 V0의 기능인 multi-step scheduling을 껐다.
@@ -75,9 +81,9 @@ vLLM의 설정 인자는 지금까지 본 개념과 거의 일대일로 대응�
 |---|---|---|
 | `--gpu-memory-utilization` | 0.92 | 엔진이 쓸 GPU 메모리 비율. 가중치와 workspace를 뺀 나머지가 KV cache |
 | `--max-num-seqs` | GPU에 따라 다름 | 동시에 실행할 요청 수의 상한 |
-| `--max-num-batched-tokens` | GPU와 사용 방식에 따라 다름 | 반복당 토큰 예산. 작으면 ITL(inter-token latency), 크면 TTFT(time to first token)와 처리량에 유리 |
+| `--max-num-batched-tokens` | GPU와 사용 방식에 따라 다름 | 스텝당 토큰 예산. 작으면 ITL(inter-token latency), 크면 TTFT(time to first token)와 처리량에 유리 |
 | `--enable-prefix-caching` | 지원하는 모델에서 켜짐 | Prefix 재사용 |
-| `--tensor-parallel-size` | 1 | TP로 나눌 GPU 수 |
+| `--tensor-parallel-size` | 1 | TP(tensor parallelism)로 나눌 GPU 수 |
 | `--kv-cache-dtype` | auto | KV cache의 정밀도(`fp8` 등) |
 | `--quantization` | 모델 설정을 따름 | 양자화 방식(가중치, 방식에 따라 activation도) |
 | `--speculative-config` | 없음 | Draft 방식(EAGLE, n-gram, MTP(multi-token prediction) 등)과 추측 길이 |
@@ -86,10 +92,9 @@ vLLM의 설정 인자는 지금까지 본 개념과 거의 일대일로 대응�
 `--max-num-seqs`와 `--max-num-batched-tokens`의 기본값은 GPU와 사용 방식에 따라 달라지므로,
 실험 결과를 보고할 때는 기본값에 기대지 말고 실제 값을 함께 적는다.
 
-설정을 바꾼 효과는 서버가 내보내는 지표로 확인한다.
-서버 내부 지표는 vLLM에서 Prometheus 형식으로 나온다.[^vllm-metrics]
-KV cache 사용률은 `vllm:kv_cache_usage_perc`로, 실행·대기 요청 수는 `vllm:num_requests_running`, `vllm:num_requests_waiting`으로 본다.
-Prefix cache 적중률은 적중한 토큰 수(`vllm:prefix_cache_hits`)를 조회한 토큰 수(`vllm:prefix_cache_queries`)로 나누어 구한다.
+설정을 바꾼 효과는 vLLM이 Prometheus 형식으로 내보내는 서버 내부 지표로 확인한다.[^vllm-metrics]
+KV cache 사용률은 `vllm:kv_cache_usage_perc`, 실행·대기 요청 수는 `vllm:num_requests_running`과 `vllm:num_requests_waiting`이다.
+Prefix cache 적중률은 토큰 수를 세는 `vllm:prefix_cache_hits`를 `vllm:prefix_cache_queries`로 나누어 구한다.
 
 ## 3. SGLang
 
@@ -111,16 +116,9 @@ SGLang 논문은 스키마 같은 형식을 정규식(regular expression)으로 
 SGLang 팀은 이렇게 정해진 구간을 건너뛰는 decoding을 jump-forward decoding이라 부른다.[^sglang-fsm]
 고정된 부분도 KV cache는 계산해야 하지만 순차 decode 스텝 수가 그만큼 줄어든다.
 
-<Figure src="https://raw.githubusercontent.com/lm-sys/lm-sys.github.io/105adb035528f55f3d1823329f170a30b48f2b19/public/images/blog/compressed_fsm/compare.png" alt="같은 프롬프트(Please fill in the following information about Harry Potter.)로 JSON을 생성하는 두 방식의 비교. 위의 Jump-Forward Decoding With Compressed FSM에서는 초록 prefill 상자 뒤에 여는 중괄호와 name 키를 담은 주황 상자 하나가 붙고, 파랑 decode 상자 Har, ry, _Pot, ter 뒤에 age 키를 담은 주황 상자, 파랑 1, 1, house 키를 담은 주황 상자, 파랑 G, ryffindor와 닫는 중괄호를 담은 주황 상자, 종료 토큰이 이어진다. 아래의 Normal Decoding With FSM에서는 같은 출력을 {, 줄바꿈, 공백, name, 따옴표 같은 파랑 decode 상자로 한 토큰씩 만들어 상자가 네 줄에 걸친다. 오른쪽에는 두 방식이 만든 같은 JSON(name Harry, age 15, house Gryffindor)이 있다. 범례는 초록 Prefill, 파랑 Decode, 주황 Jump-Forward다." caption="Compressed FSM을 쓴 jump-forward decoding(위)과 FSM으로 한 토큰씩 decode하는 일반 방식(아래). 초록은 프롬프트의 prefill, 파랑은 한 토큰씩 decode한 토큰, 주황은 형식이 정해진 문자열을 forward 한 번에 처리한 jump-forward 구간이다. 두 방식은 같은 JSON(오른쪽)을 만들지만, 위쪽은 키 이름과 따옴표·괄호를 건너뛰어 decode 스텝이 훨씬 적다." source="LMSYS Org (2024), Compressed FSM 블로그 · © 2023 LMSYS Org, MIT License" wide />
+<Figure src="https://raw.githubusercontent.com/lm-sys/lm-sys.github.io/105adb035528f55f3d1823329f170a30b48f2b19/public/images/blog/compressed_fsm/compare.png" alt="같은 프롬프트(Please fill in the following information about Harry Potter.)로 JSON을 생성하는 두 방식의 비교. 위의 Jump-Forward Decoding With Compressed FSM에서는 초록 prefill 상자 뒤에 여는 중괄호와 name 키를 담은 주황 상자 하나가 붙고, 파랑 decode 상자 Har, ry, _Pot, ter와 닫는 따옴표·쉼표를 담은 파랑 상자 뒤에 age 키를 담은 주황 상자, 파랑 1, 1, house 키를 담은 주황 상자, 파랑 G, ryffindor와 닫는 중괄호를 담은 주황 상자, 종료 토큰이 이어진다. 아래의 Normal Decoding With FSM에서는 같은 출력을 {, 줄바꿈, 공백, name, 따옴표 같은 파랑 decode 상자로 한 토큰씩 만들어 상자가 네 줄에 걸친다. 오른쪽에는 두 방식이 만든 같은 JSON(name Harry, age 15, house Gryffindor)이 있다. 범례는 초록 Prefill, 파랑 Decode, 주황 Jump-Forward다." caption="Compressed FSM을 쓴 jump-forward decoding(위)과 FSM으로 한 토큰씩 decode하는 일반 방식(아래). 초록은 프롬프트의 prefill, 파랑은 한 토큰씩 decode한 토큰, 주황은 형식이 정해진 문자열을 forward 한 번에 처리한 jump-forward 구간이다. 두 방식은 같은 JSON(오른쪽)을 만들지만, 위쪽은 키 이름과 따옴표·괄호를 건너뛰어 decode 스텝이 훨씬 적다." source="LMSYS Org (2024), Compressed FSM 블로그 · © 2023 LMSYS Org, MIT License" wide />
 
-SGLang은 v0.4에서 CPU 쪽 시간을 GPU 실행과 겹치는 scheduler를 도입했다.
-SGLang 팀은 최적화하지 않은 엔진이 시간의 절반까지를 CPU 작업에 쓸 수 있다고 보고,
-scheduler가 **한 batch 앞서** 다음 batch의 준비를 하게 해 CPU 작업을 GPU 실행과 겹쳤다.[^sglang-v04]
-다음 batch에 들어갈 토큰은 아직 GPU에서 계산 중이므로,
-그 자리를 미리 표시해 두고 준비를 진행한다.
-vLLM도 지금은 같은 생각의 async scheduling을 기본으로 켜고, 호환되지 않는 설정에서만 끈다.[^vllm-config]
-
-같은 버전은 엔진을 여러 개 띄울 때 앞에서 본 cache-aware routing을 cache-aware load balancer로 구현했다.
+SGLang v0.4는 엔진을 여러 개 띄울 때 cache-aware routing을 cache-aware load balancer로 구현했다.
 엔진 인스턴스마다 radix tree가 따로 있으므로, 요청을 돌아가며 나누면 같은 prefix를 가진 요청이 여러 인스턴스에 흩어져 cache 적중률이 떨어진다.
 이 load balancer는 각 인스턴스의 radix tree를 본뜬 근사 radix tree를 유지하며 prefix가 가장 많이 맞을 인스턴스로 요청을 보낸다.
 같은 크기의 긴 공통 prefix 그룹이 여럿인 workload에서 이 방식은 v0.3보다 cache 적중률을 3.8배 높여 처리량을 최대 1.9배 늘렸다.[^sglang-v04]
@@ -137,7 +135,7 @@ SGLang의 설정도 같은 개념에 대응한다.[^sglang-args]
 가중치와 KV cache pool에 줄 GPU 메모리 비율은 `--mem-fraction-static`, chunked prefill의 조각 크기는 `--chunked-prefill-size`,
 동시 요청 수의 상한은 `--max-running-requests`, 요청의 실행 순서는 `--schedule-policy`로 정한다.
 실행 순서의 기본값은 도착한 순서대로인 `fcfs`(first come, first served)이고,
-`lpm`(longest prefix match)을 고르면 앞에서 본 cache-aware scheduling처럼 cache와 일치하는 prefix가 긴 요청부터 처리한다.
+`lpm`(longest prefix match)을 고르면 cache-aware scheduling처럼 cache와 일치하는 prefix가 긴 요청부터 처리한다.
 다만 대기 요청이 128개를 넘으면 정렬 비용을 아끼려고 `fcfs`로 돌아간다.[^sglang-policy]
 
 SGLang의 튜닝 문서는 offline batch inference, 곧 지연 목표 없이 모아 둔 요청을 한꺼번에 처리하는 경우에 처리량을 높이려면 **batch를 크게 만드는 것이 가장 중요하다**고 요약한다.[^sglang-tune]
@@ -197,12 +195,11 @@ Concurrency를 고정하면 응답이 느려질 때 새 요청도 늦게 들어�
 실제 사용자가 일정한 속도로 몰려올 때 SLO(service-level objective)를 지키는지 보기에 좋다.
 
 Goodput을 잴 때도 정의를 구분한다.
-`vllm bench serve`의 `--goodput` 옵션에 TTFT와 TPOT의 목표치를 밀리초로 주면,
-그 부하에서 목표를 모두 지킨 요청 수를 측정 시간으로 나눈 값을 보고한다.[^vllm-bench-src]
-앞에서 본 DistServe의 goodput은 SLO 달성률 목표(예: 90%)를 지키면서 GPU 한 대가 감당할 수 있는 **최대 요청률**이었다.[^distserve]
-이 값을 얻으려면 요청률을 바꿔 가며 여러 번 재고, 달성률이 목표 아래로 떨어지기 직전의 요청률을 찾아야 한다.
-
-<Figure src="https://arxiv.org/html/2401.09670v3/teaser.svg" alt="13B 모델을 A100 한 대로 서빙할 때(입력 512토큰, 출력 64토큰) 요청률(Rate, reqs/s, 0~12)에 따른 지연을 그린 두 그래프. 위 그래프는 P90 TTFT(초), 아래 그래프는 P90 TPOT(초)이고 각각 SLA라고 적힌 가로 점선(TTFT 0.4초, TPOT 0.04초)이 있다. 파랑 Existing systems 선은 위에서 약 2.8 rps, 아래에서 1.6 rps에 점선을 넘는다. 주황 Prefill-only 선은 위 그래프에서 5.6 rps에, 초록 Decode-only 선은 아래 그래프에서 10 rps에 점선을 넘는다. 각 교차점에서 세로 점선이 가로축으로 내려와 rps=1.6, rps=5.6, rps=10이 표시되어 있다." caption="DistServe의 goodput. 그림의 SLA는 이 노트의 SLO, 곧 지연 목표(가로 점선)를 뜻한다. 파랑은 prefill과 decode를 한 GPU에서 함께 돌리는 기존 시스템, 주황은 prefill만, 초록은 decode만 맡은 GPU로 두 단계를 나눈 경우다. 요청률을 올리면 P90 TTFT(위)와 P90 TPOT(아래)가 함께 오르는데, P90이 목표 아래라는 것은 요청의 90% 이상이 목표를 지킨다는 뜻이다. 두 지연이 모두 목표 아래인 최대 요청률이 goodput이므로, 기존 시스템은 TPOT에 묶여 1.6 rps에 그치고, 나누면 prefill GPU는 5.6 rps, decode GPU는 10 rps까지 목표를 지킨다." source="Zhong et al. (2024), Figure 1 · CC BY-SA 4.0" />
+DistServe의 goodput은 SLO를 지키며 감당하는 최대 요청률이다.[^distserve]
+반면 `vllm bench serve`의 `--goodput` 옵션에 TTFT와 TPOT의 목표치를 밀리초로 주면,
+주어진 부하 하나에서 목표를 모두 지킨 요청 수를 측정 시간으로 나눈 값을 보고한다.[^vllm-bench-src]
+그래서 DistServe의 goodput을 얻으려면 요청률을 바꿔 가며 여러 번 재고,
+목표를 지킨 요청의 비율이 기준 아래로 떨어지기 직전의 요청률을 찾아야 한다.
 
 <Callout type="example">
 기말 프로젝트에서 Llama 3.1 8B를 H100 한 대로 서빙하며 BF16(bfloat16)과 FP8(8-bit floating point)을 비교한다고 하자.
@@ -222,7 +219,7 @@ vllm bench serve --model meta-llama/Llama-3.1-8B-Instruct \
   --goodput ttft:1000 tpot:50
 ```
 
-`--ignore-eos`는 종료 토큰(EOS, end of sequence)이 나와도 정해진 길이까지 생성하게 해 두 서버의 출력 길이를 맞추고,
+`--ignore-eos`는 두 서버의 출력 길이를 맞추고,
 `--num-warmups`는 측정 전에 warmup 요청을 보낸다(기본값 0).
 `--request-rate`의 기본값은 inf, 곧 모든 요청을 처음에 한꺼번에 보내는 것이므로,
 `--max-concurrency`만 주면 동시 요청 수를 64로 고정한 concurrency 방식의 측정이 된다.[^vllm-bench-src]
@@ -234,19 +231,20 @@ prefix 재사용이나 draft 수락처럼 내용에 좌우되는 효과는 대�
 세로축에 GPU 한 대의 output token throughput을 두어 두 정밀도의 곡선을 겹쳐 그린다.
 동시 요청 64에서 초당 6,400토큰이 나왔다면 그 점은 (100, 6,400)이다(가상의 수치).
 가로축 값에는 TTFT와 대기 시간이 섞여 있어 1/TPOT와 다르므로, decode 중에 사용자가 느끼는 속도는 TPOT로 따로 본다.
+</Callout>
 
-Roofline으로 보면 동시 요청이 적을 때는 가중치 읽기가 병목이라 FP8이 TPOT를 줄일 것으로 기대한다.
+앞의 예시를 roofline으로 보면, 동시 요청이 적을 때는 가중치 읽기가 병목이라 FP8이 TPOT를 줄일 것으로 기대한다.
 다만 vLLM의 FP8 문서가 설명하는 online 모드(`fp8_per_tensor`)는 per-tensor scale을 쓰고 activation의 scale을 매 forward마다 구하며,
 문서는 이 모드의 지연 개선이 제한된다고 적는다.[^vllm-fp8w8a8]
 동시 요청이 많아 행렬곱 연산이 병목이 되면 FP8 Tensor Core로 처리량이 높아질 수 있다.
 결과가 예측과 다르면 동시 요청 1의 TPOT로 MBU(model bandwidth utilization)를 계산해 대역폭 지붕에서 얼마나 떨어져 있는지 보고,
 그래도 원인이 보이지 않으면 엔진의 profiler로 실행 기록(trace)을 떠서 kernel 사이에 GPU가 노는 구간과 attention·행렬곱의 비중을 확인한다.[^vllm-profile]
+
 양자화와 speculative decoding처럼 여러 기법을 함께 켤 때는 개별 이득을 단순히 곱해 예측할 수 없으므로,
 각각 켠 경우와 함께 켠 경우를 같은 조건에서 따로 잰다.
 정확도는 같은 프롬프트에 대한 task 점수로 따로 확인한다.
-</Callout>
 
-vLLM은 이런 반복을 자동화하는 `vllm bench sweep`도 제공한다.
+vLLM은 이렇게 설정과 부하를 바꿔 가며 재는 일을 자동화하는 `vllm bench sweep`도 제공한다.
 서버 설정의 조합마다 측정을 돌리고, 부하 수준을 바꿔 지연과 처리량의 맞교환을 찾으며,
 위와 같은 정의의 사용자당 처리량과 GPU당 처리량으로 Pareto 곡선을 그린다.[^vllm-sweep]
 Pareto 곡선은 자기보다 두 축이 모두 나은 점이 없는 점들을 이은 선으로, 한 축을 더 얻으려면 다른 축을 내줘야 하는 경계다.
@@ -256,6 +254,8 @@ Pareto 곡선은 자기보다 두 축이 모두 나은 점이 없는 점들을 �
 [^survey]: Park, S., Jeon, S., Lee, C., Jeon, S., Kim, B.-S., & Lee, J. (2025). A Survey on Inference Engines for Large Language Models: Perspectives on Optimization and Efficiency. [arXiv:2505.01658v2](https://arxiv.org/abs/2505.01658v2).
 
 [^vllm-mrv2]: vLLM Project. (2026). Model Runner V2 Design Document. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/model_runner_v2/).
+
+[^vllm-config]: vLLM Project. (2026). vllm/config/vllm.py. *vLLM v0.31.0*. [github.com](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/config/vllm.py).
 
 [^vllm-v1]: vLLM Team. (2025). vLLM V1: A Major Upgrade to vLLM's Core Architecture. *vLLM Blog*. [vllm.ai](https://vllm.ai/blog/2025-01-27-v1-alpha-release).
 
@@ -268,8 +268,6 @@ Pareto 곡선은 자기보다 두 축이 모두 나은 점이 없는 점들을 �
 [^sglang]: Zheng, L., Yin, L., Xie, Z., et al. (2024). SGLang: Efficient Execution of Structured Language Model Programs. *NeurIPS 2024*. [arXiv:2312.07104](https://arxiv.org/abs/2312.07104).
 
 [^sglang-fsm]: Yin, L., Sheng, Y., & Zheng, L. (2024). Fast JSON Decoding for Local LLMs with Compressed Finite State Machine. *LMSYS Blog*. [lmsys.org](https://lmsys.org/blog/2024-02-05-compressed-fsm/).
-
-[^vllm-config]: vLLM Project. (2026). vllm/config/vllm.py. *vLLM v0.31.0*. [github.com](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/config/vllm.py).
 
 [^sglang-v04]: The SGLang Team. (2024). SGLang v0.4: Zero-Overhead Batch Scheduler, Cache-Aware Load Balancer, Faster Structured Outputs. *LMSYS Blog*. [lmsys.org](https://lmsys.org/blog/2024-12-04-sglang-v0-4/).
 

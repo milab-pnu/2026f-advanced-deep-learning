@@ -4,8 +4,10 @@ week: 7
 order: 2
 ---
 
-앞에서 본 batching은 여러 요청을 한 스텝에 묶어 decode에서 놀던 연산 능력을 더 많이 쓰게 했다.
-Roofline 분석에서 보았듯 선형층의 arithmetic intensity가 함께 처리하는 토큰 수와 거의 같기 때문이다.
+import mtpArchitecture from "./assets/week07-mtp-gloeckle-architecture.png";
+
+Batching은 여러 요청을 한 스텝에 묶어 decode에서 놀던 연산 능력을 더 많이 쓰게 한다.
+Roofline 분석으로 보면 선형층의 arithmetic intensity가 함께 처리하는 토큰 수와 거의 같기 때문이다.
 그런데 요청이 적으면 묶을 것이 없다.
 요청 하나만 decode하는 스텝은 Llama 3 8B라면 BF16(bfloat16) 가중치 16 GB를 읽어 토큰 하나에만 쓴다.
 요청이 하나뿐일 때도 이 남는 연산 능력을 채울 방법이 있다.
@@ -60,15 +62,14 @@ target은 `on the mat .` 네 토큰을 한 번에 입력해 네 위치의 출력
 결과는 target 혼자 greedy decoding한 것과 같다.
 위치 4처럼 버린 계산과 draft의 비용이 대가다.
 
-검증하는 forward는 입력한 네 토큰의 key·value를 모두 KV cache에 써 넣는다.
-그래서 판정이 끝나면 확정된 토큰의 칸까지만 남기고 나머지를 버린다.
+구현에서는 판정이 끝난 뒤 KV cache도 되감아야 한다.
+검증하는 forward가 입력한 네 토큰의 key·value를 모두 KV cache에 써 넣기 때문에,
+확정된 토큰의 칸까지만 남기고 나머지를 버린다.
 위 예라면 `on`, `the`, `mat`의 key·value는 남기고, 거부된 `.`의 칸만 지운다.
 교체된 `and`는 아직 KV cache에 없으므로 다음 forward의 첫 입력이 되고,
 draft도 자기 cache를 같은 지점으로 되돌린 뒤 `and`부터 다시 추측한다.
-어느 방식이든 데이터를 옮기지 않고 요청의 유효 길이만 되돌리면 되고,
+두 cache 모두 데이터를 옮기지 않고 요청의 유효 길이만 되돌리면 되고,
 paged KV cache라면 그 결과 비게 된 블록을 반납한다.
-
-<Figure src="https://arxiv.org/html/2211.17192v2/figure1.png" alt="Leviathan 등의 Figure 1. 조건 없이 문장을 생성하는 예에서 문장 'japan's benchmark nikkei 225 index rose 226.69 points, or 1.5 percent, to 10,989.79 in late morning trading.'이 아홉 줄에 걸쳐 만들어진다. 각 줄은 target 모델의 forward 한 번이다. 초록색은 draft가 제안하고 target이 수락한 토큰, 빨간색 취소선은 거부된 토큰, 파란색은 거부 지점에서 target이 고친 토큰이다. 한 줄에 초록 토큰이 여러 개 붙는 경우가 많다." caption="Speculative decoding의 진행. 한 줄이 target의 forward 한 번이고, 초록은 수락된 draft 토큰, 빨강은 거부된 토큰, 파랑은 target이 고친 토큰이다. 한 번의 forward로 여러 토큰이 확정되는 줄이 많다." source="Leviathan et al. (2023), Figure 1 · CC BY 4.0" hero />
 
 ### 1-3. 분포를 보존하는 수락 규칙
 
@@ -116,6 +117,11 @@ Greedy 검증은 $p$와 $q$가 모두 argmax에 확률 1을 둔 특수한 경우
 앞의 greedy 예에서 `the`가 수락되고 `mat`이 거부되었다면, 둘째 위치의 $p'$에서 새 토큰을 뽑고 `.`는 버린다.
 그래서 sampling에서도 forward 한 번이 내는 토큰은 최소 1개, 최대 $\gamma+1$개다.
 
+이 분포 보존은 수학적으로는 정확하지만,
+vLLM 문서는 실제 서빙에서의 보장이 하드웨어 수치 정밀도의 범위 안에서라고 밝힌다.[^vllm-spec]
+Batch 구성이 바뀌면 부동소수점 계산 순서가 달라지고,
+그 작은 수치 차이로 다른 토큰이 선택되면 이후 생성 결과가 달라질 수 있다.
+
 ### 1-4. 기대 속도 향상
 
 추측 하나하나가 문맥과 상관없이 서로 독립으로 확률 $\alpha$로 수락된다고 단순화하면,
@@ -131,7 +137,7 @@ $\alpha$가 1이면 추측이 모두 수락되어 $\gamma+1$개가 된다.
 Draft 한 번이 target 한 번의 $c$배 시간이 든다면 전체 시간의 개선 배수는 $(1-\alpha^{\gamma+1})/\bigl((1-\alpha)(\gamma c+1)\bigr)$이다.
 $\alpha=0.7$, $\gamma=4$, $c=0.05$라면 $2.77/1.2\approx2.3$배다.
 이 식은 target이 $\gamma+1$개 위치를 계산하는 데 위치 하나와 같은 시간이 든다는 가정에 기대는데,
-앞에서 본 memory-bound decode가 그 가정을 뒷받침한다.[^leviathan]
+decode가 memory-bound라는 앞의 하한 계산이 그 가정을 뒷받침한다.[^leviathan]
 
 실제로 Leviathan 등은 T5-XXL(11B)에 T5-small을 draft로 붙여 번역에서 2.6–3.4배,
 요약에서 2.3–3.1배 빨라졌다고 보고했다(batch 1).
@@ -157,8 +163,6 @@ $k$번째 head는 지금 위치보다 $k+1$칸 뒤의 토큰을 예측한다.
 기존 LM(language model) head는 바로 다음 토큰을, head 1은 그다음을, head 2는 그 뒤를 맡는 식이다.
 Head 하나는 residual 연결이 있는 FFN(feed-forward network) 한 층과 어휘로 보내는 LM head로 이루어져, target에 비해 매우 작다.
 
-<Figure src="https://arxiv.org/html/2401.10774v3/Medusa.drawio.png" alt="Medusa의 Figure 1. 왼쪽 Original Model은 Embedding, Transformer Layers, LM Head가 아래에서 위로 쌓여 있고, 입력은 'What will happen if Medusa meets a llama?'다. Transformer Layers의 마지막 hidden state(Last Hidden)가 LM Head와 함께 Medusa Head 1, 2, 3으로 들어간다. 오른쪽 Top-k Predictions에는 LM Head의 후보 It, I, As, head 1의 후보 is, 따옴표, the, head 2의 후보 difficult, is, 따옴표, head 3의 후보 not, difficult, a가 있다. 아래 Candidates에는 'It is difficult not'에 초록 체크, 'It' difficult a'와 'It is' not'에 빨간 X가 붙어 있고, Single step prediction은 'It is difficult'다." caption="Medusa의 구조. 원래 모델의 마지막 hidden state를 LM head와 Medusa head 세 개가 함께 받아, 바로 다음 토큰과 그 뒤 세 위치의 상위 후보를 각각 낸다. 이 후보들을 조합한 경로를 검증해 이 예에서는 It is difficult를 한 스텝에 얻는다. 눈송이와 불꽃 표시는 원래 모델을 고정하는 Medusa-1과 함께 학습하는 Medusa-2를 뜻한다." source="Cai et al. (2024), Figure 1 · CC BY 4.0" />
-
 Head마다 후보를 여러 개 두면 추측은 한 줄이 아니라 나무가 된다.
 Head 1의 상위 2개와 head 2의 상위 3개를 조합하면 후보 경로가 6개다.
 Medusa는 이 나무 전체를 forward 한 번으로 검증하려고 **tree attention**을 쓴다.
@@ -166,7 +170,7 @@ Medusa는 이 나무 전체를 forward 한 번으로 검증하려고 **tree atte
 position index도 나무의 깊이에 맞춰 준다.
 그래서 서로 다른 경로를 한 시퀀스에 이어 붙여도 경로마다 따로 계산한 것과 같은 결과가 나온다.
 
-<Figure src="https://arxiv.org/html/2401.10774v3/tree_attention.png" alt="Medusa의 Figure 2. 왼쪽은 후보 나무다. Root에서 head 1의 후보 두 개(It, I)가 나오고, 각각에서 head 2의 후보 세 개(is, 따옴표, the)가 이어져 후보 경로가 모두 6개다. 오른쪽은 8×8 attention mask로, 행은 query, 열은 key다. 각 후보 토큰은 자기 자신과 나무에서의 조상에만 체크 표시가 있어, 예를 들어 It 아래의 is는 It과 자기 자신만 본다." caption="Tree attention. Head 1의 상위 2개와 head 2의 상위 3개로 만든 후보 6개 경로를 한 번에 검증한다. Mask는 각 토큰이 자기 자신과 나무에서의 조상만 보게 한다." source="Cai et al. (2024), Figure 2 · CC BY 4.0" hero />
+<Figure src="https://arxiv.org/html/2401.10774v3/tree_attention.png" alt="Medusa의 Figure 2. 왼쪽은 후보 나무다. Root에서 head 1의 후보 두 개(It, I)가 나오고, 각각에서 head 2의 후보 세 개(is, 따옴표, the)가 이어져 후보 경로가 모두 6개다. 오른쪽은 8×8 attention mask로, 행은 query, 열은 key다. 각 후보 토큰은 자기 자신과 나무에서의 조상에만 체크 표시가 있어, 예를 들어 It 아래의 is는 It과 자기 자신만 본다." caption="Tree attention. Head 1의 상위 2개와 head 2의 상위 3개로 만든 후보 6개 경로를 한 번에 검증한다. Mask는 각 토큰이 자기 자신과 나무에서의 조상만 보게 한다." source="Cai et al. (2024), Figure 2 · CC BY 4.0" wide />
 
 Vicuna-7B에서 target을 고정하고 head만 학습하는 Medusa-1은 2.18배,
 target과 head를 함께 학습하는 Medusa-2는 2.83배 빨라졌다(batch 1).
@@ -205,10 +209,9 @@ EAGLE-3는 feature 예측이라는 제약을 버리고 토큰을 직접 예측�
 
 EAGLE 계열은 추측의 깊이 방향으로 draft의 forward를 차례로 돌리므로, 추측이 길수록 drafting 시간도 늘어난다.
 이 순차 단계를 없애려고 추측 블록 전체를 forward 한 번에 내는 병렬 drafting이 나왔다.
+Block diffusion은 빈칸(mask)으로 둔 블록의 여러 위치를 몇 번의 반복으로 함께 채우는 생성 방식이다.
 DFlash는 target의 feature를 조건으로 받는 가벼운 block diffusion 모델로,
-블록 안의 비어 있는 여러 위치를 한 번에 예측해 토큰을 한꺼번에 만든다.[^dflash]
-Block diffusion은 빈칸(mask)으로 둔 블록의 여러 위치를 몇 번의 반복으로 함께 채우는 생성 방식이고,
-DFlash는 draft 블록을 forward 한 번으로 만든다.
+draft 블록 전체를 forward 한 번으로 만든다.[^dflash]
 vLLM도 DFlash를 비롯한 병렬 drafting 방식을 지원한다.[^vllm-parallel]
 
 ### 2-4. 학습 없는 draft
@@ -243,7 +246,7 @@ Gloeckle 등은 이를 inference 가속보다 먼저 학습 효율의 문제로 
 위치마다 다음 토큰 $n$개를 함께 예측하는 <strong>multi-token prediction(MTP)</strong>이다.
 위치 $t$에서 head $i$는 $t+i$번째 정답 토큰의 cross-entropy를 내고, 이 $n$개 손실을 더해 trunk와 head를 함께 학습한다.
 
-<Figure src="https://arxiv.org/html/2404.19737v1/img/main_fig_col.png" alt="Gloeckle 등의 Figure 1. 위 그림은 입력 토큰 1–4가 공유 trunk를 지나 head 4개로 갈라지고, 위치마다 다음 토큰 네 개(예: 입력 1에서 토큰 2, 3, 4, 5)를 예측하는 구조다. 첫 head 외의 예측은 추론 때 버리거나 속도를 최대 3배 높이는 데 쓴다고 적혀 있다. 아래 그림은 모델 크기별 MBPP pass@1 변화로, 0.3B와 0.6B에서는 4-token 예측이 기준보다 낮고, 1.3B부터 높아져 13B에서는 기준 26.0에 4.5점을 더한다." caption="Multi-token prediction의 구조(위)와 모델 크기에 따른 MBPP 성능 변화(아래). 이 코드 학습 실험에서는 작은 모델에서 손해이고 큰 모델에서 이득이었다." source="Gloeckle et al. (2024), Figure 1 · CC BY 4.0" />
+<Figure src={mtpArchitecture.src} alt="Gloeckle 등의 Figure 1 위 패널. 아래의 입력 토큰 1–4가 Shared라 적힌 공유 trunk를 지나고, 각 위치에서 줄기가 네 갈래로 나뉘어 겹쳐 놓인 Head 1–4로 들어간다. 맨 위 4-token targets에는 위치마다 다음 토큰 네 개가 놓여, 예를 들어 입력 1 위에는 토큰 2, 3, 4, 5가 있다. Head 1이 맡은 바로 다음 토큰은 연한 노란색, head 2–4가 맡은 그 뒤 토큰들은 분홍색이고, 분홍색은 추론 때 버리거나 속도를 최대 3배 높이는 데 쓴다는 범례가 붙어 있다." caption="Multi-token prediction의 구조. 공유 trunk의 출력을 head 4개가 함께 받아, 위치마다 다음 토큰 네 개를 하나씩 맡아 예측한다. 분홍색으로 표시된 head 2–4의 예측은 추론 때 버리거나 self-speculative decoding의 draft로 쓴다." source="Gloeckle et al. (2024), Figure 1 · CC BY 4.0 · 위 패널만 잘라냄" />
 
 이 목표는 모델 크기에 따라 효과가 달랐다.
 비교 상대는 전체 파라미터 수를 맞춘 next-token 모델로, head에 층을 더한 만큼 trunk에서 층을 뺐다.
@@ -256,9 +259,7 @@ Gloeckle 등은 이를 inference 가속보다 먼저 학습 효율의 문제로 
 
 ### 3-2. DeepSeek-V3의 순차 MTP
 
-DeepSeek-V3는 2024년 말 공개된 MoE(mixture of experts) 모델이다.
-FFN을 여러 expert로 나누고 토큰마다 일부 expert만 골라 계산하므로, 총 파라미터는 671B이지만 토큰 하나에 쓰는 파라미터는 37B다.
-이 모델은 MTP를 조금 다르게 구현했다.[^dsv3]
+DeepSeek-V3는 2024년 말 공개된 MoE(mixture of experts) 모델로, MTP를 조금 다르게 구현했다.[^dsv3]
 Gloeckle 등의 head들은 같은 hidden state에서 서로 다른 미래 토큰을 독립적으로 예측하지만,
 DeepSeek-V3는 추가 토큰을 **순서대로** 예측해, 뒤 토큰을 예측할 때 앞 토큰 정보를 이어 받는다.
 본체 마지막 층의 hidden state를 깊이 0의 표현, $k$번째 MTP 모듈의 출력을 깊이 $k$의 표현이라 부르자.
@@ -266,7 +267,6 @@ $k$번째 MTP 모듈은 깊이 $k-1$의 표현과 $k$칸 뒤 토큰의 embedding
 Transformer 층 하나를 거쳐 한 칸 더 뒤의 토큰을 예측한다.
 학습 때는 이 입력 토큰이 정답 문장의 토큰이고, draft로 쓸 때는 이미 고른 토큰이다.
 Embedding과 LM head는 본체와 공유한다.
-보고서는 이 구조가 EAGLE과 비슷하지만 EAGLE의 주목적이 speculative decoding인 반면 자신들은 학습 성능을 높이려고 MTP를 쓴다고 밝힌다.
 
 실제 학습에서는 깊이 $D=1$, 곧 한 칸 뒤의 토큰 하나만 더 예측했다.
 생성할 때는 MTP 모듈을 버려도 본체가 그대로 동작하고, 남겨 두면 speculative decoding의 draft가 된다.
@@ -280,9 +280,9 @@ EAGLE 계열의 draft와 DeepSeek-V3의 MTP 모듈은 모양이 비슷하다.
 둘 다 target의 표현과 다음 토큰의 embedding을 받아 작은 Transformer 층으로 한 칸 뒤를 예측하고,
 embedding과 LM head를 target과 공유한다.
 차이는 학습 시점과 목표에 있다.
-EAGLE은 다 만든 target을 고정하고 draft만 따로 학습한다.
-DeepSeek-V3의 MTP는 pre-training 동안 본체와 함께 학습하므로,
-별도 draft 학습 없이 그 모듈을 draft로 쓸 수 있다.
+EAGLE은 speculative decoding을 위해 다 만든 target을 고정하고 draft만 따로 학습한다.
+DeepSeek-V3의 MTP는 학습 성능을 높이려고 pre-training 동안 본체와 함께 학습한다.[^dsv3]
+그래서 별도 draft 학습 없이 그 모듈을 draft로 쓸 수 있다.
 </Callout>
 
 ## 4. Batch 크기와 이득
@@ -331,8 +331,6 @@ Sadhukhan 등의 MagicDec은 KV cache 읽기가 스텝을 지배하는 긴 문�
 A100 8대에서 LLaMA-3.1-8B를 $\gamma=3$으로 두고, draft가 KV cache를 512토큰만 쓰게 해 drafting 비용을 낮춘 설정의 이론 분석에서는,
 문맥이 약 4,000토큰보다 짧으면 batch가 커질수록 이득이 줄지만 그보다 길면 오히려 커진다고 예측했다.[^magicdec]
 
-<Figure src="https://raw.githubusercontent.com/Infini-AI-Lab/MagicDec/09cd671c01bc87f7570d3243c46200a96f0fc0b4/pages/static/images/verify_2_autoreg.png" alt="선 그래프. 제목은 'Ratio of verification time to decode time (verifying 8 tokens)'다. 가로축은 평균 시퀀스 길이로 10에서 10⁶까지의 로그 눈금이고, 세로축은 T_verify/T_decode로 1.0에서 2.0까지다. Batch 크기 8, 16, 32, 64, 128, 256, 512, 1024마다 선이 하나씩 있다. 시퀀스가 짧은 왼쪽에서는 batch가 클수록 비가 커서 batch 1024는 약 2.0, batch 8은 약 1.1–1.2다. 시퀀스 길이가 1,000을 넘으면 모든 선이 빠르게 모여 내려가고, 10⁴ 이후로는 거의 1.0에 붙는다." caption="검증 시간과 일반 decode 시간의 비. H100에서 토큰 8개를 검증하는 시간을 일반 decode 한 스텝의 시간으로 나눈 값을 batch 크기별로 그렸다. 실측 그래프라 노트의 하한 계산과 수치는 다르지만, 문맥이 길수록 1에 가까워지는 경향은 같다." source="Sadhukhan et al., MagicDec 프로젝트 페이지 Figure 2 · Apache-2.0" />
-
 ### 4-2. 서빙에서의 선택
 
 그래서 서빙에서는 부하에 맞춰 speculative decoding의 사용 여부와 추측 길이를 조절하는 방법이 나왔다.
@@ -347,10 +345,6 @@ vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-boun
 토큰당 속도는 TPOT로 비교하고, 출력 사이의 대기 간격은 ITL 분포로 본다.
 
 <Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.31.0/docs/assets/benchmarking/latency-metrics-speculative-decoding-light.svg" alt="'Latency with token bundling' 시간축 그림. 요청을 0 ms에 보내고, Output 1로 토큰 T1이 100 ms에, Output 2로 T2, T3, T4가 묶여 140 ms에, Output 3으로 T5가 180 ms에 도착한다. 0–100 ms가 TTFT 100 ms이고, 출력 사이 간격은 두 번 모두 ITL 40 ms다. 100–180 ms가 80 ms의 생성 구간이다. 아래 왼쪽 상자는 Mean ITL = (40 ms + 40 ms) ÷ 2 = 40 ms, 오른쪽 상자는 TPOT = (180 − 100) ms ÷ (5 − 1) = 20 ms/token이다." caption="토큰이 묶여 도착할 때의 ITL과 TPOT. 토큰 다섯 개가 출력 세 번에 나뉘어 도착하면 ITL은 관측된 간격 두 개의 평균인 40 ms이지만, TPOT는 첫 토큰 뒤 80 ms를 토큰 네 개로 나눈 20 ms다." source="vLLM Project (v0.31.0), Benchmark CLI 문서 · Apache-2.0" wide />
-출력 분포가 보존된다는 보장도 수학적으로는 정확하지만,
-vLLM 문서는 그 보장이 하드웨어 수치 정밀도의 범위 안에서라고 밝힌다.[^vllm-spec]
-Batch 구성이 바뀌면 부동소수점 계산 순서가 달라지고,
-그 작은 수치 차이로 다른 토큰이 선택되면 이후 생성 결과가 달라질 수 있다.
 
 [^survey]: Xia, H., Yang, Z., Dong, Q., et al. (2024). Unlocking Efficiency in Large Language Model Inference: A Comprehensive Survey of Speculative Decoding. *Findings of ACL 2024*, 7655–7671. [arXiv:2401.07851v3](https://arxiv.org/abs/2401.07851v3).
 
