@@ -4,54 +4,170 @@ week: 6
 order: 2
 ---
 
-Decode는 batch를 아무리 키워도 memory-bound로 남는다.
-그래서 decode 스텝의 시간은 메모리에서 읽는 bytes가 정한다.
-읽는 데이터의 대부분은 batch가 작을 때는 가중치이고, batch가 클 때는 KV(key-value) cache다.
-이 노트는 숫자 하나를 저장하는 bits를 줄여 두 가지를 모두 줄이는 <strong>양자화(quantization)</strong>를 다룬다.
-Llama 3 8B의 가중치를 BF16(bfloat16)에서 INT4(4-bit integer)로 저장하면 16 GB가 약 4 GB가 되어,
-요청 하나를 decode하는 스텝에서 읽는 데이터가 4분의 1 가까이로 준다.
+<strong>양자화(quantization)</strong>는 weight와 activation을 더 적은 bits로 표현하는 방법이다.
+Llama 3 8B의 weight를 BF16(bfloat16)에서 INT4(4-bit integer)로 바꾸면 16 GB가 약 4 GB가 된다.
+대신 정밀도를 낮춘 만큼 오차가 생기고, LLM(large language model)은 activation의 몇몇 channel에 큰 값(outlier)이 몰려 있어 이 오차가 특히 크다.[^survey]
 
-문제는 정밀도를 낮추면 오차가 생긴다는 점이다.
-LLM(large language model)에서는 activation의 몇몇 channel에 다른 값보다 훨씬 큰 값(outlier)이 몰려 나타나, 이 오차가 특히 커진다.
-이 노트는 양자화의 기본과 PTQ·QAT의 구분을 본 뒤,
-학습을 마친 모델을 가중치, activation, KV cache 순으로 양자화하는 방법과
-학습 단계에서부터 낮은 bits에 맞추는 방법을 차례로 본다.
-Gong 등의 저비트 LLM 서베이는 저비트 형식과 이를 실행하는 시스템, 양자화 알고리즘을 함께 정리했다.[^survey]
-
-양자화는 MIT의 Song Han 교수 강의 [6.5940 TinyML and Efficient Deep Learning Computing](https://hanlab.mit.edu/courses/2024-fall-65940)(2024년 가을)으로 먼저 익히면 좋다.
-Quantization I·II 두 강의가 숫자 형식, 균일 양자화와 양자화 단위, PTQ와 QAT, 1-bit·2-bit(binary·ternary) 양자화까지 기본을 다루고,
-Efficient LLM Deployment 강의가 SmoothQuant, AWQ, QServe 같은 LLM 양자화를 다룬다.
-이 세 방법은 모두 Song Han 교수의 연구실(MIT HAN Lab)에서 나왔다.
-
-<Video src="https://www.youtube.com/watch?v=ymAzUz3qlIA" caption="Song Han, MIT 6.5940 (Fall 2024), Lecture 5: Quantization (Part I). Part II와 Efficient LLM Deployment 강의는 강의 페이지에서 이어 볼 수 있다." />
+Song Han 교수(MIT)는 모델 경량화 연구를 이끌어 왔고,
+이 노트의 SmoothQuant, AWQ, QServe가 모두 그의 연구실(MIT HAN Lab)에서 나왔다.
+그의 강의 [EfficientML.ai](https://efficientml.ai)는 영상과 슬라이드가 모두 공개되어 있다.
 
 ## 1. 양자화의 기본
 
 ### 1-1. 균일 양자화
 
-Mixed precision 학습에서는 FP32(32-bit floating point)와 BF16 같은 부동소수점 형식을 쓴다.
-양자화는 실숫값을 이보다 더 적은 bits로 표현할 수 있는 값의 집합(격자)에 대응시킨다.
-가장 기본적인 균일 양자화는 등간격의 정수 격자를 쓴다.
-간격(scale) $s$와 영점(zero-point) $z$로 실숫값 $x$를 $b$-bit 정수로 바꾸고,
-계산에 쓸 때 다시 실숫값으로 되돌린다(dequantize).[^nagel]
+LLM은 보통 FP32(32-bit floating point)나 BF16 같은 부동소수점으로 학습하고 저장한다.
+양자화는 실숫값을 이보다 더 적은 bits의 정수로 바꾸어 저장하고, 계산할 때 다시 실숫값으로 되돌린다.
+가장 기본적인 방식은 실숫값을 간격이 일정한 격자에 대응시키는 균일(uniform) 양자화다.
+값의 범위를 정수 범위에 그대로 맞추는 비대칭(asymmetric) 양자화로 그 과정을 차례로 따라가 보자.[^nagel]
+
+양자화할 값들의 최솟값 $x_{\min}$과 최댓값 $x_{\max}$, 그리고 쓸 bits 수 $b$가 주어진다.
+$b$-bit 부호 없는 정수는 $0$부터 $2^b-1$까지다.
+예로 값 네 개 $x=(-0.20,\,0.12,\,0.33,\,1.10)$을 4-bit로 양자화하자.
+$x_{\min}=-0.2$, $x_{\max}=1.1$이고, 정수는 $0$부터 $15$까지다.
+
+<figure>
+<svg viewBox="0 0 640 225" role="img" aria-label="비대칭 양자화의 대응 관계. 위 수직선은 실숫값, 아래 수직선은 4-bit 정수 0부터 15까지다. x_min=-0.2와 x_max=1.1 사이를 15칸으로 나누면 한 칸이 s=0.0867이다. 실숫값 0은 주황색 선으로 정수 2에 이어져 zero-point z=2임을 보인다. z를 정수로 반올림했기 때문에 정수 0과 15의 눈금은 x_min, x_max와 조금 어긋난다. 파란 점 0.12와 0.33은 가장 가까운 눈금으로 반올림되어 정수 3과 6으로 저장된다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <defs><marker id="zp-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8"/></marker></defs>
+  <text x="10" y="85" font-size="13" fill="#0f172a" font-weight="600">실숫값</text>
+  <text x="10" y="195" font-size="13" fill="#0f172a" font-weight="600">정수</text>
+  <line x1="90.0" y1="80" x2="590.0" y2="80" stroke="#0f172a"/>
+  <line x1="90.0" y1="190" x2="590.0" y2="190" stroke="#0f172a"/>
+  <line x1="116.4" y1="86" x2="116.4" y2="184" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="116.4" y1="74" x2="116.4" y2="86" stroke="#0f172a"/>
+  <line x1="116.4" y1="184" x2="116.4" y2="196" stroke="#0f172a"/>
+  <text x="116.4" y="212" font-size="12" text-anchor="middle" fill="#64748b">0</text>
+  <line x1="146.3" y1="86" x2="146.3" y2="184" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="146.3" y1="74" x2="146.3" y2="86" stroke="#0f172a"/>
+  <line x1="146.3" y1="184" x2="146.3" y2="196" stroke="#0f172a"/>
+  <text x="146.3" y="212" font-size="12" text-anchor="middle" fill="#64748b">1</text>
+  <line x1="176.2" y1="86" x2="176.2" y2="184" stroke="#b45309" stroke-width="2"/>
+  <line x1="176.2" y1="74" x2="176.2" y2="86" stroke="#0f172a"/>
+  <line x1="176.2" y1="184" x2="176.2" y2="196" stroke="#0f172a"/>
+  <text x="176.2" y="212" font-size="12" text-anchor="middle" fill="#b45309" font-weight="600">2</text>
+  <line x1="206.1" y1="86" x2="206.1" y2="184" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="206.1" y1="74" x2="206.1" y2="86" stroke="#0f172a"/>
+  <line x1="206.1" y1="184" x2="206.1" y2="196" stroke="#0f172a"/>
+  <text x="206.1" y="212" font-size="12" text-anchor="middle" fill="#1d4ed8" font-weight="600">3</text>
+  <line x1="236.0" y1="86" x2="236.0" y2="184" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="236.0" y1="74" x2="236.0" y2="86" stroke="#0f172a"/>
+  <line x1="236.0" y1="184" x2="236.0" y2="196" stroke="#0f172a"/>
+  <text x="236.0" y="212" font-size="12" text-anchor="middle" fill="#64748b">4</text>
+  <line x1="265.9" y1="86" x2="265.9" y2="184" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="265.9" y1="74" x2="265.9" y2="86" stroke="#0f172a"/>
+  <line x1="265.9" y1="184" x2="265.9" y2="196" stroke="#0f172a"/>
+  <text x="265.9" y="212" font-size="12" text-anchor="middle" fill="#64748b">5</text>
+  <line x1="295.7" y1="86" x2="295.7" y2="184" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="295.7" y1="74" x2="295.7" y2="86" stroke="#0f172a"/>
+  <line x1="295.7" y1="184" x2="295.7" y2="196" stroke="#0f172a"/>
+  <text x="295.7" y="212" font-size="12" text-anchor="middle" fill="#1d4ed8" font-weight="600">6</text>
+  <line x1="325.6" y1="86" x2="325.6" y2="184" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="325.6" y1="74" x2="325.6" y2="86" stroke="#0f172a"/>
+  <line x1="325.6" y1="184" x2="325.6" y2="196" stroke="#0f172a"/>
+  <text x="325.6" y="212" font-size="12" text-anchor="middle" fill="#64748b">7</text>
+  <line x1="355.5" y1="86" x2="355.5" y2="184" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="355.5" y1="74" x2="355.5" y2="86" stroke="#0f172a"/>
+  <line x1="355.5" y1="184" x2="355.5" y2="196" stroke="#0f172a"/>
+  <text x="355.5" y="212" font-size="12" text-anchor="middle" fill="#64748b">8</text>
+  <line x1="385.4" y1="86" x2="385.4" y2="184" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="385.4" y1="74" x2="385.4" y2="86" stroke="#0f172a"/>
+  <line x1="385.4" y1="184" x2="385.4" y2="196" stroke="#0f172a"/>
+  <text x="385.4" y="212" font-size="12" text-anchor="middle" fill="#64748b">9</text>
+  <line x1="415.3" y1="86" x2="415.3" y2="184" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="415.3" y1="74" x2="415.3" y2="86" stroke="#0f172a"/>
+  <line x1="415.3" y1="184" x2="415.3" y2="196" stroke="#0f172a"/>
+  <text x="415.3" y="212" font-size="12" text-anchor="middle" fill="#64748b">10</text>
+  <line x1="445.2" y1="86" x2="445.2" y2="184" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="445.2" y1="74" x2="445.2" y2="86" stroke="#0f172a"/>
+  <line x1="445.2" y1="184" x2="445.2" y2="196" stroke="#0f172a"/>
+  <text x="445.2" y="212" font-size="12" text-anchor="middle" fill="#64748b">11</text>
+  <line x1="475.1" y1="86" x2="475.1" y2="184" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="475.1" y1="74" x2="475.1" y2="86" stroke="#0f172a"/>
+  <line x1="475.1" y1="184" x2="475.1" y2="196" stroke="#0f172a"/>
+  <text x="475.1" y="212" font-size="12" text-anchor="middle" fill="#64748b">12</text>
+  <line x1="504.9" y1="86" x2="504.9" y2="184" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="504.9" y1="74" x2="504.9" y2="86" stroke="#0f172a"/>
+  <line x1="504.9" y1="184" x2="504.9" y2="196" stroke="#0f172a"/>
+  <text x="504.9" y="212" font-size="12" text-anchor="middle" fill="#64748b">13</text>
+  <line x1="534.8" y1="86" x2="534.8" y2="184" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="534.8" y1="74" x2="534.8" y2="86" stroke="#0f172a"/>
+  <line x1="534.8" y1="184" x2="534.8" y2="196" stroke="#0f172a"/>
+  <text x="534.8" y="212" font-size="12" text-anchor="middle" fill="#64748b">14</text>
+  <line x1="564.7" y1="86" x2="564.7" y2="184" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="564.7" y1="74" x2="564.7" y2="86" stroke="#0f172a"/>
+  <line x1="564.7" y1="184" x2="564.7" y2="196" stroke="#0f172a"/>
+  <text x="564.7" y="212" font-size="12" text-anchor="middle" fill="#64748b">15</text>
+  <text x="176.2" y="68" font-size="12" text-anchor="middle" fill="#b45309" font-weight="600">0</text>
+  <line x1="348.6" y1="77" x2="348.6" y2="83" stroke="#64748b"/>
+  <text x="348.6" y="68" font-size="12" text-anchor="middle" fill="#64748b">0.5</text>
+  <line x1="521.0" y1="77" x2="521.0" y2="83" stroke="#64748b"/>
+  <text x="521.0" y="68" font-size="12" text-anchor="middle" fill="#64748b">1.0</text>
+  <circle cx="107.2" cy="80" r="4" fill="#fff" stroke="#0f172a" stroke-width="1.5"/>
+  <text x="107.2" y="50" font-size="12" text-anchor="middle" fill="#0f172a">x<tspan baseline-shift="sub" font-size="9">min</tspan> = −0.2</text>
+  <circle cx="555.5" cy="80" r="4" fill="#fff" stroke="#0f172a" stroke-width="1.5"/>
+  <text x="555.5" y="50" font-size="12" text-anchor="middle" fill="#0f172a">x<tspan baseline-shift="sub" font-size="9">max</tspan> = 1.1</text>
+  <path d="M355.5,50 L355.5,54 L385.4,54 L385.4,50" fill="none" stroke="#0f172a"/>
+  <text x="370.5" y="44" font-size="12" text-anchor="middle" fill="#0f172a">s ≈ 0.087</text>
+  <text x="168.2" y="131.0" font-size="12" text-anchor="end" fill="#b45309" font-weight="600">zero-point</text>
+  <text x="168.2" y="147.0" font-size="12" text-anchor="end" fill="#b45309" font-weight="600">z = 2</text>
+  <circle cx="217.6" cy="80" r="4.5" fill="#1d4ed8"/>
+  <text x="221.6" y="102" font-size="12" text-anchor="start" fill="#1d4ed8" font-weight="600">0.12</text>
+  <line x1="217.6" y1="88" x2="206.1" y2="181" stroke="#1d4ed8" stroke-width="1.6" marker-end="url(#zp-arrow)"/>
+  <circle cx="290.0" cy="80" r="4.5" fill="#1d4ed8"/>
+  <text x="294.0" y="102" font-size="12" text-anchor="start" fill="#1d4ed8" font-weight="600">0.33</text>
+  <line x1="290.0" y1="88" x2="295.7" y2="181" stroke="#1d4ed8" stroke-width="1.6" marker-end="url(#zp-arrow)"/>
+</svg>
+<figcaption>예의 대응 관계. 실숫값 −0.2부터 1.1까지를 정수 0부터 15까지에 맞추면 눈금 한 칸이 s ≈ 0.087이고, 실숫값 0은 정수 2에 놓인다. 이 2가 zero-point z다. z를 정수로 반올림한 만큼 격자가 조금 옮겨져, 정수 0과 15의 눈금은 x<sub>min</sub>, x<sub>max</sub>(빈 원)와 약간 어긋난다. 0.12와 0.33은 가장 가까운 눈금인 정수 3과 6으로 저장된다.</figcaption>
+</figure>
+
+**Step 1. Scale.** 실숫값 범위를 정수 범위에 맞춘다.
+예에서는 길이 1.3인 범위 $[-0.2,\,1.1]$을 정수 0부터 15까지, 곧 15칸에 맞추므로 한 칸은 $1.3/15\approx0.0867$이다.
 
 $$
-x_{\text{int}}=\operatorname{clamp}\!\left(\left\lfloor \frac{x}{s}\right\rceil+z;\ 0,\ 2^b-1\right),
-\qquad
-\hat{x}=s\,(x_{\text{int}}-z)
+s=\frac{x_{\max}-x_{\min}}{2^b-1}
+$$
+
+**Step 2. Zero-point.** 값을 $s$로 나누어 칸 단위로 바꾸면, 최솟값 $x_{\min}$은 $x_{\min}/s$가 된다.
+예에서는 $-0.2/0.0867\approx-2.31$이다.
+정수는 0부터 시작하므로, 이 값이 0에 오도록 반대 방향으로 그만큼, 곧 $+2.31$ 옮긴다.
+이 옮기는 양이 zero-point $z$인데, 정수여야 하므로 반올림해 $z=2$로 둔다.
+
+$$
+z=\left\lfloor -\frac{x_{\min}}{s}\right\rceil
 $$
 
 $\lfloor\cdot\rceil$는 가장 가까운 정수로의 반올림이다.
-반올림 오차는 $[-s/2,\,s/2]$ 안에 있고, 범위를 벗어난 값은 잘린다(clipping).
-위 식은 zero-point를 두고 $0$부터 $2^b-1$까지의 부호 없는 정수를 쓰는 비대칭(asymmetric) 형식으로,
-한쪽으로 치우친 값의 범위를 알뜰하게 쓴다.
-Zero-point를 0으로 두고 0을 중심으로 한 부호 있는 정수 범위로 자르는 대칭(symmetric) 양자화는 계산이 단순해 가중치에 흔히 쓰인다.[^nagel]
-대칭 INT4라면 $-8$부터 $7$까지의 정수를 쓰고, 보통 $s=\max\lvert x\rvert/7$로 정한다.
+옮긴 뒤 실숫값 0은 $0+z$, 곧 정수 $z$(예에서는 2)에 놓이므로 $z$는 실숫값 0에 대응하는 정수이기도 하다.
 
-<Figure src="https://arxiv.org/html/2106.08295v1/RoundingSchemes.svg" alt="8-bit 균일 양자화 격자 세 가지를 수직선 위의 파란 눈금으로 그린 그림. 위 왼쪽 Symmetric signed는 실숫값 0을 가운데 두고 정수 −128부터 127까지의 눈금이 간격 s로 놓이며, 실숫값은 s·x_int8이다. 위 오른쪽 Symmetric unsigned는 실숫값 0에서 시작해 정수 0부터 255까지의 눈금이 max까지 이어진다. 아래 Asymmetric은 정수 0이 실숫값 min=−sz에, 정수 255가 max에 놓이고, 실숫값 0은 그 사이의 정수 z에 대응한다. 실숫값은 s(x_uint8−z)로 계산한다." caption="8-bit의 세 가지 균일 격자. 대칭(위 왼쪽)은 실숫값 0이 정수 0에 놓이고 격자가 0을 중심으로 펼쳐진다. 위 오른쪽은 0 이상의 값만 정수 0부터 255까지에 담는 부호 없는 대칭 형식으로, 본문에서는 쓰지 않는다. 비대칭(아래)은 zero-point z만큼 격자를 옮겨 정수 0부터 255까지를 실제 값의 범위 min부터 max까지에 맞춘다. 그림의 s와 z는 위 식의 s, z와 같다." source="Nagel et al. (2021), Figure 3 · CC BY 4.0" />
+**Step 3. Quantize.** 각 값이 정수 몇에 놓이는지 구한다.
+$x/s$로 칸 단위로 바꾸어 반올림하고, Step 2처럼 $z$만큼 옮긴다.
+정수 범위를 벗어나면 끝 값으로 자른다(clipping).
+
+$$
+x_q=\operatorname{clamp}\!\left(\left\lfloor \frac{x}{s}\right\rceil+z;\ 0,\ 2^b-1\right)
+$$
+
+예에서 0.12는 $\lfloor1.38\rceil+2=3$, 0.33은 $\lfloor3.81\rceil+2=6$이 되고, 네 값은 $x_q=(0,\,3,\,6,\,15)$로 저장된다.
+
+**Step 4. Dequantize.** 거꾸로 $z$를 빼고 $s$를 곱해 실숫값으로 되돌린다.
+
+$$
+\hat{x}=s\,(x_q-z)
+$$
+
+예에서 3은 $0.0867\times(3-2)\approx0.087$, 6은 $0.0867\times(6-2)\approx0.347$이 된다.
+원래 값 0.12, 0.33과의 차이가 반올림에서 생긴 오차이고, 잘리지 않은 값이라면 $[-s/2,\,s/2]$ 안에 있다.
+$z$를 반올림한 만큼 격자가 옮겨져, $x_{\min}$과 $x_{\max}$도 $-0.173$, $1.127$로 조금 다르게 되돌아온다.
+
+Zero-point를 $z=0$으로 고정하고 0을 중심으로 한 부호 있는 정수 $-2^{b-1}$부터 $2^{b-1}-1$까지를 쓰면 대칭(symmetric) 양자화가 된다.
+이때 scale은 값의 최대 절댓값을 가장 큰 정수에 맞춘 $s=\max(\lvert x_{\min}\rvert,\,\lvert x_{\max}\rvert)/(2^{b-1}-1)$이고,
+$x_q=\operatorname{clamp}(\lfloor x/s\rceil;\ -2^{b-1},\ 2^{b-1}-1)$, $\hat{x}=s\,x_q$로 계산이 더 단순하다.
+대신 값이 한쪽으로 치우치면 값이 없는 쪽에도 격자를 나눠 준다.
+앞의 예를 대칭 INT4로 두면 $s=1.1/7\approx0.157$로 비대칭의 0.0867보다 간격이 두 배 가까이 넓다.
+그래서 0을 중심으로 고르게 퍼진 weight는 흔히 대칭으로, 한쪽으로 치우친 activation은 비대칭으로 양자화한다.[^nagel]
 
 <Callout type="example">
-가중치 네 개 $w=(0.12,\,-0.50,\,0.33,\,0.04)$를 대칭 INT4로 양자화하자.
+Weight 네 개 $w=(0.12,\,-0.50,\,0.33,\,0.04)$를 대칭 INT4로 양자화하자.
 $s=0.50/7\approx0.0714$이므로 $w/s\approx(1.68,\,-7,\,4.62,\,0.56)$을 반올림해 $(2,\,-7,\,5,\,1)$을 저장한다.
 되돌리면 $(0.143,\,-0.500,\,0.357,\,0.071)$로, 오차는 모두 $s/2\approx0.036$ 이하다.
 
@@ -67,25 +183,39 @@ $s=4.0/7\approx0.571$로 커져,
 
 선형층에 들어가는 activation은 토큰×hidden 차원의 행렬이고,
 이 행렬의 열, 곧 hidden 차원 하나를 channel이라 부른다.
-가중치 행렬에서는 입력 차원 하나를 입력 channel, 출력 차원 하나를 출력 channel이라 부른다.
+Weight 행렬에서는 입력 차원 하나를 입력 channel, 출력 차원 하나를 출력 channel이라 부른다.
 
 예시가 보여 주듯 scale을 몇 개의 값이 함께 쓰느냐, 곧 양자화 단위(granularity)가 오차를 크게 좌우한다.[^survey]
 
 - **per-tensor**: 행렬 전체가 scale 하나를 쓴다.
-- **per-channel**: channel마다 scale을 둔다. 가중치는 보통 출력 channel마다 둔다.
+- **per-channel**: channel마다 scale을 둔다. Weight는 보통 출력 channel마다 둔다.
 - **per-token**: activation의 토큰(행)마다 scale을 둔다.
 - **per-group**: 연속된 원소 몇 개(예: 128개)마다 scale을 둔다.
 
 범위를 작게 나눌수록 큰 값의 영향이 그 묶음 안에 갇히지만, scale을 저장할 공간이 늘어난다.
-LLM의 4-bit 가중치 양자화에서는 원소 128개마다 scale을 두는 group 크기 128이 흔한 기본값이다.
+LLM의 4-bit weight 양자화에서는 원소 128개마다 scale을 두는 group 크기 128이 흔한 기본값이다.
 GPTQ 논문은 이때 group마다 두는 scale과 zero-point 같은 부가 정보에 원소당 약 0.15 bits가 더 든다고 보고했다.[^gptq]
 
 <Callout type="example">
-Llama 3 8B의 가중치를 group 128의 INT4로 저장하고 group마다 16-bit scale 하나만 둔다면 원소당 $4+16/128=4.125$ bits다.
+Llama 3 8B의 weight를 group 128의 INT4로 저장하고 group마다 16-bit scale 하나만 둔다면 원소당 $4+16/128=4.125$ bits다.
 부가 정보는 원소당 0.125 bits로, zero-point를 두지 않은 만큼 위의 약 0.15 bits보다 조금 작다.
 파라미터 8.03B개에 곱하면 약 4.1 GB로, BF16의 16.1 GB에서 약 4분의 1이 된다.
-H100 한 대에 올린 Llama 3 8B의 memory usage 계산에서는 KV cache에 쓸 공간이 약 12 GB 늘어난다.
+H100 한 대에 올린 Llama 3 8B의 memory usage 계산에서는 KV(key-value) cache에 쓸 공간이 약 12 GB 늘어난다.
 </Callout>
+
+Weight와 activation을 모두 정수로 바꿔 정수 행렬곱을 하려면, scale을 어느 축에 두느냐가 정밀도뿐 아니라 계산 방식도 정한다.
+Activation $X$(토큰×입력 차원)는 토큰 $i$마다 scale $s_{X,i}$를, weight $W$(입력 차원×출력 차원)는 출력 channel $j$마다 scale $s_{W,j}$를 두고 대칭 양자화하면,
+
+$$
+Y_{ij}=\sum_k X_{ik}W_{kj}\approx\sum_k \bigl(s_{X,i}X^{q}_{ik}\bigr)\bigl(s_{W,j}W^{q}_{kj}\bigr)=s_{X,i}\,s_{W,j}\sum_k X^{q}_{ik}W^{q}_{kj}
+$$
+
+이다.
+두 scale은 합의 첨자 $k$와 무관하므로 합 밖으로 나온다.
+그래서 합은 정수끼리의 곱셈과 덧셈으로 하고, 마지막에 결과 원소마다 scale 두 개를 곱하면 된다.
+반대로 입력 channel $k$마다 scale을 두면 그 scale이 합 안에 남아, 정수 행렬곱 하나로 계산할 수 없다.[^nagel]
+
+<Figure src="https://arxiv.org/html/2211.10438v7/quant_scheme.svg" alt="Activation X(토큰 T × 입력 channel C_i, 초록)와 weight W(입력 channel C_i × 출력 channel C_o, 노랑)의 곱을 두 가지 양자화 단위로 그린 그림. (a) per-tensor 양자화에서는 X와 W가 각각 작은 사각형 하나로 표시된 scale Δ_X, Δ_W 하나씩을 쓴다. (b)에서는 X 왼쪽에 길이 T의 세로 막대 Δ_X가 붙어 토큰(행)마다 scale을 두는 per-token 양자화를, W 위에 길이 C_o의 가로 막대 Δ_W가 붙어 출력 channel(열)마다 scale을 두는 per-channel 양자화를 나타낸다. 빨간 점선이 X의 한 행과 W의 한 열을 묶는다." caption="그림의 Δ는 본문의 scale s다. (b)처럼 토큰 T마다, 출력 channel C_o마다 둔 scale은 합의 바깥 축에 있어 합 밖으로 꺼낼 수 있다. 반면 합을 도는 축인 입력 channel C_i에 scale을 두면 합 밖으로 꺼낼 수 없다." source="Xiao et al. (2023), Figure 3 · CC BY 4.0" />
 
 ### 1-3. FP8
 
@@ -93,15 +223,15 @@ H100 한 대에 올린 Llama 3 8B의 memory usage 계산에서는 KV cache에 �
 Micikevicius 등이 제안한 FP8은 두 가지다.
 지수 4 bits와 가수 3 bits의 E4M3는 최댓값이 448이고,
 지수 5 bits와 가수 2 bits의 E5M2는 최댓값이 57,344다.
-제안자들은 가중치와 activation에는 정밀도가 높은 E4M3를,
+제안자들은 weight와 activation에는 정밀도가 높은 E4M3를,
 범위가 넓어야 하는 gradient에는 E5M2를 권했다.[^fp8]
 부동소수점은 0 근처에 격자가 촘촘하고 큰 값 쪽으로 성기므로,
 outlier가 섞인 분포에서는 정수 격자보다 손상이 적을 수 있다.
-16-bit로 학습한 GPT-3 6.7B를 가중치는 channel별, activation은 텐서별 scale을 두고 사후 양자화했을 때 WikiText-103 perplexity가 16-bit 8.51, INT8 10.29, E4M3 8.41이었다.[^fp8]
+16-bit로 학습한 GPT-3 6.7B를 weight는 channel별, activation은 텐서별 scale을 두고 사후 양자화했을 때 WikiText-103 perplexity가 16-bit 8.51, INT8 10.29, E4M3 8.41이었다.[^fp8]
 
 FP8의 다른 장점은 하드웨어 지원이다.
 H100 SXM의 FP8 Tensor Core는 dense 기준 약 1,979 TFLOP/s로, BF16 dense 989 TFLOP/s의 두 배다.[^h100]
-가중치와 activation을 모두 FP8로 두고 행렬곱을 하면,
+Weight와 activation을 모두 FP8로 두고 행렬곱을 하면,
 roofline에서 평평한 지붕이 두 배로 높아지고 ridge point도 295에서 591로 옮겨 간다.
 긴 prefill처럼 행렬곱이 compute-bound인 경우의 이론 상한이 두 배가 되는 것이다.
 
@@ -136,8 +266,8 @@ Blackwell 세대의 DGX B200에서는 FP4(4-bit floating point)의 이론 최대
 모델 배포에도 쓰이기 시작했다.
 OpenAI의 gpt-oss는 MoE(mixture of experts) 구조다.
 MoE는 FFN을 expert 여러 개로 늘리고 토큰마다 몇 개만 고르는 구조라 파라미터 대부분이 expert FFN에 있다.
-gpt-oss는 이 MoE 가중치를 MXFP4로 양자화해 원소당 4.25 bits로 저장했고,
-MoE 가중치가 전체 파라미터의 90% 이상을 차지하므로 116.8B 파라미터의 120b 모델이 80 GB GPU 한 대에 올라간다.[^gptoss]
+gpt-oss는 이 MoE weight를 MXFP4로 양자화해 원소당 4.25 bits로 저장했고,
+MoE weight가 전체 파라미터의 90% 이상을 차지하므로 116.8B 파라미터의 120b 모델이 80 GB GPU 한 대에 올라간다.[^gptoss]
 
 ## 2. PTQ와 QAT
 
@@ -150,7 +280,7 @@ LLM은 다시 학습하는 비용이 매우 커서 대개 PTQ부터 쓰고,
 PTQ로는 품질을 지키기 어려운 낮은 bits에서 QAT를 쓴다.
 
 PTQ에서는 scale을 정하는 일이 곧 양자화다.
-가중치는 학습이 끝나면 값이 고정되므로 scale을 미리 정해 두면 된다.
+Weight는 학습이 끝나면 값이 고정되므로 scale을 미리 정해 두면 된다.
 Activation은 입력마다 값이 달라서, 실행 중에 들어온 값의 최댓값으로 scale을 정하거나(dynamic),
 대표 입력을 미리 흘려 잰 범위로 고정된 scale을 쓴다(static).[^survey]
 Dynamic은 입력에 맞춰지는 대신 실행 중에 최댓값을 구하는 비용이 들고,
@@ -164,40 +294,26 @@ GPTQ, AWQ(activation-aware weight quantization), SmoothQuant 같은 대표적인
 
 무엇을 양자화하느냐로도 나눌 수 있다.
 선형층의 행렬곱에는 두 방식이 있다.
-하나는 **가중치만** 낮은 bits로 저장하고,
+하나는 **weight만** 낮은 bits로 저장하고,
 계산할 때 GPU(graphics processing unit) kernel 안에서 FP16(16-bit floating point)이나 BF16으로 dequantize해 16-bit 행렬곱을 하는 weight-only 양자화다.
-가중치 4-bit, activation 16-bit라는 뜻에서 W4A16처럼 부른다.
-다른 하나는 가중치와 **activation을 모두** 낮은 bits로 바꿔 INT8(8-bit integer)이나 FP8(8-bit floating point) 행렬곱을 직접 하는 weight-activation 양자화로,
+Weight 4-bit, activation 16-bit라는 뜻에서 W4A16처럼 부른다.
+다른 하나는 weight와 **activation을 모두** 낮은 bits로 바꿔 INT8(8-bit integer)이나 FP8(8-bit floating point) 행렬곱을 직접 하는 weight-activation 양자화로,
 W8A8처럼 부른다.
-
-Weight-activation 양자화의 행렬곱이 실제로 어떻게 계산되는지 보자.
-Activation $X$(토큰×입력 차원)는 토큰 $i$마다 scale $s_{X,i}$를, 가중치 $W$(입력 차원×출력 차원)는 출력 channel $j$마다 scale $s_{W,j}$를 두고 대칭 양자화하면,
-
-$$
-Y_{ij}=\sum_k X_{ik}W_{kj}\approx\sum_k \bigl(s_{X,i}X^{\text{int}}_{ik}\bigr)\bigl(s_{W,j}W^{\text{int}}_{kj}\bigr)=s_{X,i}\,s_{W,j}\sum_k X^{\text{int}}_{ik}W^{\text{int}}_{kj}
-$$
-
-이다.
-두 scale은 합의 첨자 $k$와 무관하므로 합 밖으로 나온다.
-그래서 합은 정수끼리의 곱셈과 덧셈으로 하고, 마지막에 결과 원소마다 scale 두 개를 곱하면 된다.
-반대로 입력 channel $k$마다 scale을 두면 그 scale이 합 안에 남아, 정수 행렬곱 하나로 계산할 수 없다.[^nagel]
-
-<Figure src="https://arxiv.org/html/2211.10438v7/quant_scheme.svg" alt="Activation X(토큰 T × 입력 channel C_i, 초록)와 가중치 W(입력 channel C_i × 출력 channel C_o, 노랑)의 곱을 두 가지 양자화 단위로 그린 그림. (a) per-tensor 양자화에서는 X와 W가 각각 작은 사각형 하나로 표시된 scale Δ_X, Δ_W 하나씩을 쓴다. (b)에서는 X 왼쪽에 길이 T의 세로 막대 Δ_X가 붙어 토큰(행)마다 scale을 두는 per-token 양자화를, W 위에 길이 C_o의 가로 막대 Δ_W가 붙어 출력 channel(열)마다 scale을 두는 per-channel 양자화를 나타낸다. 빨간 점선이 X의 한 행과 W의 한 열을 묶는다." caption="그림의 Δ는 본문의 scale s다. (b)처럼 토큰 T마다, 출력 channel C_o마다 둔 scale은 합의 바깥 축에 있어 합 밖으로 꺼낼 수 있다. 반면 합을 도는 축인 입력 channel C_i에 scale을 두면 합 밖으로 꺼낼 수 없다." source="Xiao et al. (2023), Figure 3 · CC BY 4.0" />
 
 선형층 밖에서는 attention이 읽는 KV cache도 낮은 bits로 저장할 수 있다.
 
 세 대상이 줄이는 비용은 다르다.
-Weight-only는 읽는 가중치 bytes를 줄이므로, 읽는 데이터의 대부분이 가중치인 작은 batch의 decode에서 효과가 크다.
+Weight-only는 읽는 weight bytes를 줄이므로, 읽는 데이터의 대부분이 weight인 작은 batch의 decode에서 효과가 크다.
 Weight-activation 양자화는 행렬곱을 BF16보다 빠른 저정밀 연산 장치로 하므로,
 긴 prefill처럼 행렬곱이 compute-bound인 경우에도 빨라질 수 있다.
 KV cache 양자화는 읽는 데이터의 대부분이 KV cache인 큰 batch와 긴 문맥의 decode에서 효과가 크다.
 
 다만 이 이득은 하드웨어와 소프트웨어가 받쳐 줄 때만 생긴다.
-Weight-only가 읽는 bytes를 줄이려면, 낮은 bits의 가중치를 메모리에서 읽어 칩 안에서 dequantize하자마자 행렬곱에 쓰는 kernel이 있어야 한다.
-16-bit로 되돌린 가중치를 메모리에 한 번 써 두었다가 다시 읽는다면, 읽고 쓰는 bytes는 양자화하지 않았을 때보다 오히려 많다.
+Weight-only가 읽는 bytes를 줄이려면, 낮은 bits의 weight를 메모리에서 읽어 칩 안에서 dequantize하자마자 행렬곱에 쓰는 kernel이 있어야 한다.
+16-bit로 되돌린 weight를 메모리에 한 번 써 두었다가 다시 읽는다면, 읽고 쓰는 bytes는 양자화하지 않았을 때보다 오히려 많다.
 Weight-activation 양자화는 GPU의 연산 장치가 그 형식의 행렬곱을 직접 지원해야 한다.
 FP8 행렬곱은 Ada Lovelace와 Hopper 세대부터 지원하므로,
-vLLM은 A100 같은 Ampere 세대 GPU에서는 FP8 모델을 가중치만 FP8로 읽는 weight-only(W8A16)로 돌린다.[^vllm-fp8-hw]
+vLLM은 A100 같은 Ampere 세대 GPU에서는 FP8 모델을 weight만 FP8로 읽는 weight-only(W8A16)로 돌린다.[^vllm-fp8-hw]
 그래서 방법을 고르기 전에 쓰려는 GPU와 서빙 엔진이 그 형식의 kernel을 갖추었는지부터 확인한다.
 vLLM 문서는 양자화 방법마다 지원하는 GPU 세대를 표로 정리해 두었다.[^vllm-quant]
 
@@ -205,24 +321,24 @@ vLLM 문서는 양자화 방법마다 지원하는 GPU 세대를 표로 정리�
 
 ### 3-1. 반올림의 한계
 
-Decode 스텝을 가중치 읽기가 지배한다면 가중치만 4-bit 이하로 줄이는 쪽이 이득이 크다.
-가중치에는 activation 같은 극단적인 outlier가 드물어 8-bit에서는 단순 반올림(RTN, round-to-nearest)으로도 괜찮지만,
+Decode 스텝을 weight 읽기가 지배한다면 weight만 4-bit 이하로 줄이는 쪽이 이득이 크다.
+Weight에는 activation 같은 극단적인 outlier가 드물어 8-bit에서는 단순 반올림(RTN, round-to-nearest)으로도 괜찮지만,
 4-bit 이하로 내려가면 오차가 쌓인다.
 GPTQ 논문의 OPT-175B 실험에서 WikiText-2 perplexity는 FP16이 8.34, RTN 4-bit이 10.54였고,
 RTN 3-bit은 7,300으로 모델이 무너졌다.[^gptq]
 
 ### 3-2. GPTQ
 
-Frantar 등의 GPTQ는 층 하나를 양자화할 때 가중치 자체의 오차보다 **층 출력의 오차**를 줄이는 문제로 본다.[^gptq]
+Frantar 등의 GPTQ는 층 하나를 양자화할 때 weight 자체의 오차보다 **층 출력의 오차**를 줄이는 문제로 본다.[^gptq]
 원논문 표기를 따라 이 절에서는 앞의 $XW$와 달리 $W$를 출력×입력, $X$를 입력×토큰으로 두고 층 출력을 $WX$로 쓴다.
-목표는 출력 오차 $\lVert WX-\hat{W}X\rVert^2$를 최소로 하는 양자화된 가중치 $\hat{W}$다.
-가중치를 하나 양자화해 오차가 생기면,
-아직 양자화하지 않은 다른 가중치를 조금씩 고쳐 그 오차를 출력에서 상쇄한다.
-함께 움직이는 입력 차원에 곱해지는 가중치끼리는 서로의 오차를 메워 줄 수 있기 때문이다.
+목표는 출력 오차 $\lVert WX-\hat{W}X\rVert^2$를 최소로 하는 양자화된 weight $\hat{W}$다.
+Weight를 하나 양자화해 오차가 생기면,
+아직 양자화하지 않은 다른 weight를 조금씩 고쳐 그 오차를 출력에서 상쇄한다.
+함께 움직이는 입력 차원에 곱해지는 weight끼리는 서로의 오차를 메워 줄 수 있기 때문이다.
 
 <Callout type="example">
 출력이 $y=w_1x_1+w_2x_2$이고, 두 입력이 늘 같은 값($x_1=x_2=1$)이라고 하자.
-가중치는 $w=(0.35,\,0.35)$, 격자 간격은 0.25다.
+Weight는 $w=(0.35,\,0.35)$, 격자 간격은 0.25다.
 각자 반올림하면 $(0.25,\,0.25)$가 되어 $y$가 0.70에서 0.50으로 0.20 줄어든다.
 대신 $w_1$만 먼저 0.25로 반올림하고,
 생긴 오차 0.10을 $w_2$에 더해 0.45로 고친 뒤 반올림하면 $w_2=0.50$이 된다.
@@ -230,8 +346,8 @@ Frantar 등의 GPTQ는 층 하나를 양자화할 때 가중치 자체의 오차
 두 입력이 늘 함께 움직이므로 $w_1$의 손실을 $w_2$가 메울 수 있었다.
 </Callout>
 
-실제 GPTQ는 입력 차원끼리 얼마나 함께 움직이는지를 담은 행렬 $XX^\top$으로 어떤 가중치를 얼마나 고칠지 계산한다.
-가중치 $W$의 열, 곧 입력 차원을 왼쪽부터 차례로 양자화하고,
+실제 GPTQ는 입력 차원끼리 얼마나 함께 움직이는지를 담은 행렬 $XX^\top$으로 어떤 weight를 얼마나 고칠지 계산한다.
+Weight $W$의 열, 곧 입력 차원을 왼쪽부터 차례로 양자화하고,
 열 하나를 양자화할 때마다 아직 양자화하지 않은 오른쪽 열들을 고쳐 방금 생긴 오차를 메운다.
 실제로는 열 여러 개를 블록으로 묶어 처리해 GPU에서 빠르게 돌린다.
 
@@ -242,28 +358,28 @@ Frantar 등의 GPTQ는 층 하나를 양자화할 때 가중치 자체의 오차
 
 ### 3-3. AWQ
 
-GPTQ는 가중치를 calibration 데이터에 맞춰 직접 고치므로, 그 데이터의 분포에 민감하다.
+GPTQ는 weight를 calibration 데이터에 맞춰 직접 고치므로, 그 데이터의 분포에 민감하다.
 AWQ 논문의 실험(OPT-6.7B, INT3)에서 calibration과 평가에 다른 분포의 데이터를 쓰면 GPTQ의 perplexity는 2.3–4.9 나빠졌다.
-Lin 등의 AWQ는 반올림한 뒤 남은 가중치를 고쳐 오차를 메우는 대신, 반올림하기 전에 중요한 가중치를 보호하는 쪽을 택했다.
-가중치를 데이터에 맞춰 고치지 않으므로, 같은 실험에서 AWQ는 perplexity가 0.5–0.6 오르는 데 그쳤다.[^awq]
+Lin 등의 AWQ는 반올림한 뒤 남은 weight를 고쳐 오차를 메우는 대신, 반올림하기 전에 중요한 weight를 보호하는 쪽을 택했다.
+Weight를 데이터에 맞춰 고치지 않으므로, 같은 실험에서 AWQ는 perplexity가 0.5–0.6 오르는 데 그쳤다.[^awq]
 
-AWQ의 출발점은 가중치마다 중요도가 다르다는 관찰이다.
-가중치의 1%만 FP16으로 남겨도 양자화 오차가 크게 줄었는데, 어느 1%를 남기느냐가 중요했다.
-가중치 크기가 아니라 **그 가중치에 곱해지는 activation의 크기**로 고른 1%를 남겼을 때 효과가 컸다.
+AWQ의 출발점은 weight마다 중요도가 다르다는 관찰이다.
+Weight의 1%만 FP16으로 남겨도 양자화 오차가 크게 줄었는데, 어느 1%를 남기느냐가 중요했다.
+Weight 크기가 아니라 **그 weight에 곱해지는 activation의 크기**로 고른 1%를 남겼을 때 효과가 컸다.
 INT3, group 128의 OPT-6.7B에서 RTN의 perplexity 23.54가,
 activation 기준으로 고른 1%를 FP16으로 두면 11.39가 되었지만,
-가중치 크기 기준으로 고르면 22.37에 그쳤다.
+Weight 크기 기준으로 고르면 22.37에 그쳤다.
 LLM의 activation은 몇몇 channel에 다른 값보다 훨씬 큰 값(outlier)이 몰려 나타나는데,[^llmint8]
-그런 channel에 곱해지는 가중치의 오차는 큰 activation과 곱해져 출력에서 크게 드러나기 때문이다.
+그런 channel에 곱해지는 weight의 오차는 큰 activation과 곱해져 출력에서 크게 드러나기 때문이다.
 
-다만 가중치 일부만 FP16으로 남기고 나머지를 양자화하는 방식은 한 행렬에 두 형식이 섞여 하드웨어에서 다루기 번거롭다.
-AWQ는 중요한 channel의 가중치에 1보다 큰 배율 $s$를 곱해 키운 뒤 양자화하고,
+다만 weight 일부만 FP16으로 남기고 나머지를 양자화하는 방식은 한 행렬에 두 형식이 섞여 하드웨어에서 다루기 번거롭다.
+AWQ는 중요한 channel의 weight에 1보다 큰 배율 $s$를 곱해 키운 뒤 양자화하고,
 대응하는 activation을 그만큼 나눈다.
-배율을 곱해도 group의 최댓값이 거의 그대로라면 격자 간격도 그대로라서, 키운 가중치의 반올림 오차가 상대적으로 $1/s$배로 준다.
-배율이 너무 크면 group의 격자 간격이 커져 나머지 가중치의 오차가 늘어난다(OPT-6.7B에서 $s=2$의 perplexity가 11.92, $s=4$는 12.36).
+배율을 곱해도 group의 최댓값이 거의 그대로라면 격자 간격도 그대로라서, 키운 weight의 반올림 오차가 상대적으로 $1/s$배로 준다.
+배율이 너무 크면 group의 격자 간격이 커져 나머지 weight의 오차가 늘어난다(OPT-6.7B에서 $s=2$의 perplexity가 11.92, $s=4$는 12.36).
 
 <Callout type="example">
-격자 간격이 0.1인 group에서 중요한 가중치 $w=0.23$을 그대로 반올림하면 0.2가 되어 오차가 0.03이다.
+격자 간격이 0.1인 group에서 중요한 weight $w=0.23$을 그대로 반올림하면 0.2가 되어 오차가 0.03이다.
 배율 $s=2$를 곱한 0.46을 반올림하면 0.5이고, 다시 2로 나누면 0.25라서 오차가 0.02다.
 격자 간격은 그대로인데 $w$ 입장에서는 간격이 0.05로 촘촘해진 셈이라, 오차 상한도 0.05에서 0.025로 준다.
 대응하는 activation을 2로 나누므로 행렬곱의 결과는 그대로다.
@@ -279,25 +395,25 @@ AWQ와 함께 공개한 inference 프레임워크 TinyChat은 batch 1로 200토�
 
 Weight-only의 이득은 batch가 커지거나 prefill로 가면 줄어든다.
 첫째, batch가 크면 읽는 데이터의 대부분이 KV cache다.
-문맥이 2,048토큰인 요청 192개를 묶은 decode 스텝은 67.8 GB를 읽는데 그중 가중치는 16 GB뿐이라,
-가중치를 INT4로 줄여도 읽는 데이터는 약 56 GB로 18%쯤 주는 데 그친다.
-둘째, weight-only는 bytes만 줄일 뿐 계산량은 그대로이고, 가중치를 dequantize하는 계산이 더해진다.
+문맥이 2,048토큰인 요청 192개를 묶은 decode 스텝은 67.8 GB를 읽는데 그중 weight는 16 GB뿐이라,
+Weight를 INT4로 줄여도 읽는 데이터는 약 56 GB로 18%쯤 주는 데 그친다.
+둘째, weight-only는 bytes만 줄일 뿐 계산량은 그대로이고, weight를 dequantize하는 계산이 더해진다.
 작은 batch의 decode에서는 놀던 연산 장치가 이 계산을 맡지만,
 prefill처럼 선형층이 이미 compute-bound이면 줄일 읽기 시간은 없고 dequantize 계산만 비용으로 남는다.
-Zhou 등의 서베이는 AWQ 4-bit 가중치로 Llama-2를 실험해,
+Zhou 등의 서베이는 AWQ 4-bit weight로 Llama-2를 실험해,
 weight-only가 decode를 크게 빠르게 하지만 prefill에서는 dequantize 비용 때문에 오히려 느려질 수 있고,
 batch와 입력이 커질수록 이득이 줄어든다고 정리했다.[^zhou]
 
-큰 batch에서도 4-bit 가중치의 이득을 살리려고 두 방식을 합친 발전도 있다.
-Lin 등의 QServe는 4-bit weight-only 방법이 가중치를 dequantize하는 비용 때문에 큰 batch의 서빙에서는 이득이 없다고 지적했다.[^qserve]
-그래서 가중치는 4-bit로 저장하되 실행 중에는 8-bit 정수까지만 싸게 되돌리고, activation도 8-bit로 양자화해 행렬곱을 INT8로 한다(W4A8).
-이처럼 activation까지 양자화하면 행렬곱 자체를 저정밀 연산 장치로 할 수 있지만, activation에는 가중치에 없던 어려움이 있다.
+큰 batch에서도 4-bit weight의 이득을 살리려고 두 방식을 합친 발전도 있다.
+Lin 등의 QServe는 4-bit weight-only 방법이 weight를 dequantize하는 비용 때문에 큰 batch의 서빙에서는 이득이 없다고 지적했다.[^qserve]
+그래서 weight는 4-bit로 저장하되 실행 중에는 8-bit 정수까지만 싸게 되돌리고, activation도 8-bit로 양자화해 행렬곱을 INT8로 한다(W4A8).
+이처럼 activation까지 양자화하면 행렬곱 자체를 저정밀 연산 장치로 할 수 있지만, activation에는 weight에 없던 어려움이 있다.
 
 ## 4. Weight-activation 양자화
 
 ### 4-1. LLM.int8()
 
-AWQ가 중요한 가중치를 고를 때 기댄 activation의 큰 값은, activation 자체를 양자화할 때는 걸림돌이 된다.
+AWQ가 중요한 weight를 고를 때 기댄 activation의 큰 값은, activation 자체를 양자화할 때는 걸림돌이 된다.
 8-bit 정도면 반올림만 해도 충분할 것 같지만, 큰 LLM에서는 그렇지 않았다.
 Dettmers 등은 activation의 몇몇 channel에 다른 값보다 훨씬 큰 값이 몰린다는 것을 보고했다.[^llmint8]
 이런 값은 여러 층과 토큰에 걸쳐 같은 channel에 반복해 나타나며, 원논문은 이를 outlier feature라 불렀다.
@@ -311,7 +427,7 @@ LLM.int8()의 해법은 **나누어 계산하기**다.
 Outlier가 있는 channel(전체 값의 약 0.1%)은 FP16 행렬곱으로,
 나머지 99.9%는 INT8 행렬곱으로 계산한 뒤 결과를 더한다.[^llmint8]
 
-<Figure src="https://arxiv.org/html/2208.07339v2/method2_horizontal.svg" alt="LLM.int8()의 계산 흐름도. 왼쪽에 FP16 activation X(3행 5열)와 가중치 W(5행 2열)가 있고, X의 둘째와 넷째 열(45, 12, 37과 −17, −63, −83)과 그에 곱해지는 W의 둘째와 넷째 행이 노란 outlier로 칠해져 있다. 위쪽 상자 8-bit Vector-wise Quantization은 나머지 하늘색 값만 모아 (1) X의 행마다 최대 절댓값 C_x(2, 3, 1)와 W의 열마다 최대 절댓값 C_w(1, 2)를 구하고, (2) X_F16·(127/C_x)=X_I8, W_F16·(127/C_w)=W_I8로 양자화한 뒤, (3) INT8 행렬곱으로 Out_I32를 얻고, (4) Out_I32·(C_x⊗C_w)/(127·127)로 dequantize해 FP16 결과를 얻는다. 아래쪽 상자 16-bit Decomposition은 노란 outlier 열과 행만 모아 FP16 행렬곱을 한다. 두 결과를 더해 Out_FP16을 낸다." caption="노란 outlier channel(X의 열과 거기에 곱해지는 W의 행)은 아래쪽 FP16 행렬곱으로, 나머지는 위쪽에서 토큰마다(X의 행), 출력 channel마다(W의 열) 대칭 INT8로 양자화해 정수 행렬곱을 한다. 그림의 127/C는 본문의 1/s에 해당한다. 최대 절댓값 C를 정수 127에 맞추므로 s=C/127이다." source="Dettmers et al. (2022), Figure 2 · CC BY 4.0" wide />
+<Figure src="https://arxiv.org/html/2208.07339v2/method2_horizontal.svg" alt="LLM.int8()의 계산 흐름도. 왼쪽에 FP16 activation X(3행 5열)와 weight W(5행 2열)가 있고, X의 둘째와 넷째 열(45, 12, 37과 −17, −63, −83)과 그에 곱해지는 W의 둘째와 넷째 행이 노란 outlier로 칠해져 있다. 위쪽 상자 8-bit Vector-wise Quantization은 나머지 하늘색 값만 모아 (1) X의 행마다 최대 절댓값 C_x(2, 3, 1)와 W의 열마다 최대 절댓값 C_w(1, 2)를 구하고, (2) X_F16·(127/C_x)=X_I8, W_F16·(127/C_w)=W_I8로 양자화한 뒤, (3) INT8 행렬곱으로 Out_I32를 얻고, (4) Out_I32·(C_x⊗C_w)/(127·127)로 dequantize해 FP16 결과를 얻는다. 아래쪽 상자 16-bit Decomposition은 노란 outlier 열과 행만 모아 FP16 행렬곱을 한다. 두 결과를 더해 Out_FP16을 낸다." caption="노란 outlier channel(X의 열과 거기에 곱해지는 W의 행)은 아래쪽 FP16 행렬곱으로, 나머지는 위쪽에서 토큰마다(X의 행), 출력 channel마다(W의 열) 대칭 INT8로 양자화해 정수 행렬곱을 한다. 그림의 127/C는 본문의 1/s에 해당한다. 최대 절댓값 C를 정수 127에 맞추므로 s=C/127이다." source="Dettmers et al. (2022), Figure 2 · CC BY 4.0" wide />
 이것으로 BLOOM-176B를 성능 손실 없이 8-bit로 돌려 메모리를 1.96배 줄였다.
 다만 행렬을 둘로 나누어 따로 계산하는 부담 때문에 속도는 거의 빨라지지 않았고, 오히려 조금 느려지기도 했다.
 
@@ -319,18 +435,18 @@ Outlier가 있는 channel(전체 값의 약 0.1%)은 FP16 행렬곱으로,
 
 Xiao 등의 SmoothQuant는 outlier가 **같은 channel에 고정되어 나타난다**는 점에 주목했다.[^smoothquant]
 Activation $X$의 outlier는 특정 channel에 몰려 있지만,
-그 channel에 곱해지는 가중치 $W$의 행은 평범한 크기다.
-Activation은 양자화하기 어렵고 가중치는 쉬운 셈이다.
+그 channel에 곱해지는 weight $W$의 행은 평범한 크기다.
+Activation은 양자화하기 어렵고 weight는 쉬운 셈이다.
 
-<Figure src="https://arxiv.org/html/2211.10438v7/aw-dist-long.png" alt="SmoothQuant 논문의 Figure 4. OPT-13B 한 층의 activation과 가중치 크기를 3차원으로 그린 네 그림이다. 첫째, 원래 activation은 몇몇 channel에서 값이 70에 이르는 빨간 벽처럼 솟아 있고 나머지는 2 이하로 낮다. 둘째, smoothing 후 activation은 모든 channel이 10 이하로 고르다. 셋째, 원래 가중치는 전체가 평평하다. 넷째, smoothing 후 가중치는 일부 입력 channel에 작은 봉우리가 생겼지만 여전히 낮다. 위쪽 화살표는 양자화의 어려움을 activation에서 가중치로 옮긴다는 뜻이다." caption="양자화의 어려움을 activation에서 가중치로 옮기기 전과 후. 옮기기 전(첫째, 셋째 그림)에는 activation의 몇몇 channel만 벽처럼 솟고 가중치는 평평하다. 옮긴 뒤(둘째, 넷째 그림)에는 activation의 outlier channel이 평평해지는 대신 가중치에 작은 봉우리가 생긴다." source="Xiao et al. (2023), Figure 4 · CC BY 4.0" wide />
+<Figure src="https://arxiv.org/html/2211.10438v7/aw-dist-long.png" alt="SmoothQuant 논문의 Figure 4. OPT-13B 한 층의 activation과 weight 크기를 3차원으로 그린 네 그림이다. 첫째, 원래 activation은 몇몇 channel에서 값이 70에 이르는 빨간 벽처럼 솟아 있고 나머지는 2 이하로 낮다. 둘째, smoothing 후 activation은 모든 channel이 10 이하로 고르다. 셋째, 원래 weight는 전체가 평평하다. 넷째, smoothing 후 weight는 일부 입력 channel에 작은 봉우리가 생겼지만 여전히 낮다. 위쪽 화살표는 양자화의 어려움을 activation에서 weight로 옮긴다는 뜻이다." caption="양자화의 어려움을 activation에서 weight로 옮기기 전과 후. 옮기기 전(첫째, 셋째 그림)에는 activation의 몇몇 channel만 벽처럼 솟고 weight는 평평하다. 옮긴 뒤(둘째, 넷째 그림)에는 activation의 outlier channel이 평평해지는 대신 weight에 작은 봉우리가 생긴다." source="Xiao et al. (2023), Figure 4 · CC BY 4.0" wide />
 
 Activation을 입력 channel마다 다른 scale로 양자화하면 정확도는 지킬 수 있다.
 하지만 앞의 행렬곱 식에서 보았듯 입력 channel마다 둔 scale은 합 안에 남아, 빠른 정수 행렬곱 하나로 계산할 수 없다.
 
-SmoothQuant는 그 어려움을 가중치 쪽으로 옮긴다.
-입력 channel $j$마다 smoothing factor $s_j$를 정해 activation을 $s_j$로 나누고 가중치의 해당 행에 $s_j$를 곱하면,
+SmoothQuant는 그 어려움을 weight 쪽으로 옮긴다.
+입력 channel $j$마다 smoothing factor $s_j$를 정해 activation을 $s_j$로 나누고 weight의 해당 행에 $s_j$를 곱하면,
 행렬곱의 결과는 그대로다.
-AWQ의 배율과 같은 등가 변환이지만, AWQ는 중요한 가중치를 보호하려고 가중치를 키웠고 SmoothQuant는 activation을 고르게 하려고 activation을 줄인다.
+AWQ의 배율과 같은 등가 변환이지만, AWQ는 중요한 weight를 보호하려고 weight를 키웠고 SmoothQuant는 activation을 고르게 하려고 activation을 줄인다.
 
 $$
 Y=\bigl(X\operatorname{diag}(s)^{-1}\bigr)\bigl(\operatorname{diag}(s)\,W\bigr),
@@ -338,15 +454,15 @@ Y=\bigl(X\operatorname{diag}(s)^{-1}\bigr)\bigl(\operatorname{diag}(s)\,W\bigr),
 s_j=\frac{\max\lvert X_j\rvert^{\alpha}}{\max\lvert W_j\rvert^{1-\alpha}}
 $$
 
-$X_j$는 calibration 입력에서 잰 activation의 $j$번째 입력 channel, $W_j$는 거기에 곱해지는 가중치의 $j$번째 행이다.
+$X_j$는 calibration 입력에서 잰 activation의 $j$번째 입력 channel, $W_j$는 거기에 곱해지는 weight의 $j$번째 행이다.
 $\alpha$는 어려움을 얼마나 옮길지를 정하고,
 OPT와 BLOOM에서는 $\alpha=0.5$가 균형점이었다.[^smoothquant]
 Activation을 나누는 연산은 실행 전에 앞 층에 합쳐 둔다.
 앞 층이 LayerNorm(layer normalization)이나 RMSNorm이면 정규화 뒤 channel마다 곱하는 학습 배율 $\gamma_j$를 $s_j$로 나누어 두고,
-앞 층이 선형층이면 그 가중치의 해당 열을 $s_j$로 나누어 둔다.
+앞 층이 선형층이면 그 weight의 해당 열을 $s_j$로 나누어 둔다.
 그래서 실행 중 비용이 거의 없다.
 
-<Figure src="https://arxiv.org/html/2211.10438v7/transform.png" alt="SmoothQuant 변환을 작은 정수 행렬로 보인 그림. 왼쪽 Original에서 activation X는 2행 4열(1, −16, 2, 6 / −2, 8, −1, −9)이고, 아래 점선 칸에 열마다의 최대 절댓값 (2, 16, 2, 9)가 있다. 가중치 W는 4행 3열이고 오른쪽 점선 칸에 행마다의 최대 절댓값 (2, 1, 2, 1)이 있다. 오른쪽 SmoothQuant에서는 s=√(max|X|/max|W|)로 구한 s=(1, 4, 1, 3)이 점선 칸에 있고, X̂=X·diag(s)⁻¹은 1, −4, 2, 2 / −2, 2, −1, −3이 되며, Ŵ=diag(s)·W는 둘째 행이 4, −4, −4, 넷째 행이 −3, −3, 3으로 커진다." caption="α=0.5일 때의 SmoothQuant. X의 둘째 channel은 최대 절댓값이 16이고 거기에 곱해지는 W의 둘째 행은 1이라 s=√(16/1)=4다. 그 channel을 4로 나누고 W의 그 행에 4를 곱하면, activation의 channel별 최댓값 가운데 가장 큰 값이 16에서 4로 줄고 그만큼 가중치 행이 커진다. 행렬곱의 결과는 그대로다." source="Xiao et al. (2023), Figure 5 · CC BY 4.0" />
+<Figure src="https://arxiv.org/html/2211.10438v7/transform.png" alt="SmoothQuant 변환을 작은 정수 행렬로 보인 그림. 왼쪽 Original에서 activation X는 2행 4열(1, −16, 2, 6 / −2, 8, −1, −9)이고, 아래 점선 칸에 열마다의 최대 절댓값 (2, 16, 2, 9)가 있다. Weight W는 4행 3열이고 오른쪽 점선 칸에 행마다의 최대 절댓값 (2, 1, 2, 1)이 있다. 오른쪽 SmoothQuant에서는 s=√(max|X|/max|W|)로 구한 s=(1, 4, 1, 3)이 점선 칸에 있고, X̂=X·diag(s)⁻¹은 1, −4, 2, 2 / −2, 2, −1, −3이 되며, Ŵ=diag(s)·W는 둘째 행이 4, −4, −4, 넷째 행이 −3, −3, 3으로 커진다." caption="α=0.5일 때의 SmoothQuant. X의 둘째 channel은 최대 절댓값이 16이고 거기에 곱해지는 W의 둘째 행은 1이라 s=√(16/1)=4다. 그 channel을 4로 나누고 W의 그 행에 4를 곱하면, activation의 channel별 최댓값 가운데 가장 큰 값이 16에서 4로 줄고 그만큼 weight 행이 커진다. 행렬곱의 결과는 그대로다." source="Xiao et al. (2023), Figure 5 · CC BY 4.0" />
 
 이렇게 모든 선형층의 행렬곱을 INT8로 하면서도 정확도를 유지했고,
 A100 80GB에서 NVIDIA의 inference 라이브러리 FasterTransformer로 잰 context(prefill) 단계에서 최대 1.56배 빨라지고 메모리를 약 2배 줄였으며,
@@ -354,11 +470,11 @@ OPT-175B를 GPU 8대 대신 4대로 비슷하거나 더 짧은 지연에 돌렸�
 
 ### 4-3. 직교 회전
 
-SmoothQuant는 outlier의 크기를 activation과 가중치 사이에서 나누었다.
+SmoothQuant는 outlier의 크기를 activation과 weight 사이에서 나누었다.
 4-bit activation까지 가면 그것으로 부족하다.
 격자가 16칸뿐이라 남은 outlier 몇 개가 scale을 정하면 나머지 값이 대부분 0으로 뭉개진다.
 Ashkboos 등의 QuaRot은 outlier를 줄이는 대신 **여러 좌표에 고르게 흩는** 방법을 택했다.[^quarot]
-직교 행렬 $Q$($QQ^\top=I$)를 activation에 곱하고 가중치에는 그 전치를 곱하면 행렬곱의 결과는 그대로다.
+직교 행렬 $Q$($QQ^\top=I$)를 activation에 곱하고 weight에는 그 전치를 곱하면 행렬곱의 결과는 그대로다.
 
 $$
 Y=XW=(XQ)(Q^\top W)
@@ -384,31 +500,31 @@ $$
 
 QuaRot은 이 회전을 층 사이를 흐르는 residual stream에 한 번 건다.
 Residual stream은 각 층이 입력에 자기 출력을 더해 다음 층으로 넘기는 hidden 벡터의 흐름이다.
-이 흐름에서 값을 읽는 선형층의 가중치 $W$는 $Q^\top W$로, 흐름에 값을 더하는 선형층의 가중치 $W'$는 $W'Q$로 미리 바꿔 둔다.
+이 흐름에서 값을 읽는 선형층의 weight $W$는 $Q^\top W$로, 흐름에 값을 더하는 선형층의 weight $W'$는 $W'Q$로 미리 바꿔 둔다.
 그러면 흐름에는 늘 회전된 값이 흐르고, 각 행렬곱에서 $Q$와 $Q^\top$이 상쇄되어 결과는 회전 전과 같다.
-이렇게 회전은 대부분 앞뒤 가중치에 미리 곱해 둘 수 있어 실행 중 비용이 거의 없다.
+이렇게 회전은 대부분 앞뒤 weight에 미리 곱해 둘 수 있어 실행 중 비용이 거의 없다.
 
 <Details summary="RMSNorm과 실행 중 회전">
 
 Residual stream과 선형층 사이의 RMSNorm은 벡터를 크기로만 나누고 회전은 벡터의 크기를 바꾸지 않으므로, 회전과 순서를 바꾸어도 결과가 같다.
-다만 RMSNorm이 channel마다 곱하는 학습 배율 $\gamma$는 회전과 순서를 바꿀 수 없어, 먼저 다음 선형층의 가중치에 합쳐 둔다.
-FFN 안의 비선형 함수 뒤처럼 회전을 미리 곱해 둘 가중치가 앞에 없는 곳에서만,
-실행 중에 빠른 Hadamard 변환으로 activation을 회전하고 짝이 되는 회전은 다음 가중치에 합쳐 둔다.
+다만 RMSNorm이 channel마다 곱하는 학습 배율 $\gamma$는 회전과 순서를 바꿀 수 없어, 먼저 다음 선형층의 weight에 합쳐 둔다.
+FFN 안의 비선형 함수 뒤처럼 회전을 미리 곱해 둘 weight가 앞에 없는 곳에서만,
+실행 중에 빠른 Hadamard 변환으로 activation을 회전하고 짝이 되는 회전은 다음 weight에 합쳐 둔다.
 
 </Details>
 
-QuaRot은 이렇게 가중치, activation, KV cache를 모두 4-bit로 두고도 LLaMA2-70B의 WikiText-2 perplexity 증가를 0.47 이내로 막았다.[^quarot]
+QuaRot은 이렇게 weight, activation, KV cache를 모두 4-bit로 두고도 LLaMA2-70B의 WikiText-2 perplexity 증가를 0.47 이내로 막았다.[^quarot]
 Liu 등의 SpinQuant는 회전에 따라 결과가 크게 달라진다는 데 주목해 회전 행렬 자체를 학습했고,
 같은 4-bit 설정에서 LLaMA-2 7B의 zero-shot reasoning task 정확도 차이를 원래 모델 대비 2.9점으로 줄였다.[^spinquant]
 Meta는 Llama 3.2 1B와 3B의 양자화 배포판 가운데 하나를 SpinQuant로 만들었다.[^llama32q]
 
 ## 5. KV cache 양자화
 
-양자화는 가중치만이 아니라 KV cache에도 쓴다.
+양자화는 weight만이 아니라 KV cache에도 쓴다.
 KV cache 크기 식에서 원소당 바이트 수를 줄이면 같은 메모리에 더 많은 토큰이 들어가고,
 긴 문맥의 decode에서 스텝을 지배하는 KV cache 읽기도 줄어든다.
 vLLM 같은 서빙 엔진은 KV cache를 FP8로 저장하는 옵션을 제공한다.[^vllm-fp8]
-Llama 3 8B라면 토큰당 약 131 KB가 약 66 KB로 줄어, 가중치를 BF16으로 두고 H100 한 대에 올린 memory usage 계산에서 KV cache에 남은 53.5 GB에 약 816,000토큰이 들어간다(scale 같은 부가 정보 제외).
+Llama 3 8B라면 토큰당 약 131 KB가 약 66 KB로 줄어, weight를 BF16으로 두고 H100 한 대에 올린 memory usage 계산에서 KV cache에 남은 53.5 GB에 약 816,000토큰이 들어간다(scale 같은 부가 정보 제외).
 요청 길이가 같다면 같은 메모리로 약 두 배의 batch를 받을 수 있다.
 스텝마다 읽는 KV cache bytes도 절반이 된다.
 Batch를 아무리 키워도 decode의 intensity가 약 63에 머문 것은 요청마다 따로 읽는 KV cache 때문이었으므로,
@@ -425,15 +541,15 @@ Attention 출력은 소수의 중요한 토큰에 몰린 value의 가중합이�
 
 <Figure src="https://arxiv.org/html/2402.02750v2/Llama-2-13b-hf_layer16_head0_k.svg" alt="Llama-2-13B 16층 head 0의 key cache 크기를 3차원 곡면으로 그린 그림. 가로축은 토큰(0–200), 깊이축은 channel(0–127), 세로축은 절댓값이다. 대부분의 channel은 절댓값 2.5 이하의 낮은 파란 바닥을 이루지만, 몇몇 channel은 모든 토큰에 걸쳐 10을 넘게 솟은 빨간 벽을 이룬다." caption="Key cache. 큰 값이 몇몇 channel에 고정되어 토큰 축을 따라 벽처럼 이어진다. 그래서 같은 channel끼리 묶어 scale을 둔다. 같은 층·head의 value는 절댓값이 대부분 2 이하이고 특정 channel에 몰린 벽이 없다." source="Liu et al. (2024), Figure 2 · CC BY 4.0 · Llama-2-13B 16층 head 0" />
 
-Key를 per-channel로 두면 scale이 $q\cdot k$의 합을 도는 channel 축에 놓여, weight-activation 양자화의 행렬곱 식에서처럼 정수 행렬곱 밖으로 꺼낼 수 없다.
+Key를 per-channel로 두면 scale이 $q\cdot k$의 합을 도는 channel 축에 놓여, 앞의 행렬곱 식에서처럼 정수 행렬곱 밖으로 꺼낼 수 없다.
 그래서 KIVI는 양자화한 cache를 행렬곱 kernel 안에서 tile 단위로 dequantize해, attention을 원래 정밀도로 계산한다.[^kivi]
 또 per-channel 묶음은 같은 channel의 값을 토큰 여러 개에 걸쳐 모아야 만들 수 있어, 토큰이 하나씩 생기는 decode와 바로 맞지 않는다.
 KIVI는 최근 토큰 일부(실험에서는 128개)의 key를 원래 정밀도로 두었다가 그만큼 쌓이면 32토큰씩 묶어 양자화하고,
 value도 최근 토큰 일부는 원래 정밀도로 둔다.
 
-KIVI는 이렇게 KV cache를 2-bit로 줄여 모델 가중치를 포함한 최대 메모리를 2.6배 줄였고,
+KIVI는 이렇게 KV cache를 2-bit로 줄여 모델 weight를 포함한 최대 메모리를 2.6배 줄였고,
 batch를 최대 4배 키워 처리량을 2.35–3.47배 높였다(Llama-2-7B, A100 한 대).[^kivi]
-다만 KV cache는 생성 중에 계속 새로 쓰이므로, 가중치와 달리 실행 중에 양자화하고 dequantize하는 비용이 든다.
+다만 KV cache는 생성 중에 계속 새로 쓰이므로, weight와 달리 실행 중에 양자화하고 dequantize하는 비용이 든다.
 
 ## 6. 양자화를 고려한 학습
 
@@ -442,16 +558,16 @@ batch를 최대 4배 키워 처리량을 2.35–3.47배 높였다(Llama-2-7B, A1
 지금까지 본 방법은 모두 학습을 마친 모델을 사후에 양자화하는 PTQ다.
 Bits를 더 낮추면 PTQ만으로는 품질을 지키기 어렵고,
 그때는 학습 중에 양자화의 효과를 반영하는 **QAT**를 쓴다.
-실수 가중치를 따로 두고 갱신하되, forward에서는 그 가중치를 양자화했다 되돌린 값으로 계산한다.
+실수 weight를 따로 두고 갱신하되, forward에서는 그 weight를 양자화했다 되돌린 값으로 계산한다.
 Backward에서는 미분할 수 없는 반올림의 미분을 1로 보는 STE(straight-through estimator)로 gradient를 근사해,
 모델이 양자화 오차에 맞춰 적응하게 한다.[^nagel]
 
 <Callout type="example">
-실수 가중치가 $w=0.30$이고 격자 간격이 0.25라면 forward는 반올림한 0.25로 계산한다.
+실수 weight가 $w=0.30$이고 격자 간격이 0.25라면 forward는 반올림한 0.25로 계산한다.
 양자화된 값에 대한 손실의 gradient가 $-0.4$로 나왔다면, STE는 반올림의 미분을 1로 보고 이 값을 그대로 $w$의 gradient로 쓴다.
 학습률 0.1로 갱신하면 $w$는 0.34가 되지만 반올림한 값은 여전히 0.25다.
 같은 방향의 gradient가 몇 번 더 쌓여 $w$가 0.375를 넘으면 그때 forward의 값이 0.50으로 바뀐다.
-격자 간격보다 작은 갱신도 실수 가중치에 쌓이므로, 모델은 어느 격자점으로 옮겨 갈지를 학습할 수 있다.
+격자 간격보다 작은 갱신도 실수 weight에 쌓이므로, 모델은 어느 격자점으로 옮겨 갈지를 학습할 수 있다.
 </Callout>
 
 ### 6-2. Distillation을 쓰는 QAT
@@ -459,7 +575,7 @@ Backward에서는 미분할 수 없는 반올림의 미분을 1로 보는 STE(st
 LLM에서는 사전학습 데이터 전체로 다시 학습하기 어려워,
 원래 모델을 teacher로 삼아 양자화 모델의 다음 토큰 분포가 teacher의 분포를 따르게 하는 distillation을 함께 쓰기도 한다.
 Liu 등의 LLM-QAT는 원래 모델이 직접 생성한 텍스트로 양자화 모델을 distillation해,
-원래 사전학습 데이터 없이 가중치와 KV cache를 4-bit, activation을 8-bit로 양자화했다.[^llmqat]
+원래 사전학습 데이터 없이 weight와 KV cache를 4-bit, activation을 8-bit로 양자화했다.[^llmqat]
 원논문은 activation까지 4-bit로 내리기에는 이 방법도 부족하다고 밝혔다.
 Google은 Gemma 3를 약 5,000스텝 동안 원래 정밀도 모델의 확률을 목표로 QAT해,
 llama.cpp의 4-bit 형식(Q4_0)으로 양자화할 때 perplexity가 나빠지는 폭을 54% 줄였다고 밝혔다.
@@ -468,14 +584,14 @@ llama.cpp의 4-bit 형식(Q4_0)으로 양자화할 때 perplexity가 나빠지�
 ### 6-3. 처음부터 낮은 bits로 학습
 
 앞의 QAT는 이미 학습된 모델을 짧게 더 학습해 낮은 bits에 맞춘다.
-가중치를 1–2 bits까지 내리면 이것으로도 부족해서, 사전학습 처음부터 양자화된 가중치로 학습하는 방법이 나왔다.
-Wang 등의 BitNet은 선형층을 BitLinear라는 층으로 바꾸어, 가중치는 1-bit($\pm1$), activation은 8-bit로 양자화한 채 사전학습했다.[^bitnet]
-같은 설정으로 학습한 6.7B 16-bit 모델을 PTQ로 1-bit 가중치까지 내리면 perplexity가 $10^{21}$을 넘어 모델이 무너졌지만,
+Weight를 1–2 bits까지 내리면 이것으로도 부족해서, 사전학습 처음부터 양자화된 weight로 학습하는 방법이 나왔다.
+Wang 등의 BitNet은 선형층을 BitLinear라는 층으로 바꾸어, weight는 1-bit($\pm1$), activation은 8-bit로 양자화한 채 사전학습했다.[^bitnet]
+같은 설정으로 학습한 6.7B 16-bit 모델을 PTQ로 1-bit weight까지 내리면 perplexity가 $10^{21}$을 넘어 모델이 무너졌지만,
 처음부터 BitNet으로 학습한 모델은 17.07로 16-bit 모델의 15.19에 가까웠다.
 
-Ma 등의 BitNet b1.58은 가중치가 가질 수 있는 값을 $-1$, $0$, $1$ 셋으로 넓혔다.[^bitnet158]
-값이 세 개라 가중치 하나에 $\log_2 3\approx1.58$ bits가 든다.
-$n\times m$ 가중치 행렬마다 절댓값의 평균 $\gamma$로 나눈 뒤 반올림하고, $-1$과 $1$ 사이로 자른다.
+Ma 등의 BitNet b1.58은 weight가 가질 수 있는 값을 $-1$, $0$, $1$ 셋으로 넓혔다.[^bitnet158]
+값이 세 개라 weight 하나에 $\log_2 3\approx1.58$ bits가 든다.
+$n\times m$ weight 행렬마다 절댓값의 평균 $\gamma$로 나눈 뒤 반올림하고, $-1$과 $1$ 사이로 자른다.
 
 $$
 \tilde{W}=\operatorname{RoundClip}\!\left(\frac{W}{\gamma+\epsilon},\,-1,\,1\right),
@@ -484,27 +600,27 @@ $$
 $$
 
 $\epsilon$은 0으로 나누지 않게 하는 작은 수다.
-학습 중에는 STE처럼 실수 가중치(latent weight)를 따로 두고 갱신하며, forward에서만 이 세 값으로 바꾼다.
+학습 중에는 STE처럼 실수 weight(latent weight)를 따로 두고 갱신하며, forward에서만 이 세 값으로 바꾼다.
 Inference에는 세 값과 $\gamma$만 남는다.
 
-가중치가 $-1$, $0$, $1$뿐이면 행렬곱에서 곱셈이 사라진다.
-출력 하나는 가중치가 1인 입력을 더하고 $-1$인 입력을 빼서 얻고, scale $\gamma$는 마지막에 한 번만 곱한다.
+Weight가 $-1$, $0$, $1$뿐이면 행렬곱에서 곱셈이 사라진다.
+출력 하나는 weight가 1인 입력을 더하고 $-1$인 입력을 빼서 얻고, scale $\gamma$는 마지막에 한 번만 곱한다.
 
 <Callout type="example">
-입력이 $x=(3,\,-2,\,5,\,1)$이고 세 값 가중치가 $(1,\,0,\,-1,\,1)$, $\gamma=0.4$라고 하자.
+입력이 $x=(3,\,-2,\,5,\,1)$이고 세 값 weight가 $(1,\,0,\,-1,\,1)$, $\gamma=0.4$라고 하자.
 출력은 곱셈 없이 $3-5+1=-1$을 계산한 뒤 $\gamma$를 한 번 곱한 $-0.4$다.
-가중치가 0인 둘째 입력은 계산에서 빠진다.
+Weight가 0인 둘째 입력은 계산에서 빠진다.
 </Callout>
 
 100B 토큰으로 학습한 실험에서 BitNet b1.58은 3B부터 같은 데이터로 학습한 16-bit LLaMA 구조 모델과 perplexity가 비슷했다(9.91 대 10.04).
 이때 GPU 메모리는 3.55배 적고 토큰당 지연은 2.71배 짧았다.[^bitnet158]
 이후 Ma 등은 이 방식으로 4T 토큰을 처음부터 학습한 2B 모델 BitNet b1.58 2B4T를 공개했다.[^bitnet2b4t]
 비교 대상인 Qwen2.5 1.5B를 GPTQ나 AWQ로 INT4까지 PTQ하면 여러 벤치마크의 평균 점수가 BF16의 55.72에서 52.15, 51.17로 떨어졌다.
-BitNet b1.58 2B4T는 embedding을 뺀 가중치가 0.4 GB로 INT4판의 0.7 GB보다 작으면서 평균 55.01이었다.
+BitNet b1.58 2B4T는 embedding을 뺀 weight가 0.4 GB로 INT4판의 0.7 GB보다 작으면서 평균 55.01이었다.
 
 대가도 분명하다.
 PTQ나 짧은 QAT와 달리 사전학습 전체를 새로 해야 한다.
-또 세 값 가중치의 이득은 그 형식을 위한 kernel이 있어야 나온다.
+또 세 값 weight의 이득은 그 형식을 위한 kernel이 있어야 나온다.
 공개 모델 카드는 Hugging Face Transformers로 돌리면 효율 이득을 기대하지 말고, 전용 inference 프레임워크 bitnet.cpp를 쓰라고 안내한다.[^bitnet-hf]
 
 ## 7. 방법의 선택
@@ -514,11 +630,11 @@ Roofline으로 정리하면 다음과 같다.
 
 | 상황 | 병목 | 알맞은 선택 |
 |---|---|---|
-| 작은 batch의 decode, 메모리가 작은 GPU | 가중치 읽기 | Weight-only 4-bit(GPTQ, AWQ) |
+| 작은 batch의 decode, 메모리가 작은 GPU | weight 읽기 | Weight-only 4-bit(GPTQ, AWQ) |
 | 긴 prefill, 행렬곱이 compute-bound가 될 만큼 큰 batch | 행렬곱 연산 | W8A8(SmoothQuant), FP8 |
 | 긴 문맥, 많은 동시 요청 | KV cache 읽기와 용량 | KV cache 양자화 |
-| FP4 연산을 지원하는 최신 GPU | 가중치 읽기나 행렬곱 연산 | MXFP4, NVFP4 |
-| 사전학습부터 새로 할 수 있고 메모리가 매우 작은 기기에 배포 | 가중치 읽기와 용량 | 1.58-bit 가중치로 처음부터 학습(BitNet b1.58) |
+| FP4 연산을 지원하는 최신 GPU | weight 읽기나 행렬곱 연산 | MXFP4, NVFP4 |
+| 사전학습부터 새로 할 수 있고 메모리가 매우 작은 기기에 배포 | weight 읽기와 용량 | 1.58-bit weight로 처음부터 학습(BitNet b1.58) |
 
 이 표는 쓰려는 GPU와 서빙 엔진이 그 형식의 kernel을 갖추었다는 전제에서 성립한다.
 
