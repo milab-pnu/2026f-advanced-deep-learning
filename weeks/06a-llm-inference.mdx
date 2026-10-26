@@ -4,12 +4,12 @@ week: 6
 order: 0
 ---
 
-지금까지는 LLM(large language model)을 학습하는 과정을 공부하였다.
-지금부터는 실제로 사용하는 단계인 inference에 대해 공부한다.
-Reasoning model의 긴 CoT(chain of thought)나 agent처럼 요청 하나가 처리하는 토큰도 늘고 있어
-inference 시 비용 효율화는 더욱 요구된다.[^r1]
+지금까지는 LLM(large language model)을 학습하는 과정을 보았다.
+이번 주부터는 학습한 모델을 실제로 쓰는 단계인 inference를 다룬다.
+Reasoning model의 긴 CoT(chain of thought)나 agent처럼 요청 하나가 처리하는 토큰이 늘면서,
+inference 비용을 줄이는 일은 더 중요해졌다.
 
-Inference 비용은 다음 세 가지로 나누어 접근한다.[^survey]
+Inference 비용은 세 가지로 나누어 볼 수 있다.[^survey]
 
 - **Computational cost**: 계산 자체의 양으로, FLOPs(floating-point operations)로 센다.
 - **Memory access cost**: 가중치나 KV cache 같은 데이터를 메모리에서 연산 장치로 읽어 오고 결과를 다시 쓰는 데 드는 비용이다.
@@ -407,11 +407,6 @@ vLLM 같은 서빙 엔진은 다음 값을 지표나 로그로 보여 준다.[^v
 [^survey]: Zhou, Z., Ning, X., Hong, K., et al. (2024). A Survey on Efficient Inference for Large Language Models. [arXiv:2404.14294v3](https://arxiv.org/abs/2404.14294v3).
 
 [^llama3]: Llama Team, AI @ Meta. (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
-
-
-
-
-[^r1]: Guo, D., et al. (2025). DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning. *Nature*, 645(8081), 633–638. [doi:10.1038/s41586-025-09422-z](https://doi.org/10.1038/s41586-025-09422-z).
 
 [^distserve]: Zhong, Y., Liu, S., Chen, J., Hu, J., Zhu, Y., Liu, X., Jin, X., & Zhang, H. (2024). DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving. *OSDI 2024*. [arXiv:2401.09670](https://arxiv.org/abs/2401.09670).
 
