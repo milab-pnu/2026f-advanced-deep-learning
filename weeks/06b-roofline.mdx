@@ -250,8 +250,8 @@ Head 32개와 층 32개를 곱하면 약 1.1 TFLOP이다.
 
 요청을 묶으면 처리량이 오르고 TPOT가 늘어난다는 관계를 시간의 하한으로 계산해 보자.
 모든 요청의 문맥이 2,048토큰이라고 가정한다.
-토큰당 KV cache는 $2\,(\text{K와 V})\times32\,\text{층}\times8\ \text{KV head}\times128\,\text{차원}\times2\ \text{bytes}=128\ \text{KiB}$다(1 KiB는 1,024 bytes).
-그러면 요청 하나의 KV cache는 $2048\times128\ \text{KiB}\approx0.27$ GB다.
+토큰당 KV cache는 $2\,(\text{K와 V})\times32\,\text{층}\times8\ \text{KV head}\times128\,\text{차원}\times2\ \text{bytes}=131{,}072\ \text{bytes}\approx131\ \text{KB}$다.
+그러면 요청 하나의 KV cache는 $2048\times131{,}072\ \text{bytes}\approx0.27$ GB다.
 
 한 스텝에 읽는 데이터는 가중치 16.06 GB에 요청당 KV cache 0.27 GB를 더한 양이고,
 계산은 요청마다 선형층 $2N\approx16.1$ GFLOP과 attention 약 1.1 GFLOP($4sd_h$에 query head 32개와 층 32개를 곱한 값)이다.

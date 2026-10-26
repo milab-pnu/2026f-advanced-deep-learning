@@ -13,7 +13,7 @@ Inference 비용은 모델을 작게 만들어서도 줄일 수 있지만,
 두 계산은 같은 결론에 닿았다.
 Batch를 키워 처리량(throughput)을 올리려 하면 선형층이 ridge point에 닿기 전에 KV(key-value) cache 공간이 먼저 모자란다.
 GPU 메모리에서 가중치와 workspace를 빼면 KV cache에 약 53.5 GB가 남고,
-토큰당 128 KiB라서 요청마다 8,192토큰까지 자란다면 49개까지 들어간다고 어림했다.<Sidenote>이 노트에서 KiB·MiB·GiB는 $2^{10}$·$2^{20}$·$2^{30}$ bytes이고, MB·GB·TB는 $10^6$·$10^9$·$10^{12}$ bytes다.</Sidenote>
+토큰당 약 131 KB라서 요청마다 8,192토큰까지 자란다면 49개까지 들어간다고 어림했다.
 그런데 이 계산은 공간을 한 칸도 낭비하지 않는다고 가정했고,
 여러 요청이 같은 앞부분(prefix)을 가져도 요청마다 따로 저장한다고 셈했다.
 
@@ -48,8 +48,8 @@ Kwon 등은 이런 방식에서 생기는 낭비를 세 가지로 나누었다.[
 <Callout type="example">
 Llama 3 8B로 최대 8,192토큰을 허용하는 서비스에서,
 입력이 100토큰이고 200토큰을 생성한 뒤 끝나는 요청을 생각하자.
-연속 할당은 요청이 들어오는 순간 8,192칸, 1 GiB를 잡는다.
-끝날 때까지 필요한 칸은 많아야 입력과 출력을 합한 300칸, 37.5 MiB로 3.7%다.
+연속 할당은 요청이 들어오는 순간 8,192칸, 약 1.07 GB를 잡는다.
+끝날 때까지 필요한 칸은 많아야 입력과 출력을 합한 300칸, 약 39 MB로 3.7%다.
 KV cache 공간 53.5 GB를 요청마다 최대 길이만큼 나누어 주면 동시에 49개만 받지만,
 쓰는 만큼만 주면 산술적으로 1,300개 넘게 받는다.
 </Callout>
@@ -87,10 +87,10 @@ Reserved와 internal fragmentation은 마지막 블록의 빈칸으로 줄어, �
 
 <Callout type="example">
 vLLM의 기본 블록 크기는 16토큰이다.[^vllm]
-Llama 3 8B에서 블록 하나는 $16\times128\ \text{KiB}=2\ \text{MiB}$다.
+Llama 3 8B에서 블록 하나는 $16\times131\ \text{KB}\approx2.1\ \text{MB}$다.
 앞의 요청이 300토큰까지 자라면 블록 19개(304칸)를 쓰고, 마지막 블록의 빈칸 4개,
-0.5 MiB만 낭비한다.
-연속 할당이 잡던 1 GiB 대신 38 MiB만 쓴다.
+약 0.5 MB만 낭비한다.
+연속 할당이 잡던 약 1.07 GB 대신 약 40 MB만 쓴다.
 </Callout>
 
 블록이 너무 작으면 GPU에서 연산을 실행하는 프로그램(kernel)이 KV cache를 읽고 처리할 때 GPU의 병렬성을 충분히 쓰지 못할 수 있고,
@@ -159,7 +159,7 @@ prefix가 같으면 그 부분의 KV cache도 같다.
 2,048토큰짜리 시스템 프롬프트를 모든 요청 앞에 붙이는 서비스를 생각하자.
 이 프롬프트의 prefill은 약 34 TFLOP(tera floating-point operation)이라,
 H100 SXM의 peak를 모두 내도 약 34 ms, 절반을 내면 약 69 ms가 든다.
-이 프롬프트의 KV cache는 $2{,}048\times128\ \text{KiB}\approx268\ \text{MB}$다.
+이 프롬프트의 KV cache는 $2{,}048\times131{,}072\ \text{bytes}\approx268\ \text{MB}$다.
 시스템 프롬프트를 한 번만 계산해 두고 재사용하면 요청마다 수십 ms의 prefill을 건너뛰어 TTFT(time to first token)가 짧아지고,
 동시 요청마다 268 MB씩 따로 두던 KV cache도 한 벌로 줄어든다.
 </Callout>
@@ -227,7 +227,7 @@ vLLM의 hash는 부모 블록의 hash를 이어 받으므로, page 크기가 같
 ## 4. 길이에 비례하는 cache 크기
 
 Paging과 prefix 재사용으로 낭비와 중복을 없애도,
-남은 KV cache는 여전히 토큰 하나에 128 KiB씩 문맥 길이에 비례해 자란다.
+남은 KV cache는 여전히 토큰 하나에 약 131 KB씩 문맥 길이에 비례해 자란다.
 Roofline 분석에서처럼 문맥이 길고 batch가 크면 decode 스텝에서 이 KV cache를 읽는 시간이 가중치를 읽는 시간보다 커진다.
 GPU 메모리에 둘 KV cache를 더 줄이는 방법은 크게 세 갈래다.
 토큰 하나를 더 적은 byte로 저장하는 양자화(quantization), 저장할 토큰 수를 줄이는 eviction, GPU 밖의 더 큰 저장소로 옮기는 offloading이다.
@@ -338,7 +338,7 @@ H100의 PCIe(peripheral component interconnect express) Gen5 대역폭 128 GB/s�
 
 Prefix는 한 번 가져오면 되지만,
 실행 중인 긴 요청의 KV cache를 GPU 밖에 두고 attention을 GPU에서 계산한다면 decode 스텝마다 그 전체를 다시 읽어 와야 한다.
-32,768토큰 요청의 KV cache 4 GiB를 PCIe 한 방향 64 GB/s로 읽으면 스텝마다 약 67 ms가 들지만,
+32,768토큰 요청의 KV cache 약 4.3 GB를 PCIe 한 방향 64 GB/s로 읽으면 스텝마다 약 67 ms가 들지만,
 H100 SXM의 HBM(3.35 TB/s)에서 읽으면 약 1.3 ms다.
 그래서 지연이 중요한 서빙에서 offloading은 주로 지금 attention에 쓰지 않는 cache,
 곧 재사용을 기다리는 prefix나 선점 때 swapping으로 내보낸 블록에 쓴다.
