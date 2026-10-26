@@ -6,14 +6,14 @@ order: 3
 
 양자화는 파라미터 하나를 적은 bits로 저장한다.
 이 노트는 **파라미터의 수 자체**를 줄이는 방법을 다룬다.
-파라미터가 줄면 읽을 가중치 bytes와 계산할 FLOPs(floating-point operations)가 함께 줄어든다.
-그러면 memory-bound인 decode에서는 가중치를 읽는 시간이, compute-bound인 prefill에서는 연산 시간이 줄고,
+파라미터가 줄면 읽을 weight bytes와 계산할 FLOPs(floating-point operations)가 함께 줄어든다.
+그러면 memory-bound인 decode에서는 weight를 읽는 시간이, compute-bound인 prefill에서는 연산 시간이 줄고,
 남는 GPU(graphics processing unit) 메모리는 KV(key-value) cache에 돌아간다.
-다만 이것은 남은 가중치가 GPU kernel이 빠르게 처리할 수 있는 모양일 때의 이야기이고,
+다만 이것은 남은 weight가 GPU kernel이 빠르게 처리할 수 있는 모양일 때의 이야기이고,
 지운 결과가 그런 모양을 갖추기는 생각보다 어렵다.
 
 방법은 세 갈래다.
-학습된 모델에서 덜 중요한 가중치를 지우는 pruning, 큰 모델(teacher)의 출력 분포를 목표로 작은 모델을 학습하는 distillation, 가중치 행렬을 작은 행렬의 곱으로 바꾸는 low-rank factorization이다.
+학습된 모델에서 덜 중요한 weight를 지우는 pruning, 큰 모델(teacher)의 출력 분포를 목표로 작은 모델을 학습하는 distillation, weight 행렬을 작은 행렬의 곱으로 바꾸는 low-rank factorization이다.
 실제로는 이 셋이 섞인다.
 Pruning으로 줄인 모델의 품질을 distillation으로 되살리는 것은 최근 작은 모델을 만들 때 널리 쓰이는 방법이 되었다.
 Zhu 등의 LLM(large language model) 압축 서베이도 pruning, distillation, low-rank factorization을 압축의 주요 갈래로 정리한다.[^survey]
@@ -22,43 +22,43 @@ Zhu 등의 LLM(large language model) 압축 서베이도 pruning, distillation, 
 
 ### 1-1. 재학습의 벽
 
-가장 단순한 pruning은 크기가 작은 가중치를 0으로 만드는 magnitude pruning이다.
-작은 모델에서는 가중치를 지운 뒤 재학습으로 품질을 되살리는 방식이 잘 통했다.
+가장 단순한 pruning은 크기가 작은 weight를 0으로 만드는 magnitude pruning이다.
+작은 모델에서는 weight를 지운 뒤 재학습으로 품질을 되살리는 방식이 잘 통했다.
 그러나 LLM에서는 이 재학습 자체가 매우 비싸다.[^sparsegpt]
 재학습 없이 크기만 보고 지우면 금방 무너진다.
-Frantar와 Alistarh는 OPT-175B에 magnitude pruning을 하면 sparsity(전체 가중치 중 0으로 만든 비율) 10%까지만 정확도를 지키고 30%를 넘으면 완전히 무너진다고 보고했다.[^sparsegpt]
+Frantar와 Alistarh는 OPT-175B에 magnitude pruning을 하면 sparsity(전체 weight 중 0으로 만든 비율) 10%까지만 정확도를 지키고 30%를 넘으면 완전히 무너진다고 보고했다.[^sparsegpt]
 필요한 것은 재학습 없이 한 번에(one-shot) 지우면서도 품질을 지키는 방법이었다.
 
 ### 1-2. One-shot pruning
 
 Frantar와 Alistarh의 SparseGPT는 양자화의 GPTQ와 같은 생각을 pruning에 썼다.[^sparsegpt]
-층 하나에서 어떤 가중치를 지울지(mask)를 고르고,
-남은 가중치를 고쳐 층 출력 $WX$의 변화를 최소화한다.
-지운 가중치의 몫을 남은 가중치가 메우게 하는 것이다.
+층 하나에서 어떤 weight를 지울지(mask)를 고르고,
+남은 weight를 고쳐 층 출력 $WX$의 변화를 최소화한다.
+지운 weight의 몫을 남은 weight가 메우게 하는 것이다.
 GPTQ의 계산 기법을 그대로 써서 OPT-175B와 BLOOM-176B를 각각 4.5시간 안에 지웠고,
 perplexity가 거의 늘지 않는 선에서 OPT-175B는 60%, BLOOM-176B는 50%까지 지웠다.
 OPT-175B를 50% 지웠을 때 WikiText-2 perplexity는 dense 8.35에 대해 8.21이었고,
 같은 50%를 magnitude pruning으로 지우면 43,000이었다.
 원논문은 OPT 계열에서 큰 모델일수록 더 많이 지울 수 있다는 점도 함께 보였다.
 
-Sun 등의 Wanda는 가중치를 고치는 단계마저 없앴다.[^wanda]
-가중치 $W_{ij}$의 중요도를 크기만이 아니라 **그 가중치에 들어오는 입력의 크기**와 함께 본다.
+Sun 등의 Wanda는 weight를 고치는 단계마저 없앴다.[^wanda]
+Weight $W_{ij}$의 중요도를 크기만이 아니라 **그 weight에 들어오는 입력의 크기**와 함께 본다.
 
 $$
 S_{ij}=\lvert W_{ij}\rvert\cdot\lVert X_j\rVert_2
 $$
 
 $\lVert X_j\rVert_2$는 calibration 데이터의 모든 토큰에서 입력 channel $j$의 값을 모은 벡터의 크기다.
-출력마다(행마다) 점수가 낮은 가중치를 지우고, 남은 가중치는 그대로 둔다.
+출력마다(행마다) 점수가 낮은 weight를 지우고, 남은 weight는 그대로 둔다.
 이렇게 하는 까닭은 activation outlier에 있다.
-큰 activation이 들어오는 channel의 가중치는 크기가 작아도 출력에 큰 영향을 준다.
+큰 activation이 들어오는 channel의 weight는 크기가 작아도 출력에 큰 영향을 준다.
 
 <Callout type="example">
-가중치 한 행이 $(0.8,\,-0.1,\,0.3,\,0.05)$이고,
+Weight 한 행이 $(0.8,\,-0.1,\,0.3,\,0.05)$이고,
 각 입력 channel의 크기 $\lVert X_j\rVert_2$가 $(0.5,\,10,\,1,\,9)$라고 하자.
 절반을 지운다면 magnitude pruning은 크기가 작은 $-0.1$과 $0.05$를 지운다.
 Wanda의 점수는 $(0.4,\,1.0,\,0.3,\,0.45)$이므로 오히려 $0.3$과 $0.8$을 지운다.
-둘째와 넷째 가중치는 작지만 큰 입력에 곱해지므로 출력에 주는 영향이 더 크다.
+둘째와 넷째 weight는 작지만 큰 입력에 곱해지므로 출력에 주는 영향이 더 크다.
 </Callout>
 
 LLaMA-7B를 50% 지웠을 때 WikiText-2 perplexity는 dense 5.68, magnitude 17.29, SparseGPT 7.22, Wanda 7.26으로 Wanda가 SparseGPT와 비슷했다.
@@ -68,15 +68,15 @@ LLaMA-7B를 50% 지웠을 때 WikiText-2 perplexity는 dense 5.68, magnitude 17.
 
 ### 2-1. Unstructured sparsity의 한계
 
-가중치의 절반을 0으로 만들었다고 행렬곱이 절반의 시간에 끝나지는 않는다.
-지금까지 본 방법처럼 위치와 상관없이 가중치를 지우는 **unstructured pruning**에서는 0이 행렬 곳곳에 불규칙하게 흩어지는데,
+Weight의 절반을 0으로 만들었다고 행렬곱이 절반의 시간에 끝나지는 않는다.
+지금까지 본 방법처럼 위치와 상관없이 weight를 지우는 **unstructured pruning**에서는 0이 행렬 곳곳에 불규칙하게 흩어지는데,
 GPU의 dense 행렬곱 kernel은 그 0들을 그대로 곱한다.
 0을 건너뛰려면 위치 정보를 따로 저장하고 불규칙한 메모리 접근을 감당하는 특수한 kernel이 필요하다.
 SparseGPT 논문에서는 sparsity 40–60%로 지운 OPT-2.7B가 CPU(central processing unit)용 희소 연산 엔진에서 1.57–2.16배 빨라졌지만,[^sparsegpt]
 GPU에서 같은 이득을 내기는 어렵다.
 
 <figure>
-<svg viewBox="0 0 600 190" role="img" aria-label="세 가지 pruning 패턴을 4행 8열의 가중치 격자로 비교한다. 진한 칸은 남은 가중치, 흰 칸은 지운 가중치다. 왼쪽 unstructured는 위치와 상관없이 절반을 지워 진한 칸이 불규칙하게 흩어져 있다. 가운데 2:4 semi-structured는 각 행의 연속된 네 칸마다 정확히 두 칸만 남아 있고, 네 칸 묶음의 경계가 점선으로 표시되어 있다. 오른쪽 structured는 왼쪽 네 열만 남고 오른쪽 네 열이 통째로 지워져, 남은 부분이 더 작은 dense 행렬이 된다. 아래에는 각 패턴을 GPU에서 가속하는 방법이 적혀 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 600 190" role="img" aria-label="세 가지 pruning 패턴을 4행 8열의 weight 격자로 비교한다. 진한 칸은 남은 weight, 흰 칸은 지운 weight다. 왼쪽 unstructured는 위치와 상관없이 절반을 지워 진한 칸이 불규칙하게 흩어져 있다. 가운데 2:4 semi-structured는 각 행의 연속된 네 칸마다 정확히 두 칸만 남아 있고, 네 칸 묶음의 경계가 점선으로 표시되어 있다. 오른쪽 structured는 왼쪽 네 열만 남고 오른쪽 네 열이 통째로 지워져, 남은 부분이 더 작은 dense 행렬이 된다. 아래에는 각 패턴을 GPU에서 가속하는 방법이 적혀 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <text x="300" y="22" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">같은 50% sparsity의 세 가지 패턴</text>
   <text x="108" y="48" font-size="13" text-anchor="middle" fill="#0f172a" font-weight="600">Unstructured</text>
   <rect x="36" y="60" width="18" height="18" fill="#64748b" stroke="#94a3b8"/>
@@ -186,7 +186,7 @@ GPU에서 같은 이득을 내기는 어렵다.
   <text x="300" y="176" font-size="13" text-anchor="middle" fill="#0f172a">GPU 가속: Sparse Tensor Core</text>
   <text x="492" y="176" font-size="13" text-anchor="middle" fill="#0f172a">GPU 가속: 일반 dense kernel</text>
 </svg>
-<figcaption>같은 비율을 지워도 남은 가중치의 배치에 따라 GPU에서 얻는 속도가 다르다. 진한 칸이 남은 가중치다.</figcaption>
+<figcaption>같은 비율을 지워도 남은 weight의 배치에 따라 GPU에서 얻는 속도가 다르다. 진한 칸이 남은 weight다.</figcaption>
 </figure>
 
 ### 2-2. 2:4 semi-structured sparsity
@@ -202,7 +202,7 @@ SparseGPT로 OPT-175B를 2:4로 지우면 perplexity가 8.35에서 8.74로 조�
 OPT-2.7B에서는 12.47에서 17.18로 크게 늘었다.[^sparsegpt]
 One-shot 방법은 작은 calibration 데이터에서 근사한 중요도로 마스크를 정하므로, 2:4처럼 제약이 강하면 그 근사의 오차가 품질 손실로 이어지기 쉽다.
 그래서 마스크를 학습으로 고르는 방법도 나왔다.
-Fang 등의 MaskLLM은 가중치는 고정한 채 어떤 2개를 남길지를 학습 데이터에서 end-to-end로 학습한다.[^maskllm]
+Fang 등의 MaskLLM은 weight는 고정한 채 어떤 2개를 남길지를 학습 데이터에서 end-to-end로 학습한다.[^maskllm]
 LLaMA-2 7B에서 마스크를 2,000스텝 학습하는 데 A100 GPU 1,280시간이 들었지만,
 WikiText-2 perplexity를 SparseGPT의 10.42에서 6.72(dense 5.12)로 낮추었다.
 
@@ -212,7 +212,7 @@ MaskLLM 논문이 A6000·batch 1에서 NVIDIA의 서빙 라이브러리 TensorRT
 까닭은 두 가지다.
 첫째, 행렬곱 외의 연산은 빨라지지 않는다.
 둘째, memory-bound인 작은 batch의 decode에서는 연산 속도보다 읽는 bytes가 시간을 정한다.
-그런데 2:4는 위치 정보를 함께 저장하므로 FP16(16-bit floating point) 가중치의 bytes를 절반이 아니라 약 44%만 줄인다.[^nvidia24]
+그런데 2:4는 위치 정보를 함께 저장하므로 FP16(16-bit floating point) weight의 bytes를 절반이 아니라 약 44%만 줄인다.[^nvidia24]
 값 4개에 64 bits가 들던 것이 남은 값 2개(32 bits)와 위치(4 bits)를 합한 36 bits가 되기 때문이다.
 그래서 읽는 bytes로만 따지면 행렬곱이 빨라지는 상한은 64/36, 약 1.8배다.
 실제 kernel은 이 상한에도 못 미쳐, Wanda 논문이 batch 1에서 잰 LLaMA-65B 선형층의 행렬곱은 1.54–1.63배 빨라졌다.[^wanda]
@@ -228,7 +228,7 @@ Attention head, FFN(feed-forward network)의 중간 channel, embedding 차원(hi
 대신 지우는 단위가 커서 품질 손실이 크고,
 대개 미세조정으로 회복해야 한다.[^survey]
 
-구조 단위로 지울 때는 함께 지워야 하는 가중치를 묶어야 한다.
+구조 단위로 지울 때는 함께 지워야 하는 weight를 묶어야 한다.
 FFN이 좋은 예다.
 Llama의 FFN은 SwiGLU(Swish-gated linear unit)를 써서 $W_{\text{down}}\big(\mathrm{SiLU}(W_{\text{gate}}x)\odot W_{\text{up}}x\big)$ 꼴로 계산한다.
 여기서 $W_{\text{gate}}$, $W_{\text{up}}$, $W_{\text{down}}$은 gate·up·down 투영 행렬이고 $\odot$은 원소별 곱이다.
@@ -238,14 +238,14 @@ Llama 3 8B는 4,096차원의 입력을 중간 차원 14,336으로 올렸다가 �
 
 Embedding 차원은 묶음이 훨씬 크다.
 모든 층이 같은 차원의 벡터를 주고받으므로,
-이 차원 하나를 지우면 모든 층에서 attention·FFN 투영 행렬의 해당 입력과 출력, 정규화 층(RMSNorm)의 해당 가중치,
+이 차원 하나를 지우면 모든 층에서 attention·FFN 투영 행렬의 해당 입력과 출력, 정규화 층(RMSNorm)의 해당 weight,
 그리고 embedding과 LM head의 해당 차원이 함께 줄어든다.
 
 Ma 등의 LLM-Pruner는 이런 의존 관계를 자동으로 찾아 묶고,
 gradient로 묶음의 중요도를 추정해 지운 뒤 LoRA(low-rank adaptation)로 회복했다.
 LLaMA-7B의 파라미터 20%를 지우고 회복하면 zero-shot 분류 task 일곱 개의 평균 정확도가 원래의 94.97%였다.[^llmpruner]
 
-<Figure src="https://arxiv.org/html/2305.11627v3/main_v5.png" alt="LLM-Pruner의 Figure 2. LLaMA에서 함께 지워야 하는 가중치 묶음 세 종류를 뉴런과 연결선으로 보인다. 종 표시가 붙은 뉴런 하나를 지우면 거기 연결된 가중치가 점선으로 함께 지워지고, 빨간 점선을 따라 연결된 다른 뉴런으로 전파된다. 왼쪽 Group Type A(MLP)는 Gate Projection과 Up Projection의 출력 뉴런 하나와 Down Projection의 입력이 함께 지워진다. 가운데 Group Type B(Multi-head Attention)는 Head 1 하나를 지우면 Query, Key, Value의 해당 출력 뉴런과 출력 투영의 해당 입력이 함께 지워진다. 오른쪽 Group Type C(Channel-wise Grouping)는 Embedding부터 L개 층의 Multi-head Attention, Norm, MLP를 거쳐 LM Head까지, 같은 channel 하나가 모든 층에 걸쳐 함께 지워진다." caption="LLM-Pruner가 묶는 가중치 묶음. Group A는 FFN 중간 channel 하나로, gate·up 투영의 출력과 down 투영의 입력이 함께 지워지는 본문의 예와 같다. Group B는 attention head 하나, Group C는 embedding 차원 하나로 embedding부터 LM head까지 모든 층에 걸친다." source="Ma et al. (2023), Figure 2 · CC BY 4.0" wide />
+<Figure src="https://arxiv.org/html/2305.11627v3/main_v5.png" alt="LLM-Pruner의 Figure 2. LLaMA에서 함께 지워야 하는 weight 묶음 세 종류를 뉴런과 연결선으로 보인다. 종 표시가 붙은 뉴런 하나를 지우면 거기 연결된 weight가 점선으로 함께 지워지고, 빨간 점선을 따라 연결된 다른 뉴런으로 전파된다. 왼쪽 Group Type A(MLP)는 Gate Projection과 Up Projection의 출력 뉴런 하나와 Down Projection의 입력이 함께 지워진다. 가운데 Group Type B(Multi-head Attention)는 Head 1 하나를 지우면 Query, Key, Value의 해당 출력 뉴런과 출력 투영의 해당 입력이 함께 지워진다. 오른쪽 Group Type C(Channel-wise Grouping)는 Embedding부터 L개 층의 Multi-head Attention, Norm, MLP를 거쳐 LM Head까지, 같은 channel 하나가 모든 층에 걸쳐 함께 지워진다." caption="LLM-Pruner가 묶는 weight 묶음. Group A는 FFN 중간 channel 하나로, gate·up 투영의 출력과 down 투영의 입력이 함께 지워지는 본문의 예와 같다. Group B는 attention head 하나, Group C는 embedding 차원 하나로 embedding부터 LM head까지 모든 층에 걸친다." source="Ma et al. (2023), Figure 2 · CC BY 4.0" wide />
 
 층 전체를 지우는 깊이 pruning도 있다.
 Men 등의 ShortGPT는 입력과 출력이 거의 같은 층,
@@ -307,8 +307,8 @@ Decoder가 8층인 T5로 요약·번역·질의응답을 batch 1로 돌렸을 �
 Del Corro 등은 SkipDecode를 제안하며 두 가지 문제를 짚었다.[^skipdecode]
 첫째, batch 안의 토큰들이 서로 다른 층에서 멈추면 스텝은 가장 늦게 멈추는 토큰이 끝날 때까지 이어진다.
 Roofline으로 보면 이득은 더 작다.
-Decode는 memory-bound라 스텝의 시간은 대부분 가중치를 읽는 데 들고,
-batch 안의 토큰 하나라도 어떤 층을 계산하면 그 층의 가중치는 읽어야 하므로, 일부 토큰이 일찍 멈춰도 읽는 bytes는 거의 줄지 않는다.
+Decode는 memory-bound라 스텝의 시간은 대부분 weight를 읽는 데 들고,
+batch 안의 토큰 하나라도 어떤 층을 계산하면 그 층의 weight는 읽어야 하므로, 일부 토큰이 일찍 멈춰도 읽는 bytes는 거의 줄지 않는다.
 둘째, 뒤 토큰이 앞 토큰보다 깊이 계산하면, 앞 토큰이 건너뛴 층의 key·value를 다시 계산해야 한다.
 SkipDecode는 같은 위치의 토큰은 batch 전체가 같은 수의 층을 계산하고, 그 수가 생성이 진행될수록 줄어들게 정해 두 문제를 피했다.
 대신 토큰마다 깊이를 고른다는 장점은 그만큼 사라진다.
@@ -339,7 +339,7 @@ Sardana 등은 여기에 배포 뒤의 inference 계산까지 더해, 요청이 
 
 ### 5-1. SVD 근사
 
-$d\times n$ 가중치 행렬 $W$를 rank $r$의 두 행렬 $U\in\mathbb{R}^{d\times r}$,
+$d\times n$ weight 행렬 $W$를 rank $r$의 두 행렬 $U\in\mathbb{R}^{d\times r}$,
 $V\in\mathbb{R}^{r\times n}$의 곱으로 근사하면,
 파라미터 수는 $dn$에서 $(d+n)r$로, 토큰 하나를 처리하는 행렬곱 FLOPs는 $2dn$에서 $2(d+n)r$로 바뀐다.
 이득을 보려면 $r<dn/(d+n)$이어야 한다.
@@ -347,20 +347,20 @@ $4096\times4096$ 행렬이라면 $r<2048$이고, $r=1024$로 두면 파라미터
 다만 층 출력 $WX$를 구하는 행렬곱 하나가 $VX$와 $U(VX)$ 두 번으로 바뀌고,
 이를 따로 실행하면 중간 결과를 한 번 더 쓰고 읽고 kernel도 하나 늘어나므로,
 FLOPs가 절반이 되어도 실제 지연은 그만큼 줄지 않을 수 있다.
-가중치 오차(Frobenius norm)가 가장 작은 rank-$r$ 근사는 SVD(singular value decomposition)로 큰 특이값 $r$개만 남겨 얻는다.
+Weight 오차(Frobenius norm)가 가장 작은 rank-$r$ 근사는 SVD(singular value decomposition)로 큰 특이값 $r$개만 남겨 얻는다.
 남긴 특이값의 대각 행렬을 $\Sigma_r$, 그에 대응하는 왼쪽·오른쪽 특이벡터를 열로 모은 행렬을 $U_r$, $V_r$라 할 때, $U=U_r\Sigma_r$, $V=V_r^\top$로 두면 $W\approx U_r\Sigma_rV_r^\top=UV$다.
 
-문제는 LLM의 가중치가 낮은 rank에 잘 들어맞지 않는다는 점이다.
+문제는 LLM의 weight가 낮은 rank에 잘 들어맞지 않는다는 점이다.
 Yuan 등의 ASVD(activation-aware singular value decomposition) 실험에서 LLaMA-7B의 파라미터를 SVD로 5%만 줄여도 WikiText-2 perplexity가 5.68에서 2,800으로 무너졌다.[^asvd]
-가중치의 오차를 최소화하는 SVD가 층 출력의 오차를 최소화하지는 않기 때문이다.
+Weight의 오차를 최소화하는 SVD가 층 출력의 오차를 최소화하지는 않기 때문이다.
 Activation outlier가 있으면,
-가중치에서 작아 보이는 오차도 큰 activation과 곱해져 출력에서 크게 드러난다.
+Weight에서 작아 보이는 오차도 큰 activation과 곱해져 출력에서 크게 드러난다.
 
 ### 5-2. Activation을 고려한 분해
 
 해법은 Wanda나 AWQ(activation-aware weight quantization)와 같다.
-가중치만이 아니라 입력 activation의 통계를 함께 본다.
-ASVD는 activation의 크기로 만든 대각 행렬 $S$를 가중치에 곱한 $WS$를 SVD로 분해한 뒤 $S^{-1}$을 다시 곱해,
+Weight만이 아니라 입력 activation의 통계를 함께 본다.
+ASVD는 activation의 크기로 만든 대각 행렬 $S$를 weight에 곱한 $WS$를 SVD로 분해한 뒤 $S^{-1}$을 다시 곱해,
 큰 activation이 들어오는 방향을 우선 보존한다.
 층마다 민감도가 달라서 rank도 층마다 다르게 정한다.
 그 결과 LLaMA-7B의 파라미터를 5%, 10%, 15% 줄였을 때 perplexity가 5.78, 6.09, 6.80으로 유지되었다.[^asvd]
@@ -369,7 +369,7 @@ Wang 등의 SVD-LLM은 한 걸음 더 나아가 channel 사이의 상관까지 �
 20%를 줄인 LLaMA-2-7B의 WikiText-2 perplexity는 원래 5.47(평가 설정이 달라 앞의 MaskLLM 실험의 5.12와 다르다), SVD 18,192, ASVD 10.10이었고,
 SVD-LLM은 8.50, 분해한 두 행렬을 LoRA로 미세조정하면 7.73이었다.[^svdllm]
 
-그래도 학습된 가중치를 사후에 분해하는 방식은 원래 품질을 지키며 줄일 수 있는 비율이 아직 작다.
+그래도 학습된 weight를 사후에 분해하는 방식은 원래 품질을 지키며 줄일 수 있는 비율이 아직 작다.
 20% 압축에서도 perplexity가 원래보다 꽤 높다.
 
 [^survey]: Zhu, X., Li, J., Liu, Y., Ma, C., & Wang, W. (2024). A Survey on Model Compression for Large Language Models. *Transactions of the Association for Computational Linguistics*, 12, 1556–1577. [arXiv:2308.07633v4](https://arxiv.org/abs/2308.07633v4).

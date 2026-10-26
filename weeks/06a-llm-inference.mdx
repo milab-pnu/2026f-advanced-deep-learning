@@ -11,11 +11,11 @@ inference 비용을 줄이는 일은 더 중요해졌다.
 Inference 비용은 세 가지로 나누어 볼 수 있다.[^survey]
 
 - **Computational cost**: 계산 자체의 양으로, FLOPs(floating-point operations)로 센다.
-- **Memory access cost**: 가중치나 KV(key-value) cache 같은 데이터를 메모리에서 연산 장치로 읽어 오고 결과를 다시 쓰는 데 드는 비용이다.
-- **Memory usage**: 가중치와 KV cache 등이 GPU(graphics processing unit) 메모리를 차지하는 양이다.
+- **Memory access cost**: weight나 KV(key-value) cache 같은 데이터를 메모리에서 연산 장치로 읽어 오고 결과를 다시 쓰는 데 드는 비용이다.
+- **Memory usage**: weight와 KV cache 등이 GPU(graphics processing unit) 메모리를 차지하는 양이다.
 
 먼저 생성이 prefill과 decode 두 단계로 나뉘는 과정을 보고, 각 단계의 시간을 computational cost와 memory access cost 가운데 어느 쪽이 정하는지 따진다.
-이어서 GPU 메모리에 가중치와 KV cache가 얼마나 들어가고, 그 공간이 동시에 처리할 수 있는 요청 수를 어떻게 정하는지 계산한다.
+이어서 GPU 메모리에 weight와 KV cache가 얼마나 들어가고, 그 공간이 동시에 처리할 수 있는 요청 수를 어떻게 정하는지 계산한다.
 마지막으로 사용자가 겪는 지연과 서버 전체의 처리량을 어떤 지표로 재는지 정리한다.
 기준 모델은 Llama 3 8B(층 수 $L=32$, query head 32개, KV head 8개, head 차원 $d_h=128$, 최대 문맥 128K 토큰)다.[^llama3]
 
@@ -61,7 +61,7 @@ Query는 저장하지 않는다.
 새 key·value를 cache 뒤에 붙인 뒤, 새 query로 cache 전체를 읽어 attention을 계산한다.[^survey]
 
 <figure>
-<svg viewBox="0 0 600 270" role="img" aria-label="Decode 한 스텝에서 KV cache를 쓰는 attention. 위쪽 줄에 토큰 The, cat, sat, on, the가 있고 다섯째 the가 새 토큰이다. 그 아래 K cache 줄과 V cache 줄에는 위치 1부터 4까지의 key와 value가 초록 칸으로 저장되어 있고, 새 토큰으로 새로 계산한 k5와 v5가 파란 테두리 칸으로 뒤에 붙는다. 오른쪽의 q5는 새 토큰으로만 계산하며 저장하지 않는다. q5에서 나온 ① 내적 화살표는 K cache 줄 전체를 감싼 주황 점선 테두리에 닿는다. q5는 k1부터 k5까지 모두와 내적해 softmax로 가중치 a1부터 a5를 만든다. ② 가중합 화살표는 V cache 줄 전체를 감싼 주황 점선 테두리에서 나와 o5로 이어지며, 앞의 가중치로 v1부터 v5까지를 모두 더한 값이 출력 o5다. o5는 다음 층으로 올라가 결국 다음 토큰을 고르는 데 쓰인다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 600 270" role="img" aria-label="Decode 한 스텝에서 KV cache를 쓰는 attention. 위쪽 줄에 토큰 The, cat, sat, on, the가 있고 다섯째 the가 새 토큰이다. 그 아래 K cache 줄과 V cache 줄에는 위치 1부터 4까지의 key와 value가 초록 칸으로 저장되어 있고, 새 토큰으로 새로 계산한 k5와 v5가 파란 테두리 칸으로 뒤에 붙는다. 오른쪽의 q5는 새 토큰으로만 계산하며 저장하지 않는다. q5에서 나온 ① 내적 화살표는 K cache 줄 전체를 감싼 주황 점선 테두리에 닿는다. q5는 k1부터 k5까지 모두와 내적해 softmax로 attention weight a1부터 a5를 만든다. ② 가중합 화살표는 V cache 줄 전체를 감싼 주황 점선 테두리에서 나와 o5로 이어지며, 앞의 attention weight로 v1부터 v5까지를 모두 더한 값이 출력 o5다. o5는 다음 층으로 올라가 결국 다음 토큰을 고르는 데 쓰인다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <defs><marker id="kvstep-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/></marker><marker id="kvstep-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8"/></marker></defs>
   <text x="300" y="22" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Decode 한 스텝: 새 토큰 the(위치 5)가 들어올 때 한 층의 attention</text>
   <text x="14" y="62" font-size="13" fill="#64748b">토큰</text>
@@ -91,7 +91,7 @@ Query는 저장하지 않는다.
   <path d="M349,57 C 420,57 470,70 470,100" fill="none" stroke="#1d4ed8" stroke-width="1.5" marker-end="url(#kvstep-blue)"/>
   <line x1="444" y1="117" x2="356" y2="117" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvstep-arrow)"/>
   <text x="396" y="112" font-size="12" text-anchor="middle" fill="#0f172a">① 내적</text>
-  <text x="212" y="146" font-size="12" text-anchor="middle" fill="#c2410c">q<tspan font-size="9" baseline-shift="sub">5</tspan>와 k<tspan font-size="9" baseline-shift="sub">1</tspan> … k<tspan font-size="9" baseline-shift="sub">5</tspan>의 내적 → softmax → 가중치 a<tspan font-size="9" baseline-shift="sub">1</tspan> … a<tspan font-size="9" baseline-shift="sub">5</tspan></text>
+  <text x="212" y="146" font-size="12" text-anchor="middle" fill="#c2410c">q<tspan font-size="9" baseline-shift="sub">5</tspan>와 k<tspan font-size="9" baseline-shift="sub">1</tspan> … k<tspan font-size="9" baseline-shift="sub">5</tspan>의 내적 → softmax → weight a<tspan font-size="9" baseline-shift="sub">1</tspan> … a<tspan font-size="9" baseline-shift="sub">5</tspan></text>
   <line x1="355" y1="172" x2="442" y2="172" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvstep-arrow)"/>
   <text x="396" y="167" font-size="12" text-anchor="middle" fill="#0f172a">② 가중합</text>
   <rect x="446" y="159" width="48" height="26" rx="4" fill="#ffffff" stroke="#0f172a"/><text x="470" y="177" font-size="14" text-anchor="middle" fill="#0f172a">o<tspan font-size="9" baseline-shift="sub">5</tspan></text>
@@ -233,7 +233,7 @@ GPU는 **계산을 하는 연산 장치와 데이터를 담는 메모리**로 �
 메모리는 두 층으로, GPU 칩 안의 SRAM(static random-access memory)은 작지만 빠르고 칩 바로 옆의 HBM(high-bandwidth memory)은 크지만 상대적으로 느리다.
 
 <figure>
-<svg viewBox="0 0 600 300" role="img" aria-label="H100 SXM에서 데이터가 움직이는 길. 왼쪽 HBM은 GPU 칩 밖에 있고 가중치 16 GB, KV cache, 새로 덧붙이는 key·value 칸을 담는다. 오른쪽 GPU 칩 안에는 왼쪽에 모든 SM이 함께 쓰는 L2 cache 50 MB가 있고, 그 오른쪽에 SM 하나가 있다. SM 안에는 register와 shared memory, 그리고 연산 장치인 Tensor Core가 들어 있다. ① 가중치와 KV cache를 HBM에서 L2 cache를 거쳐 SM 안의 register와 shared memory로 읽어 온다. ② Tensor Core가 그 데이터로 계산한다. ③ 새 토큰의 key·value를 L2 cache를 거쳐 HBM의 KV cache 뒤에 쓴다. 노란 칸이 SRAM이고 칩 안에 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 600 300" role="img" aria-label="H100 SXM에서 데이터가 움직이는 길. 왼쪽 HBM은 GPU 칩 밖에 있고 weight 16 GB, KV cache, 새로 덧붙이는 key·value 칸을 담는다. 오른쪽 GPU 칩 안에는 왼쪽에 모든 SM이 함께 쓰는 L2 cache 50 MB가 있고, 그 오른쪽에 SM 하나가 있다. SM 안에는 register와 shared memory, 그리고 연산 장치인 Tensor Core가 들어 있다. ① weight와 KV cache를 HBM에서 L2 cache를 거쳐 SM 안의 register와 shared memory로 읽어 온다. ② Tensor Core가 그 데이터로 계산한다. ③ 새 토큰의 key·value를 L2 cache를 거쳐 HBM의 KV cache 뒤에 쓴다. 노란 칸이 SRAM이고 칩 안에 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <defs>
     <marker id="memflow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/></marker>
     <marker id="memflow-store" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8"/></marker>
@@ -243,7 +243,7 @@ GPU는 **계산을 하는 연산 장치와 데이터를 담는 메모리**로 �
   <text x="105" y="62" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">HBM</text>
   <text x="105" y="80" font-size="12" text-anchor="middle" fill="#64748b">칩 밖, 같은 패키지 · 80 GB</text>
   <rect x="35" y="92" width="140" height="36" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
-  <text x="105" y="115" font-size="13" text-anchor="middle" fill="#0f172a">가중치 16 GB</text>
+  <text x="105" y="115" font-size="13" text-anchor="middle" fill="#0f172a">Weight 16 GB</text>
   <rect x="35" y="138" width="140" height="36" rx="4" fill="#bbf7d0" stroke="#15803d"/>
   <text x="105" y="161" font-size="13" text-anchor="middle" fill="#0f172a">KV cache</text>
   <rect x="35" y="196" width="140" height="36" rx="4" fill="#bbf7d0" stroke="#1d4ed8" stroke-width="3"/>
@@ -277,7 +277,7 @@ GPU는 **계산을 하는 연산 장치와 데이터를 담는 메모리**로 �
   <rect x="250" y="270" width="16" height="16" rx="3" fill="#f1f5f9" stroke="#0f172a"/><text x="272" y="283" font-size="13" fill="#0f172a">HBM (칩 밖, 크고 느림)</text>
   <rect x="430" y="270" width="16" height="16" rx="3" fill="#dbeafe" stroke="#1d4ed8"/><text x="452" y="283" font-size="13" fill="#0f172a">연산 장치</text>
 </svg>
-<figcaption>H100 SXM에서 forward 한 번의 데이터 이동. ① 가중치와 KV cache를 HBM에서 L2 cache를 거쳐 SM 안으로 읽어 오고, ② Tensor Core가 계산하며, ③ 새 토큰의 key·value를 L2 cache를 거쳐 HBM의 KV cache 뒤에 쓴다.</figcaption>
+<figcaption>H100 SXM에서 forward 한 번의 데이터 이동. ① weight와 KV cache를 HBM에서 L2 cache를 거쳐 SM 안으로 읽어 오고, ② Tensor Core가 계산하며, ③ 새 토큰의 key·value를 L2 cache를 거쳐 HBM의 KV cache 뒤에 쓴다.</figcaption>
 </figure>
 
 연산 장치와 SRAM의 일부(register, shared memory)는 SM(streaming multiprocessor)이라는 블록으로 묶여 있다.[^hopper]
@@ -306,28 +306,28 @@ SXM은 서버 보드에 직접 장착하는 형태이고, PCIe(peripheral compon
 </Details>
 
 계산하려면 데이터를 HBM에서 SRAM을 거쳐 연산 장치로 읽어 와야 한다.
-SRAM은 16 GB인 가중치를 담아 두기에 턱없이 작으므로, forward를 한 번 할 때마다 가중치 전체를 HBM에서 다시 읽어 온다.
+SRAM은 16 GB인 weight를 담아 두기에 턱없이 작으므로, forward를 한 번 할 때마다 weight 전체를 HBM에서 다시 읽어 온다.
 SRAM은 HBM에서 가져온 조각을 잠시 올려 두는 곳일 뿐이라, 읽는 시간은 이 길에서 가장 느린 구간인 HBM의 대역폭이 정한다.
 GPU는 읽기와 계산을 겹쳐 진행하므로, forward 한 번의 시간은 대략 **읽는 시간**과 **계산하는 시간** 가운데 긴 쪽이 정한다.
 
-**Prefill**은 한 번 읽은 가중치를 $n$개 토큰에 함께 쓴다.
+**Prefill**은 한 번 읽은 weight를 $n$개 토큰에 함께 쓴다.
 프롬프트가 어느 정도 길면 계산하는 시간이 읽는 시간보다 길어진다.
 이렇게 computational cost가 시간을 정하는 단계를 **compute-bound**라 부른다.
-**Decode**는 같은 가중치를 다 읽어 와서 토큰 하나에만 쓴다.
-계산은 금방 끝나고 시간 대부분이 가중치와 KV cache를 읽는 데, 곧 memory access cost에 든다.
+**Decode**는 같은 weight를 다 읽어 와서 토큰 하나에만 쓴다.
+계산은 금방 끝나고 시간 대부분이 weight와 KV cache를 읽는 데, 곧 memory access cost에 든다.
 이런 단계는 **memory-bound**다.
 
 <Callout type="example">
-Llama 3 8B의 BF16 가중치는 약 16 GB다.
+Llama 3 8B의 BF16 weight는 약 16 GB다.
 H100 SXM은 HBM에서 초당 3.35 TB를 읽고(memory bandwidth), BF16 행렬곱을 초당 약 $989\times10^{12}$ FLOPs(computation)까지 계산한다.
-가중치를 한 번 읽는 데는 $16\ \text{GB}/3.35\ \text{TB/s}\approx4.8$ ms가 걸린다.
+Weight를 한 번 읽는 데는 $16\ \text{GB}/3.35\ \text{TB/s}\approx4.8$ ms가 걸린다.
 토큰 하나의 forward는 파라미터마다 곱셈과 덧셈을 한 번씩 하므로 계산량이 약 $2N\approx16$ GFLOPs(파라미터 수 $N\approx8.03\times10^9$)이고, 계산은 $16\ \text{GFLOPs}/989\ \text{TFLOP/s}\approx0.016$ ms면 끝난다.
 Decode 한 스텝은 읽는 데 4.8 ms, 계산하는 데 0.016 ms라서 연산 장치는 시간의 99% 이상을 기다린다.
-1,000토큰을 prefill하면 계산이 1,000배인 16 ms로 늘지만 가중치는 여전히 한 번만 읽으므로, 이번에는 계산이 더 오래 걸린다.
+1,000토큰을 prefill하면 계산이 1,000배인 16 ms로 늘지만 weight는 여전히 한 번만 읽으므로, 이번에는 계산이 더 오래 걸린다.
 </Callout>
 
 <figure>
-<svg viewBox="0 0 600 330" role="img" aria-label="Prefill과 decode의 forward 한 번을 나란히 그린 구조도. 두 단계 모두 HBM에 가중치 16 GB와 KV cache가 있고, 가중치를 연산 장치로 한 번 읽어 온다. 왼쪽 prefill은 연산 장치에서 토큰 1,000개를 함께 계산하고 KV cache에 key와 value를 쓴다. 오른쪽 decode는 토큰 하나만 계산하고 KV cache를 읽는다. 아래 막대는 같은 축척의 시간이다. Prefill은 읽기 4.8 ms, 계산 16 ms로 계산이 길어 compute-bound이고, decode는 읽기 4.8 ms, 계산 0.016 ms로 읽기가 길어 memory-bound다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 600 330" role="img" aria-label="Prefill과 decode의 forward 한 번을 나란히 그린 구조도. 두 단계 모두 HBM에 weight 16 GB와 KV cache가 있고, weight를 연산 장치로 한 번 읽어 온다. 왼쪽 prefill은 연산 장치에서 토큰 1,000개를 함께 계산하고 KV cache에 key와 value를 쓴다. 오른쪽 decode는 토큰 하나만 계산하고 KV cache를 읽는다. 아래 막대는 같은 축척의 시간이다. Prefill은 읽기 4.8 ms, 계산 16 ms로 계산이 길어 compute-bound이고, decode는 읽기 4.8 ms, 계산 0.016 ms로 읽기가 길어 memory-bound다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <defs>
     <marker id="pd-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/>
@@ -339,7 +339,7 @@ Decode 한 스텝은 읽는 데 4.8 ms, 계산하는 데 0.016 ms라서 연산 �
   <rect x="30" y="44" width="240" height="56" fill="#f1f5f9" stroke="#0f172a"/>
   <text x="38" y="58" font-size="12" fill="#64748b">HBM</text>
   <rect x="40" y="64" width="130" height="28" fill="#e2e8f0" stroke="#0f172a"/>
-  <text x="105" y="83" font-size="13" text-anchor="middle" fill="#0f172a">가중치 16 GB</text>
+  <text x="105" y="83" font-size="13" text-anchor="middle" fill="#0f172a">Weight 16 GB</text>
   <rect x="185" y="64" width="75" height="28" fill="#ffffff" stroke="#0f172a"/>
   <text x="222" y="83" font-size="13" text-anchor="middle" fill="#0f172a">KV cache</text>
   <line x1="105" y1="92" x2="105" y2="140" stroke="#0f172a" stroke-width="1.5" marker-end="url(#pd-arrow)"/>
@@ -356,7 +356,7 @@ Decode 한 스텝은 읽는 데 4.8 ms, 계산하는 데 0.016 ms라서 연산 �
   <rect x="330" y="44" width="240" height="56" fill="#f1f5f9" stroke="#0f172a"/>
   <text x="338" y="58" font-size="12" fill="#64748b">HBM</text>
   <rect x="340" y="64" width="130" height="28" fill="#e2e8f0" stroke="#0f172a"/>
-  <text x="405" y="83" font-size="13" text-anchor="middle" fill="#0f172a">가중치 16 GB</text>
+  <text x="405" y="83" font-size="13" text-anchor="middle" fill="#0f172a">Weight 16 GB</text>
   <rect x="485" y="64" width="75" height="28" fill="#ffffff" stroke="#0f172a"/>
   <text x="522" y="83" font-size="13" text-anchor="middle" fill="#0f172a">KV cache</text>
   <line x1="405" y1="92" x2="405" y2="140" stroke="#0f172a" stroke-width="1.5" marker-end="url(#pd-arrow)"/>
@@ -389,21 +389,21 @@ Decode 한 스텝은 읽는 데 4.8 ms, 계산하는 데 0.016 ms라서 연산 �
 ## 3. Memory usage
 
 Decode에서 연산 장치가 기다리는 시간을 줄이는 가장 직접적인 방법은 여러 요청의 decode 스텝을 forward 한 번으로 묶는 **batching**이다.
-**가중치를 한 번 읽어 여러 요청의 토큰을 함께 계산**하므로, 같은 읽기 시간에 더 많은 토큰을 만든다.
+**weight를 한 번 읽어 여러 요청의 토큰을 함께 계산**하므로, 같은 읽기 시간에 더 많은 토큰을 만든다.
 다만 묶은 요청은 저마다 KV cache를 GPU 메모리에 두어야 하므로, 얼마나 많이 묶을 수 있는지는 메모리가 정한다.
 요청을 받아 batch로 묶고 모델을 실행하는 소프트웨어를 **서빙 엔진**이라 하며, 앞서 다뤘던 오픈소스 엔진 vLLM을 예로 든다.
-KV cache에 쓸 수 있는 공간은 엔진이 쓰도록 잡아 둔 GPU 메모리에서 가중치, activation, workspace(계산 중에 잠시 쓰는 버퍼)를 빼고 남은 만큼이다.
+KV cache에 쓸 수 있는 공간은 엔진이 쓰도록 잡아 둔 GPU 메모리에서 weight, activation, workspace(계산 중에 잠시 쓰는 버퍼)를 빼고 남은 만큼이다.
 Llama 3 8B를 GPU 한 대에 올려 그 숫자를 계산해 보자.
 
-### 3-1. 가중치
+### 3-1. Weight
 
-가중치 메모리는 파라미터 수에 원소 하나를 저장하는 bytes, 곧 precision을 곱한 값이다.
-Embedding까지 포함한 Llama 3 8B의 파라미터는 약 8.03B개이고, BF16은 원소당 2 bytes이므로 가중치는 약 16.1 GB다.
+Weight 메모리는 파라미터 수에 원소 하나를 저장하는 bytes, 곧 precision을 곱한 값이다.
+Embedding까지 포함한 Llama 3 8B의 파라미터는 약 8.03B개이고, BF16은 원소당 2 bytes이므로 weight는 약 16.1 GB다.
 학습과 달리 gradient나 optimizer 상태가 없으므로 이 값이 모델 상태의 전부이고, 요청 수나 문맥 길이와 상관없이 고정이다.
 
 이 값을 줄이는 방향은 두 가지다.
 하나는 precision을 낮추는 양자화(quantization)다.
-모든 가중치를 4-bit 정수(INT4)로 둔다고 단순화하면 약 4 GB가 된다.
+모든 weight를 4-bit 정수(INT4)로 둔다고 단순화하면 약 4 GB가 된다.
 다른 하나는 pruning, low-rank factorization, distillation처럼 파라미터 수 자체를 줄이는 압축이다.
 
 ### 3-2. KV cache
@@ -433,25 +433,25 @@ $$
 이다.
 요청끼리 공유하는 부분이 없다면 서버 전체의 KV cache는 동시에 처리 중인 요청들의 토큰 수를 모두 더한 값에 비례한다.
 
-| 상황 | KV cache | 가중치(BF16, 16.1 GB) 대비 |
+| 상황 | KV cache | Weight(BF16, 16.1 GB) 대비 |
 |---|---|---|
 | 8,192토큰 요청 1개 | 1.07 GB | 약 0.07배 |
 | 131,072토큰 요청 1개 | 17.2 GB | 약 1.07배 |
 | 8,192토큰 요청 32개 | 34.4 GB | 약 2.1배 |
 
-**KV cache는 sequence 길이와 batch 크기의 곱에 비례해 커지므로, 둘 중 하나만 늘어도 금방 가중치만큼 커진다.**
-최대 문맥 128K토큰을 채운 요청 하나가 가중치와 비슷하고, 8,192토큰 요청 32개를 묶으면 가중치의 두 배를 넘는다.
+**KV cache는 sequence 길이와 batch 크기의 곱에 비례해 커지므로, 둘 중 하나만 늘어도 금방 weight만큼 커진다.**
+최대 문맥 128K토큰을 채운 요청 하나가 weight와 비슷하고, 8,192토큰 요청 32개를 묶으면 weight의 두 배를 넘는다.
 
 ### 3-3. 동시에 처리할 수 있는 요청 수
 
-가중치와 KV cache 말고도 실행 중의 activation과 workspace가 필요하다.
+Weight와 KV cache 말고도 실행 중의 activation과 workspace가 필요하다.
 학습과 달리 backward가 없어 층의 중간 결과를 다음 층으로 넘기면 버릴 수 있으므로 activation의 비중은 작다.
-vLLM은 시작할 때 더미 입력으로 forward를 한 번 돌려(profile run) activation 메모리의 peak를 재고, 가중치와 그만큼을 뺀 나머지를 KV cache 공간으로 잡는다.[^vllm-worker]
+vLLM은 시작할 때 더미 입력으로 forward를 한 번 돌려(profile run) activation 메모리의 peak를 재고, weight와 그만큼을 뺀 나머지를 KV cache 공간으로 잡는다.[^vllm-worker]
 
 <Callout type="example">
 메모리 80 GB인 H100 SXM 한 대에 vLLM을 띄운다.
 vLLM은 기본적으로 GPU 메모리의 92%를 쓰므로 사용할 수 있는 공간은 약 73.6 GB다.[^vllm-args]
-여기서 가중치 16.1 GB와 실행 중의 activation과 workspace 약 4 GB를 뺀다고 가정하면 KV cache에 약 53.5 GB가 남는다.
+여기서 weight 16.1 GB와 실행 중의 activation과 workspace 약 4 GB를 뺀다고 가정하면 KV cache에 약 53.5 GB가 남는다.
 토큰당 131,072 bytes이므로
 
 $$

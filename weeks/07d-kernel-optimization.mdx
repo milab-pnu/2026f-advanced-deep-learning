@@ -5,7 +5,7 @@ order: 3
 ---
 
 Llama 3 8B를 H100 한 대에서 batch 1, 문맥 2,048토큰으로 돌릴 때 TPOT(time per output token)가 8.0 ms라면,
-가중치와 KV(key-value) cache를 BF16(bfloat16)으로 한 번씩 읽는 하한 4.9 ms의 약 1.6배이고,
+Weight와 KV(key-value) cache를 BF16(bfloat16)으로 한 번씩 읽는 하한 4.9 ms의 약 1.6배이고,
 MBU(model bandwidth utilization)는 61%다.
 MBU만으로는 남은 39%가 어디서 새는지 나눌 수 없다.
 읽어야 할 데이터의 양은 하한에 이미 들어 있으므로, 먼저 의심할 곳은 **그 계산을 GPU(graphics processing unit)에서 실행하는 방식**이다.
@@ -206,8 +206,8 @@ SGLang에 붙여 비교한 실험에서 FlashInfer는 Triton 언어로 작성한
 ### 3-1. 작은 batch의 행렬곱
 
 Decode의 선형층은 batch가 작으면 행렬과 벡터의 곱에 가깝다.
-가중치가 16-bit라면 이런 연산의 intensity는 토큰 수와 거의 같다.
-이때 kernel의 주된 목표는 **가중치를 대역폭의 한계 속도로 흘려 읽는 것**이다.
+Weight가 16-bit라면 이런 연산의 intensity는 토큰 수와 거의 같다.
+이때 kernel의 주된 목표는 **weight를 대역폭의 한계 속도로 흘려 읽는 것**이다.
 큰 행렬곱에 맞춰 조율한 kernel을 그대로 쓰면,
 한쪽 차원이 아주 작은 이 납작한 행렬곱에서는 대역폭을 다 쓰지 못한다.
 Hong 등의 FlashDecoding++는 이름만 Flash-Decoding과 비슷할 뿐 다른 연구진이 낸 별개의 기법으로,
@@ -217,22 +217,22 @@ FlashDecoding++는 batch 쪽 타일을 Tensor Core가 한 번에 처리하는 8�
 일은 출력 차원 방향으로 thread block들에 나누고,
 출력 차원이 크면 shared memory 버퍼 두 개를 번갈아 써서 다음 타일을 읽는 동안 현재 타일을 계산한다(double buffering).
 
-### 3-2. 양자화 가중치의 kernel
+### 3-2. 양자화 weight의 kernel
 
-Weight-only 양자화(quantization)는 kernel 안에서 가중치를 원래 정밀도로 되돌려야(dequantize) 한다.
-Frantar 등의 Marlin은 4-bit 가중치와 FP16 activation의 행렬곱을 위한 kernel이다.[^marlin]
-4-bit 가중치를 HBM에서 읽어 shared memory를 거쳐 레지스터로 가져오는 동안 앞선 데이터의 계산을 겹치고,
+Weight-only 양자화(quantization)는 kernel 안에서 weight를 원래 정밀도로 되돌려야(dequantize) 한다.
+Frantar 등의 Marlin은 4-bit weight와 FP16 activation의 행렬곱을 위한 kernel이다.[^marlin]
+4-bit weight를 HBM에서 읽어 shared memory를 거쳐 레지스터로 가져오는 동안 앞선 데이터의 계산을 겹치고,
 레지스터 안에서 FP16으로 되돌려 Tensor Core에 넣는다.
-가중치는 미리 이 순서에 맞게 재배치해 저장해 둔다.
+Weight는 미리 이 순서에 맞게 재배치해 저장해 둔다.
 
 작은 batch에서는 일을 SM에 고르게 나누는 것도 문제다.
 출력 타일 수가 SM 수로 나누어떨어지지 않으면 마지막 차례에서 일부 SM이 논다.
 Marlin은 SM마다 맡을 타일 수를 똑같이 정해 두고, 한 SM의 몫이 한 열의 끝에 닿으면 다음 열의 위에서 이어 받게 배정한다(striped partitioning).
 그러면 SM마다 일이 거의 같아지고, 부분 결과를 합치는 일은 한 열을 나누어 맡은 SM들 사이에서만 생긴다.[^marlin]
 
-<Figure src="https://arxiv.org/html/2408.11743v1/marlin-partition.svg" alt="Marlin의 striped partitioning 그림. 위쪽의 가중치(Weights) 행렬이 세로 열 네 개로 나뉘고, 색이 다른 칸 일곱 개에 SM 번호 1부터 7이 적혀 있다. SM 1은 첫째 열의 위쪽을, SM 2는 첫째 열의 아래쪽과 둘째 열의 맨 위를, SM 3은 둘째 열의 가운데를, SM 4는 둘째 열의 맨 아래와 셋째 열의 위쪽을, SM 5는 셋째 열의 아래쪽을, SM 6과 7은 넷째 열의 위와 아래를 맡는다. 아래쪽 출력(Output) 띠의 네 칸에는 각 열을 함께 계산하는 SM이 1/2, 2/3/4, 4/5, 6/7로 적혀 있다." caption="Marlin의 striped partitioning(그림의 세로 라벨 Overlapped Partitioning이 이 배정 방식이다). 가중치 행렬의 열 하나가 출력의 열 하나를 만들며, 칸 안의 숫자는 SM 번호, 아래 띠는 그 출력 열을 함께 계산해 합치는 SM이다. SM마다 같은 양을 맡고, 한 열의 끝에 닿으면 다음 열의 위에서 이어 받는다." source="Frantar et al. (2025), Figure 5 · CC BY 4.0" />
+<Figure src="https://arxiv.org/html/2408.11743v1/marlin-partition.svg" alt="Marlin의 striped partitioning 그림. 위쪽의 weight 행렬(Weights)이 세로 열 네 개로 나뉘고, 색이 다른 칸 일곱 개에 SM 번호 1부터 7이 적혀 있다. SM 1은 첫째 열의 위쪽을, SM 2는 첫째 열의 아래쪽과 둘째 열의 맨 위를, SM 3은 둘째 열의 가운데를, SM 4는 둘째 열의 맨 아래와 셋째 열의 위쪽을, SM 5는 셋째 열의 아래쪽을, SM 6과 7은 넷째 열의 위와 아래를 맡는다. 아래쪽 출력(Output) 띠의 네 칸에는 각 열을 함께 계산하는 SM이 1/2, 2/3/4, 4/5, 6/7로 적혀 있다." caption="Marlin의 striped partitioning(그림의 세로 라벨 Overlapped Partitioning이 이 배정 방식이다). Weight 행렬의 열 하나가 출력의 열 하나를 만들며, 칸 안의 숫자는 SM 번호, 아래 띠는 그 출력 열을 함께 계산해 합치는 SM이다. SM마다 같은 양을 맡고, 한 열의 끝에 닿으면 다음 열의 위에서 이어 받는다." source="Frantar et al. (2025), Figure 5 · CC BY 4.0" />
 
-원논문의 roofline 분석으로 보면, 4-bit 가중치 하나는 0.5 byte인데 토큰 하나가 가중치 하나마다 2 FLOP(floating-point operation)을 쓰므로 batch $b$에서 intensity는 약 $4b$다.
+원논문의 roofline 분석으로 보면, 4-bit weight 하나는 0.5 byte인데 토큰 하나가 weight 하나마다 2 FLOP(floating-point operation)을 쓰므로 batch $b$에서 intensity는 약 $4b$다.
 H100에서는 이 값이 ridge point 295에 닿는 $b\approx74$까지는 읽는 bytes가 FP16의 4분의 1인 만큼 이상적으로 4배 빠르다.
 계산량은 그대로라 batch가 더 커지면 4-bit 쪽부터 compute-bound에 가까워지고,
 이득은 약 $295/b$배로 줄다가 intensity가 $b$인 FP16 쪽도 compute-bound가 되는 $b\approx295$에서 사라진다.[^marlin]
@@ -250,7 +250,7 @@ Gale 등의 MegaBlocks는 이 계산을 크기가 다른 블록들로 이루어�
 곧 block-sparse 행렬곱으로 바꿔 토큰을 버리지 않고 계산했다.[^megablocks]
 Inference 엔진도 같은 생각을 쓴다.
 vLLM의 fused MoE kernel은 토큰을 expert 순서로 정렬한 뒤,
-블록마다 어떤 expert의 가중치를 쓸지를 표시해 같은 선형층에 속한 모든 expert의 행렬곱을 kernel 하나로 처리한다.[^vllm-fusedmoe]
+블록마다 어떤 expert의 weight를 쓸지를 표시해 같은 선형층에 속한 모든 expert의 행렬곱을 kernel 하나로 처리한다.[^vllm-fusedmoe]
 첫 선형층, 활성화, 둘째 선형층은 따로 호출한다.
 Expert parallelism에서 토큰을 GPU 사이로 보내고 받는 all-to-all도 전용 kernel이 맡는다.
 DeepSeek가 공개한 DeepEP가 그 예다.[^deepep]

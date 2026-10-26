@@ -9,10 +9,10 @@ import lmsysLicense from "./assets/lmsys-blog-LICENSE.txt?url";
 
 Inference 비용은 모델을 작게 만들어서도 줄일 수 있지만,
 이번 주는 모델 대신 서빙 시스템 쪽에서 줄인다.
-출발점은 H100 SXM GPU(graphics processing unit) 한 대에 Llama 3 8B를 BF16(bfloat16) 가중치 그대로 올려 본 메모리 계산과 roofline 분석이다.
+출발점은 H100 SXM GPU(graphics processing unit) 한 대에 Llama 3 8B를 BF16(bfloat16) weight 그대로 올려 본 메모리 계산과 roofline 분석이다.
 두 계산은 같은 결론에 닿았다.
 Batch를 키워 처리량(throughput)을 올리려 하면 선형층이 ridge point에 닿기 전에 KV(key-value) cache 공간이 먼저 모자란다.
-GPU 메모리에서 가중치와 workspace를 빼면 KV cache에 약 53.5 GB가 남고,
+GPU 메모리에서 weight와 workspace를 빼면 KV cache에 약 53.5 GB가 남고,
 토큰당 약 131 KB라서 요청마다 8,192토큰까지 자란다면 49개까지 들어간다고 어림했다.
 그런데 이 계산은 공간을 한 칸도 낭비하지 않는다고 가정했고,
 여러 요청이 같은 앞부분(prefix)을 가져도 요청마다 따로 저장한다고 셈했다.
@@ -138,7 +138,7 @@ Kwon 등은 멈춘 요청의 블록을 다루는 두 방법을 비교했다.
 멈춘 요청의 블록을 CPU(central processing unit) 메모리로 옮겨 두었다가 다시 가져오는 swapping과,
 블록을 버리고 나중에 다시 prefill해 KV cache를 재계산하는 recomputation이다.
 Recomputation은 이미 생성한 토큰까지 프롬프트처럼 한 번에 prefill하므로 원래의 decode보다 훨씬 빠를 수 있다.[^vllm]
-Decode는 스텝마다 가중치를 다시 읽지만, prefill은 한 번 읽은 가중치를 여러 토큰에 쓴다.
+Decode는 스텝마다 weight를 다시 읽지만, prefill은 한 번 읽은 weight를 여러 토큰에 쓴다.
 실험에서는 블록이 작을수록 CPU와 GPU 사이의 작은 전송이 많아져 swapping이 불리했고,
 블록이 크면 swapping이 유리했다.
 OPT-13B로 ShareGPT 요청을 처리한 실험에서 16–64토큰 블록은 두 방법의 end-to-end 성능이 비슷했다.[^vllm]
@@ -228,7 +228,7 @@ vLLM의 hash는 부모 블록의 hash를 이어 받으므로, page 크기가 같
 
 Paging과 prefix 재사용으로 낭비와 중복을 없애도,
 남은 KV cache는 여전히 토큰 하나에 약 131 KB씩 문맥 길이에 비례해 자란다.
-Roofline 분석에서처럼 문맥이 길고 batch가 크면 decode 스텝에서 이 KV cache를 읽는 시간이 가중치를 읽는 시간보다 커진다.
+Roofline 분석에서처럼 문맥이 길고 batch가 크면 decode 스텝에서 이 KV cache를 읽는 시간이 weight를 읽는 시간보다 커진다.
 GPU 메모리에 둘 KV cache를 더 줄이는 방법은 크게 세 갈래다.
 토큰 하나를 더 적은 byte로 저장하는 양자화(quantization), 저장할 토큰 수를 줄이는 eviction과 merging, GPU 밖의 더 큰 저장소로 옮기는 offloading이다.
 양자화와 eviction·merging은 GPU에 둘 크기와 스텝마다 읽을 양을 함께 줄이고,
@@ -244,7 +244,7 @@ offloading은 GPU 밖의 용량을 빌려 GPU에 둘 크기만 줄인다.
 이런 eviction은 생성 중에 모든 과거 토큰이 똑같이 중요하지는 않다는 관찰에서 출발한다.
 Zhang 등은 H2O(Heavy-Hitter Oracle)를 제안하며 두 가지를 관찰했다.[^h2o]
 OPT 모델의 attention 행렬을 보니, 각 행에서 최댓값의 1%보다 작은 값을 0으로 치면 거의 모든 층에서 95% 넘는 값이 0이었다.
-또 key 토큰마다 지금까지의 query들에게서 받은 attention 가중치를 모두 더해 누적 attention 점수를 만들면,
+또 key 토큰마다 지금까지의 query들에게서 받은 attention weight를 모두 더해 누적 attention 점수를 만들면,
 이 점수는 power law를 따라 소수의 토큰에 몰렸다.
 저자들은 이런 토큰을 heavy hitter라 불렀다.
 
@@ -261,7 +261,7 @@ H2O는 LLaMA-13B의 XSUM 요약 같은 task에서 full cache와 비슷한 성능
 
 점수를 세지 않고 위치만으로 남길 토큰을 정할 수도 있다.
 Xiao 등의 StreamingLLM은 처음 몇 토큰(보통 4개)과 최근 토큰의 key·value만 남긴다.[^streamingllm]
-처음 토큰들은 내용과 상관없이 큰 attention 가중치를 받는 attention sink라서, 이것까지 지우면 softmax의 분모가 크게 바뀌어 출력이 무너지기 때문이다.
+처음 토큰들은 내용과 상관없이 큰 attention weight를 받는 attention sink라서, 이것까지 지우면 softmax의 분모가 크게 바뀌어 출력이 무너지기 때문이다.
 다만 가운데 토큰은 중요해도 지워지므로, StreamingLLM은 긴 문맥을 기억하게 하는 방법이 아니라 학습한 길이보다 길게 생성을 이어 가게 하는 방법이다.
 
 H2O와 StreamingLLM은 생성하면서 스텝마다 지울 토큰을 정한다.
@@ -309,12 +309,12 @@ head마다 남은 key·value를 차례로 새 블록에 채워 넣을 수 있다
 
 어떤 토큰을 고르든, eviction은 지운 토큰의 정보를 그대로 버린다.
 Zhang 등은 CaM(cache merging)을 제안하며 이 점을 짚었다.[^cam]
-Attention 출력은 value를 attention 가중치로 더한 $o=\sum_k A_kV_k$이므로,
+Attention 출력은 value를 attention weight로 더한 $o=\sum_k A_kV_k$이므로,
 토큰 $i$의 key·value를 지우면 출력에서 $A_iV_i$만큼이 빠진다.
 남기는 토큰이 적을수록 이렇게 빠지는 몫이 커져 품질이 떨어진다.
 
 CaM은 지울 토큰의 value를 버리지 않고 남는 토큰의 value에 더해 둔다.
-남는 토큰들의 attention 가중치가 그대로라고 보면, 남는 토큰 $j$의 value를
+남는 토큰들의 attention weight가 그대로라고 보면, 남는 토큰 $j$의 value를
 
 $$
 V_j\leftarrow V_j+\frac{A_i}{A_j}V_i
@@ -325,7 +325,7 @@ $$
 Key는 합치지 않고 버린다.
 
 문제는 다음 스텝부터다.
-Query가 바뀌면 $A_i$와 $A_j$의 비도 바뀌는데, 앞으로의 attention 가중치는 미리 알 수 없다.
+Query가 바뀌면 $A_i$와 $A_j$의 비도 바뀌는데, 앞으로의 attention weight는 미리 알 수 없다.
 그래서 CaM은 토큰 하나에 몰아 더하는 대신 최근 토큰 $m$개에 $V_i/m$씩 고르게 나누어 더한다.
 연속된 토큰 여러 개의 평균 attention은 토큰 하나의 attention보다 스텝에 따라 덜 흔들린다는 관찰에 기댄 것이다.
 또 지울 토큰의 누적 attention 점수가 최근 토큰들의 평균보다 작을수록 낮은 확률로만 합쳐,

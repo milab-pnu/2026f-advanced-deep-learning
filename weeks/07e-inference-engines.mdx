@@ -7,7 +7,7 @@ order: 4
 지금까지 본 inference 최적화 기법은 따로따로 쓰이는 일이 드물다.
 요청 하나가 서버에 들어오면 scheduler가 batch에 넣고,
 KV(key-value) cache manager가 블록을 내주고 prefix cache를 찾고,
-kernel이 필요하면 양자화(quantization)한 가중치로 계산하고, 경우에 따라 draft가 다음 토큰을 추측한다.
+kernel이 필요하면 양자화(quantization)한 weight로 계산하고, 경우에 따라 draft가 다음 토큰을 추측한다.
 이 모두를 한 프로그램 안에서 맞물려 돌리는 것이 **inference engine**이다.
 Park 등은 오픈소스와 상용 엔진 25개를 살펴보고, 엔진들이 쓰는 최적화를 batching, 병렬화, 압축, caching, attention 등으로 분류했다.[^survey]
 이 노트는 그 가운데 대표적인 공개 엔진인 vLLM과 SGLang이 앞의 기법들을 어떻게 묶는지 보고,
@@ -79,13 +79,13 @@ vLLM의 설정 인자는 지금까지 본 개념과 거의 일대일로 대응�
 
 | 인자 | 기본값 | 무엇을 정하나 |
 |---|---|---|
-| `--gpu-memory-utilization` | 0.92 | 엔진이 쓸 GPU 메모리 비율. 가중치와 workspace를 뺀 나머지가 KV cache |
+| `--gpu-memory-utilization` | 0.92 | 엔진이 쓸 GPU 메모리 비율. Weight와 workspace를 뺀 나머지가 KV cache |
 | `--max-num-seqs` | GPU에 따라 다름 | 동시에 실행할 요청 수의 상한 |
 | `--max-num-batched-tokens` | GPU와 사용 방식에 따라 다름 | 스텝당 토큰 예산. 작으면 ITL(inter-token latency), 크면 TTFT(time to first token)와 처리량에 유리 |
 | `--enable-prefix-caching` | 지원하는 모델에서 켜짐 | Prefix 재사용 |
 | `--tensor-parallel-size` | 1 | TP(tensor parallelism)로 나눌 GPU 수 |
 | `--kv-cache-dtype` | auto | KV cache의 정밀도(`fp8` 등) |
-| `--quantization` | 모델 설정을 따름 | 양자화 방식(가중치, 방식에 따라 activation도) |
+| `--quantization` | 모델 설정을 따름 | 양자화 방식(weight, 방식에 따라 activation도) |
 | `--speculative-config` | 없음 | Draft 방식(EAGLE, n-gram, MTP(multi-token prediction) 등)과 추측 길이 |
 | `--enforce-eager` | False | `torch.compile`과 CUDA graph를 끄고 실행 |
 
@@ -132,14 +132,14 @@ GPU마다 자기 요청의 latent만 두므로 복제가 사라지고, 아낀 �
 ### 3-2. 설정과 튜닝
 
 SGLang의 설정도 같은 개념에 대응한다.[^sglang-args]
-가중치와 KV cache pool에 줄 GPU 메모리 비율은 `--mem-fraction-static`, chunked prefill의 조각 크기는 `--chunked-prefill-size`,
+Weight와 KV cache pool에 줄 GPU 메모리 비율은 `--mem-fraction-static`, chunked prefill의 조각 크기는 `--chunked-prefill-size`,
 동시 요청 수의 상한은 `--max-running-requests`, 요청의 실행 순서는 `--schedule-policy`로 정한다.
 실행 순서의 기본값은 도착한 순서대로인 `fcfs`(first come, first served)이고,
 `lpm`(longest prefix match)을 고르면 cache-aware scheduling처럼 cache와 일치하는 prefix가 긴 요청부터 처리한다.
 다만 대기 요청이 128개를 넘으면 정렬 비용을 아끼려고 `fcfs`로 돌아간다.[^sglang-policy]
 
 SGLang의 튜닝 문서는 offline batch inference, 곧 지연 목표 없이 모아 둔 요청을 한꺼번에 처리하는 경우에 처리량을 높이려면 **batch를 크게 만드는 것이 가장 중요하다**고 요약한다.[^sglang-tune]
-작은 batch에서는 가중치 읽기가 병목이라는 roofline 분석과 같은 결론이다.
+작은 batch에서는 weight 읽기가 병목이라는 roofline 분석과 같은 결론이다.
 문서는 서버 로그의 KV cache 사용률이 0.9를 넘으면 메모리를 잘 쓰고 있다고 보고,
 대기 요청이 쌓였는데도 0.9 아래에 머물면 서버가 새 요청을 너무 보수적으로 받아들이는 것이라고 본다.
 메모리가 모자라면 prefill에서는 조각 크기를, decode에서는 동시 요청 수를 줄이라고 권한다.
@@ -161,7 +161,7 @@ LMDeploy는 TurboMind라는 자체 엔진으로 압축과 서빙을 함께 제�
 ### 5-1. 측정 조건
 
 엔진이나 설정을 비교할 때는 결과에 영향을 주는 조건을 모두 고정한다.
-모델과 그 버전, GPU의 종류와 수, 가중치와 KV cache의 정밀도, 입력과 출력 길이의 분포,
+모델과 그 버전, GPU의 종류와 수, weight와 KV cache의 정밀도, 입력과 출력 길이의 분포,
 sampling 설정이 같아야 한다.
 출력 길이를 고정하려면 종료 토큰을 무시하고 정해진 길이까지 생성하게 한다.[^nvidia-bench]
 엔진과 설정에 따라 첫 요청 무렵에는 CUDA graph capture·컴파일·메모리 할당 같은 한 번뿐인 작업이 섞일 수 있으므로,
@@ -233,7 +233,7 @@ prefix 재사용이나 draft 수락처럼 내용에 좌우되는 효과는 대�
 가로축 값에는 TTFT와 대기 시간이 섞여 있어 1/TPOT와 다르므로, decode 중에 사용자가 느끼는 속도는 TPOT로 따로 본다.
 </Callout>
 
-앞의 예시를 roofline으로 보면, 동시 요청이 적을 때는 가중치 읽기가 병목이라 FP8이 TPOT를 줄일 것으로 기대한다.
+앞의 예시를 roofline으로 보면, 동시 요청이 적을 때는 weight 읽기가 병목이라 FP8이 TPOT를 줄일 것으로 기대한다.
 다만 vLLM의 FP8 문서가 설명하는 online 모드(`fp8_per_tensor`)는 per-tensor scale을 쓰고 activation의 scale을 매 forward마다 구하며,
 문서는 이 모드의 지연 개선이 제한된다고 적는다.[^vllm-fp8w8a8]
 동시 요청이 많아 행렬곱 연산이 병목이 되면 FP8 Tensor Core로 처리량이 높아질 수 있다.

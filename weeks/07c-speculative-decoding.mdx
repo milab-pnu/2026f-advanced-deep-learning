@@ -9,7 +9,7 @@ import mtpArchitecture from "./assets/week07-mtp-gloeckle-architecture.png";
 Batching은 여러 요청을 한 스텝에 묶어 decode에서 놀던 연산 능력을 더 많이 쓰게 한다.
 Roofline 분석으로 보면 선형층의 arithmetic intensity가 함께 처리하는 토큰 수와 거의 같기 때문이다.
 그런데 요청이 적으면 묶을 것이 없다.
-요청 하나만 decode하는 스텝은 Llama 3 8B라면 BF16(bfloat16) 가중치 16 GB를 읽어 토큰 하나에만 쓴다.
+요청 하나만 decode하는 스텝은 Llama 3 8B라면 BF16(bfloat16) weight 16 GB를 읽어 토큰 하나에만 쓴다.
 요청이 하나뿐일 때도 이 남는 연산 능력을 채울 방법이 있다.
 같은 요청의 **다음 토큰 여러 개를 한 번의 forward로 처리**하는 것이다.
 문제는 그 토큰들이 아직 정해지지 않았다는 점이다.
@@ -26,7 +26,7 @@ Xia 등의 서베이는 이 방식을 추측을 만드는 drafting과 추측을 
 앞에서 말한 남는 연산 능력을 수치로 보자.
 H100 SXM에서 요청 하나를 decode할 때 Llama 3 8B의 선형층은 intensity가 약 1이라 ridge point 295의 한참 왼쪽에 있다.
 문맥이 2,048토큰이라면 이 스텝의 하한은 약 4.9 ms이고, 계산만 따진 하한은 0.02 ms다.
-같은 forward에 위치 5개를 넣어도 읽는 가중치는 그대로 16 GB이고 계산 하한은 약 0.09 ms로 늘 뿐이라,
+같은 forward에 위치 5개를 넣어도 읽는 weight는 그대로 16 GB이고 계산 하한은 약 0.09 ms로 늘 뿐이라,
 스텝 시간의 하한은 여전히 약 4.9 ms다.
 **이 하한 모형에서는 위치 1개를 처리하든 5개를 처리하든 걸리는 시간이 거의 같다.**
 
@@ -152,7 +152,7 @@ Chen 등은 Chinchilla 70B에 4B draft를 붙여 2–2.5배 빨라졌다고 보�
 이 방식에는 몇 가지 부담이 따른다.
 앞의 기본 방식에서는 draft와 target이 같은 tokenizer를 써야 하고,
 수락률 $\alpha$가 높으려면 draft의 분포가 target과 비슷해야 하므로 target을 바꿀 때마다 맞는 draft를 찾거나 새로 학습해야 한다.
-서빙할 때는 두 모델의 가중치와 KV cache를 함께 GPU(graphics processing unit)에 올리고, 실행 순서를 맞춰야 한다.
+서빙할 때는 두 모델의 weight와 KV cache를 함께 GPU(graphics processing unit)에 올리고, 실행 순서를 맞춰야 한다.
 그래서 별도 모델 없이 target 자신이 추측하게 하는 **self-drafting**과,
 학습 없이 문맥에서 추측을 가져오는 방법이 갈라져 나왔다.[^survey]
 
@@ -254,7 +254,7 @@ Fu 등의 lookahead decoding은 프롬프트 대신 모델 자신이 만든 후�
 보조 모델이나 데이터 저장소 없이 LLaMA-2-Chat 7B의 MT-bench에서 최대 1.8배를 보고했다.
 
 정리하면, 학습된 self-drafting(Medusa, EAGLE)은 추가 학습을 대가로 일반 대화에서도 높은 수락률을 얻는다.
-층을 건너뛰는 draft는 별도 모듈 없이 target의 가중치만으로 추측한다.
+층을 건너뛰는 draft는 별도 모듈 없이 target의 weight만으로 추측한다.
 n-gram 방식은 추가 모델 학습이 필요 없고, 그 가운데 prompt lookup은 입력과 출력이 겹치는 task에서 수락률이 특히 높다.
 
 ## 3. Multi-token prediction
@@ -320,8 +320,8 @@ Speculative decoding은 요청마다 위치를 $\gamma+1$개로 늘리므로 bat
 Batch가 크면 이 값이 ridge point를 넘어 선형층이 compute-bound가 되고,
 그때부터는 수락되지 않을 추측을 검증하는 계산이 실제 시간을 잡아먹는다.
 
-MoE 모델에서는 위치를 늘려도 읽는 가중치는 그대로라는 가정이 약해진다.
-검증 위치가 늘면 위치마다 고르는 expert가 달라 활성 expert가 늘고, 그만큼 읽는 가중치 bytes도 늘기 때문이다.[^moesd]
+MoE 모델에서는 위치를 늘려도 읽는 weight는 그대로라는 가정이 약해진다.
+검증 위치가 늘면 위치마다 고르는 expert가 달라 활성 expert가 늘고, 그만큼 읽는 weight bytes도 늘기 때문이다.[^moesd]
 
 <Callout type="example">
 같은 하한 모형으로 Llama 3 8B를 H100에서 돌린다고 하자.
