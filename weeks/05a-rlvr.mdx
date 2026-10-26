@@ -6,7 +6,7 @@ order: 0
 
 import vero from "./assets/week05-vero.png";
 
-앞 주차의 RLHF(reinforcement learning from human feedback)와 DPO(direct preference optimization)는 사람이나 모델이 선호하는 응답을 학습 신호로 썼다.
+RLHF(reinforcement learning from human feedback)와 DPO(direct preference optimization)는 사람이나 모델이 선호하는 응답을 학습 신호로 썼다.
 그런데 더 낫다고 고른 답이 틀린 답일 수도 있다.
 수학 문제나 코드처럼 정답이 있는 task라면, 선호를 묻는 대신 **응답의 최종 답을 정답과 맞춰 보고 그 결과를 보상**으로 쓸 수 있다.
 풀이 과정이나 선호 판정 없이 문제와 정답만 있으면 되므로,
@@ -17,7 +17,7 @@ import vero from "./assets/week05-vero.png";
 
 ### 1-1. 선호 보상의 한계
 
-앞 주차 RLHF에서 정리했듯이,
+RLHF에서 보았듯이,
 선호 비교로 학습한 보상은 **정확성을 반영할 수는 있지만 정답을 직접 검증해 주지는 않는다.**
 수학 문제 풀이 혹은 코드 작성에서 이 문제는 특히 크다.
 reward model이 풀이의 정오를 가리려면 각 단계를 따라가며 오류를 찾아낼 수 있어야 하는데,
@@ -30,7 +30,7 @@ SFT(supervised fine-tuning)는 사람이 쓴 풀이 전체가, RLHF는 응답 �
 
 ### 1-2. GRPO와 RLVR
 
-앞 주차 PPO(proximal policy optimization)에서 토큰 $t$의 advantage는 응답의 보상에서 value model의 예측을 뺀 값이었다.
+PPO(proximal policy optimization)에서 토큰 $t$의 advantage는 응답의 보상에서 value model의 예측을 뺀 값이었다.
 
 $$
 \hat A_t=R(x,y)-\hat V(s_t)
@@ -109,7 +109,7 @@ Sarch 등의 Vero는 VLM을 RL로 학습하면서 59개 데이터셋마다 답�
 둘째는 하나의 정답으로 채점할 수 없는 경우다.
 "사흘째 두통이 계속되는데 어떻게 해야 하나요?"라는 질문에는 좋은 답이 여러 가지지만,
 "갑작스럽고 극심한 통증이면 바로 진료를 받으라고 권한다"처럼 좋은 답이라면 갖춰야 할 항목은 정할 수 있다.
-이때는 앞 주차 RLHF에서 본 rubric을 보상으로 쓸 수 있다.
+이때는 RLHF에서 본 rubric을 보상으로 쓸 수 있다.
 Gunjal 등의 Rubrics as Rewards는 질문마다 좋은 답이 갖춰야 할 항목을 만들어 두고,
 LLM judge가 항목별로 채점한 점수를 보상으로 정책을 GRPO로 학습했다.[^rar]
 항목은 LLM이 참조 답을 참고해 만들고, 각 항목에 중요도에 따른 가중치를 붙인다.
@@ -138,7 +138,7 @@ R1 계열이 최종적으로 쓴 보상은 **모두 응답 단위로 주어지�
 
 ### 3-1. 생성·검증·갱신
 
-보상의 출처만 바뀌었을 뿐 정책을 갱신하는 틀은 앞 주차 RLHF와 같다.
+보상의 출처만 바뀌었을 뿐 정책을 갱신하는 틀은 RLHF와 같다.
 생성과 갱신을 번갈아 하는 기본 절차의 한 반복은 다음과 같다.<Sidenote>이 절차를 직접 돌려 보려면 Unsloth의 [RL 가이드](https://unsloth.ai/docs/get-started/reinforcement-learning-rl-guide)를 추천한다.</Sidenote>
 
 1. 문제와 정답 정보를 준비한다. 문제는 정책에 주고, 정답 정보는 검증기만 본다.
@@ -166,7 +166,7 @@ Tülu 3의 RLVR도 초등 서술형 수학 GSM8K, MATH, IFEval 세 task의 프�
 대부분의 문제에서 응답이 전부 오답이라면 먼저 원인을 가린다.
 답 추출이 실패했거나 길이 한도에 잘렸다면 검증기나 생성 설정을 고치고,
 실제로 풀지 못한 것이라면 더 쉬운 문제를 섞거나,
-앞 주차에서 본 cold start처럼 풀이를 담은 응답으로 SFT를 먼저 해 정답이 가끔은 나오는 출발 모델을 만든다.
+cold start처럼 풀이를 담은 응답으로 SFT를 먼저 해 정답이 가끔은 나오는 출발 모델을 만든다.
 반대로 대부분 전부 정답이라면 더 어려운 문제가 필요하다.
 응답 몇 개를 뽑아 전부 오답이었다고 그 문제를 모델이 영영 못 푼다는 뜻은 아니므로,
 이 판단은 문제 하나가 아니라 문제 집합의 분포를 보고 내린다.

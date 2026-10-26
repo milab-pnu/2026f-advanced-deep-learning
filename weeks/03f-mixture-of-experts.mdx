@@ -32,7 +32,7 @@ FFN activations 노트에서 계산했듯이,
 
 Dense 구조에서는 이 FFN 가중치를 **모든 토큰이 전부** 사용한다.
 FFN 폭을 두 배로 키우면 저장할 파라미터도 두 배, 토큰마다 곱해야 하는 행렬도 두 배가 된다.
-앞 주차에서 본 근사 $C\approx6ND$도 같은 가정을 깔고 있다.
+학습 compute의 근사 $C\approx6ND$도 같은 가정을 깔고 있다.
 파라미터 $N$을 늘리면 토큰당 계산 $6N$이 같이 늘어난다.
 
 그런데 파라미터 수와 토큰당 계산을 꼭 함께 늘려야 할까?
@@ -224,7 +224,7 @@ DeepSeek-V3는 37B/671B로 약 5.5%이고[^dsv3] gpt-oss-120b는 5.1B/116.8B로 
 그래서 MoE 모델을 비교할 때는 전체 파라미터 하나만 보지 말고 활성 파라미터와 expert 구성을 함께 보아야 한다.
 
 **통신.** Expert가 많으면 여러 GPU(graphics processing unit)에 나누어 둔다.
-이것이 앞 주차에서 본 EP(expert parallelism)다.
+이것이 EP(expert parallelism)다.
 각 GPU는 자기 토큰을 선택된 expert가 있는 GPU로 보내고(dispatch),
 결과를 다시 받아 원래 순서로 합친다(combine).
 두 단계 모두 all-to-all 통신이다.

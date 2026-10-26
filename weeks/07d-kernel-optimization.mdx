@@ -4,9 +4,9 @@ week: 7
 order: 3
 ---
 
-앞 주차의 예시에서 Llama 3 8B를 H100 한 대에서 batch 1, 문맥 2,048토큰으로 돌릴 때 TPOT(time per output token)가 8.0 ms라면,
+Llama 3 8B를 H100 한 대에서 batch 1, 문맥 2,048토큰으로 돌릴 때 TPOT(time per output token)가 8.0 ms라면,
 가중치와 KV(key-value) cache를 BF16(bfloat16)으로 한 번씩 읽는 하한 4.9 ms의 약 1.6배이고,
-MBU(model bandwidth utilization)는 61%라고 했다.
+MBU(model bandwidth utilization)는 61%다.
 MBU만으로는 남은 39%가 어디서 새는지 나눌 수 없다.
 읽어야 할 데이터의 양은 하한에 이미 들어 있으므로, 먼저 의심할 곳은 **그 계산을 GPU(graphics processing unit)에서 실행하는 방식**이다.
 Kernel 최적화는 두 가지 일을 한다.
@@ -27,8 +27,8 @@ FlashInfer 등은 길이가 다른 작업을 이어 붙여 고르게 흘려 보�
 
 ## 1. GPU에서 kernel이 실행되는 방식
 
-앞 주차 FlashAttention에서 kernel을 GPU가 많은 데이터를 병렬로 처리하도록 실행하는 프로그램으로,
-kernel fusion을 이어지는 연산을 한 kernel에 묶어 중간값의 HBM 왕복을 줄이는 방법으로 보았다.
+Kernel은 GPU가 많은 데이터를 병렬로 처리하도록 실행하는 프로그램이고,
+kernel fusion은 이어지는 연산을 한 kernel에 묶어 중간값의 HBM 왕복을 줄이는 방법이다.
 여기에 한 가지를 더한다.
 GPU는 수많은 연산 장치를 SM(streaming multiprocessor)이라는 단위로 묶어 두고,
 kernel은 일을 thread block 단위로 쪼개 SM들에 나누어 준다.
@@ -49,7 +49,7 @@ Decode는 두 조건을 모두 어렵게 만든다.
 
 ### 2-1. FlashAttention의 병렬화
 
-앞 주차에 본 FlashAttention 1은 key·value 블록을 바깥 반복에 두고 여러 query 블록에 재사용하며,
+FlashAttention 1은 key·value 블록을 바깥 반복에 두고 여러 query 블록에 재사용하며,
 online softmax로 결과를 갱신했다.
 일을 SM에 나누는 단위는 batch와 attention head였다.
 FlashAttention-2는 반복 순서를 바꿔 query 블록을 바깥에 두고,
@@ -132,7 +132,7 @@ Dao 등의 Flash-Decoding은 나눌 방향을 하나 더 만들었다.
 </figure>
 
 <Callout type="example">
-앞 주차 FlashAttention의 online softmax 예시를 다시 쓰자.
+FlashAttention의 online softmax 예시를 다시 쓰자.
 Query 하나의 점수가 $[1,2,3,0]$, value가 $[10,20,30,40]$이고 정답 출력은 약 26.21이었다.
 그때는 thread block 하나가 두 블록을 차례로 처리하며 통계를 고쳐 나갔다.
 Flash-Decoding은 두 조각을 동시에 계산한다.
@@ -220,7 +220,7 @@ FlashDecoding++는 batch 쪽 타일을 Tensor Core가 한 번에 처리하는 8�
 
 ### 3-2. 양자화 가중치의 kernel
 
-앞 주차에 본 weight-only 양자화(quantization)는 kernel 안에서 가중치를 되돌려야 한다.
+Weight-only 양자화(quantization)는 kernel 안에서 가중치를 되돌려야 한다.
 Frantar 등의 Marlin은 4-bit 가중치와 FP16 activation의 행렬곱을 위한 kernel이다.[^marlin]
 4-bit 가중치를 HBM에서 읽어 shared memory를 거쳐 레지스터로 가져오는 동안 앞선 데이터의 계산을 겹치고,
 레지스터 안에서 FP16으로 되돌려 Tensor Core에 넣는다.

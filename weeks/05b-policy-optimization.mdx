@@ -6,7 +6,7 @@ order: 1
 
 import drgrpo from "./assets/week05-drgrpo.png";
 
-앞 주차 RLHF(reinforcement learning from human feedback)에서 본 PPO(proximal policy optimization)는 value model로 advantage를 추정했다.
+RLHF(reinforcement learning from human feedback)에서 본 PPO(proximal policy optimization)는 value model로 advantage를 추정했다.
 검증 보상으로 긴 추론을 학습하는 RLVR(reinforcement learning with verifiable rewards)에서는 다르다.[^survey]
 응답이 수천 토큰이고 보상은 끝에 한 번뿐이며, 같은 문제에 대한 응답을 여러 개 뽑는 것이 자연스럽다.
 그래서 RLVR의 정책 최적화는 value model 대신 같은 문제의 응답끼리 비교하는 GRPO(group relative policy optimization)에서 출발했고, 그 식의 각 부분을 고친 변형들이 뒤따랐다.
@@ -55,11 +55,11 @@ $$
 $$
 
 $\frac{1}{|y_i|}$은 응답의 토큰 손실을 그 응답의 길이로 나누어 평균하는 길이 정규화다.
-$\rho_{i,t}=\pi_\theta(y_{i,t}\mid x,y_{i,<t})/\pi_{\theta_{\mathrm{old}}}(y_{i,t}\mid x,y_{i,<t})$는 앞 주차 PPO에서 본 토큰 확률비다.
+$\rho_{i,t}=\pi_\theta(y_{i,t}\mid x,y_{i,<t})/\pi_{\theta_{\mathrm{old}}}(y_{i,t}\mid x,y_{i,<t})$는 PPO의 토큰 확률비다.
 GRPO는 같은 배치로 여러 번 갱신할 수 있게 설계되어, 응답을 만든 $\pi_{\theta_{\mathrm{old}}}$와 갱신 중인 $\pi_\theta$의 차이를 이 비율로 보정한다.
 두 정책이 많이 멀어지면 clipping에 걸려 policy 항의 gradient가 사라지는 토큰이 늘며,
 생성 엔진과 학습기의 수치 차이나 비동기 학습의 정책 지연도 같은 차이를 만든다.
-KL 항은 앞 주차 RLHF의 PPO와 달리 보상에 섞지 않고 목적함수에 직접 넣는다.
+KL 항은 RLHF의 PPO와 달리 보상에 섞지 않고 목적함수에 직접 넣는다.
 보상에 섞으면 토큰마다 보상이 달라져 응답 전체가 같은 advantage를 받는 계산이 복잡해지기 때문이다.[^deepseekmath]
 
 <Callout type="example">

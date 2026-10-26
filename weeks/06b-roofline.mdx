@@ -17,7 +17,7 @@ prefill과 decode의 두 병목을 TTFT(time to first token)와 TPOT(time per ou
 
 ### 1-1. 연산 속도와 메모리 대역폭
 
-앞 주차에서 FlashAttention을 볼 때 GPU 메모리를 두 층으로 나누었다.
+GPU 메모리는 두 층으로 나눌 수 있다.
 칩 바깥의 크고 느린 HBM(high-bandwidth memory)과,
 연산 장치 곁의 작고 빠른 SRAM(static random-access memory)이다.
 가중치와 KV(key-value) cache는 HBM에 있고, 계산하려면 연산 장치 쪽으로 읽어 와야 한다.
@@ -168,7 +168,7 @@ batch를 키워도 attention의 intensity는 오르지 않는다.
 
 요청 하나, 층 하나에서 문맥 길이가 $s$일 때를 계산해 보자.
 Head 차원을 $d_{\text{head}}$라 하면, query head 하나는 key $s$개와 내적하고($2sd_{\text{head}}$ FLOPs) value $s$개를 가중합한다($2sd_{\text{head}}$ FLOPs).
-GQA(grouped-query attention)에서는 query head $n_h$개를 KV head $n_{kv}$개에 나누어, query head $g=n_h/n_{kv}$개(앞 주차에서 본 그룹 크기)가 KV head 하나를 함께 쓴다.[^gqa]
+GQA(grouped-query attention)에서는 query head $n_h$개를 KV head $n_{kv}$개에 나누어, query head $g=n_h/n_{kv}$개(그룹 크기)가 KV head 하나를 함께 쓴다.[^gqa]
 그래서 KV head 하나를 읽는 동안 $4gsd_{\text{head}}$ FLOPs를 한다.
 읽는 데이터는 그 KV head의 key와 value, $2\cdot s\cdot d_{\text{head}}\cdot2$ bytes다.
 Query와 출력은 각각 $g\,d_{\text{head}}$ 크기라 문맥 $s$개분의 key·value에 비해 작으므로 뺐다.
@@ -185,7 +185,7 @@ Query head마다 KV head를 따로 두는 MHA(multi-head attention)는 $g=1$이�
 Head를 공유하면 KV cache가 줄 뿐 아니라,
 한 번 읽은 key·value를 여러 query head가 재사용해 decode attention의 intensity가 올라간다.
 
-앞 주차 MLA(multi-head latent attention)에서는 이 효과가 훨씬 크다.
+MLA(multi-head latent attention)에서는 이 효과가 훨씬 크다.
 MLA는 토큰마다 head별 key·value 대신 작은 latent 벡터 하나를 캐시한다.
 행렬 흡수(absorb) 경로에서는 이 latent를 key·value로 복원하지 않고, 모든 query head가 latent를 직접 읽어 계산한다.[^dsv2]
 모든 query head가 캐시 하나를 함께 쓰므로 $g$가 query head 수 전체인 셈이다.
@@ -202,7 +202,7 @@ memory-bound인 decode에서는 그 늘어난 계산이 놀던 연산 장치를 
 
 Prefill에서는 선형층이 토큰 $n$개를 한꺼번에 처리하고, attention도 query $n$개가 같은 key·value를 재사용한다.
 다만 $n\times n$ 점수 행렬을 HBM에 썼다가 다시 읽으면 그 이동 때문에 attention의 intensity가 낮아진다.
-앞 주차에서 본 FlashAttention은 이 행렬을 SRAM 안에서 처리해 그 이동을 없앤다.[^flash]
+FlashAttention은 이 행렬을 SRAM 안에서 처리해 그 이동을 없앤다.[^flash]
 
 <Callout type="example">
 2,048토큰 프롬프트 하나를 prefill한다고 하자.
@@ -284,7 +284,7 @@ roofline 모형은 전체 시간을 둘을 더한 값이 아니라 둘 중 오�
 
 ### 5-1. MFU
 
-**MFU**는 앞 주차에 학습 효율을 잴 때 본 지표다.[^palm]
+**MFU**는 원래 학습 효율을 재는 지표다.[^palm]
 초당 처리한 토큰 수에 토큰당 이론 FLOPs를 곱한 값, 곧 모델이 실제로 낸 FLOP/s를 peak FLOP/s로 나눈다.
 학습에서는 토큰당 $6N$을 썼지만 inference는 forward만 하므로 토큰당 $2N$이다.
 

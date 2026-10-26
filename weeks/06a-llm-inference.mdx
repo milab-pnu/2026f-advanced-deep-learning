@@ -4,25 +4,18 @@ week: 6
 order: 0
 ---
 
-지금까지는 모델을 만드는 과정을 보았다.
-구조를 정하고, 대량의 텍스트로 사전학습하고, SFT(supervised fine-tuning)와 강화학습(reinforcement learning, RL)으로 다듬었다.
-이번 주는 그렇게 만든 모델을 실제로 돌리는 단계인 inference의 **비용**과, 모델을 작게 만들어 그 비용을 줄이는 방법을 다룬다.
-학습 비용은 모델을 만들 때 한 번 들지만 inference 비용은 모델이 쓰이는 동안 계속 든다.
-이 비용은 사용자에게는 응답 지연으로, 서비스를 운영하는 쪽에는 GPU(graphics processing unit) 시간, 곧 돈으로 드러난다.
+지금까지는 LLM(large language model)을 학습하는 과정을 공부하였다.
+지금부터는 실제로 사용하는 단계인 inference에 대해 공부한다.
+학습 비용은 만들 때 한 번 들지만 inference 비용은 쓰이는 동안 계속 든다.
 
-Zhou 등은 LLM(large language model) inference의 효율을 다룬 서베이에서 이 비용을 계산량, 메모리 접근, 메모리 사용량으로 나누었다.[^survey]
-이 노트는 먼저 inference의 계산량이 왜 커지는지 보고,
-생성의 두 단계가 각각 계산과 메모리 접근 가운데 어디에 막히는지 본 뒤,
-비용을 재는 지표를 정리하고, 마지막으로 GPU 한 대의 메모리에 무엇이 얼마나 들어가는지 계산한다.
-
-기준 모델은 지금까지 써 온 **Llama 3 8B**(층 수 $L=32$, query head 32개, KV(key-value) head 8개, head 차원 $d_h=128$)다.[^llama3]
-이 노트의 Llama 3는 보고서를 따라 최대 128K 토큰 문맥을 지원하는 Llama 3.1 판을 가리킨다.
+Inference의 비용을 계산량, 메모리 접근, 메모리 사용량으로 나누었다.[^survey]
+기준 모델은 지금까지 써 온 Llama 3 8B(층 수 $L=32$, query head 32개, KV(key-value) head 8개, head 차원 $d_h=128$, 최대 토큰 수 128K)다.[^llama3]
 
 ## 1. Inference 비용이 커지는 이유
 
 ### 1-1. 학습 비용과 inference 비용
 
-앞 주차 scaling law에서 본 Chinchilla는 **학습 compute 예산**이 정해졌을 때 loss를 가장 낮추는 모델 크기와 토큰 수를 찾았다.
+Chinchilla 연구는 **학습 compute 예산**이 정해졌을 때 loss를 가장 낮추는 모델 크기와 토큰 수를 찾았다.
 이 기준에는 학습이 끝난 뒤 그 모델을 얼마나 쓸지가 들어 있지 않다.
 
 파라미터 $N$개인 모델의 forward는 토큰당 약 $2N$ FLOPs(floating-point operations)이고, backward까지 더한 학습은 약 $6N$ FLOPs다.
@@ -45,7 +38,7 @@ Llama 3 8B가 약 1,900개(약 15조 토큰)로 90배 넘게 많다.
 ### 1-2. 늘어나는 생성 길이
 
 Inference가 다루는 토큰의 양도 늘고 있다.
-앞 주차에서 본 추론 모델(reasoning model)은 답을 내기 전에 수천 토큰에 이르는 long CoT(long chain of thought)를 생성한다.[^r1]
+추론 모델(reasoning model)은 답을 내기 전에 수천 토큰에 이르는 long CoT(long chain of thought)를 생성한다.[^r1]
 정확도를 높이려고 self-consistency처럼 같은 문제에 응답을 여러 개 뽑아 다수결로 답을 고르기도 한다.
 도구 결과를 받을 때마다 문맥 뒤에 붙여 다음 행동을 생성하는 agent는,
 기록을 요약하거나 잘라 내지 않는 한 턴이 이어질수록 문맥이 길어진다.
@@ -55,10 +48,10 @@ Inference가 다루는 토큰의 양도 늘고 있다.
 ### 1-3. 순차 생성의 비효율
 
 토큰 수만이 문제는 아니다.
-학습은 앞 주차에서 본 teacher forcing으로 정답 문장을 입력에 넣고 causal mask로 각 위치가 자기와 왼쪽만 보게 하므로,
+학습은 teacher forcing으로 정답 문장을 입력에 넣고 causal mask로 각 위치가 자기와 왼쪽만 보게 하므로,
 길이 $n$인 시퀀스의 모든 위치를 한 번의 forward로 처리하고 각 위치의 loss를 병렬로 구한다.
 생성은 정답 문장이 없으니 그럴 수 없다.
-앞 주차 decoder-only LLM의 생성 루프에서 보았듯, 다음 토큰은 앞 토큰을 고른 뒤에야 입력할 수 있다.
+다음 토큰은 앞 토큰을 고른 뒤에야 입력할 수 있다.
 
 $$
 x_{n+1}\sim p_\theta(\cdot\mid x_{1:n}),\qquad
@@ -67,7 +60,7 @@ $$
 
 $p_\theta$는 파라미터가 $\theta$인 모델이 앞 토큰들을 보고 내놓는 다음 토큰 분포다.
 토큰을 하나씩 생성하므로 출력 토큰 $m$개를 만들려면 모델 전체를 $m$번 차례로 실행해야 한다.
-앞 주차에서 본 KV cache가 앞 토큰들의 key·value를 저장해 두므로, 첫 forward 뒤로는 매번 새 토큰 하나만 넣는 forward가 된다.
+KV cache가 앞 토큰들의 key·value를 저장해 두므로, 첫 forward 뒤로는 매번 새 토큰 하나만 넣는 forward가 된다.
 GPU는 큰 행렬곱을 한꺼번에 처리할 때 효율이 높은데,
 토큰 하나짜리 forward는 행렬곱이 작아 그 능력을 다 쓰지 못한다.
 그래서 한 번에 묶어 처리하는 요청이 적으면, 같은 FLOPs라도 생성은 학습보다 GPU 시간이 더 들기 쉽다.
@@ -77,8 +70,7 @@ GPU는 큰 행렬곱을 한꺼번에 처리할 때 효율이 높은데,
 
 ### 2-1. 두 단계의 역할
 
-KV cache를 쓰는 생성 요청은 성격이 다른 두 단계로 나뉜다.
-앞 주차 KV cache 구조에서 본 prefill과 decode다.[^survey]
+KV cache를 쓰는 생성 요청은 성격이 다른 두 단계, prefill과 decode로 나뉜다.[^survey]
 
 **Prefill.** 프롬프트의 토큰 $n$개를 한 번의 forward로 함께 처리해 모든 층의 key·value를 KV cache에 쓰고, 첫 출력 토큰을 고른다.
 $n$개 토큰이 함께 계산되므로 학습의 forward처럼 큰 행렬곱이 된다.
@@ -99,7 +91,7 @@ forward 횟수로는 1 대 199로 decode가 거의 전부다.
 ### 2-2. 단계마다 다른 병목
 
 GPU에서 계산하려면 데이터를 칩 바깥의 HBM(high-bandwidth memory)에서 칩 안의 연산 장치로 읽어 와야 한다.
-앞 주차 FlashAttention에서 보았듯 칩 안의 SRAM(static random-access memory)은 작아서 8B 모델의 가중치를 담아 둘 수 없다.
+칩 안의 SRAM(static random-access memory)은 작아서 8B 모델의 가중치를 담아 둘 수 없다.
 그래서 forward를 한 번 할 때마다 가중치 전체를 HBM에서 다시 읽어 온다.
 GPU는 읽기와 계산을 겹쳐 진행하므로, forward 한 번의 시간은 대략 **읽는 시간**과 **계산하는 시간** 가운데 긴 쪽이 정한다.
 
@@ -120,6 +112,66 @@ Decode 한 스텝은 읽는 데 4.8 ms, 계산하는 데 0.016 ms라서 연산 �
 두 시간이 같아지는 것은 토큰 약 300개를 함께 처리할 때다.
 여기서는 attention 계산과 KV cache 읽기를 빼고, 계산과 읽기가 사양값의 최대 속도로 완전히 겹친다고 단순화했다.
 </Callout>
+
+<figure>
+<svg viewBox="0 0 600 330" role="img" aria-label="Prefill과 decode의 forward 한 번을 나란히 그린 구조도. 두 단계 모두 HBM에 가중치 16 GB와 KV cache가 있고, 가중치를 연산 장치로 한 번 읽어 온다. 왼쪽 prefill은 연산 장치에서 토큰 1,000개를 함께 계산하고 KV cache에 key와 value를 쓴다. 오른쪽 decode는 토큰 하나만 계산하고 KV cache를 읽는다. 아래 막대는 같은 축척의 시간이다. Prefill은 읽기 4.8 ms, 계산 16 ms로 계산이 길어 compute-bound이고, decode는 읽기 4.8 ms, 계산 0.016 ms로 읽기가 길어 memory-bound다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <defs>
+    <marker id="pd-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/>
+    </marker>
+  </defs>
+  <line x1="300" y1="36" x2="300" y2="322" stroke="#cbd5e1" stroke-dasharray="4 3"/>
+  <text x="150" y="26" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Prefill (프롬프트 1,000토큰)</text>
+  <text x="450" y="26" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Decode (한 스텝)</text>
+  <rect x="30" y="44" width="240" height="56" fill="#f1f5f9" stroke="#0f172a"/>
+  <text x="38" y="58" font-size="12" fill="#64748b">HBM</text>
+  <rect x="40" y="64" width="130" height="28" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="105" y="83" font-size="13" text-anchor="middle" fill="#0f172a">가중치 16 GB</text>
+  <rect x="185" y="64" width="75" height="28" fill="#ffffff" stroke="#0f172a"/>
+  <text x="222" y="83" font-size="13" text-anchor="middle" fill="#0f172a">KV cache</text>
+  <line x1="105" y1="92" x2="105" y2="140" stroke="#0f172a" stroke-width="1.5" marker-end="url(#pd-arrow)"/>
+  <text x="112" y="121" font-size="13" fill="#0f172a">읽기</text>
+  <line x1="222" y1="142" x2="222" y2="94" stroke="#0f172a" stroke-width="1.5" marker-end="url(#pd-arrow)"/>
+  <text x="229" y="121" font-size="13" fill="#0f172a">쓰기</text>
+  <rect x="30" y="142" width="240" height="68" fill="#ffffff" stroke="#0f172a"/>
+  <text x="150" y="160" font-size="13" text-anchor="middle" fill="#0f172a">연산 장치: 토큰 1,000개를 함께 계산</text>
+  <g fill="#0f172a">
+    <rect x="54" y="168" width="10" height="10"/><rect x="66" y="168" width="10" height="10"/><rect x="78" y="168" width="10" height="10"/><rect x="90" y="168" width="10" height="10"/><rect x="102" y="168" width="10" height="10"/><rect x="114" y="168" width="10" height="10"/><rect x="126" y="168" width="10" height="10"/><rect x="138" y="168" width="10" height="10"/><rect x="150" y="168" width="10" height="10"/><rect x="162" y="168" width="10" height="10"/><rect x="174" y="168" width="10" height="10"/><rect x="186" y="168" width="10" height="10"/><rect x="198" y="168" width="10" height="10"/><rect x="210" y="168" width="10" height="10"/><rect x="222" y="168" width="10" height="10"/><rect x="234" y="168" width="10" height="10"/>
+    <rect x="54" y="180" width="10" height="10"/><rect x="66" y="180" width="10" height="10"/><rect x="78" y="180" width="10" height="10"/><rect x="90" y="180" width="10" height="10"/><rect x="102" y="180" width="10" height="10"/><rect x="114" y="180" width="10" height="10"/><rect x="126" y="180" width="10" height="10"/><rect x="138" y="180" width="10" height="10"/><rect x="150" y="180" width="10" height="10"/><rect x="162" y="180" width="10" height="10"/><rect x="174" y="180" width="10" height="10"/><rect x="186" y="180" width="10" height="10"/><rect x="198" y="180" width="10" height="10"/><rect x="210" y="180" width="10" height="10"/><rect x="222" y="180" width="10" height="10"/><rect x="234" y="180" width="10" height="10"/>
+    <rect x="54" y="192" width="10" height="10"/><rect x="66" y="192" width="10" height="10"/><rect x="78" y="192" width="10" height="10"/><rect x="90" y="192" width="10" height="10"/><rect x="102" y="192" width="10" height="10"/><rect x="114" y="192" width="10" height="10"/><rect x="126" y="192" width="10" height="10"/><rect x="138" y="192" width="10" height="10"/><rect x="150" y="192" width="10" height="10"/><rect x="162" y="192" width="10" height="10"/><rect x="174" y="192" width="10" height="10"/><rect x="186" y="192" width="10" height="10"/><rect x="198" y="192" width="10" height="10"/><rect x="210" y="192" width="10" height="10"/><rect x="222" y="192" width="10" height="10"/><rect x="234" y="192" width="10" height="10"/>
+  </g>
+  <rect x="330" y="44" width="240" height="56" fill="#f1f5f9" stroke="#0f172a"/>
+  <text x="338" y="58" font-size="12" fill="#64748b">HBM</text>
+  <rect x="340" y="64" width="130" height="28" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="405" y="83" font-size="13" text-anchor="middle" fill="#0f172a">가중치 16 GB</text>
+  <rect x="485" y="64" width="75" height="28" fill="#ffffff" stroke="#0f172a"/>
+  <text x="522" y="83" font-size="13" text-anchor="middle" fill="#0f172a">KV cache</text>
+  <line x1="405" y1="92" x2="405" y2="140" stroke="#0f172a" stroke-width="1.5" marker-end="url(#pd-arrow)"/>
+  <text x="412" y="121" font-size="13" fill="#0f172a">읽기</text>
+  <line x1="522" y1="92" x2="522" y2="140" stroke="#0f172a" stroke-width="1.5" marker-end="url(#pd-arrow)"/>
+  <text x="529" y="121" font-size="13" fill="#0f172a">읽기</text>
+  <rect x="330" y="142" width="240" height="68" fill="#ffffff" stroke="#0f172a"/>
+  <text x="450" y="160" font-size="13" text-anchor="middle" fill="#0f172a">연산 장치: 토큰 1개만 계산</text>
+  <rect x="445" y="180" width="10" height="10" fill="#0f172a"/>
+  <text x="30" y="246" font-size="13" fill="#64748b">읽기</text>
+  <rect x="70" y="236" width="51" height="12" fill="#94a3b8"/>
+  <text x="127" y="246" font-size="13" fill="#0f172a">4.8 ms</text>
+  <text x="30" y="270" font-size="13" fill="#64748b">계산</text>
+  <rect x="70" y="260" width="170" height="12" fill="#0f172a"/>
+  <text x="246" y="270" font-size="13" fill="#0f172a">16 ms</text>
+  <text x="330" y="246" font-size="13" fill="#64748b">읽기</text>
+  <rect x="370" y="236" width="51" height="12" fill="#94a3b8"/>
+  <text x="427" y="246" font-size="13" fill="#0f172a">4.8 ms</text>
+  <text x="330" y="270" font-size="13" fill="#64748b">계산</text>
+  <rect x="370" y="260" width="2" height="12" fill="#0f172a"/>
+  <text x="378" y="270" font-size="13" fill="#0f172a">0.016 ms</text>
+  <text x="150" y="300" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">compute-bound</text>
+  <text x="150" y="318" font-size="13" text-anchor="middle" fill="#64748b">계산 시간이 더 길다</text>
+  <text x="450" y="300" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">memory-bound</text>
+  <text x="450" y="318" font-size="13" text-anchor="middle" fill="#64748b">읽기 시간이 더 길다</text>
+</svg>
+<figcaption>H100 SXM에서 Llama 3 8B의 forward 한 번. 두 단계 모두 HBM에서 가중치 16 GB를 한 번 읽지만, prefill은 그 가중치로 토큰 1,000개를 함께 계산하고 decode는 토큰 하나만 계산한다. 연산 장치 안의 칸은 토큰 수를 나타내는 표시일 뿐 실제 개수가 아니다. 아래 막대는 앞 예시의 계산값을 같은 축척으로 그린 것이며, attention 계산과 KV cache를 읽고 쓰는 시간은 뺐다.</figcaption>
+</figure>
 
 여러 요청의 decode 스텝을 한 forward로 묶는 **batching**을 하면, 한 번 읽은 가중치를 여러 토큰에 쓸 수 있어 연산 장치가 기다리는 시간이 줄어든다.
 다만 요청마다 KV cache는 따로 읽어야 하므로 묶은 수만큼 읽는 양도 함께 는다.
@@ -259,9 +311,9 @@ Llama 3 8B를 GPU 한 대에 올려 그 숫자를 계산해 보자.
 ### 4-1. 가중치
 
 가중치 메모리는 파라미터 수에 원소당 바이트 수를 곱한 값이다.
-앞 주차 FFN(feed-forward network)에서 공식 설정으로 셌듯이, embedding까지 포함한 Llama 3 8B의 파라미터는 약 8.03B개다.
+공식 설정으로 세면 embedding까지 포함한 Llama 3 8B의 파라미터는 약 8.03B개다.
 BF16은 원소당 2 bytes이므로 가중치는 약 16.1 GB다.
-앞 주차 mixed precision 학습에서는 gradient, FP32(32-bit floating point) master weight, Adam 모멘트까지 파라미터당 16 bytes가 들었지만,
+Mixed precision 학습에는 gradient, FP32(32-bit floating point) master weight, Adam 모멘트까지 파라미터당 16 bytes가 들지만,
 inference에는 이들이 없으므로 이 16.1 GB가 모델 상태의 전부다.
 
 이 값은 요청 수나 문맥 길이와 상관없이 고정이다.
@@ -275,7 +327,7 @@ head나 channel 같은 구조 단위로 가중치를 덜어내는 structured pru
 ### 4-2. KV cache
 
 Llama 3 8B처럼 모든 층이 전체 문맥에 attention하는 모델에서 KV cache는 층마다, KV head마다, 지금까지의 모든 토큰에 대해 key와 value 벡터를 하나씩 저장한다.
-앞 주차 KV cache 구조에서 센 원소 수에 원소당 바이트 수 $b$를 곱하면 토큰 하나의 크기가 나온다($n_{kv}$는 KV head 수).
+토큰 하나에 저장하는 원소 수에 원소당 바이트 수 $b$를 곱하면 토큰당 크기가 나온다($n_{kv}$는 KV head 수).
 
 $$
 \frac{\text{KV cache}}{\text{토큰}}
@@ -297,7 +349,7 @@ KiB(kibibyte)는 $2^{10}$ bytes, GiB(gibibyte)는 $2^{30}$ bytes로, $10^{9}$ by
 
 Llama 3가 지원하는 최대 문맥인 128K(131,072)토큰을 채운 요청 하나만으로도 KV cache가 가중치만큼 커지고,[^llama3]
 요청을 많이 묶으면 가중치를 쉽게 넘어선다.
-앞 주차에서 본 것처럼 Llama 3 8B는 query head 네 개가 KV head 하나를 함께 쓰는 GQA(grouped-query attention)다.
+Llama 3 8B는 query head 네 개가 KV head 하나를 함께 쓰는 GQA(grouped-query attention)다.
 Query head마다 KV head를 따로 두는 MHA(multi-head attention)였다면 토큰당 512 KiB로 이 표의 네 배였다.
 
 ### 4-3. 동시에 처리할 수 있는 요청 수

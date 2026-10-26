@@ -4,7 +4,7 @@ week: 7
 order: 4
 ---
 
-앞 주차와 이번 주에 본 기법은 따로따로 쓰이는 일이 드물다.
+지금까지 본 inference 최적화 기법은 따로따로 쓰이는 일이 드물다.
 요청 하나가 서버에 들어오면 scheduler가 batch에 넣고,
 KV(key-value) cache 관리자가 블록을 내주고 prefix cache를 찾고,
 kernel이 필요하면 양자화(quantization)한 가중치로 계산하고, 경우에 따라 draft가 다음 토큰을 추측한다.
@@ -79,7 +79,7 @@ vLLM의 설정 인자는 지금까지 본 개념과 거의 일대일로 대응�
 실험 결과를 보고할 때는 기본값에 기대지 말고 실제 값을 함께 적는다.
 
 설정을 바꾼 효과는 서버가 내보내는 지표로 확인한다.
-앞 주차에 본 서버 내부 지표는 vLLM에서 Prometheus 형식으로 나온다.[^vllm-metrics]
+서버 내부 지표는 vLLM에서 Prometheus 형식으로 나온다.[^vllm-metrics]
 KV cache 사용률은 `vllm:kv_cache_usage_perc`로, 실행·대기 요청 수는 `vllm:num_requests_running`, `vllm:num_requests_waiting`으로 본다.
 Prefix cache 적중률은 적중한 토큰 수(`vllm:prefix_cache_hits`)를 조회한 토큰 수(`vllm:prefix_cache_queries`)로 나누어 구한다.
 
@@ -126,7 +126,7 @@ SGLang의 설정도 같은 개념에 대응한다.[^sglang-args]
 다만 대기 요청이 128개를 넘으면 정렬 비용을 아끼려고 `fcfs`로 돌아간다.[^sglang-policy]
 
 SGLang의 튜닝 문서는 offline batch inference에서 처리량을 높이려면 **batch를 크게 만드는 것이 가장 중요하다**고 요약한다.[^sglang-tune]
-작은 batch에서는 가중치 읽기가 병목이라는 앞 주차 roofline 분석과 같은 결론이다.
+작은 batch에서는 가중치 읽기가 병목이라는 roofline 분석과 같은 결론이다.
 문서는 서버 로그의 KV cache 사용률이 0.9를 넘으면 메모리를 잘 쓰고 있다고 보고,
 대기 요청이 쌓였는데도 0.9 아래에 머물면 서버가 새 요청을 너무 보수적으로 받아들이는 것이라고 본다.
 메모리가 모자라면 prefill에서는 조각 크기를, decode에서는 동시 요청 수를 줄이라고 권한다.

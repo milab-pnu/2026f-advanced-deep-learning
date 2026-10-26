@@ -76,7 +76,7 @@ $$
 
 원래 Transformer는 $d_{\text{ff}}=4d$로 두어 벡터를 네 배 넓혔다가 다시 좁힌다.[^aiayn]
 같은 가중치를 모든 위치에 따로 적용하므로 FFN은 위치 사이의 정보를 섞지 않는다.
-앞 주차의 표현대로 attention이 위치 사이의 정보를 섞고,
+Attention이 위치 사이의 정보를 섞고,
 FFN은 그 결과를 토큰마다 비선형
 변환한다.<Sidenote>FFN의 두 행렬을 key-value memory로 읽는 해석도 있다. $W_1$의 각 열이 입력 패턴을 감지하는 key, $W_2$의 대응하는 행이 출력에 더할 value 역할을 한다는 관찰이다.[^geva]</Sidenote>
 
@@ -280,7 +280,7 @@ Transformer에서는 BERT가 OpenAI GPT를 따라 ReLU 대신 GELU를 썼다고 
 Shazeer는 encoder–decoder인 T5 base 설정에서 파라미터와 연산량을 맞춘 FFN 여러 개를 비교했다.[^glu]
 학습 목표는 C4 말뭉치의 span-filling(빈칸 채우기) 사전학습이고,
 평가 지표는 같은 목표의 held-out log-perplexity(낮을수록 좋음)다.
-앞 주차의 다음 토큰 예측 perplexity와 목표가 다르므로 절대값을 그쪽과 비교하지는 않는다.
+다음 토큰 예측의 perplexity와 목표가 다르므로 절대값을 그쪽과 비교하지는 않는다.
 65,536 step에서 log-perplexity는 ReLU 1.997, GELU 1.983(네 번 반복한 표준편차 약 0.005)이었고,
 524,288 step에서는 ReLU 1.677, GELU 1.679였다.
 이 설정에서는 모양만 바꾼 차이가 작았다.

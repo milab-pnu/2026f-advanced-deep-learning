@@ -18,7 +18,7 @@ Gong 등의 저비트 LLM 서베이는 숫자 형식과 실행 방식, 양자화
 
 ### 1-1. 균일 양자화
 
-앞 주차 mixed precision 학습에서는 FP32(32-bit floating point)와 BF16 같은 부동소수점 형식을 썼다.
+Mixed precision 학습에서는 FP32(32-bit floating point)와 BF16 같은 부동소수점 형식을 쓴다.
 양자화는 실숫값을 이보다 더 적은 bits로 표현할 수 있는 값의 집합(격자)에 대응시킨다.
 가장 기본적인 균일 양자화는 등간격의 정수 격자를 쓴다.
 간격(scale) $s$와 영점(zero-point) $z$로 실숫값 $x$를 $b$-bit 정수로 바꾸고,
