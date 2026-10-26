@@ -45,7 +45,7 @@ V1의 주요 설계는 다음과 같다.[^vllm-v1][^vllm-arch]
 
 - **프로세스 분리.** Scheduling과 GPU worker의 모델 실행 조율만 맡는 Engine Core를 별도 프로세스의 반복문으로 두고,
   토큰화·글자 변환·스트리밍은 API 서버 프로세스가 맡아 겹쳐 실행한다.
-  GPU 네 대에 TP(tensor parallelism)로 나눠 `vllm serve -tp=4`로 띄우면 API 서버 하나, Engine Core 하나, GPU worker 넷의 프로세스 여섯 개가 뜬다.
+  GPU 네 대에 TP(tensor parallelism)로 나눠 띄우면 API 서버 하나, Engine Core 하나, GPU worker 넷의 프로세스 여섯 개가 뜬다.
 - **단계 구분이 없는 scheduler.** Scheduler의 결정은 "요청마다 이번에 처리할 토큰 수"라는 하나의 표에 담기고,
   그 합이 반복당 토큰 예산을 넘지 않게 정해진다.
   새 요청의 prefill 조각도, 기존 요청의 decode 한 토큰도,
@@ -56,9 +56,8 @@ V1의 주요 설계는 다음과 같다.[^vllm-v1][^vllm-arch]
 - **Persistent batch와 CUDA graph.** 스텝마다 입력 텐서를 새로 만들지 않고 바뀐 부분만 고친다.
   `torch.compile`과 구간별 CUDA graph를 쓴다.
 
-vLLM 팀은 V1이 여러 스텝을 한 번에 scheduling하는 multi-step scheduling을 끈 V0보다 처리량이 최대 1.7배 높다고 보고하면서,
-두 버전이 쓰는 kernel은 거의 같다고 밝혔다.[^vllm-v1]
-이득의 대부분이 kernel이 아니라 kernel 바깥의 시간을 줄인 데서 나왔다는 뜻이다.
+vLLM 팀은 V1의 처리량이 V0보다 최대 1.7배 높다고 보고했다(V0의 multi-step scheduling을 끈 비교).[^vllm-v1]
+두 버전이 쓰는 kernel은 거의 같으므로, 이득의 대부분은 kernel 바깥의 시간을 줄인 데서 나왔다.
 
 ### 2-2. 주요 설정
 
@@ -76,8 +75,7 @@ vLLM의 설정 인자는 지금까지 본 개념과 거의 일대일로 대응�
 | `--speculative-config` | 없음 | Draft 방식(EAGLE, n-gram, MTP(multi-token prediction) 등)과 추측 길이 |
 | `--enforce-eager` | False | `torch.compile`과 CUDA graph를 끄고 실행 |
 
-`--max-num-seqs`의 기본값은 GPU의 종류와 메모리 크기, `--performance-mode`에 따라,
-`--max-num-batched-tokens`의 기본값은 그에 더해 서버로 띄우는지 Python에서 직접 부르는지에 따라 달라진다.
+`--max-num-seqs`와 `--max-num-batched-tokens`의 기본값은 GPU와 사용 방식에 따라 달라지므로,
 실험 결과를 보고할 때는 기본값에 기대지 말고 실제 값을 함께 적는다.
 
 설정을 바꾼 효과는 서버가 내보내는 지표로 확인한다.
@@ -108,7 +106,7 @@ SGLang 논문은 스키마 같은 형식을 정규식(regular expression)으로 
 SGLang 팀은 최적화하지 않은 엔진이 시간의 절반까지를 CPU 작업에 쓸 수 있다고 보고,
 scheduler가 **한 batch 앞서** 다음 batch의 준비를 하게 해 CPU 작업을 GPU 실행과 겹쳤다.[^sglang-v04]
 다음 batch에 들어갈 토큰은 아직 GPU에서 계산 중이므로,
-그 자리를 미리 표시해 둔 future token으로 준비를 진행하고 CUDA event로 실행 순서를 맞춘다.
+그 자리를 미리 표시해 두고 준비를 진행한다.
 
 같은 버전은 엔진을 여러 개 띄울 때 앞에서 본 cache-aware routing을 cache-aware load balancer로 구현했다.
 엔진 인스턴스마다 radix tree가 따로 있으므로, 요청을 돌아가며 나누면 같은 prefix를 가진 요청이 여러 인스턴스에 흩어져 cache 적중률이 떨어진다.
@@ -121,16 +119,11 @@ Attention 부분만 GPU마다 다른 요청을 맡는 data parallelism으로 돌
 ### 3-2. 설정과 튜닝
 
 SGLang의 설정도 같은 개념에 대응한다.[^sglang-args]
-`--mem-fraction-static`은 가중치와 KV cache pool에 줄 GPU 메모리 비율,
-`--chunked-prefill-size`는 chunked prefill의 조각 크기(-1이면 끔),
-`--max-running-requests`는 동시 요청 수의 상한,
-`--schedule-policy`는 요청의 실행 순서,
-`--tp-size`는 TP의 GPU 수,
-`--attention-backend`는 attention kernel(FlashInfer, FlashAttention, Triton 등),
-`--speculative-algorithm`은 speculative decoding의 draft 방식이다.
+가중치와 KV cache pool에 줄 GPU 메모리 비율은 `--mem-fraction-static`, chunked prefill의 조각 크기는 `--chunked-prefill-size`,
+동시 요청 수의 상한은 `--max-running-requests`, 요청의 실행 순서는 `--schedule-policy`로 정한다.
 실행 순서의 기본값은 도착한 순서대로인 `fcfs`(first come, first served)이고,
 `lpm`(longest prefix match)을 고르면 앞에서 본 cache-aware scheduling처럼 cache와 일치하는 prefix가 긴 요청부터 처리한다.
-다만 대기 요청이 128개를 넘으면 prefix 비교와 정렬 비용을 아끼려고 `fcfs`로 돌아가고, prefix cache를 끈 경우에도 `fcfs`를 쓴다.[^sglang-policy]
+다만 대기 요청이 128개를 넘으면 정렬 비용을 아끼려고 `fcfs`로 돌아간다.[^sglang-policy]
 
 SGLang의 튜닝 문서는 offline batch inference에서 처리량을 높이려면 **batch를 크게 만드는 것이 가장 중요하다**고 요약한다.[^sglang-tune]
 작은 batch에서는 가중치 읽기가 병목이라는 앞 주차 roofline 분석과 같은 결론이다.
@@ -194,11 +187,10 @@ Goodput을 잴 때도 정의를 구분한다.
 <Callout type="example">
 기말 프로젝트에서 Llama 3.1 8B를 H100 한 대로 서빙하며 BF16(bfloat16)과 FP8(8-bit floating point)을 비교한다고 하자.
 같은 엔진 버전과 설정으로 서버를 두 번 띄우되,
-앞선 측정의 prefix cache가 결과에 섞이지 않게 두 서버 모두 `--no-enable-prefix-caching`으로 시작한다.
-FP8 서버는 미리 FP8로 양자화한 checkpoint를 불러오거나,
-BF16 checkpoint를 불러오면서 양자화한다(vLLM v0.31에서는 `--quantization fp8_per_tensor`).
-어느 방식인지와 엔진 버전, KV cache 정밀도와 batch 관련 설정을 결과와 함께 적고,
-미리 양자화한 checkpoint라면 아래 `--model`도 그 이름으로 바꾼다.
+앞선 측정의 prefix cache가 결과에 섞이지 않게 두 서버 모두 prefix caching을 끄고(`--no-enable-prefix-caching`) 시작한다.
+FP8 서버는 미리 FP8로 양자화한 checkpoint를 불러오거나(이때는 아래 `--model`도 그 이름으로 바꾼다),
+BF16 checkpoint를 불러오면서 양자화한다(`--quantization` 인자).
+어느 방식인지와 엔진 버전, KV cache 정밀도와 batch 관련 설정을 결과와 함께 적는다.
 두 서버에 각각 다음처럼 부하를 건다.
 
 ```bash
@@ -218,7 +210,7 @@ prefix 재사용이나 draft 수락처럼 내용에 좌우되는 효과는 대�
 `--max-concurrency`를 1, 4, 16, 64, 256으로 바꿔 가며 반복하고,
 가로축에 동시 요청 수로 나눈 처리량(output token throughput ÷ 동시 요청 수),
 세로축에 GPU 한 대의 output token throughput을 두어 두 정밀도의 곡선을 겹쳐 그린다.
-동시 요청 64에서 초당 6,400토큰이 나왔다면 그 점은 (100, 6,400)이다(교육용 수치).
+동시 요청 64에서 초당 6,400토큰이 나왔다면 그 점은 (100, 6,400)이다(가상의 수치).
 가로축 값에는 TTFT와 대기 시간이 섞여 있어 1/TPOT와 다르므로, decode 중에 사용자가 느끼는 속도는 TPOT로 따로 본다.
 
 Roofline으로 보면 동시 요청이 적을 때는 가중치 읽기가 병목이라 FP8이 TPOT를 줄일 것으로 기대한다.
