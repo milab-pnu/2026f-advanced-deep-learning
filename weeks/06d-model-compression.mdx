@@ -64,7 +64,7 @@ Wanda의 점수는 $(0.4,\,1.0,\,0.3,\,0.45)$이므로 오히려 $0.3$과 $0.8$�
 LLaMA-7B를 50% 지웠을 때 WikiText-2 perplexity는 dense 5.68, magnitude 17.29, SparseGPT 7.22, Wanda 7.26으로 Wanda가 SparseGPT와 비슷했다.
 그러면서 LLaMA-65B의 중요도 계산에 걸린 시간은 SparseGPT의 1,353초에 비해 5.6초였다.[^wanda]
 
-## 2. 희소성과 실제 속도
+## 2. Sparsity와 실제 속도
 
 ### 2-1. Unstructured sparsity의 한계
 
@@ -191,7 +191,7 @@ GPU에서 같은 이득을 내기는 어렵다.
 
 ### 2-2. 2:4 semi-structured sparsity
 
-NVIDIA는 Ampere GPU부터 하드웨어가 직접 가속할 수 있는 희소성 패턴을 정했다.
+NVIDIA는 Ampere GPU부터 하드웨어가 직접 가속할 수 있는 sparsity 패턴을 정했다.
 연속된 원소 4개마다 적어도 2개를 0으로 두는 **2:4 sparsity**다.
 Sparse Tensor Core는 남은 값과 그 위치(남은 값마다 2 bits)만 읽어,
 dense 행렬곱보다 최대 두 배의 연산 속도를 낸다.[^nvidia24]
@@ -219,18 +219,32 @@ MaskLLM 논문이 A6000·batch 1에서 NVIDIA의 서빙 라이브러리 TensorRT
 ### 3-1. 너비와 깊이
 
 특수한 kernel 없이 속도를 얻는 방법은 **구조 단위**로 지우는 것이다.
-Attention head, FFN(feed-forward network)의 중간 channel, hidden 차원, 층 전체를 통째로 없애면,
+Attention head, FFN(feed-forward network)의 중간 channel, embedding 차원(hidden 차원), 층 전체를 통째로 없애면,
 남은 모델은 그저 더 작은 dense 모델이라 일반 kernel로 가속할 수 있다.
+앞의 셋처럼 층 안의 폭을 줄이는 것을 너비(width) pruning, 층 수를 줄이는 것을 깊이(depth) pruning이라 한다.
 대신 지우는 단위가 커서 품질 손실이 크고,
 대개 미세조정으로 회복해야 한다.[^survey]
 
 구조 단위로 지울 때는 함께 지워야 하는 가중치를 묶어야 한다.
-예를 들어 FFN의 중간 channel 하나를 지우면, 그 channel을 만드는 gate·up 투영의 출력과 그 channel을 받는 down 투영의 입력이 함께 사라진다.
+FFN이 좋은 예다.
+Llama의 FFN은 SwiGLU(Swish-gated linear unit)를 써서 $W_{\text{down}}\big(\mathrm{SiLU}(W_{\text{gate}}x)\odot W_{\text{up}}x\big)$ 꼴로 계산한다.
+여기서 $W_{\text{gate}}$, $W_{\text{up}}$, $W_{\text{down}}$은 gate·up·down 투영 행렬이고 $\odot$은 원소별 곱이다.
+중간 channel $i$의 값은 gate·up 투영의 $i$번째 출력끼리 곱해 만들고, down 투영이 이 값을 $i$번째 입력으로 받는다.
+Llama 3 8B는 4,096차원의 입력을 중간 차원 14,336으로 올렸다가 다시 4,096차원으로 내린다.[^llama3]
+그래서 중간 channel 하나를 지우면, 그 channel을 만드는 gate·up 투영의 출력과 그 channel을 받는 down 투영의 입력이 함께 사라진다.
+
+Embedding 차원은 묶음이 훨씬 크다.
+모든 층이 같은 차원의 벡터를 주고받으므로,
+이 차원 하나를 지우면 모든 층에서 attention·FFN 투영 행렬의 해당 입력과 출력, 정규화 층(RMSNorm)의 해당 가중치,
+그리고 embedding과 LM head의 해당 차원이 함께 줄어든다.
+
 Ma 등의 LLM-Pruner는 이런 의존 관계를 자동으로 찾아 묶고,
 gradient로 묶음의 중요도를 추정해 지운 뒤 LoRA(low-rank adaptation)로 회복했다.
 LLaMA-7B의 파라미터 20%를 지우고 회복하면 zero-shot 분류 task 일곱 개의 평균 정확도가 원래의 94.97%였다.[^llmpruner]
 
-층 전체를 지우는 깊이 방향 pruning도 있다.
+<Figure src="https://arxiv.org/html/2305.11627v3/main_v5.png" alt="LLM-Pruner의 Figure 2. LLaMA에서 함께 지워야 하는 가중치 묶음 세 종류를 뉴런과 연결선으로 보인다. 종 표시가 붙은 뉴런 하나를 지우면 거기 연결된 가중치가 점선으로 함께 지워지고, 빨간 점선을 따라 연결된 다른 뉴런으로 전파된다. 왼쪽 Group Type A(MLP)는 Gate Projection과 Up Projection의 출력 뉴런 하나와 Down Projection의 입력이 함께 지워진다. 가운데 Group Type B(Multi-head Attention)는 Head 1 하나를 지우면 Query, Key, Value의 해당 출력 뉴런과 출력 투영의 해당 입력이 함께 지워진다. 오른쪽 Group Type C(Channel-wise Grouping)는 Embedding부터 L개 층의 Multi-head Attention, Norm, MLP를 거쳐 LM Head까지, 같은 channel 하나가 모든 층에 걸쳐 함께 지워진다." caption="LLM-Pruner가 묶는 가중치 묶음. Group A는 FFN 중간 channel 하나로, gate·up 투영의 출력과 down 투영의 입력이 함께 지워지는 본문의 예와 같다. Group B는 attention head 하나, Group C는 embedding 차원 하나로 embedding부터 LM head까지 모든 층에 걸친다." source="Ma et al. (2023), Figure 2 · CC BY 4.0" wide />
+
+층 전체를 지우는 깊이 pruning도 있다.
 Men 등의 ShortGPT는 입력과 출력이 거의 같은 층,
 곧 표현을 별로 바꾸지 않는 층을 찾아 지워 파라미터의 약 25%를 줄이고도 선다형 task에서 성능의 약 90%를 유지했다.[^shortgpt]
 Gromov 등은 입력과 출력이 가장 비슷한 연속된 층들을 지운 뒤 QLoRA(quantized LoRA)로 짧게 미세조정해 회복(healing)했다.
@@ -284,7 +298,9 @@ Meta의 Llama 3.2 1B와 3B는 pruning과 distillation을 함께 썼다.
 Llama 3.1 8B를 구조적으로 한 번에 pruning하고,
 사전학습 단계에서 Llama 3.1 8B와 70B의 logit을 토큰별 목표로 넣어 distillation으로 성능을 되살렸다.[^llama32]
 
-앞에서 학습 비용과 inference 비용을 견주며, inference 수요가 크면 작은 모델을 오래 학습하는 편이 전체 비용에서 유리하다고 했다.
+Compute-optimal 배분은 학습 계산만 따진 것이다.
+Sardana 등은 여기에 배포 뒤의 inference 계산까지 더해, 요청이 약 10억 건 이상 예상되면 compute-optimal보다 작은 모델을 더 오래 학습하는 편이 전체 비용에서 유리하다고 계산했다.[^sardana]
+작은 모델은 학습에 토큰을 더 쓰지만 요청마다 드는 계산이 적어서, 요청이 많을수록 그 차이가 학습의 추가 비용을 넘어서기 때문이다.
 큰 모델을 한 번 학습해 두고 거기서 여러 크기의 작은 모델을 pruning과 distillation으로 뽑아내는 방식은,
 그 작은 모델들을 각각 처음부터 오래 학습하는 비용까지 줄인다.
 
@@ -301,6 +317,7 @@ $4096\times4096$ 행렬이라면 $r<2048$이고, $r=1024$로 두면 파라미터
 이를 따로 실행하면 중간 결과를 한 번 더 쓰고 읽고 kernel도 하나 늘어나므로,
 FLOPs가 절반이 되어도 실제 지연은 그만큼 줄지 않을 수 있다.
 가중치 오차(Frobenius norm)가 가장 작은 rank-$r$ 근사는 SVD(singular value decomposition)로 큰 특이값 $r$개만 남겨 얻는다.
+남긴 특이값의 대각 행렬을 $\Sigma_r$, 그에 대응하는 왼쪽·오른쪽 특이벡터를 열로 모은 행렬을 $U_r$, $V_r$라 할 때, $U=U_r\Sigma_r$, $V=V_r^\top$로 두면 $W\approx U_r\Sigma_rV_r^\top=UV$다.
 
 문제는 LLM의 가중치가 낮은 rank에 잘 들어맞지 않는다는 점이다.
 Yuan 등의 ASVD(activation-aware singular value decomposition) 실험에서 LLaMA-7B의 파라미터를 SVD로 5%만 줄여도 WikiText-2 perplexity가 5.68에서 2,800으로 무너졌다.[^asvd]
@@ -325,6 +342,7 @@ SVD-LLM은 8.50, 분해한 두 행렬을 LoRA로 미세조정하면 7.73이었�
 20% 압축에서도 perplexity가 원래보다 꽤 높다.
 Low-rank 구조를 처음부터 모델에 넣고 학습하는 길도 있다.
 MLA(multi-head latent attention)는 key와 value를 저차원 latent로 압축하는 low-rank 구조를 처음부터 학습한 예다.
+Key·value 투영을 embedding 차원에서 작은 차원 $d_c$로 내리는 행렬 $V$와 head별 key·value로 다시 올리는 행렬 $U$의 곱 $UV$로 두고 학습하므로, 투영의 rank가 $d_c$를 넘지 않는다(DeepSeek-V3에서 $d_c=512$).[^dsv3]
 
 [^survey]: Zhu, X., Li, J., Liu, Y., Ma, C., & Wang, W. (2024). A Survey on Model Compression for Large Language Models. *Transactions of the Association for Computational Linguistics*, 12, 1556–1577. [arXiv:2308.07633v4](https://arxiv.org/abs/2308.07633v4).
 
@@ -340,6 +358,8 @@ MLA(multi-head latent attention)는 key와 value를 저차원 latent로 압축�
 
 [^llmpruner]: Ma, X., Fang, G., & Wang, X. (2023). LLM-Pruner: On the Structural Pruning of Large Language Models. *NeurIPS 2023*. [arXiv:2305.11627](https://arxiv.org/abs/2305.11627).
 
+[^llama3]: Llama Team, AI @ Meta. (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
+
 [^shortgpt]: Men, X., Xu, M., Zhang, Q., et al. (2025). ShortGPT: Layers in Large Language Models are More Redundant Than You Expect. *Findings of ACL 2025*, 20192–20204. [ACL Anthology](https://aclanthology.org/2025.findings-acl.1035/).
 
 [^gromov]: Gromov, A., Tirumala, K., Shapourian, H., Glorioso, P., & Roberts, D. A. (2025). The Unreasonable Ineffectiveness of the Deeper Layers. *ICLR 2025*. [arXiv:2403.17887](https://arxiv.org/abs/2403.17887).
@@ -354,6 +374,10 @@ MLA(multi-head latent attention)는 key와 value를 저차원 latent로 압축�
 
 [^llama32]: Meta. (2024). Llama 3.2: Revolutionizing edge AI and vision with open, customizable models. *Meta AI Blog*. [ai.meta.com](https://ai.meta.com/blog/llama-3-2-connect-2024-vision-edge-mobile-devices/).
 
+[^sardana]: Sardana, N., Portes, J., Doubov, S., & Frankle, J. (2024). Beyond Chinchilla-Optimal: Accounting for Inference in Language Model Scaling Laws. *ICML 2024*. [arXiv:2401.00448](https://arxiv.org/abs/2401.00448).
+
 [^asvd]: Yuan, Z., Shang, Y., Song, Y., et al. (2023). ASVD: Activation-aware Singular Value Decomposition for Compressing Large Language Models. [arXiv:2312.05821](https://arxiv.org/abs/2312.05821).
+
+[^dsv3]: DeepSeek-AI. (2024). DeepSeek-V3 Technical Report. [arXiv:2412.19437](https://arxiv.org/abs/2412.19437).
 
 [^svdllm]: Wang, X., Zheng, Y., Wan, Z., & Zhang, M. (2025). SVD-LLM: Truncation-aware Singular Value Decomposition for Large Language Model Compression. *ICLR 2025*. [arXiv:2403.07378](https://arxiv.org/abs/2403.07378).

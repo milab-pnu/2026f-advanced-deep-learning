@@ -4,6 +4,9 @@ week: 7
 order: 3
 ---
 
+import flashOriginal from "./assets/week02-flashattention-original.jpg";
+import flashLicense from "./assets/flashattention-LICENSE.txt?url";
+
 Llama 3 8B를 H100 한 대에서 batch 1, 문맥 2,048토큰으로 돌릴 때 TPOT(time per output token)가 8.0 ms라면,
 가중치와 KV(key-value) cache를 BF16(bfloat16)으로 한 번씩 읽는 하한 4.9 ms의 약 1.6배이고,
 MBU(model bandwidth utilization)는 61%다.
@@ -27,14 +30,19 @@ FlashInfer 등은 길이가 다른 작업을 이어 붙여 고르게 흘려 보�
 
 ## 1. GPU에서 kernel이 실행되는 방식
 
-Kernel은 GPU가 많은 데이터를 병렬로 처리하도록 실행하는 프로그램이고,
-kernel fusion은 이어지는 연산을 한 kernel에 묶어 중간값의 HBM 왕복을 줄이는 방법이다.
-여기에 한 가지를 더한다.
+Kernel은 GPU가 많은 데이터를 병렬로 처리하도록 실행하는 프로그램이다.
+PyTorch처럼 연산을 하나씩 실행하면 행렬곱, 덧셈 같은 연산마다 kernel이 실행되고,
+각 kernel은 입력을 HBM에서 읽어 결과를 다시 HBM에 쓴다.
+Kernel fusion은 이어지는 연산을 한 kernel로 묶어 중간값의 HBM 왕복을 줄이는 방법이다.
+예를 들어 원소마다 $y=\max(2x+1,0)$을 계산할 때 곱셈, 덧셈, 최댓값을 따로 실행하면 중간값 $2x$와 $2x+1$을 HBM에 썼다가 다시 읽지만,
+한 kernel로 묶으면 $x$를 한 번 읽고 $y$를 한 번 쓰는 것으로 끝난다.
+
 GPU는 수많은 연산 장치를 SM(streaming multiprocessor)이라는 단위로 묶어 두고,
 kernel은 일을 thread block 단위로 쪼개 SM들에 나누어 준다.
 Thread block 하나는 한 SM에서 실행되며, 그 안의 thread는 32개씩 warp로 묶여 같은 명령을 함께 실행한다.
-H100 SXM에는 SM이 132개 있고, SM마다 최대 228 KB의 shared memory가 있다.[^hopper]
-FlashAttention에서 SRAM(static random-access memory)이라 부른 칩 안의 작고 빠른 메모리가 이것이다.
+H100 SXM에는 SM이 132개 있고, SM마다 그 안의 thread들이 함께 쓰는 shared memory가 최대 228 KB 있다.[^hopper]
+칩 안의 작고 빠른 메모리를 통틀어 SRAM(static random-access memory)이라 하며, register, shared memory, L2 cache가 여기에 든다.
+FlashAttention 논문이 SRAM이라 부르며 블록을 올려 두는 곳은 그중 SM마다 있는 shared memory다.
 
 이 구조에서 kernel이 하드웨어를 다 쓰려면 두 가지가 필요하다.
 첫째, **모든 SM에 일이 돌아가야** 한다.
@@ -49,8 +57,31 @@ Decode는 두 조건을 모두 어렵게 만든다.
 
 ### 2-1. FlashAttention의 병렬화
 
-FlashAttention 1은 key·value 블록을 바깥 반복에 두고 여러 query 블록에 재사용하며,
-online softmax로 결과를 갱신했다.
+FlashAttention은 attention을 query 블록과 key·value 블록이 만나는 작은 조각(타일)으로 나누어 계산한다.
+타일을 하나씩 SM의 shared memory에 올려 점수와 출력을 계산하므로, 시퀀스 길이 $n$에 대한 $n\times n$ 점수 행렬 전체를 HBM에 쓰지 않는다.
+이렇게 데이터를 타일로 나누어 빠른 메모리에서 처리하는 방식을 tiling이라 한다.[^fa1]
+
+<Figure src={flashOriginal.src} alt="FlashAttention 1 원본 그림. 왼쪽은 GPU SRAM과 HBM의 메모리 계층, 가운데는 K와 V의 바깥 반복 및 Q의 안쪽 반복, 오른쪽은 GPT-2 attention의 실행 시간 비교." caption="FlashAttention 1의 메모리 계층과 블록 계산 및 fused kernel. 가운데 그림처럼 K·V 블록(바깥 반복)과 Q 블록(안쪽 반복)이 만나는 타일을 SRAM에서 계산하며, 그림의 N은 시퀀스 길이 n이다." source="Dao et al. (2022), FlashAttention 저장소 · BSD 3-Clause · 수정 없음" wide />
+
+그림은 FlashAttention 저장소의 BSD 3-Clause 라이선스(<a href={flashLicense}>전문</a>)에 따라 수정 없이 실었다.
+
+블록으로 나누면 softmax에서 문제가 생긴다.
+Softmax의 분모는 한 query의 모든 점수를 보아야 정해지는데, 블록을 하나씩 순회하면 점수가 일부만 보인다.
+그래서 지금까지 본 점수의 최댓값 $m$, 지수 합 $\ell$, value의 가중합을 들고 다니다가,
+새 블록에서 더 큰 점수가 나오면 앞의 합들을 $e^{m_{\text{old}}-m_{\text{new}}}$배로 고친다.
+이 방식을 online softmax라 부른다.[^online-softmax]
+
+<Callout type="example">
+Query 하나의 점수 $x_j$가 $[1,2,3,0]$이고, 각 위치의 value $v_j$가 스칼라 $[10,20,30,40]$이라고 하자.
+한 번에 계산한 정답 출력은 $\sum_j e^{x_j}v_j/\sum_j e^{x_j}\approx26.21$이다.
+Key·value를 두 블록 $[1,2]$와 $[3,0]$으로 나누어 차례로 처리해 보자.
+블록 1 뒤에는 $m=2$, $\ell=e^{-1}+e^{0}\approx1.368$, 가중합 $10e^{-1}+20\approx23.68$이므로 출력은 $23.68/1.368\approx17.31$이다.
+블록 2에서 최댓값이 3으로 바뀌므로 앞의 $\ell$과 가중합에 $e^{2-3}$을 곱해 각각 $0.503$과 $8.71$로 고친다.
+여기에 블록 2의 몫을 더하면 $\ell\approx0.503+e^{0}+e^{-3}\approx1.553$, 가중합 $\approx8.71+30+40e^{-3}\approx40.70$이고,
+출력은 $40.70/1.553\approx26.21$로 정답과 같다.
+</Callout>
+
+FlashAttention 1은 그림 가운데처럼 key·value 블록을 바깥 반복에 두고 여러 query 블록에 재사용했다.
 일을 SM에 나누는 단위는 batch와 attention head였다.
 FlashAttention-2는 반복 순서를 바꿔 query 블록을 바깥에 두고,
 **query의 시퀀스 길이** 방향으로도 나누어 query 행 블록마다 thread block을 두었다.[^fa2]
@@ -59,7 +90,7 @@ FlashAttention-2는 반복 순서를 바꿔 query 블록을 바깥에 두고,
 Prefill 쪽의 발전은 새 GPU의 연산 장치를 쉬지 않게 하는 방향으로 이어졌다.
 FlashAttention-2는 H100에서 peak의 35%밖에 쓰지 못했는데,
 Shah 등의 FlashAttention-3는 데이터를 옮기는 warp와 계산하는 warp를 나누어 둘을 겹치고,
-한 warp 묶음이 softmax를 계산하는 동안 다른 묶음은 행렬곱을 하도록 둘을 겹쳐 FP16(16-bit floating point)에서 peak의 75%까지 올렸다.[^fa3]
+warp 4개를 묶은 warpgroup 하나가 softmax를 계산하는 동안 다른 warpgroup은 행렬곱을 하도록 둘을 겹쳐 FP16(16-bit floating point)에서 peak의 75%까지 올렸다.[^fa3]
 Blackwell GPU에서는 Tensor Core가 지수 함수 계산이나 shared memory 대역폭보다 훨씬 빨라져,
 FlashAttention-4는 softmax의 지수 계산 일부를 소프트웨어로 근사하는 등 행렬곱이 아닌 일을 줄이는 쪽으로 다시 설계했다.[^fa4]
 같은 알고리즘이라도 하드웨어 세대마다 병목이 옮겨 가 kernel을 다시 짜야 한다는 뜻이다.
@@ -71,7 +102,7 @@ Dao 등은 이렇게 생기는 thread block이 SM 수보다 적으면 이 연산
 <Callout type="example">
 Llama 3 8B를 batch 1로 decode한다고 하자.
 KV split 없이 query head마다 thread block 하나를 두면 thread block은 32개뿐이고, H100의 SM 132개 가운데 100개가 논다.
-문맥이 32,768토큰이라면 KV head 하나의 key·value는 BF16으로 $32768\times128\times2\times2\ \text{bytes}\approx16.8$ MB다.
+문맥이 32,768토큰이라면 한 층에서 KV head 하나의 key·value는 BF16으로 $32768\times128\times2\times2\ \text{bytes}\approx16.8$ MB다.
 Thread block 하나가 이 16.8 MB를 처음부터 끝까지 혼자 읽어야 하므로,
 SM 하나가 낼 수 있는 대역폭이 그 시간을 정한다.
 SM 132개가 함께 쓰도록 설계된 3.35 TB/s를 SM 32개만으로 끌어 쓰려는 셈이라 다 쓰기 어렵다.
@@ -132,10 +163,9 @@ Dao 등의 Flash-Decoding은 나눌 방향을 하나 더 만들었다.
 </figure>
 
 <Callout type="example">
-FlashAttention의 online softmax 예시를 다시 쓰자.
-Query 하나의 점수가 $[1,2,3,0]$, value가 $[10,20,30,40]$이고 정답 출력은 약 26.21이었다.
-그때는 thread block 하나가 두 블록을 차례로 처리하며 통계를 고쳐 나갔다.
-Flash-Decoding은 두 조각을 동시에 계산한다.
+앞의 online softmax 예시와 같은 점수 $[1,2,3,0]$과 value $[10,20,30,40]$을 쓰자(정답 출력 약 26.21).
+FlashAttention에서는 thread block 하나가 두 블록을 차례로 처리하며 $m$과 $\ell$을 고쳐 나갔다.
+Flash-Decoding은 두 블록을 조각 두 개로 보고 동시에 계산한다.
 조각 1($[1,2]$)은 부분 출력 약 17.31과 $\text{LSE}_1=\log(e^{1}+e^{2})\approx2.313$을,
 조각 2($[3,0]$)는 부분 출력 약 30.47과 $\text{LSE}_2=\log(e^{3}+e^{0})\approx3.049$를 각자 낸다.
 LSE는 online softmax에서 들고 다닌 최댓값 $m$과 지수 합 $\ell$을 한 값으로 접은 것으로, $m+\log\ell$과 같다(조각 1이면 $2+\log1.368$).
@@ -161,7 +191,7 @@ vLLM의 초기 PagedAttention kernel이 이 선택을 그대로 보여 준다.
 
 PagedAttention은 요청 하나의 KV cache를 GPU 메모리 곳곳의 블록에 흩어 둔다.
 Attention kernel은 block table을 따라 그 블록들을 찾아 읽어야 하고,
-앞에서 보았듯 vLLM 원논문의 kernel은 이 때문에 연속 메모리를 쓰는 FasterTransformer의 kernel보다 지연이 20–26% 길었다.[^vllm]
+vLLM 원논문의 PagedAttention kernel은 이 때문에 연속 메모리를 쓰는 FasterTransformer의 kernel보다 지연이 20–26% 길었다.[^vllm]
 게다가 실제 서빙의 batch에는 prefill 조각과 decode가 섞이고, 요청마다 길이가 다르며,
 prefix caching으로 여러 요청이 일부 블록을 공유한다.
 
@@ -186,6 +216,8 @@ GPU kernel은 그 계획대로 실행한다(run).
 요청마다 query tile이 하나인 decode로 단순화하면,
 계획은 전체 KV 길이를 thread block 수로 나눈 값을 조각의 최대 길이로 삼아 긴 KV를 자르고,
 긴 조각부터 지금까지 맡은 일이 가장 적은 thread block에 하나씩 배정한다.[^flashinfer]
+
+<Figure src="https://arxiv.org/html/2501.01005v2/focus-scheduler.svg" alt="FlashInfer의 load-balanced runtime scheduler 그림. 위쪽 상자 왼편에서 요청 0, 1, 2의 일이 query 방향(Q/O, 세로)과 KV 방향(K/V, 가로)으로 work 0부터 work 6까지의 tile로 잘린다. 요청 0은 work 0, work 1과 짧은 work 2, 요청 1은 work 3과 work 4, 요청 2는 KV 방향으로 나뉜 work 5와 work 6이다. 오른편 CTA work queue에서는 CTA 0이 work 5, CTA 1이 work 6과 work 2, CTA 2가 work 0, CTA 3이 work 1, CTA 4가 work 4와 work 3을 맡는다. 아래쪽 reduction map은 최종 출력 0은 부분 출력 0에서, 1은 1과 2에서, 2는 3에서, 3은 4에서, 4는 5와 6에서 온다고 적는다. Attention kernel이 tile마다 부분 출력 O′와 LSE′를 내면 contraction kernel이 이를 합쳐 최종 출력 O와 LSE를 만든다." caption="FlashInfer의 load-balanced scheduler. 요청마다 query 길이와 KV 길이를 받아 일을 work tile로 자르고, 각 CTA(cooperative thread array, thread block을 가리키는 CUDA 용어)의 작업 대기열에 일의 양이 고르도록 나누어 준다. Attention kernel은 tile마다 부분 출력과 log-sum-exp를 내고, contraction kernel(부분 결과를 합치는 kernel)이 reduction map에 따라 이를 최종 출력으로 합친다. 그림에는 query tile이 여러 개인 요청도 들어 있다." source="Ye et al. (2025), Figure 6 · CC BY-SA 4.0" wide />
 
 <Callout type="example">
 Decode 요청 네 개의 KV 길이가 8K, 2K, 1K, 1K이고, 설명을 위해 thread block 네 개가 SM 네 개에서 동시에 돈다고 하자.
@@ -212,7 +244,8 @@ Decode의 선형층은 batch가 작으면 행렬과 벡터의 곱에 가깝다.
 이때 kernel의 주된 목표는 **가중치를 대역폭의 한계 속도로 흘려 읽는 것**이다.
 큰 행렬곱에 맞춰 조율한 kernel을 그대로 쓰면,
 한쪽 차원이 아주 작은 이 납작한 행렬곱에서는 대역폭을 다 쓰지 못한다.
-Hong 등의 FlashDecoding++는 이 납작한 행렬곱(flat GEMM, GEMM은 general matrix multiplication)을 따로 다뤘다.[^fdpp]
+Hong 등의 FlashDecoding++는 이름만 Flash-Decoding과 비슷할 뿐 다른 연구진이 낸 별개의 기법으로,
+이 납작한 행렬곱(flat GEMM, GEMM은 general matrix multiplication)을 따로 다뤘다.[^fdpp]
 원논문이 비교한 NVIDIA 행렬곱 라이브러리 cuBLAS·CUTLASS처럼 batch 쪽 차원을 64행 타일로 처리하면, batch가 8일 때 타일의 87.5%를 0으로 채운 채 계산한다.
 FlashDecoding++는 batch 쪽 타일을 Tensor Core가 한 번에 처리하는 8행으로 줄여, batch가 8보다 작으면 8행이 될 때까지만 0으로 채운다.
 일은 출력 차원 방향으로 thread block들에 나누고,
@@ -220,7 +253,7 @@ FlashDecoding++는 batch 쪽 타일을 Tensor Core가 한 번에 처리하는 8�
 
 ### 3-2. 양자화 가중치의 kernel
 
-Weight-only 양자화(quantization)는 kernel 안에서 가중치를 되돌려야 한다.
+Weight-only 양자화(quantization)는 kernel 안에서 가중치를 원래 정밀도로 되돌려야(dequantize) 한다.
 Frantar 등의 Marlin은 4-bit 가중치와 FP16 activation의 행렬곱을 위한 kernel이다.[^marlin]
 4-bit 가중치를 HBM에서 읽어 shared memory를 거쳐 레지스터로 가져오는 동안 앞선 데이터의 계산을 겹치고,
 레지스터 안에서 FP16으로 되돌려 Tensor Core에 넣는다.
@@ -230,6 +263,8 @@ Frantar 등의 Marlin은 4-bit 가중치와 FP16 activation의 행렬곱을 위�
 출력 타일 수가 SM 수로 나누어떨어지지 않으면 마지막 차례에서 일부 SM이 논다.
 Marlin은 SM마다 맡을 타일 수를 똑같이 정해 두고, 한 SM의 몫이 한 열의 끝에 닿으면 다음 열의 위에서 이어 받게 배정한다(striped partitioning).
 그러면 SM마다 일이 거의 같아지고, 부분 결과를 합치는 일은 한 열을 나누어 맡은 SM들 사이에서만 생긴다.[^marlin]
+
+<Figure src="https://arxiv.org/html/2408.11743v1/marlin-partition.svg" alt="Marlin의 striped partitioning 그림. 위쪽의 가중치(Weights) 행렬이 세로 열 네 개로 나뉘고, 색이 다른 칸 일곱 개에 SM 번호 1부터 7이 적혀 있다. SM 1은 첫째 열의 위쪽을, SM 2는 첫째 열의 아래쪽과 둘째 열의 맨 위를, SM 3은 둘째 열의 가운데를, SM 4는 둘째 열의 맨 아래와 셋째 열의 위쪽을, SM 5는 셋째 열의 아래쪽을, SM 6과 7은 넷째 열의 위와 아래를 맡는다. 아래쪽 출력(Output) 띠의 네 칸에는 각 열을 함께 계산하는 SM이 1/2, 2/3/4, 4/5, 6/7로 적혀 있다." caption="Marlin의 striped partitioning. 가중치 행렬의 열 하나가 출력의 열 하나를 만들며, 칸 안의 숫자는 SM 번호, 아래 띠는 그 출력 열을 함께 계산해 합치는 SM이다. SM마다 같은 양을 맡고, 한 열의 끝에 닿으면 다음 열의 위에서 이어 받는다." source="Frantar et al. (2025), Figure 5 · CC BY 4.0" />
 
 원논문은 이 kernel이 언제까지 이득을 내는지 roofline으로 설명한다.
 토큰 하나는 가중치 하나마다 2 FLOP(floating-point operation)을 쓰는데 4-bit 가중치 하나는 0.5 byte이므로, batch $b$에서 intensity는 약 $2b/0.5=4b$다.
@@ -244,6 +279,8 @@ vLLM에 넣은 end-to-end 측정에서는 RTX A6000으로 Llama-2-7B를 서빙�
 
 ### 3-3. MoE의 grouped GEMM
 
+MoE 층은 Transformer 블록의 FFN(feed-forward network)을 expert라 부르는 FFN 여러 개로 바꾸고, router가 토큰마다 그중 $k$개를 고른다.
+그래서 MoE 층의 계산은 expert마다 선형층 두 개(그 사이 활성화)를 그 expert로 온 토큰들에만 하는 행렬곱이다.
 MoE 층에서는 batch의 토큰들이 서로 다른 expert로 흩어지고, expert마다 받는 토큰 수가 다르다.
 모든 expert에 같은 수의 토큰을 맞춰 하나의 batched 행렬곱으로 계산하는 단순한 구현은,
 넘치는 토큰을 버리거나 모자란 자리를 0으로 채워야 했다.
@@ -285,7 +322,7 @@ Attention은 요청마다 길이가 달라 그래프에 담기 어렵다.
 그래서 vLLM은 attention backend가 지원하면 요청마다 query 길이가 같은 decode batch는 전체를 그래프 하나로,
 나머지는 attention 사이의 구간만 그래프로 기록한다.[^vllm-cg]
 
-<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.30.0/docs/assets/design/cuda_graphs/current_design.png" alt="vLLM 문서의 CUDA graph 설계 그림. 위쪽에서 모델은 torch.compile로 attention 사이의 submodule들로 쪼개지고(piecewise compilation), submodule마다 CUDA graph wrapper가 붙는다. 실행 시 요청 batch의 종류와 크기에 따라 세 가지 방식 가운데 하나를 고른다. PIECEWISE는 submodule 구간은 CUDA graph로, attention은 그래프 없이(eager) 번갈아 실행한다. FULL은 모델 전체를 CUDA graph 하나로 실행한다. NONE은 그래프 없이 모두 eager로 실행한다." caption="vLLM의 CUDA graph 실행 방식. Attention 사이의 구간만 그래프로 재생하는 PIECEWISE, 모델 전체를 재생하는 FULL, 그래프를 쓰지 않는 NONE 가운데 batch에 맞는 것을 고른다." source="vLLM Project (v0.30.0), CUDA Graphs 설계 문서 · Apache-2.0" />
+<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.31.0/docs/assets/design/cuda_graphs/current_design.png" alt="vLLM 문서의 CUDA graph 설계 그림. 위쪽에서 모델은 torch.compile로 attention 사이의 submodule들로 쪼개지고(piecewise compilation), submodule마다 CUDA graph wrapper가 붙는다. 실행 시 요청 batch의 종류와 크기에 따라 세 가지 방식 가운데 하나를 고른다. PIECEWISE는 submodule 구간은 CUDA graph로, attention은 그래프 없이(eager) 번갈아 실행한다. FULL은 모델 전체를 CUDA graph 하나로 실행한다. NONE은 그래프 없이 모두 eager로 실행한다." caption="vLLM의 CUDA graph 실행 방식. Attention 사이의 구간만 그래프로 재생하는 PIECEWISE, 모델 전체를 재생하는 FULL, 그래프를 쓰지 않는 NONE 가운데 batch에 맞는 것을 고른다. 그림의 eager는 그래프 없이 kernel을 하나씩 제출해 실행하는 방식이다." source="vLLM Project (v0.31.0), CUDA Graphs 설계 문서 · Apache-2.0" />
 
 ### 4-2. 컴파일러
 
@@ -307,6 +344,10 @@ FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kern
 [^survey]: Pan, J., & Li, G. (2025). A Survey of LLM Inference Systems. [arXiv:2506.21901](https://arxiv.org/abs/2506.21901).
 
 [^hopper]: Andersch, M., Palmer, G., Krashinsky, R., Stam, N., Mehta, V., Brito, G., & Ramaswamy, S. (2022). NVIDIA Hopper Architecture In-Depth. *NVIDIA Technical Blog*. [developer.nvidia.com](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/).
+
+[^fa1]: Dao, T., Fu, D. Y., Ermon, S., Rudra, A., & Ré, C. (2022). FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. *NeurIPS 2022*. [arXiv:2205.14135](https://arxiv.org/abs/2205.14135).
+
+[^online-softmax]: Milakov, M., & Gimelshein, N. (2018). Online normalizer calculation for softmax. [arXiv:1805.02867](https://arxiv.org/abs/1805.02867).
 
 [^fa2]: Dao, T. (2024). FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning. *ICLR 2024*. [arXiv:2307.08691](https://arxiv.org/abs/2307.08691).
 

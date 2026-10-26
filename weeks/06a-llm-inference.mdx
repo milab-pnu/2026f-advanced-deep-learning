@@ -35,10 +35,83 @@ $$
 $p_\theta$는 파라미터가 $\theta$인 모델이 앞 토큰들을 보고 내놓는 다음 토큰 분포다.
 이렇게 앞 토큰들을 조건으로 한 토큰씩 차례로 생성하는 방식을 autoregressive 생성이라 한다.
 토큰을 하나씩 생성하므로 출력 토큰 $m$개를 만들려면 모델 전체를 $m$번 차례로 실행해야 한다.
-이때 앞 토큰들의 key·value를 매번 다시 계산하지 않도록 저장해 두는 것이 KV cache다.
+
+### 1-2. KV cache
+
+이 반복에서 매번 처음부터 다시 계산하지 않아도 되는 부분이 있다.
+Attention 층 하나에서 head 하나만 보면, 위치 $t$의 출력은 그 위치의 query와 위치 1부터 $t$까지의 key·value로 계산한다.
+
+$$
+q_t=x_tW^Q,\qquad k_j=x_jW^K,\qquad v_j=x_jW^V
+$$
+
+$$
+o_t=\sum_{j=1}^{t}\operatorname{softmax}_j\!\left(\frac{q_t\cdot k_j}{\sqrt{d_h}}\right)v_j
+$$
+
+$x_j$는 그 층에 들어오는 위치 $j$의 벡터다.
+Causal mask 때문에 $x_j$는 위치 $j$까지의 토큰에만 달려 있으므로, 뒤에 새 토큰이 붙어도 과거 위치의 $k_j$와 $v_j$는 바뀌지 않는다.
+그래서 한 번 계산한 key·value를 층마다 저장해 두고 다음 스텝에서 다시 쓴다.
+이 저장소가 **KV cache**다.
+Query는 저장하지 않는다.
+다음 토큰을 고르는 데는 새 위치의 출력 $o_t$만 필요하고, 그 계산에는 새 query $q_t$ 하나만 쓰이기 때문이다.
+
+정리하면 새 토큰 하나를 만들 때 층마다 새 토큰의 query·key·value만 계산하고,
+새 key·value를 cache 뒤에 붙인 뒤, 새 query로 cache 전체를 읽어 attention을 계산한다.[^survey]
+
+<figure>
+<svg viewBox="0 0 600 270" role="img" aria-label="Decode 한 스텝에서 KV cache를 쓰는 attention. 위쪽 줄에 토큰 The, cat, sat, on, the가 있고 다섯째 the가 새 토큰이다. 그 아래 K cache 줄과 V cache 줄에는 위치 1부터 4까지의 key와 value가 초록 칸으로 저장되어 있고, 새 토큰으로 새로 계산한 k5와 v5가 파란 테두리 칸으로 뒤에 붙는다. 오른쪽의 q5는 새 토큰으로만 계산하며 저장하지 않는다. q5는 k1부터 k5까지와 내적해 softmax로 가중치 a1부터 a5를 만들고, 그 가중치로 v1부터 v5까지를 더해 출력 o5를 만든다. o5는 다음 층으로 올라가 결국 다음 토큰을 고르는 데 쓰인다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <defs><marker id="kvstep-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/></marker><marker id="kvstep-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8"/></marker></defs>
+  <text x="300" y="22" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Decode 한 스텝: 새 토큰 the(위치 5)가 들어올 때 한 층의 attention</text>
+  <text x="14" y="62" font-size="13" fill="#64748b">토큰</text>
+  <text x="14" y="122" font-size="13" fill="#64748b">K cache</text>
+  <text x="14" y="177" font-size="13" fill="#64748b">V cache</text>
+  <rect x="76" y="44" width="48" height="26" rx="4" fill="#e2e8f0" stroke="#0f172a"/><text x="100" y="62" font-size="14" text-anchor="middle" fill="#0f172a">The</text>
+  <rect x="132" y="44" width="48" height="26" rx="4" fill="#e2e8f0" stroke="#0f172a"/><text x="156" y="62" font-size="14" text-anchor="middle" fill="#0f172a">cat</text>
+  <rect x="188" y="44" width="48" height="26" rx="4" fill="#e2e8f0" stroke="#0f172a"/><text x="212" y="62" font-size="14" text-anchor="middle" fill="#0f172a">sat</text>
+  <rect x="244" y="44" width="48" height="26" rx="4" fill="#e2e8f0" stroke="#0f172a"/><text x="268" y="62" font-size="14" text-anchor="middle" fill="#0f172a">on</text>
+  <rect x="300" y="44" width="48" height="26" rx="4" fill="#dbeafe" stroke="#1d4ed8"/><text x="324" y="62" font-size="14" text-anchor="middle" fill="#1e3a8a">the</text>
+  <rect x="76" y="104" width="48" height="26" rx="4" fill="#bbf7d0" stroke="#15803d" stroke-width="1"/><text x="100" y="122" font-size="14" text-anchor="middle" fill="#0f172a">k<tspan font-size="9" baseline-shift="sub">1</tspan></text>
+  <rect x="132" y="104" width="48" height="26" rx="4" fill="#bbf7d0" stroke="#15803d" stroke-width="1"/><text x="156" y="122" font-size="14" text-anchor="middle" fill="#0f172a">k<tspan font-size="9" baseline-shift="sub">2</tspan></text>
+  <rect x="188" y="104" width="48" height="26" rx="4" fill="#bbf7d0" stroke="#15803d" stroke-width="1"/><text x="212" y="122" font-size="14" text-anchor="middle" fill="#0f172a">k<tspan font-size="9" baseline-shift="sub">3</tspan></text>
+  <rect x="244" y="104" width="48" height="26" rx="4" fill="#bbf7d0" stroke="#15803d" stroke-width="1"/><text x="268" y="122" font-size="14" text-anchor="middle" fill="#0f172a">k<tspan font-size="9" baseline-shift="sub">4</tspan></text>
+  <rect x="300" y="104" width="48" height="26" rx="4" fill="#bbf7d0" stroke="#1d4ed8" stroke-width="3"/><text x="324" y="122" font-size="14" text-anchor="middle" fill="#0f172a">k<tspan font-size="9" baseline-shift="sub">5</tspan></text>
+  <rect x="76" y="159" width="48" height="26" rx="4" fill="#bbf7d0" stroke="#15803d" stroke-width="1"/><text x="100" y="177" font-size="14" text-anchor="middle" fill="#0f172a">v<tspan font-size="9" baseline-shift="sub">1</tspan></text>
+  <rect x="132" y="159" width="48" height="26" rx="4" fill="#bbf7d0" stroke="#15803d" stroke-width="1"/><text x="156" y="177" font-size="14" text-anchor="middle" fill="#0f172a">v<tspan font-size="9" baseline-shift="sub">2</tspan></text>
+  <rect x="188" y="159" width="48" height="26" rx="4" fill="#bbf7d0" stroke="#15803d" stroke-width="1"/><text x="212" y="177" font-size="14" text-anchor="middle" fill="#0f172a">v<tspan font-size="9" baseline-shift="sub">3</tspan></text>
+  <rect x="244" y="159" width="48" height="26" rx="4" fill="#bbf7d0" stroke="#15803d" stroke-width="1"/><text x="268" y="177" font-size="14" text-anchor="middle" fill="#0f172a">v<tspan font-size="9" baseline-shift="sub">4</tspan></text>
+  <rect x="300" y="159" width="48" height="26" rx="4" fill="#bbf7d0" stroke="#1d4ed8" stroke-width="3"/><text x="324" y="177" font-size="14" text-anchor="middle" fill="#0f172a">v<tspan font-size="9" baseline-shift="sub">5</tspan></text>
+  <line x1="324" y1="71" x2="324" y2="101" stroke="#1d4ed8" stroke-width="1.5" marker-end="url(#kvstep-blue)"/>
+  <text x="294" y="90" font-size="12" text-anchor="end" fill="#1d4ed8">k<tspan font-size="9" baseline-shift="sub">5</tspan>, v<tspan font-size="9" baseline-shift="sub">5</tspan>를 새로 계산해 붙임</text>
+  <rect x="446" y="104" width="48" height="26" rx="4" fill="#dbeafe" stroke="#1d4ed8"/><text x="470" y="122" font-size="14" text-anchor="middle" fill="#1e3a8a">q<tspan font-size="9" baseline-shift="sub">5</tspan></text>
+  <text x="470" y="148" font-size="12" text-anchor="middle" fill="#1d4ed8">저장하지 않음</text>
+  <path d="M349,57 C 420,57 470,70 470,100" fill="none" stroke="#1d4ed8" stroke-width="1.5" marker-end="url(#kvstep-blue)"/>
+  <line x1="444" y1="117" x2="352.0" y2="117" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvstep-arrow)"/>
+  <text x="396" y="112" font-size="12" text-anchor="middle" fill="#0f172a">① 내적</text>
+  <text x="212" y="148" font-size="12" text-anchor="middle" fill="#c2410c">q<tspan font-size="9" baseline-shift="sub">5</tspan>와 k<tspan font-size="9" baseline-shift="sub">1</tspan> … k<tspan font-size="9" baseline-shift="sub">5</tspan>의 내적 → softmax → 가중치 a<tspan font-size="9" baseline-shift="sub">1</tspan> … a<tspan font-size="9" baseline-shift="sub">5</tspan></text>
+  <line x1="350.0" y1="172" x2="442" y2="172" stroke="#0f172a" stroke-width="1.5" marker-end="url(#kvstep-arrow)"/>
+  <text x="396" y="167" font-size="12" text-anchor="middle" fill="#0f172a">② 가중합</text>
+  <rect x="446" y="159" width="48" height="26" rx="4" fill="#ffffff" stroke="#0f172a"/><text x="470" y="177" font-size="14" text-anchor="middle" fill="#0f172a">o<tspan font-size="9" baseline-shift="sub">5</tspan></text>
+  <text x="470" y="203" font-size="12" text-anchor="middle" fill="#64748b">다음 층으로 → 다음 토큰</text>
+  <text x="212" y="203" font-size="12" text-anchor="middle" fill="#c2410c">o<tspan font-size="9" baseline-shift="sub">5</tspan> = a<tspan font-size="9" baseline-shift="sub">1</tspan>v<tspan font-size="9" baseline-shift="sub">1</tspan> + … + a<tspan font-size="9" baseline-shift="sub">5</tspan>v<tspan font-size="9" baseline-shift="sub">5</tspan></text>
+  <rect x="60" y="240" width="16" height="16" rx="3" fill="#bbf7d0" stroke="#15803d" stroke-width="1"/><text x="82" y="253" font-size="13" fill="#0f172a">cache에서 읽기만 함</text>
+  <rect x="240" y="240" width="16" height="16" rx="3" fill="#bbf7d0" stroke="#1d4ed8" stroke-width="3"/><text x="262" y="253" font-size="13" fill="#0f172a">이번 스텝에 붙인 칸</text>
+  <rect x="410" y="240" width="16" height="16" rx="3" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1"/><text x="432" y="253" font-size="13" fill="#0f172a">새 토큰의 query</text>
+</svg>
+<figcaption>Decode 한 스텝에서 한 층의 attention. 새 토큰 the로는 query·key·value를 하나씩만 계산한다. key·value는 cache 뒤에 붙이고(파란 테두리), 위치 1–4의 key·value는 cache에서 읽기만 한다. Query는 이번 스텝의 출력을 만드는 데만 쓰고 저장하지 않는다. 그림은 head 하나만 그렸다.</figcaption>
+</figure>
+
+<Callout type="example">
+입력 1,000토큰에 출력 200토큰인 요청을 forward에 넣는 토큰 수로 세어 보자.
+Cache가 없으면 출력 토큰을 하나 만들 때마다 지금까지의 시퀀스 전체를 다시 넣어야 하므로,
+1,000, 1,001, …, 1,199토큰을 차례로 넣어 모두 $200\times1{,}000+(0+1+\dots+199)=219{,}900$토큰을 처리한다.
+Cache가 있으면 처음에 1,000토큰을 한 번 넣고 그 뒤로는 새 토큰 하나씩 199번 넣으므로 1,199토큰이면 된다.
+약 180배 차이이고, 출력이 길어질수록 차이는 더 커진다.
+</Callout>
+
 KV cache를 쓰면 생성 요청은 성격이 다른 두 단계, prefill과 decode로 나뉜다.[^survey]
 
-### 1-2. 두 단계의 역할
+### 1-3. 두 단계의 역할
 
 **Prefill.** 프롬프트의 토큰 $n$개를 한 번의 forward로 함께 처리해 모든 층의 key·value를 KV cache에 쓰고, 첫 출력 토큰을 고른다.
 $n$개 토큰이 함께 계산되므로 학습의 forward처럼 큰 행렬곱이 된다.
@@ -133,9 +206,8 @@ $n$개 토큰이 함께 계산되므로 학습의 forward처럼 큰 행렬곱이
 </figure>
 
 <Callout type="example">
-입력 1,000토큰에 출력 200토큰인 요청을 생각하자.
-Prefill은 forward 한 번에 1,000개 토큰을 처리하고 첫 출력 토큰을 낸다.
-나머지 199개 토큰은 decode forward 199번으로 하나씩 나온다.
+앞 예시에서 cache를 쓸 때 넣은 1,199토큰 가운데 1,000토큰은 prefill forward 한 번에 들어가고,
+나머지 199토큰은 decode forward 199번에 하나씩 들어간다.
 처리한 토큰 수로는 1,000 대 199로 prefill이 다섯 배 많지만,
 forward 횟수로는 1 대 199로 decode가 거의 전부다.
 토큰 하나에 드는 계산은 두 단계가 비슷하지만, forward 한 번에 담긴 일의 양은 크게 다르다.
@@ -143,16 +215,26 @@ forward 횟수로는 1 대 199로 decode가 거의 전부다.
 
 ## 2. 단계마다 다른 병목
 
-GPU에서 계산하려면 데이터를 칩 바깥의 HBM(high-bandwidth memory)에서 칩 안의 연산 장치로 읽어 와야 한다.
-칩 안의 SRAM(static random-access memory)은 작아서 8B 모델의 가중치를 담아 둘 수 없다.
+GPU는 계산을 하는 연산 장치와 데이터를 담는 메모리로 이루어지고, 메모리는 크기와 속도가 다른 두 층으로 나뉜다.
+
+| 구성 | 위치 | H100 SXM | 하는 일 |
+|---|---|---|---|
+| 연산 장치(SM의 Tensor Core 등) | GPU 칩 안 | SM 132개 | 행렬곱 같은 계산 |
+| SRAM(register, shared memory, L2 cache 등) | GPU 칩 안, 연산 장치 곁 | 모두 합쳐 약 120 MB | 지금 계산할 데이터를 잠시 둔다. 매우 빠르다 |
+| HBM | GPU 칩 바로 옆, 같은 패키지 안 | 80 GB, 초당 3.35 TB | 가중치와 KV cache를 모두 담는다 |
+
+SM(streaming multiprocessor)은 연산 장치를 묶은 단위이고, SRAM(static random-access memory)은 연산 장치 자체가 아니라 그 곁에 붙은 작고 빠른 메모리다.[^hopper]
+흔히 "GPU 메모리 80 GB"나 VRAM(video RAM)이라 부르는 것이 HBM(high-bandwidth memory)이다.[^h100]
+계산하려면 데이터를 HBM에서 SRAM을 거쳐 연산 장치로 읽어 와야 하는데,
+SRAM은 다 합쳐도 약 120 MB라 16 GB인 8B 모델의 가중치를 담아 둘 수 없다.
 그래서 forward를 한 번 할 때마다 가중치 전체를 HBM에서 다시 읽어 온다.
 GPU는 읽기와 계산을 겹쳐 진행하므로, forward 한 번의 시간은 대략 **읽는 시간**과 **계산하는 시간** 가운데 긴 쪽이 정한다.
 
 Prefill은 한 번 읽은 가중치를 $n$개 토큰에 함께 쓴다.
 프롬프트가 어느 정도 길면 계산하는 시간이 읽는 시간보다 길어진다.[^distserve]
-이런 단계를 계산이 병목이라는 뜻에서 **compute-bound**라 부른다.
+이렇게 computational cost가 시간을 정하는 단계를 **compute-bound**라 부른다.
 Decode는 같은 가중치를 다 읽어 와서 토큰 하나에만 쓴다.
-계산은 금방 끝나고 시간 대부분이 가중치와 KV cache를 읽는 데 든다.
+계산은 금방 끝나고 시간 대부분이 가중치와 KV cache를 읽는 데, 곧 memory access cost에 든다.
 이런 단계는 **memory-bound**다.
 
 <Callout type="example">
@@ -238,6 +320,7 @@ Decode에서 가중치를 여러 토큰에 함께 쓰는 대표적인 방법은 
 
 Batching으로 묶은 요청은 저마다 KV cache를 GPU 메모리에 두어야 한다.
 그래서 얼마나 많이 묶을 수 있는지는 메모리가 정한다.
+요청을 받아 batch로 묶고 모델을 실행하는 소프트웨어를 서빙 엔진이라 하며, 이 노트는 오픈소스 엔진 vLLM을 예로 든다.
 KV cache에 쓸 수 있는 공간은 엔진이 쓰도록 잡아 둔 GPU 메모리에서 가중치, activation, workspace(계산 중에 잠시 쓰는 버퍼)를 빼고 남은 만큼이다.
 Llama 3 8B를 GPU 한 대에 올려 그 숫자를 계산해 보자.
 
@@ -253,6 +336,10 @@ Embedding까지 포함한 Llama 3 8B의 파라미터는 약 8.03B개이고, BF16
 다른 하나는 pruning, low-rank factorization, distillation처럼 파라미터 수 자체를 줄이는 압축이다.
 
 ### 3-2. KV cache
+
+Head가 여러 개인 multi-head attention(MHA)은 head마다 key·value를 따로 만든다.
+Llama 3 8B는 query head 네 개가 key·value head(KV head) 하나를 함께 쓰는 GQA(grouped-query attention)라서, query head는 32개지만 KV head는 8개다.
+Cache에는 KV head의 key·value만 저장하므로 KV head 수가 cache 크기를 정한다.
 
 Llama 3 8B처럼 모든 층이 전체 문맥에 attention하는 모델에서 KV cache는 층마다, KV head마다, 지금까지의 모든 토큰에 대해 key와 value 벡터를 하나씩 저장한다.
 토큰 하나에 저장하는 원소 수에 원소당 바이트 수 $b$를 곱하면 토큰당 크기가 나온다($n_{kv}$는 KV head 수).
@@ -277,14 +364,14 @@ KiB(kibibyte)는 $2^{10}$ bytes, GiB(gibibyte)는 $2^{30}$ bytes로, $10^{9}$ by
 
 최대 문맥인 128K(131,072)토큰을 채운 요청 하나만으로도 KV cache가 가중치만큼 커지고,
 요청을 많이 묶으면 가중치를 쉽게 넘어선다.
-그나마 Llama 3 8B는 query head 네 개가 KV head 하나를 함께 쓰는 GQA(grouped-query attention)다.
-Query head마다 KV head를 따로 두는 MHA(multi-head attention)였다면 토큰당 512 KiB로 이 표의 네 배였다.
+이것도 GQA로 줄인 값이다.
+MHA처럼 query head마다 KV head를 따로 두었다면 토큰당 512 KiB로 이 표의 네 배였다.
 
 ### 3-3. 동시에 처리할 수 있는 요청 수
 
 가중치와 KV cache 말고도 실행 중의 activation과 workspace가 필요하다.
 학습과 달리 backward가 없어 층의 중간 결과를 다음 층으로 넘기면 버릴 수 있으므로 activation의 비중은 작다.
-vLLM 같은 서빙 엔진은 시작할 때 더미 입력으로 forward를 한 번 돌려(profile run) activation 메모리의 peak를 재고, 가중치와 그만큼을 뺀 나머지를 KV cache 공간으로 잡는다.[^vllm-worker]
+vLLM은 시작할 때 더미 입력으로 forward를 한 번 돌려(profile run) activation 메모리의 peak를 재고, 가중치와 그만큼을 뺀 나머지를 KV cache 공간으로 잡는다.[^vllm-worker]
 
 <Callout type="example">
 메모리 80 GB인 H100 SXM 한 대에 vLLM을 띄운다.
@@ -316,7 +403,7 @@ $$
 첫 글자가 뜨기까지의 대기와, 그 뒤 글자가 흘러나오는 속도다.
 생성한 토큰을 바로 스트리밍한다면 앞의 것은 주로 prefill이, 뒤의 것은 decode가 정한다.
 이를 나누어 재는 지연(latency) 지표가 다음 네 가지다.
-정의는 오픈소스 서빙 엔진 vLLM의 벤치마크 문서를 따른다.[^vllm-bench]
+정의는 vLLM의 벤치마크 문서를 따른다.[^vllm-bench]
 
 - <strong>TTFT(time to first token)</strong>는 요청을 보낸 시점부터 첫 출력 토큰을 받을 때까지의 시간이다.
   클라이언트 쪽에서 재므로 prefill 시간 말고도 요청이 서버 대기열에서 기다린 시간,

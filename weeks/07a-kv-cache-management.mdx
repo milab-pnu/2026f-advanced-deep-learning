@@ -20,7 +20,7 @@ Jiang 등의 서베이처럼 서빙 단계에서 KV cache를 다루는 방법만
 다룰 문제는 세 가지다.
 공간을 미리 잡아 두면 낭비가 생기고, 같은 prefix를 요청마다 다시 계산해 저장하면 중복이 생긴다.
 낭비와 중복을 없애도 full attention 층의 KV cache는 문맥 길이에 비례해 커진다.
-끝으로 sliding window 층이나 SSM(state space model) 층을 섞어 층마다 저장하는 상태가 다른 hybrid 모델에서 이 관리가 어떻게 달라지는지 본다.
+끝으로 층마다 저장하는 상태가 다른 hybrid 모델에서 이 관리가 어떻게 달라지는지 본다.
 
 ## 1. 연속 공간 할당의 낭비
 
@@ -90,7 +90,7 @@ Llama 3 8B에서 블록 하나는 $16\times128\ \text{KiB}=2\ \text{MiB}$다.
 연속 할당이 잡던 1 GiB 대신 38 MiB만 쓴다.
 </Callout>
 
-블록이 너무 작으면 kernel이 KV cache를 읽고 처리할 때 GPU의 병렬성을 충분히 쓰지 못할 수 있고,
+블록이 너무 작으면 GPU에서 연산을 실행하는 프로그램(kernel)이 KV cache를 읽고 처리할 때 GPU의 병렬성을 충분히 쓰지 못할 수 있고,
 너무 크면 마지막 블록의 빈칸이 커진다.
 ChatGPT 대화를 모은 ShareGPT의 입출력 길이로 만든 요청에서는 16–128토큰 블록의 토큰당 지연이 가장 낮았지만,
 지시 데이터 Alpaca처럼 시퀀스가 짧으면 32토큰보다 큰 블록에서 성능이 크게 떨어졌다.[^vllm]
@@ -112,9 +112,12 @@ block table에서는 여러 시퀀스의 logical 블록이 같은 physical 블�
 vLLM은 physical 블록마다 그 블록을 가리키는 시퀀스 수(reference count)를 두고,
 공유 중인 블록에 어느 한 시퀀스가 새 토큰을 써야 할 때만 그 블록을 복사한다.
 운영체제의 **copy-on-write**와 같은 방식이다.[^vllm]
-예를 들어 요청 A의 프롬프트로 sample 두 개를 만들면, 두 시퀀스가 physical 블록 7과 1을 함께 가리키고 두 블록의 reference count는 2다.
-한 sample이 블록 1의 빈 넷째 칸에 첫 출력 토큰을 쓰려 하면, vLLM은 블록 1을 새 블록에 복사해 그 sample에 주고 원래 블록의 count를 1로 낮춘다.
-꽉 찬 블록 7에는 쓰기가 일어나지 않으므로 두 sample이 계속 공유한다.
+
+<Figure src="https://arxiv.org/html/2309.06180v1/parallel-decoding.svg" alt="가운데에 GPU 메모리의 physical KV block 0부터 8까지가 세로로 놓이고, 왼쪽에 sample A1, 오른쪽에 sample A2의 logical KV block 두 개씩이 있다. 두 sample의 logical block 0 'Four score and seven'은 모두 physical block 7을 가리킨다. Sample A2의 logical block 1 'years ago our mothers'는 physical block 1을 가리킨다. Sample A1의 logical block 1 'years ago our fathers'에서 physical block 1로 가던 화살표는 점선으로 바뀌었고, 실선 화살표는 physical block 3을 가리킨다. 빨간 화살표가 physical block 1에서 block 3으로 내려가며 'Copy-on-write'라고 적혀 있고, block 1 옆 상자에는 'Ref count: 2 → 1'이 적혀 있다. A1이 쓴 'fathers' 칸은 노랑, A2가 쓴 'mothers' 칸은 초록이다." caption="Parallel sampling에서의 copy-on-write. 요청 A의 프롬프트로 만든 sample 두 개가 physical 블록 7과 1을 공유한다. A1이 블록 1의 빈칸에 쓰려 하면 vLLM은 블록 1을 블록 3으로 복사해 A1에 주고, 블록 1의 reference count를 2에서 1로 낮춘다. 꽉 찬 블록 7은 계속 공유한다." source="Kwon et al. (2023), Figure 8 · CC BY 4.0" wide />
+
+그림에서 A1은 첫 출력 토큰 'fathers'를 원래 블록이 아닌 복사본(블록 3)에 쓴다.
+그 뒤 A2는 count가 1이 된 블록 1에 복사 없이 'mothers'를 쓴다.
+꽉 찬 블록 7에는 쓰기가 일어나지 않으므로 두 sample이 끝까지 공유한다.
 
 공유로 줄어드는 메모리는 decoding 방식과 데이터에 따라 다르다.
 OPT-13B로 Alpaca를 처리한 실험에서 parallel sampling은 6.1–9.8%,
@@ -188,17 +191,17 @@ vLLM 문서의 예처럼 블록 크기가 4일 때 프롬프트 14토큰 가운�
 ### 3-3. RadixAttention
 
 SGLang의 RadixAttention은 cache를 **radix tree**로 관리한다.[^sglang]
-Tree의 각 간선(edge)은 토큰열을 나타내고, 뿌리(root)에서 어떤 노드까지의 경로가 하나의 prefix다.
+Tree의 각 edge는 토큰열을 나타내고, 맨 위 노드인 root에서 어떤 노드까지의 경로가 하나의 prefix다.
 새 요청이 오면 tree에서 가장 길게 일치하는 경로를 찾아 그 KV cache를 재사용하고,
 나머지 부분을 계산한 뒤 tree에 가지로 붙인다.
 SGLang 원논문 구현에서는 page(vLLM의 블록에 해당하는 단위)의 크기가 토큰 하나라서,
 vLLM과 달리 블록 경계와 상관없이 일치하는 토큰까지 재사용한다.[^sglang]
 현재 SGLang은 page를 여러 토큰으로 키울 수도 있고, 그때는 page 경계까지만 재사용한다.[^sglang-radix]
 
-<Figure src="https://raw.githubusercontent.com/lm-sys/lm-sys.github.io/bab34fa3e5ce63f32a3ca3cdddc1a52579f67b86/public/images/blog/sglang/radix_attn.jpg" alt="RadixAttention의 radix tree가 아홉 단계에 걸쳐 바뀌는 그림. (1) 빈 tree에서 시작해 (2) 'You are a helpful assistant. User: Hello! Assistant: Hi!' 대화가 하나의 가지로 들어간다. (3) 같은 대화에 'User: Solve this problem...'이 이어 붙는다. (4) 새 대화 'User: What can you do?'가 오자 시스템 프롬프트 부분에서 가지가 갈라진다. (5) 이 새 대화에 'User: Write a story...'가 이어 붙고, 메모리가 모자라 가장 오래 쓰이지 않은 잎이 evicted 표시와 함께 지워진다. (6) few-shot 예시 'Question 1: ... Answer 3:'으로 된 요청이 뿌리에서 새 가지로 들어온다. (7) 'Question 3:'까지 같은 요청 세 개가 그 부분을 공유하고 'What...', 'When...', 'How...'로 갈라진다. (8) 첫 대화가 'User: How about..?'까지 이어진 요청으로 다시 들어오면서, 메모리가 모자라 'What can you do?' 대화의 가지가 지워진다. (9) 같은 질문에 답을 더 sampling하는 요청이 오자 'What... Answer 3:'까지를 공유한 채 기존 답 하나와 새 답 세 개로 갈라지고, 이 요청에 쓸 공간을 내려고 첫 대화의 마지막 노드와 'When...', 'How...' 가지가 지워진다. 초록 노드는 새로 추가된 노드, 파란 노드는 이번 요청이 재사용한 노드, 주황 점선 노드는 지워진 노드다." caption="RadixAttention이 요청을 처리하며 radix tree를 키우고 지우는 과정. 초록은 새로 추가된 노드, 파랑은 재사용한 노드, 주황 점선은 지워진 노드다. 공통 prefix는 하나의 노드로 공유된다." source="Zheng et al. (2024), LMSYS 블로그 Fast and Expressive LLM Inference with RadixAttention and SGLang, Figure 4 · © 2023 LMSYS Org, MIT License" hero />
+<Figure src="https://raw.githubusercontent.com/lm-sys/lm-sys.github.io/bab34fa3e5ce63f32a3ca3cdddc1a52579f67b86/public/images/blog/sglang/radix_attn.jpg" alt="RadixAttention의 radix tree가 아홉 단계에 걸쳐 바뀌는 그림. (1) 빈 tree에서 시작해 (2) 'You are a helpful assistant. User: Hello! Assistant: Hi!' 대화가 하나의 가지로 들어간다. (3) 같은 대화에 'User: Solve this problem...'이 이어 붙는다. (4) 새 대화 'User: What can you do?'가 오자 시스템 프롬프트 부분에서 가지가 갈라진다. (5) 이 새 대화에 'User: Write a story...'가 이어 붙고, 메모리가 모자라 가장 오래 쓰이지 않은 leaf가 evicted 표시와 함께 지워진다. (6) few-shot 예시 'Question 1: ... Answer 3:'으로 된 요청이 root에서 새 가지로 들어온다. (7) 'Question 3:'까지 같은 요청 세 개가 그 부분을 공유하고 'What...', 'When...', 'How...'로 갈라진다. (8) 첫 대화가 'User: How about..?'까지 이어진 요청으로 다시 들어오면서, 메모리가 모자라 'What can you do?' 대화의 가지가 지워진다. (9) 같은 질문에 답을 더 sampling하는 요청이 오자 'What... Answer 3:'까지를 공유한 채 기존 답 하나와 새 답 세 개로 갈라지고, 이 요청에 쓸 공간을 내려고 첫 대화의 마지막 노드와 'When...', 'How...' 가지가 지워진다. 초록 노드는 새로 추가된 노드, 파란 노드는 이번 요청이 재사용한 노드, 주황 점선 노드는 지워진 노드다." caption="RadixAttention이 요청을 처리하며 radix tree를 키우고 지우는 과정. 초록은 새로 추가된 노드, 파랑은 재사용한 노드, 주황 점선은 지워진 노드다. 공통 prefix는 하나의 노드로 공유된다." source="Zheng et al. (2024), LMSYS 블로그 Fast and Expressive LLM Inference with RadixAttention and SGLang, Figure 4 · © 2023 LMSYS Org, MIT License" hero />
 
-메모리가 모자라면 <strong>가장 오래 쓰이지 않은 잎(leaf)</strong>부터 지운다.
-잎부터 지우면 여러 요청이 공유하는 조상 노드는 남아 계속 재사용된다.
+메모리가 모자라면 자식 노드가 없는 끝 노드인 leaf 가운데 **가장 오래 쓰이지 않은 것**부터 지운다.
+Leaf부터 지우면 여러 요청이 공유하는 조상 노드는 남아 계속 재사용된다.
 실행 중인 요청이 쓰고 있는 노드는 reference count가 0이 아니어서 지우지 않는다.
 vLLM과 마찬가지로 cache와 실행 중인 요청이 같은 메모리 공간을 나누어 쓰므로,
 cache를 위한 공간을 따로 떼어 둘 필요가 없다.[^sglang]
@@ -209,7 +212,7 @@ A10G GPU 한 대로 Llama-7B를 돌린 이 벤치마크에서 SGLang 전체 시�
 이 향상에는 RadixAttention의 cache 재사용 말고도 프로그램 안 병렬 실행과 빠른 제약 decoding의 효과가 섞여 있다.[^sglang]
 
 vLLM의 hash는 부모 블록의 hash를 이어 받으므로, page 크기가 같고 같은 블록이 cache에 남아 있다면 hash 조회도 tree 탐색과 같은 prefix를 찾는다.
-그래서 두 설계의 적중률 차이는 자료구조보다 page 크기, 무엇을 먼저 내보내는지(eviction), 요청을 어떤 순서로 처리하는지(scheduling)에서 주로 생긴다고 볼 수 있다.
+그래서 두 설계의 적중률 차이는 자료구조보다 page 크기, 무엇을 먼저 내보내는지, 요청을 어떤 순서로 처리하는지(scheduling)에서 주로 생긴다고 볼 수 있다.
 SGLang 원논문도 요청을 처리하는 순서만 바꿔도 적중률이 크게 달라질 수 있다고 지적했다.[^sglang]
 
 ## 4. 길이에 비례하는 cache 크기
@@ -262,6 +265,8 @@ Pooling은 점수가 높은 위치의 주변도 같이 뽑히게 해서,
 전화번호에서 국가 번호만 남는 식으로 정보가 끊기는 것을 줄인다.
 고른 위치의 key·value에 observation window 자체의 key·value를 이어 붙인 것이 압축된 KV cache다.
 
+<Figure src="https://arxiv.org/html/2404.14469v2/illustration.png" alt="왼쪽 사용자가 여러 요청이 섞인 긴 프롬프트를 보낸다. 앞부분에는 주황으로 칠한 'Help me analyze the Q4 report of this company...'와 이메일 다듬기, 선물 고르기, KV cache 질문 같은 다른 문장들이 있고, 마지막에 초록으로 칠한 'Can you tell me the details of R&D expense of Q4?'가 있다. 가운데 상자의 맨 위에는 층마다 겹쳐 그린 입력 KV(Input Sequence KVs)가 긴 앞부분(Prefix)과 초록의 끝부분(Obs. window)으로 나뉘어 있다. Obs. window로 attention 가중치를 계산하고(Attention Weight Calc.), 앞부분에서 중요한 위치를 투표해 고르면(Voting & Selecting Important Features) 둘째 줄처럼 앞부분 곳곳에 주황 칸이 표시된다. 이어 고른 칸을 묶고 Obs. window와 이어 붙이면(Clustering & Concatenating Features) 셋째 줄의 짧은 압축 KV(Compressed KVs)가 된다. 오른쪽 모델은 이 회사의 4분기 R&D 비용을 답한다." caption="SnapKV의 압축 과정. 프롬프트 끝의 observation window(Obs. window)가 앞부분에 준 attention 가중치로 head마다 남길 위치를 고른다. 그림의 Clustering 단계가 본문의 pooling으로, 점수가 높은 위치의 이웃까지 묶어 남긴 뒤 observation window와 이어 붙인다." source="Li et al. (2024), Figure 1 · CC BY 4.0" wide />
+
 <Callout type="example">
 프롬프트가 10토큰이고 마지막 2토큰을 observation window로 삼아, 앞 8토큰 가운데 3토큰만 남긴다고 하자.
 한 head에서 window의 두 토큰이 앞 위치에 준 attention 점수를 더한 값과,
@@ -293,8 +298,6 @@ head마다 남은 key·value를 차례로 새 블록에 채워 넣을 수 있다
 <Callout type="warning">
 실행 중인 요청의 eviction은 손실이 있는 압축이다.
 지운 토큰의 key·value는 처음부터 다시 prefill하지 않는 한, 나중에 그 토큰이 다시 중요해져도 되살릴 수 없다.
-StreamingLLM도 같은 성격이어서,
-생성이 무너지지 않게 할 뿐 밀려난 중간 토큰의 정보를 볼 수 있게 하지는 않는다.
 앞의 품질 결과도 특정 모델과 task에서 잰 것이다.
 압축 뒤에 다른 질문이 이어지는 대화처럼 어떤 토큰이 나중에 필요할지 prefill 시점에 알기 어려운 작업에서는 품질을 직접 확인한다.
 </Callout>
@@ -337,7 +340,12 @@ H100 SXM의 HBM(3.35 TB/s)에서 읽으면 약 1.3 ms다.
 ## 5. Hybrid 모델의 cache
 
 지금까지는 모든 층이 full attention이어서, 토큰이 하나 늘면 모든 층에 key·value가 한 칸씩 쌓이는 모델을 가정했다.
-Hybrid 구조의 모델들은 문맥 길이에 비례하는 이 크기를 모델 구조에서 줄이려고 층마다 다른 상태를 둔다.
+Sliding window attention 층에서는 각 토큰이 자신을 포함한 최근 $W$개 토큰에만 attention하므로, $W$개보다 오래된 토큰의 key·value는 그 층에서 다시 읽히지 않는다.
+Gemma 3는 이 층을 local, 모든 토큰을 보는 full attention 층을 global이라 부른다.[^gemma3]
+Linear attention 층과 Mamba 같은 SSM(state space model) 층은 과거 key·value를 모두 두는 대신,
+RNN(recurrent neural network)의 hidden state처럼 토큰마다 고정 크기의 상태 하나를 갱신하고 출력은 그 상태에서 읽는다.
+이 상태의 크기는 문맥 길이와 무관하지만, 과거를 압축해 덮어쓰므로 이전 시점의 상태로 되돌릴 수 없다.
+Hybrid 모델은 이런 층을 full attention 층과 섞어 쌓아, 문맥 길이에 비례하는 KV cache를 모델 구조에서 줄인다.
 
 | 층 종류 | 실행 중에 요청마다 두는 상태 | 크기 | 공간을 돌려줄 수 있는 때 |
 |---|---|---|---|
@@ -345,7 +353,7 @@ Hybrid 구조의 모델들은 문맥 길이에 비례하는 이 크기를 모델
 | Sliding window | 최근 $W$개 토큰의 key·value | $W$에서 멈춤 | Window 밖으로 밀려난 블록은 바로 |
 | Linear attention·SSM | 고정 크기의 상태 하나 | 문맥 길이와 무관 | 요청이 끝날 때 |
 
-Gemma 3처럼 sliding window(local) 층 다섯 개마다 full attention(global) 층 하나를 두고 window를 $W=1{,}024$토큰으로 잡은 모델이라면,
+Gemma 3처럼 sliding window 층 다섯 개마다 full attention 층 하나를 두고 window를 $W=1{,}024$토큰으로 잡은 모델이라면,
 32,768토큰 문맥에서 sliding window 층 하나의 KV cache는 full attention 층 하나의 32분의 1이다.[^gemma3]
 Sliding window 층 52개와 full attention 층 10개를 둔 Gemma 3 27B라면,
 전체 KV cache도 모든 층을 full attention처럼 쌓을 때의 약 19%면 된다($(10+52/32)/62\approx0.19$).[^vllm-hybrid]
@@ -354,6 +362,9 @@ Sliding window 층 52개와 full attention 층 10개를 둔 Gemma 3 27B라면,
 vLLM의 hybrid KV cache 관리자는 같은 종류의 층을 같은 수씩 묶어 group을 만들고,
 모든 group이 같은 byte 수의 블록을 한 메모리 pool에서 받아 쓰게 한다.[^vllm-hybrid]
 Group의 블록 하나에는 그 group의 모든 층이 한 칸씩 쓰므로, 층 하나가 쓰는 byte 수가 층 종류마다 같다면 group마다 층 수가 같아야 블록 크기도 같아진다.
+
+<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.31.0/docs/assets/design/hybrid_kv_cache_manager/basic_grouping_example.png" alt="표의 열은 토큰 구간 0-15, 16-31, 32-47, 48-63, 64-79, 80-95, 96-111이다. 첫 행 'block id of group 0 (full.0 - full.9)'에는 구간마다 블록 0부터 6까지가 차례로 들어 있다. 둘째 행 'block id of group 1 (sw.0 - sw.9)'은 앞의 다섯 구간이 '/'이고 80-95에 블록 7, 96-111에 블록 8이 있다. 셋째 행 'block id of group 2 (sw.10 - sw.19)'도 앞의 다섯 구간이 '/'이고 80-95에 블록 9, 96-111에 블록 10이 있다." caption="Group별 블록 할당 예. Full attention 층 10개와 sliding window 층 20개(W=32)를 둔 모델을 10층씩 group 세 개로 묶고, 블록 하나에 16토큰을 담는다. 112토큰 요청에서 full attention group은 모든 구간에 블록 7개(0–6)를 받고, 두 sliding window group은 최근 32토큰이 걸친 마지막 두 구간(80–111)에만 블록을 2개씩 받는다. '/'는 블록이 필요 없는 구간이다. 세 group이 한 pool에서 번호가 겹치지 않는 블록 11개를 나누어 받는다." source="vLLM Project (v0.31.0), Hybrid KV Cache Manager 설계 문서 · Apache-2.0" wide />
+
 앞의 Gemma 3 27B라면 group 하나를 10층으로 잡아 full attention group 하나와 sliding window group 여섯 개를 만들고,
 sliding window 층 52개로 다 채우지 못한 8자리는 빈 층으로 둔다.
 Mamba 같은 SSM 층과 linear attention 층을 묶어 recurrent 층이라 하자.
@@ -365,13 +376,19 @@ Prefix caching의 조건도 층 종류마다 달라진다.
 Full attention 층은 prefix의 모든 블록이 cache에 있어야 하지만,
 sliding window 층은 prefix의 마지막 $W-1$개 토큰을 담은 블록만 있으면 된다.[^vllm-hybrid]
 Window $W$에는 지금 계산할 토큰 자신도 들어가기 때문이다.
+
+<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.31.0/docs/assets/design/hybrid_kv_cache_manager/full_attn.png" alt="0부터 14까지 번호가 붙은 칸 15개가 한 줄로 놓여 있고, 0번부터 6번까지 앞의 일곱 칸이 파랗게 칠해져 있다." caption="Full attention 층의 prefix 재사용. 15토큰 프롬프트를 블록 하나가 1토큰인 칸으로 그렸고, 파란 칸이 cache에 남은 토큰이다. 앞에서부터 빠짐없이 이어진 0–6번만 남아 있으므로 7토큰까지 재사용한다." source="vLLM Project (v0.31.0), Hybrid KV Cache Manager 설계 문서 · Apache-2.0" wide />
+
+<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.31.0/docs/assets/design/hybrid_kv_cache_manager/sw_attn.png" alt="0부터 14까지 번호가 붙은 칸 15개가 한 줄로 놓여 있고, 2·3·4·5번, 8·9번, 11·12·13번 칸이 파랗게 칠해져 있다. 0·1번, 6·7번, 10번, 14번은 흰 칸이다." caption="Sliding window 층(W=4)의 prefix 재사용. 같은 15토큰 프롬프트에서 파란 칸만 cache에 남아 있다. 재사용할 길이 바로 앞의 W−1=3토큰만 있으면 되므로 2–4번으로 5토큰, 3–5번으로 6토큰, 11–13번으로 14토큰을 재사용할 수 있고, 가장 긴 14토큰을 택하면 14번만 새로 계산한다. 앞쪽 0–1번이 없어도 된다는 점이 full attention과 다르다." source="vLLM Project (v0.31.0), Hybrid KV Cache Manager 설계 문서 · Apache-2.0" wide />
+
 Recurrent 층은 사정이 더 까다롭다.
-상태가 지금까지의 모든 토큰을 고정 크기 하나로 압축한 값이라,
-나중 시점의 상태로는 중간 시점의 상태를 되돌려 얻을 수 없다.
-그래서 재사용하려면 그 시점의 상태가 따로 저장돼 있어야 한다.
-vLLM은 prefix caching을 켜면 recurrent 상태를 엔진의 한 스텝(forward 한 번)이 끝날 때만 저장한다.[^vllm-cacheconfig]
-이에 맞춰 긴 프롬프트의 prefill을 여러 스텝에 나누어 처리할 때는 각 조각이 블록 경계에서 끝나도록 자른다.[^vllm-sched]
-상태는 조각이 끝난 블록 경계에만 남고, 재사용도 그 경계까지만 한다.[^vllm-mamba]
+앞에서 본 것처럼 나중 시점의 상태로는 중간 시점의 상태를 되돌려 얻을 수 없으므로,
+재사용하려면 그 시점의 상태가 따로 저장돼 있어야 한다.
+vLLM에서 이 기능은 문서에 따라 지원 범위가 다르게 적혀 있다.
+Hybrid KV Cache Manager 설계 문서는 더 이른 commit을 기준으로 썼다고 밝히며, Mamba 층의 prefix caching을 아직 개발 중(work in progress)이라고 적는다.[^vllm-hybrid]
+반면 같은 버전의 설정 문서는 prefix caching을 켜면 기본으로 Mamba 층의 상태를 엔진 한 스텝(forward 한 번)의 마지막 토큰이 블록 경계에 놓일 때 저장한다고 설명한다.[^vllm-cacheconfig]
+Scheduler도 이에 맞춰 긴 프롬프트의 prefill을 여러 스텝에 나누어 처리할 때 각 조각이 블록 경계에서 끝나도록 자른다.[^vllm-sched]
+기능 문서에 따르면 이때 상태는 블록 경계에만 남으므로, prefix 재사용도 블록 경계에서만 이어 갈 수 있다.[^vllm-mamba]
 
 상태가 들어가도록 블록을 키운 만큼 재사용 단위도 거칠어진다.
 예를 들어 블록을 512토큰으로 키운 hybrid 모델(설명을 위한 가상의 값)에서, 앞 요청이 512토큰 경계의 상태를 저장해 두었고 새 요청과 앞 1,000토큰이 같다고 하자.

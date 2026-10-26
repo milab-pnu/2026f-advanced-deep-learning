@@ -25,7 +25,7 @@ GPU 메모리는 두 층으로 나눌 수 있다.
 
 - **최대 연산 속도**(peak FLOP/s): 초당 할 수 있는 부동소수점 연산(floating-point operation, FLOP) 수의 상한이다.
   곱셈과 덧셈을 각각 1 FLOP으로 센다.
-  H100 SXM의 BF16(bfloat16) Tensor Core는 dense 연산 기준 약 989 TFLOP/s다.[^h100]<Sidenote>NVIDIA의 사양표가 적는 1,979 TFLOP/s는 structured sparsity를 썼을 때의 값이다. NVIDIA가 Hopper 구조를 소개한 글은 dense 값과 sparsity 값을 1:2로 함께 적으므로, dense 연산은 그 절반으로 계산한다.[^hopper]</Sidenote>
+  H100 SXM의 BF16(bfloat16) Tensor Core는 dense 연산 기준 약 989 TFLOP/s다.[^h100]<Sidenote>NVIDIA의 사양표가 적는 1,979 TFLOP/s는 structured sparsity(2:4처럼 정해진 비율로 0을 두는 sparsity)를 썼을 때의 값이다. NVIDIA가 Hopper 구조를 소개한 글은 dense 값과 sparsity 값을 1:2로 함께 적으므로, dense 연산은 그 절반으로 계산한다.[^hopper]</Sidenote>
 - **메모리 대역폭**(memory bandwidth): 초당 HBM에서 읽고 쓸 수 있는 bytes의 상한이다.
   H100 SXM은 3.35 TB/s다.[^h100]
 
@@ -36,7 +36,7 @@ HBM에서 1 byte를 읽어 오는 동안 연산 장치는 약 295 FLOP을 할 �
 ### 1-2. Arithmetic intensity
 
 연산이 이 두 한계 가운데 어디에 걸리는지는 그 연산의 **arithmetic intensity**로 정해진다.
-수행한 FLOPs를 HBM과 주고받은 bytes로 나눈 값이다.[^survey]
+수행한 FLOPs를 HBM과 주고받은 bytes로 나눈 값이다.[^survey][^roofline]
 
 $$
 I=\frac{\text{FLOPs}}{\text{HBM과 주고받은 bytes}}\quad[\text{FLOP/byte}]
@@ -111,6 +111,7 @@ Ridge point보다 왼쪽에 있는 연산은 **memory-bound**, 오른쪽에 있�
 Roofline을 시간으로 바꾸면 계산이 더 쉬워진다.
 연산 하나의 계산량이 $F$ FLOPs, 데이터 이동량이 $B$ bytes라면,
 계산에는 적어도 $F/\text{peak}$, 데이터 이동에는 적어도 $B/\text{대역폭}$이 걸린다.
+앞의 것은 computational cost를, 뒤의 것은 memory access cost를 시간으로 나타낸 값이다.
 둘이 완전히 겹쳐도 전체 시간은 둘 중 큰 쪽보다 짧을 수 없다.
 
 $$
@@ -121,6 +122,7 @@ $$
 그래서 연산마다 이 하한을 구해 더한 $\sum_i\max(F_i/\text{peak},\,B_i/\text{대역폭})$를 스텝 시간의 하한으로 쓴다.
 
 실제 시간은 이 하한보다 길다.
+GPU에서 연산 하나를 실행하는 프로그램을 kernel이라 한다.
 Kernel은 한 연산 안에서도 계산과 데이터 이동을 완전히 겹치기 어렵고, 실제로 내는 대역폭과 FLOP/s도 사양값에 못 미친다.
 CPU(central processing unit)에서 kernel을 띄우는 비용과 여러 GPU 사이의 통신도 이 식에는 없다.
 그러므로 이 노트가 사양값 3.35 TB/s와 989 TFLOP/s로 구하는 시간은 이상적인 하한이고, 처리량은 이상적인 상한이다.
@@ -169,6 +171,9 @@ batch를 키워도 attention의 intensity는 오르지 않는다.
 요청 하나, 층 하나에서 문맥 길이가 $s$일 때를 계산해 보자.
 Head 차원을 $d_{\text{head}}$라 하면, query head 하나는 key $s$개와 내적하고($2sd_{\text{head}}$ FLOPs) value $s$개를 가중합한다($2sd_{\text{head}}$ FLOPs).
 GQA(grouped-query attention)에서는 query head $n_h$개를 KV head $n_{kv}$개에 나누어, query head $g=n_h/n_{kv}$개(그룹 크기)가 KV head 하나를 함께 쓴다.[^gqa]
+
+<Figure wide src="https://arxiv.org/html/2305.13245v3/images/gmq_architecture.png" alt="세 가지 attention의 head 공유 방식. 아래 줄에는 세 경우 모두 query head 8개가 있다. 왼쪽 multi-head는 key head와 value head가 8개씩이라 query head마다 자기 KV head가 있다. 가운데 grouped-query는 key head와 value head가 4개씩이고, 이웃한 query head 둘이 KV head 하나에 연결된다. 오른쪽 multi-query는 key head와 value head가 하나씩이고 query head 8개가 모두 그 하나에 연결된다." caption="Query head(파랑)가 KV head(빨강 key, 주황 value)를 나누어 쓰는 방식. 세 경우 모두 query head는 8개다. 가운데 grouped-query는 query head 둘이 KV head 하나를 함께 쓰므로 g=2이고, 왼쪽 multi-head는 g=1, 오른쪽 multi-query는 g=8이다. KV head 하나에 연결된 선이 많을수록 한 번 읽은 key·value를 더 많은 query head가 재사용한다." source="Ainslie et al. (2023), Figure 2 · CC BY 4.0" />
+
 그래서 KV head 하나를 읽는 동안 $4gsd_{\text{head}}$ FLOPs를 한다.
 읽는 데이터는 그 KV head의 key와 value, $2\cdot s\cdot d_{\text{head}}\cdot2$ bytes다.
 Query와 출력은 각각 $g\,d_{\text{head}}$ 크기라 문맥 $s$개분의 key·value에 비해 작으므로 뺐다.
@@ -186,17 +191,34 @@ Head를 공유하면 KV cache가 줄 뿐 아니라,
 한 번 읽은 key·value를 여러 query head가 재사용해 decode attention의 intensity가 올라간다.
 
 MLA(multi-head latent attention)에서는 이 효과가 훨씬 크다.
-MLA는 토큰마다 head별 key·value 대신 작은 latent 벡터 하나를 캐시한다.
-행렬 흡수(absorb) 경로에서는 이 latent를 key·value로 복원하지 않고, 모든 query head가 latent를 직접 읽어 계산한다.[^dsv2]
-모든 query head가 캐시 하나를 함께 쓰므로 $g$가 query head 수 전체인 셈이다.
+MLA는 토큰마다 모든 head가 함께 쓰는 압축된 벡터 하나만 cache하고, 모든 query head가 그 벡터를 직접 읽는다.[^dsv2]
+한 번 읽은 cache를 query head 전부가 재사용하므로 decode attention의 intensity가 수백까지 오른다.
 
-DeepSeek-V3로 계산해 보자.
-층마다 캐시된 토큰 하나는 latent 512차원과 RoPE(rotary position embedding) key 64차원을 합한 576개 원소로, BF16이면 1,152 bytes다.
-Inference 코드의 흡수 경로에서는 query head 128개가 이 캐시를 함께 읽어, head마다 576차원으로 점수를 계산하고 512차원 latent로 가중합을 한다.[^dsv3][^dsv3-code]
-그러면 캐시된 토큰 하나를 읽을 때 $2\cdot128\cdot(576+512)\approx2.8\times10^5$ FLOPs를 하므로,
+<Details summary="DeepSeek-V3로 계산한 MLA의 intensity">
+
+MLA는 층마다 토큰 하나에 512차원 latent 벡터 $c$를 cache하고, head별 key와 value는 $c$에 행렬을 곱해 만든다.
+Head 하나의 key를 $W^{UK}c$라 하면 점수는 다음처럼 바꿔 쓸 수 있다.
+
+$$
+q\cdot\left(W^{UK}c\right)=\left(W^{UK\top}q\right)\cdot c
+$$
+
+그래서 query에 $W^{UK\top}$를 먼저 곱해 두면 key를 복원하지 않고 $c$와 바로 내적할 수 있다.
+Value 쪽도 마찬가지로 $c$를 먼저 가중합하고 head별 행렬은 나중에 곱한다.
+이렇게 복원 행렬을 query와 출력 쪽 계산에 합쳐 두는 방법을 weight absorption이라 한다.
+
+위치 정보는 이렇게 합칠 수 없다.
+RoPE(rotary position embedding)는 key에 그 위치에 따라 다른 회전을 곱하므로, query에 미리 곱해 둘 행렬이 key 위치마다 달라져 하나로 합칠 수 없다.
+그래서 MLA는 RoPE를 적용한 64차원 key를 따로 만들어 함께 cache한다.
+
+결국 층마다 cache된 토큰 하나는 latent 512차원과 RoPE key 64차원을 합한 576개 원소로, BF16이면 1,152 bytes다.
+Inference 코드의 weight absorption 경로에서는 query head 128개가 이 576개 원소를 함께 읽어, head마다 576차원으로 점수를 계산하고 512차원 latent로 가중합을 한다.[^dsv3][^dsv3-code]
+그러면 cache된 토큰 하나를 읽을 때 $2\cdot128\cdot(576+512)\approx2.8\times10^5$ FLOPs를 하므로,
 intensity는 $2.8\times10^5/1152\approx240$이고 ridge point에 가깝다.
-Key·value를 복원해 head별로 캐시하는 방식보다 head당 계산은 늘지만,
+Key·value를 복원해 head별로 cache하는 방식보다 head당 계산은 늘지만,
 memory-bound인 decode에서는 그 늘어난 계산이 놀던 연산 장치를 채우는 셈이다.
+
+</Details>
 
 ### 3-3. Prefill
 
@@ -244,11 +266,12 @@ Activation 이동은 작아서 뺐다.
 Batch를 1에서 192로 늘리면 스텝 시간은 약 4배가 되지만 처리량은 약 46배가 된다.
 가중치 16 GB를 한 번 읽어 192개 요청에 나누어 쓰기 때문이다.
 
-표의 모든 행에서 스텝 시간이 읽기 시간과 같다.
-이 batch 범위에서는 선형층과 attention이 모두 memory-bound라는 뜻이다.
+표의 모든 행에서 스텝 시간은 읽기 시간과 같다.
+이 batch 범위에서는 선형층의 intensity가 약 192 이하이고 attention은 4라서, 두 연산 모두 ridge point 295보다 아래에 있기 때문이다.
+연산마다 하한이 읽기 시간으로 정해지므로, 그 하한을 더한 스텝 시간도 전체 읽기 시간과 같아진다.
 
 Batch 192에서도 전체 intensity는 49로 ridge point 295에 한참 못 미친다.
-선형층만 보면 intensity는 약 192인데도 전체가 49에 머무는 것은 KV cache를 읽는 데이터가 batch에 비례해 함께 늘기 때문이다.
+Activation을 빼고 선형층만 보면 intensity는 약 192인데도 전체가 49에 머무는 것은 KV cache를 읽는 데이터가 batch에 비례해 함께 늘기 때문이다.
 Batch 192에서 읽는 67.6 GB 가운데 51.5 GB가 KV cache다.
 Batch를 키울수록 읽는 데이터에서 KV cache의 비중이 커지고, 앞에서 본 것처럼 그 부분의 intensity는 4에 묶여 있다.
 
@@ -293,7 +316,7 @@ $$
 $$
 
 Compute-bound인 prefill의 효율은 MFU로 본다.
-앞의 prefill 예처럼 2,048토큰 프롬프트를 69 ms에 prefill했다면 처리 속도는 초당 약 29,700토큰이고 MFU는 $\frac{29700\times2\times8.03\times10^9}{989\times10^{12}}\approx48\%$다.
+앞의 prefill 예처럼 2,048토큰 프롬프트를 69 ms에 prefill했다면 처리량은 초당 약 29,700토큰이고 MFU는 $\frac{29700\times2\times8.03\times10^9}{989\times10^{12}}\approx48\%$다.
 
 ### 5-2. MBU
 
@@ -326,14 +349,14 @@ FLOPs나 bytes를 줄이거나, 같은 bytes로 더 많은 일을 해 점을 오
 
 | 기법 | Roofline에서의 효과 |
 |---|---|
-| GQA·MLA | 여러 query head가 같은 KV를 함께 읽어 decode attention의 intensity를 GQA는 $g$로, MLA의 흡수 경로는 그보다 훨씬 높게 올린다 |
+| GQA·MLA | 여러 query head가 같은 KV를 함께 읽어 decode attention의 intensity를 GQA는 $g$로, MLA는 weight absorption을 쓰면 그보다 훨씬 높게 올린다 |
 | 양자화(quantization) | 가중치와 KV cache를 낮은 비트로 저장하면 읽는 bytes가 줄어 memory-bound 스텝의 하한이 낮아진다. 가중치와 activation을 모두 하드웨어가 지원하는 저정밀 형식으로 계산하면 peak도 높아진다 |
-| Pruning·low-rank·distillation | 모델을 작게 만들어 FLOPs와 bytes를 함께 줄인다. Unstructured pruning은 희소 형식과 kernel이 있어야 효과가 난다 |
-| KV cache 관리 | 낭비와 중복을 없애 같은 메모리에 더 큰 batch를 넣는다. 중요도가 낮은 과거 토큰의 KV를 지우는 eviction은 읽는 KV cache bytes도 줄인다 |
+| Pruning·low-rank·distillation | 덜 중요한 가중치를 없애는 pruning, 큰 행렬을 작은 행렬 두 개의 곱으로 근사하는 low-rank, 큰 모델의 출력을 작은 모델이 따라 하도록 학습하는 distillation이다. 모델을 작게 만들어 FLOPs와 bytes를 함께 줄인다. 가중치를 위치와 상관없이 하나씩 없애는 unstructured pruning은 희소 형식과 그에 맞는 kernel이 있어야 효과가 난다 |
+| KV cache 관리 | cache 공간을 필요한 만큼씩 나누어 주고 같은 prefix의 cache를 요청끼리 공유해, 낭비와 중복을 없애고 같은 메모리에 더 큰 batch를 넣는다. 중요도가 낮은 과거 토큰의 KV를 지우는 eviction은 읽는 KV cache bytes도 줄인다 |
 | Batching | 가중치 bytes를 여러 요청에 나누어 선형층의 점을 오른쪽으로 옮긴다 |
-| Speculative decoding | 가중치를 한 번 읽어 토큰 여러 개를 검증해 decode의 점을 오른쪽으로 옮긴다 |
-| Kernel fusion·tiling | 중간값의 HBM 왕복과 재읽기를 줄여 점을 오른쪽으로 옮긴다 |
-| 작업 분배·실행 중첩 같은 그 밖의 kernel 최적화 | FLOPs와 bytes는 거의 그대로라 점은 제자리에 가깝고, 실제 성능을 지붕에 가깝게 올린다 |
+| Speculative decoding | 작은 모델이 다음 토큰 여러 개를 먼저 제안하고 원래 모델이 forward 한 번으로 한꺼번에 검증하는 방법이다. 가중치를 한 번 읽어 토큰 여러 개를 검증하므로 decode의 점을 오른쪽으로 옮긴다 |
+| Kernel fusion·tiling | 여러 연산을 kernel 하나로 합치는 kernel fusion과, 데이터를 SRAM에 들어가는 작은 블록(tile)으로 나누어 처리하는 tiling이다. 중간값의 HBM 왕복과 재읽기를 줄여 점을 오른쪽으로 옮긴다 |
+| 작업 분배·실행 중첩 같은 그 밖의 kernel 최적화 | 연산 장치들에 일을 고르게 나누고 데이터 이동과 계산을 겹쳐 실행하는 최적화다. FLOPs와 bytes는 거의 그대로라 점은 제자리에 가깝고, 실제 성능을 지붕에 가깝게 올린다 |
 
 같은 기법도 스텝이 어느 지붕 아래 있느냐에 따라 효과가 다르다.
 예를 들어 계산은 BF16으로 두고 가중치만 INT4(4-bit 정수)로 저장하면 batch 1 스텝에서 읽을 가중치가 16 GB에서 약 4 GB로 줄어든다.

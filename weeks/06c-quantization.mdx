@@ -22,7 +22,7 @@ Mixed precision 학습에서는 FP32(32-bit floating point)와 BF16 같은 부�
 양자화는 실숫값을 이보다 더 적은 bits로 표현할 수 있는 값의 집합(격자)에 대응시킨다.
 가장 기본적인 균일 양자화는 등간격의 정수 격자를 쓴다.
 간격(scale) $s$와 영점(zero-point) $z$로 실숫값 $x$를 $b$-bit 정수로 바꾸고,
-계산에 쓸 때 다시 실숫값으로 되돌린다.[^nagel]
+계산에 쓸 때 다시 실숫값으로 되돌린다(dequantize).[^nagel]
 
 $$
 x_{\text{int}}=\operatorname{clamp}\!\left(\left\lfloor \frac{x}{s}\right\rceil+z;\ 0,\ 2^b-1\right),
@@ -32,10 +32,12 @@ $$
 
 $\lfloor\cdot\rceil$는 가장 가까운 정수로의 반올림이다.
 반올림 오차는 $[-s/2,\,s/2]$ 안에 있고, 범위를 벗어난 값은 잘린다(clipping).
-위 식은 영점을 두고 $0$부터 $2^b-1$까지의 부호 없는 정수를 쓰는 비대칭(asymmetric) 형식으로,
+위 식은 zero-point를 두고 $0$부터 $2^b-1$까지의 부호 없는 정수를 쓰는 비대칭(asymmetric) 형식으로,
 한쪽으로 치우친 값의 범위를 알뜰하게 쓴다.
-영점을 0으로 두고 0을 중심으로 한 부호 있는 정수 범위로 자르는 대칭(symmetric) 양자화는 계산이 단순해 가중치에 흔히 쓰인다.[^nagel]
+Zero-point를 0으로 두고 0을 중심으로 한 부호 있는 정수 범위로 자르는 대칭(symmetric) 양자화는 계산이 단순해 가중치에 흔히 쓰인다.[^nagel]
 대칭 INT4라면 $-8$부터 $7$까지의 정수를 쓰고, 보통 $s=\max\lvert x\rvert/7$로 정한다.
+
+<Figure src="https://arxiv.org/html/2106.08295v1/RoundingSchemes.svg" alt="8-bit 균일 양자화 격자 세 가지를 수직선 위의 파란 눈금으로 그린 그림. 위 왼쪽 Symmetric signed는 실숫값 0을 가운데 두고 정수 −128부터 127까지의 눈금이 간격 s로 놓이며, 실숫값은 s·x_int8이다. 위 오른쪽 Symmetric unsigned는 실숫값 0에서 시작해 정수 0부터 255까지의 눈금이 max까지 이어진다. 아래 Asymmetric은 정수 0이 실숫값 min=−sz에, 정수 255가 max에 놓이고, 실숫값 0은 그 사이의 정수 z에 대응한다. 실숫값은 s(x_uint8−z)로 계산한다." caption="8-bit의 세 가지 균일 격자. 대칭(위 왼쪽)은 실숫값 0이 정수 0에 놓이고 격자가 0을 중심으로 펼쳐진다. 비대칭(아래)은 zero-point z만큼 격자를 옮겨 정수 0부터 255까지를 실제 값의 범위 min부터 max까지에 맞춘다. 그림의 s와 z는 위 식의 s, z와 같다." source="Nagel et al. (2021), Figure 3 · CC BY 4.0" />
 
 <Callout type="example">
 가중치 네 개 $w=(0.12,\,-0.50,\,0.33,\,0.04)$를 대칭 INT4로 양자화하자.
@@ -51,6 +53,10 @@ $s=4.0/7\approx0.571$로 커져,
 </Callout>
 
 ### 1-2. 양자화 단위
+
+선형층에 들어가는 activation은 토큰×hidden 차원의 행렬이고,
+이 행렬의 열, 곧 hidden 차원 하나를 channel이라 부른다.
+가중치 행렬에서는 입력 차원 하나를 입력 channel, 출력 차원 하나를 출력 channel이라 부른다.
 
 예시가 보여 주듯 scale을 몇 개의 값이 함께 쓰느냐, 곧 양자화 단위(granularity)가 오차를 크게 좌우한다.[^survey]
 
@@ -81,13 +87,16 @@ static은 그 비용이 없는 대신 미리 잰 범위를 벗어난 값이 잘�
 이렇게 미리 흘려 보는 대표 입력을 **calibration 데이터**라 한다.
 학습을 마친 모델을 사후에 양자화하는 방식을 PTQ(post-training quantization), 학습 과정에 양자화를 넣는 방식을 QAT(quantization-aware training)라 한다.
 GPTQ, AWQ(activation-aware weight quantization), SmoothQuant 같은 대표적인 PTQ 방법은 calibration 데이터로 activation의 통계를 잰다.
-그래서 calibration 데이터는 실제로 들어올 입력과 비슷한 편이 좋다.[^awq]
+그래서 양자화 결과가 calibration 데이터의 분포에 영향을 받는다.
+AWQ 논문의 실험(OPT-6.7B, INT3)에서는 calibration과 평가에 같은 분포의 데이터를 쓸 때 가장 좋았다.
+분포가 다를 때 AWQ는 perplexity가 0.5–0.6 오르는 데 그쳤지만,
+가중치를 직접 고치는 GPTQ는 2.3–4.9 나빠져 calibration 분포에 특히 민감했다.[^awq]
 
 ### 1-4. 두 가지 쓰임
 
 양자화를 inference에 쓰는 방식은 크게 둘이다.
 하나는 **가중치만** 낮은 bits로 저장하고,
-계산할 때 GPU(graphics processing unit) kernel 안에서 FP16(16-bit floating point)이나 BF16으로 되돌려 16-bit 행렬곱을 하는 weight-only 양자화다.
+계산할 때 GPU(graphics processing unit) kernel 안에서 FP16(16-bit floating point)이나 BF16으로 dequantize해 16-bit 행렬곱을 하는 weight-only 양자화다.
 가중치 4-bit, activation 16-bit라는 뜻에서 W4A16처럼 부른다.
 다른 하나는 가중치와 **activation을 모두** 낮은 bits로 바꿔 INT8(8-bit integer)이나 FP8(8-bit floating point) 행렬곱을 직접 하는 weight-activation 양자화로,
 W8A8처럼 부른다.
@@ -104,18 +113,18 @@ $$
 그래서 합은 정수끼리의 곱셈과 덧셈으로 하고, 마지막에 결과 원소마다 scale 두 개를 곱하면 된다.
 반대로 입력 channel $k$마다 scale을 두면 그 scale이 합 안에 남아, 정수 행렬곱 하나로 계산할 수 없다.[^nagel]
 
-<Figure src="https://arxiv.org/html/2409.16694v3/fig_matmul_process.png" alt="Gong 등의 서베이 Figure 5. (a)는 가중치를 미리 양자화해 4-bit 값 8개를 32-bit 정수 하나에 묶어 두는 준비 과정으로, 32-bit 원소 대비 저장 공간이 약 8배 줄어든다. (b)는 weight-only 양자화의 실행 흐름이다. 묶인 가중치를 GPU 메모리에서 레지스터로 읽어 와 FP16으로 되돌린(dequantize) 뒤, FP16 activation과 함께 FP16 행렬곱 kernel로 계산한다. 왼쪽 시간축에서 가중치를 읽는 구간은 빨라지고 되돌리는 구간은 느려진다. (c)는 weight와 activation을 모두 양자화하는 흐름으로, activation도 레지스터에서 4-bit로 양자화한 뒤 정수 행렬곱 kernel로 계산하고 결과만 FP16으로 바꾼다." caption="Weight-only 양자화(b)는 가중치를 읽는 시간을 줄이는 대신 kernel 안에서 가중치를 되돌리는 시간이 들고, weight-activation 양자화(c)는 행렬곱 자체를 낮은 정밀도의 연산 장치로 한다." source="Gong et al. (2025), Figure 5 · CC BY 4.0" hero />
+<Figure src="https://arxiv.org/html/2211.10438v7/quant_scheme.svg" alt="Activation X(토큰 T × 입력 channel C_i, 초록)와 가중치 W(입력 channel C_i × 출력 channel C_o, 노랑)의 곱을 두 가지 양자화 단위로 그린 그림. (a) per-tensor 양자화에서는 X와 W가 각각 작은 사각형 하나로 표시된 scale Δ_X, Δ_W 하나씩을 쓴다. (b)에서는 X 왼쪽에 길이 T의 세로 막대 Δ_X가 붙어 토큰(행)마다 scale을 두는 per-token 양자화를, W 위에 길이 C_o의 가로 막대 Δ_W가 붙어 출력 channel(열)마다 scale을 두는 per-channel 양자화를 나타낸다. 빨간 점선이 X의 한 행과 W의 한 열을 묶는다." caption="그림의 Δ는 본문의 scale s다. (b)처럼 토큰 T마다, 출력 channel C_o마다 둔 scale은 합의 바깥 축에 있어 합 밖으로 꺼낼 수 있다. 반면 합을 도는 축인 입력 channel C_i에 scale을 두면 합 밖으로 꺼낼 수 없다." source="Xiao et al. (2023), Figure 3 · CC BY 4.0" />
 
 두 방식이 줄이는 비용은 다르다.
 앞에서 roofline으로 보았듯 weight-only는 읽는 가중치 bytes를 줄일 뿐 계산량은 그대로이고,
-여기에 되돌리는 계산이 더해진다.
+여기에 dequantize 계산이 더해진다.
 그래서 가중치 읽기가 스텝을 지배하는 decode, 특히 batch가 작을 때 효과가 크다.
 Weight-activation 양자화는 행렬곱을 BF16보다 빠른 저정밀 연산 장치로 하므로,
 긴 prefill처럼 행렬곱이 compute-bound인 경우에도 빨라질 수 있다.
 Zhou 등의 서베이는 AWQ 4-bit 가중치로 Llama-2를 실험해,
-weight-only가 decode를 크게 빠르게 하지만 prefill에서는 되돌리는 비용 때문에 오히려 느려질 수 있고,
+weight-only가 decode를 크게 빠르게 하지만 prefill에서는 dequantize 비용 때문에 오히려 느려질 수 있고,
 batch와 입력이 커질수록 이득이 줄어든다고 정리했다.[^zhou]
-가중치를 되돌리는 계산은 batch가 작을 때는 놀던 연산 장치가 맡지만,
+가중치를 dequantize하는 계산은 batch가 작을 때는 놀던 연산 장치가 맡지만,
 batch가 커져 연산 장치가 바빠지면 그 자체가 비용이 되기 때문이다.
 
 ## 2. Weight-activation 양자화와 outlier
@@ -123,17 +132,19 @@ batch가 커져 연산 장치가 바빠지면 그 자체가 비용이 되기 때
 ### 2-1. LLM.int8()
 
 8-bit 정도면 반올림만 해도 충분할 것 같지만, 큰 LLM에서는 그렇지 않았다.
-Dettmers 등은 activation에 **outlier feature**가 나타난다는 것을 발견했다.[^llmint8]
-다른 값보다 훨씬 큰 값이 여러 층과 토큰에 걸쳐 같은 hidden 차원에 반복해 나타나는 현상으로,
-6.7B 모델에서는 이런 값이 단 6개의 hidden 차원에 몰려 있었다.
+Dettmers 등은 activation의 몇몇 channel에 다른 값보다 훨씬 큰 값이 몰린다는 것을 발견했다.[^llmint8]
+이런 값은 여러 층과 토큰에 걸쳐 같은 channel에 반복해 나타나며, 원논문은 이를 outlier feature라 불렀다.
+6.7B 모델에서는 이런 값이 단 6개의 channel에 몰려 있었다.
 앞의 균일 양자화 예시처럼,
 이런 값이 있는 행렬을 per-tensor나 per-token으로 양자화하면 나머지 값의 정밀도가 무너진다.
-원논문은 이 outlier 차원들을 0으로 만들면 성능이 크게 떨어진다는 것도 보여,
+원논문은 이 outlier channel들을 0으로 만들면 성능이 크게 떨어진다는 것도 보여,
 단순히 잘라 낼 수 있는 값이 아님을 확인했다.
 
 LLM.int8()의 해법은 **나누어 계산하기**다.
-Outlier가 있는 차원(전체 값의 약 0.1%)은 FP16 행렬곱으로,
+Outlier가 있는 channel(전체 값의 약 0.1%)은 FP16 행렬곱으로,
 나머지 99.9%는 INT8 행렬곱으로 계산한 뒤 결과를 더한다.[^llmint8]
+
+<Figure src="https://arxiv.org/html/2208.07339v2/method2_horizontal.svg" alt="LLM.int8()의 계산 흐름도. 왼쪽에 FP16 activation X(3행 5열)와 가중치 W(5행 2열)가 있고, X의 둘째와 넷째 열(45, 12, 37과 −17, −63, −83)과 그에 곱해지는 W의 둘째와 넷째 행이 노란 outlier로 칠해져 있다. 위쪽 상자 8-bit Vector-wise Quantization은 나머지 하늘색 값만 모아 (1) X의 행마다 최대 절댓값 C_x(2, 3, 1)와 W의 열마다 최대 절댓값 C_w(1, 2)를 구하고, (2) X_F16·(127/C_x)=X_I8, W_F16·(127/C_w)=W_I8로 양자화한 뒤, (3) INT8 행렬곱으로 Out_I32를 얻고, (4) Out_I32·(C_x⊗C_w)/(127·127)로 dequantize해 FP16 결과를 얻는다. 아래쪽 상자 16-bit Decomposition은 노란 outlier 열과 행만 모아 FP16 행렬곱을 한다. 두 결과를 더해 Out_FP16을 낸다." caption="노란 outlier channel(X의 열과 거기에 곱해지는 W의 행)은 아래쪽 FP16 행렬곱으로, 나머지는 위쪽에서 토큰마다(X의 행), 출력 channel마다(W의 열) 대칭 INT8로 양자화해 정수 행렬곱을 한다. 그림의 127/C는 본문의 1/s에 해당한다. 최대 절댓값 C를 정수 127에 맞추므로 s=C/127이다." source="Dettmers et al. (2022), Figure 2 · CC BY 4.0" wide />
 이것으로 BLOOM-176B를 성능 손실 없이 8-bit로 돌려 메모리를 1.96배 줄였다.
 다만 행렬을 둘로 나누어 따로 계산하는 부담 때문에 속도는 거의 빨라지지 않았고, 오히려 조금 느려지기도 했다.
 
@@ -159,7 +170,12 @@ $$
 $X_j$는 calibration 입력에서 잰 activation의 $j$번째 입력 channel, $W_j$는 거기에 곱해지는 가중치의 $j$번째 행이다.
 $\alpha$는 어려움을 얼마나 옮길지를 정하고,
 OPT와 BLOOM에서는 $\alpha=0.5$가 균형점이었다.[^smoothquant]
-Activation을 나누는 연산은 앞 층의 LayerNorm(layer normalization)이나 선형층에 미리 합쳐 둘 수 있어 실행 중 비용이 거의 없다.
+Activation을 나누는 연산은 실행 전에 앞 층에 합쳐 둔다.
+앞 층이 LayerNorm(layer normalization)이나 RMSNorm이면 정규화 뒤 channel마다 곱하는 학습 배율 $\gamma_j$를 $s_j$로 나누어 두고,
+앞 층이 선형층이면 그 가중치의 해당 열을 $s_j$로 나누어 둔다.
+그래서 실행 중 비용이 거의 없다.
+
+<Figure src="https://arxiv.org/html/2211.10438v7/transform.png" alt="SmoothQuant 변환을 작은 정수 행렬로 보인 그림. 왼쪽 Original에서 activation X는 2행 4열(1, −16, 2, 6 / −2, 8, −1, −9)이고, 아래 점선 칸에 열마다의 최대 절댓값 (2, 16, 2, 9)가 있다. 가중치 W는 4행 3열이고 오른쪽 점선 칸에 행마다의 최대 절댓값 (2, 1, 2, 1)이 있다. 오른쪽 SmoothQuant에서는 s=√(max|X|/max|W|)로 구한 s=(1, 4, 1, 3)이 점선 칸에 있고, X̂=X·diag(s)⁻¹은 1, −4, 2, 2 / −2, 2, −1, −3이 되며, Ŵ=diag(s)·W는 둘째 행이 4, −4, −4, 넷째 행이 −3, −3, 3으로 커진다." caption="α=0.5일 때의 SmoothQuant. X의 둘째 channel은 최대 절댓값이 16이고 거기에 곱해지는 W의 둘째 행은 1이라 s=√(16/1)=4다. 그 channel을 4로 나누고 W의 그 행에 4를 곱하면, activation의 channel별 최댓값 가운데 가장 큰 값이 16에서 4로 줄고 그만큼 가중치 행이 커진다. 행렬곱의 결과는 그대로다." source="Xiao et al. (2023), Figure 5 · CC BY 4.0" />
 
 <Callout type="example">
 입력 channel $j$의 activation 최댓값이 64, 그 channel에 곱해지는 가중치의 최댓값이 0.25라고 하자.
@@ -170,7 +186,7 @@ $\alpha=0.5$이면 $s_j=\sqrt{64}/\sqrt{0.25}=8/0.5=16$이다.
 그 대가로 가중치 행 하나의 범위가 커진다.
 </Callout>
 
-<Figure src="https://arxiv.org/html/2211.10438v7/aw-dist-long.png" alt="SmoothQuant 논문의 Figure 4. OPT-13B 한 층의 activation과 가중치 크기를 3차원으로 그린 네 그림이다. 첫째, 원래 activation은 몇몇 channel에서 값이 70에 이르는 빨간 벽처럼 솟아 있고 나머지는 2 이하로 낮다. 둘째, smoothing 후 activation은 모든 channel이 10 이하로 고르다. 셋째, 원래 가중치는 전체가 평평하다. 넷째, smoothing 후 가중치는 일부 입력 channel에 작은 봉우리가 생겼지만 여전히 낮다. 위쪽 화살표는 양자화의 어려움을 activation에서 가중치로 옮긴다는 뜻이다." caption="SmoothQuant 전후의 activation(왼쪽 두 그림)과 가중치(오른쪽 두 그림). Activation의 outlier channel이 평평해지는 대신 가중치에 작은 봉우리가 생긴다." source="Xiao et al. (2023), Figure 4 · CC BY 4.0" hero />
+<Figure src="https://arxiv.org/html/2211.10438v7/aw-dist-long.png" alt="SmoothQuant 논문의 Figure 4. OPT-13B 한 층의 activation과 가중치 크기를 3차원으로 그린 네 그림이다. 첫째, 원래 activation은 몇몇 channel에서 값이 70에 이르는 빨간 벽처럼 솟아 있고 나머지는 2 이하로 낮다. 둘째, smoothing 후 activation은 모든 channel이 10 이하로 고르다. 셋째, 원래 가중치는 전체가 평평하다. 넷째, smoothing 후 가중치는 일부 입력 channel에 작은 봉우리가 생겼지만 여전히 낮다. 위쪽 화살표는 양자화의 어려움을 activation에서 가중치로 옮긴다는 뜻이다." caption="SmoothQuant 전후의 activation(왼쪽 두 그림)과 가중치(오른쪽 두 그림). Activation의 outlier channel이 평평해지는 대신 가중치에 작은 봉우리가 생긴다." source="Xiao et al. (2023), Figure 4 · CC BY 4.0" wide />
 
 이렇게 모든 선형층의 행렬곱을 INT8로 하면서도 정확도를 유지했고,
 A100 80GB에서 NVIDIA의 inference 라이브러리 FasterTransformer로 잰 context(prefill) 단계에서 최대 1.56배 빨라지고 메모리를 약 2배 줄였으며,
@@ -206,8 +222,16 @@ $$
 회전 없이는 0이 되었던 작은 값들이 0.11 오차 안에서 살아난다.
 </Callout>
 
-이 회전은 대부분 앞뒤 가중치에 미리 곱해 둘 수 있어 실행 중 비용이 거의 없다.
-가중치에 합칠 수 없는 몇 곳에서만 실행 중에 빠른 Hadamard 변환을 한다.
+QuaRot은 이 회전을 층 사이를 흐르는 residual stream에 한 번 건다.
+Residual stream은 각 층이 입력에 자기 출력을 더해 다음 층으로 넘기는 hidden 벡터의 흐름이다.
+이 흐름에서 값을 읽는 선형층의 가중치 $W$는 $Q^\top W$로, 흐름에 값을 더하는 선형층의 가중치 $W'$는 $W'Q$로 미리 바꿔 둔다.
+그러면 흐름에는 늘 회전된 값이 흐르고, 각 행렬곱에서 $Q$와 $Q^\top$이 상쇄되어 결과는 회전 전과 같다.
+그 사이의 RMSNorm은 벡터를 크기로만 나누고 회전은 벡터의 크기를 바꾸지 않으므로, 회전과 순서를 바꾸어도 결과가 같다.
+다만 RMSNorm이 channel마다 곱하는 학습 배율 $\gamma$는 회전과 순서를 바꿀 수 없어, 먼저 다음 선형층의 가중치에 합쳐 둔다.
+이렇게 회전은 대부분 앞뒤 가중치에 미리 곱해 둘 수 있어 실행 중 비용이 거의 없다.
+FFN 안의 비선형 함수 뒤처럼 회전을 미리 곱해 둘 가중치가 앞에 없는 곳에서만,
+실행 중에 빠른 Hadamard 변환으로 activation을 회전하고 짝이 되는 회전은 다음 가중치에 합쳐 둔다.
+
 QuaRot은 이렇게 가중치, activation, KV cache를 모두 4-bit로 두고도 LLaMA2-70B의 WikiText-2 perplexity 증가를 0.47 이내로 막았다.[^quarot]
 Liu 등의 SpinQuant는 회전에 따라 결과가 크게 달라진다는 데 주목해 회전 행렬 자체를 학습했고,
 같은 4-bit 설정에서 LLaMA-2 7B의 zero-shot reasoning task 정확도 차이를 원래 모델 대비 2.9점으로 줄였다.[^spinquant]
@@ -226,7 +250,8 @@ RTN 3-bit은 7,300으로 모델이 무너졌다.[^gptq]
 ### 3-2. GPTQ
 
 Frantar 등의 GPTQ는 층 하나를 양자화할 때 가중치 자체의 오차보다 **층 출력의 오차**를 줄이는 문제로 본다.[^gptq]
-입력 $X$에 대한 층 출력이 $WX$라면, 목표는 출력 오차 $\lVert WX-\hat{W}X\rVert^2$를 최소로 하는 양자화된 가중치 $\hat{W}$다.
+원논문 표기를 따라 이 절에서는 앞의 $XW$와 달리 $W$를 출력×입력, $X$를 입력×토큰으로 두고 층 출력을 $WX$로 쓴다.
+목표는 출력 오차 $\lVert WX-\hat{W}X\rVert^2$를 최소로 하는 양자화된 가중치 $\hat{W}$다.
 가중치를 하나 양자화해 오차가 생기면,
 아직 양자화하지 않은 다른 가중치를 조금씩 고쳐 그 오차를 출력에서 상쇄한다.
 함께 움직이는 입력 차원에 곱해지는 가중치끼리는 서로의 오차를 메워 줄 수 있기 때문이다.
@@ -242,6 +267,9 @@ Frantar 등의 GPTQ는 층 하나를 양자화할 때 가중치 자체의 오차
 </Callout>
 
 실제 GPTQ는 입력 차원끼리 얼마나 함께 움직이는지를 담은 행렬 $XX^\top$으로 어떤 가중치를 얼마나 고칠지 계산한다.
+
+<Figure src="https://arxiv.org/html/2210.17323v2/gptq-new-2.svg" alt="GPTQ의 양자화 절차 그림. 왼쪽 Inverse Layer Hessian (Cholesky Form)은 처음에 한 번 계산하는 상삼각 행렬로, 지금 처리하는 블록에 해당하는 행들이 굵은 테두리로 표시되어 있다. 오른쪽 Weight Matrix / Block에서는 가중치 행렬의 열들이 왼쪽부터 칠해져 있다. 왼쪽의 연한 주황 열들과 굵은 테두리 블록 안의 진한 주황 열은 이미 양자화한 가중치, 블록 안의 흰 열은 지금 양자화하는 열, 블록 안의 진한 파랑 열과 블록 오른쪽의 연한 파랑 열들은 아직 양자화하지 않아 갱신되는 가중치다. 블록 i는 열 단위로 재귀적으로 양자화된다는 설명이 붙어 있다." caption="오른쪽 가중치 W의 열, 곧 입력 차원을 왼쪽부터 차례로 양자화한다. 주황은 이미 양자화한 열, 흰 열은 지금 양자화하는 열이고, 파랑은 아직 양자화하지 않아 방금 생긴 오차를 메우도록 고쳐지는 열이다. 열을 묶은 블록 단위로 진행하며, 왼쪽은 XXᵀ에서 구한 Hessian 역행렬이다. 왼쪽 Hessian 역행렬 계산 방식의 세부는 넘어간다." source="Frantar et al. (2023), Figure 2 · CC BY 4.0" wide />
+
 그 결과 OPT-175B를 A100 한 대에서 약 4시간에 양자화했고,
 4-bit perplexity가 8.37, 3-bit이 8.68로 FP16(8.34)에 가까웠다.
 3-bit OPT-175B는 A100 다섯 대 대신 한 대에 올라가 토큰당 시간이 3.24배 짧아졌다(batch 1, 128토큰 생성).
@@ -259,7 +287,7 @@ activation 기준으로 고른 1%를 FP16으로 두면 11.39가 되었지만,
 가중치 크기 기준으로 고르면 22.37에 그쳤다.
 앞에서 본 activation outlier가 여기서도 열쇠다.
 
-다만 일부만 FP16으로 두는 혼합 정밀도는 하드웨어에서 다루기 번거롭다.
+다만 가중치 일부만 FP16으로 남기고 나머지를 양자화하는 방식은 한 행렬에 두 형식이 섞여 하드웨어에서 다루기 번거롭다.
 AWQ는 중요한 channel의 가중치에 1보다 큰 배율 $s$를 곱해 키운 뒤 양자화하고,
 대응하는 activation을 그만큼 나눈다.
 배율을 곱해도 group의 최댓값이 거의 그대로라면 격자 간격도 그대로라서, 키운 가중치의 반올림 오차가 상대적으로 $1/s$배로 준다.
@@ -327,7 +355,9 @@ NVFP4가 텐서 전체에 두는 FP32 scale은 이 예에서 1로 두었다.
 이런 형식은 최신 GPU의 연산 형식으로 들어갔다.
 Blackwell 세대의 DGX B200에서는 FP4(4-bit floating point)의 이론 최대 처리율이 FP8의 두 배다.[^b200]
 모델 배포에도 쓰이기 시작했다.
-OpenAI의 gpt-oss는 MoE(mixture of experts) 가중치를 MXFP4로 양자화해 원소당 4.25 bits로 저장했고,
+OpenAI의 gpt-oss는 MoE(mixture of experts) 구조다.
+MoE는 FFN을 expert 여러 개로 늘리고 토큰마다 몇 개만 고르는 구조라 파라미터 대부분이 expert FFN에 있다.
+gpt-oss는 이 MoE 가중치를 MXFP4로 양자화해 원소당 4.25 bits로 저장했고,
 MoE 가중치가 전체 파라미터의 90% 이상을 차지하므로 116.8B 파라미터의 120b 모델이 80 GB GPU 한 대에 올라간다.[^gptoss]
 
 ## 5. KV cache 양자화
@@ -348,11 +378,15 @@ Value에는 그런 패턴이 없다.
 Attention 출력은 소수의 중요한 토큰에 몰린 value의 가중합이므로,
 각 토큰 안의 원소끼리 묶어(per-token) 오차를 토큰마다 가두는 편이 attention 출력의 오차가 작다.
 
+<Figure src="https://arxiv.org/html/2402.02750v2/Llama-2-13b-hf_layer16_head0_k.svg" alt="Llama-2-13B 16층 head 0의 key cache 크기를 3차원 곡면으로 그린 그림. 가로축은 토큰(0–200), 깊이축은 channel(0–127), 세로축은 절댓값이다. 대부분의 channel은 절댓값 2.5 이하의 낮은 파란 바닥을 이루지만, 몇몇 channel은 모든 토큰에 걸쳐 10 안팎까지 솟은 빨간 벽을 이룬다." caption="Key cache. 큰 값이 몇몇 channel에 고정되어 토큰 축을 따라 벽처럼 이어진다. 그래서 같은 channel끼리 묶어 scale을 둔다." source="Liu et al. (2024), Figure 2 · CC BY 4.0 · Llama-2-13B 16층 head 0" />
+
+<Figure src="https://arxiv.org/html/2402.02750v2/Llama-2-13b-hf_layer16_head0_v.svg" alt="같은 층과 head의 value cache 크기를 같은 축으로 그린 3차원 곡면. 절댓값은 대부분 2 이하이고, 큰 값과 작은 값이 토큰과 channel 어디에나 흩어져 있어 특정 channel에 몰린 패턴이 보이지 않는다." caption="Value cache. 세로축 범위가 key보다 훨씬 작고, 큰 값이 특정 channel에 몰린 패턴이 없다." source="Liu et al. (2024), Figure 2 · CC BY 4.0 · Llama-2-13B 16층 head 0" />
+
 <Figure src="https://arxiv.org/html/2402.02750v2/quant_scheme.svg" alt="KIVI 논문의 양자화 단위 그림. 왼쪽은 per-token 양자화로, 토큰 수만큼의 길이를 가진 scale과 zero-point 벡터가 행렬 X 옆에 세로로 붙고 빨간 점선이 한 행(토큰 하나)을 묶는다. 오른쪽은 per-channel 양자화로, 차원 d만큼의 길이를 가진 scale과 zero-point 벡터가 행렬 위에 가로로 놓이고 빨간 점선이 한 열(channel 하나)을 묶는다." caption="Per-token과 per-channel 양자화. 같은 scale과 zero-point를 공유하는 범위가 행(토큰)인지 열(channel)인지가 다르다. KIVI는 key를 per-channel로, value를 per-token으로 양자화한다." source="Liu et al. (2024), Figure 1 · CC BY 4.0" />
 
 KIVI는 이렇게 KV cache를 2-bit로 줄여 모델 가중치를 포함한 최대 메모리를 2.6배 줄였고,
 batch를 최대 4배 키워 처리량을 2.35–3.47배 높였다(Llama-2-7B, A100 한 대).[^kivi]
-다만 KV cache는 생성 중에 계속 새로 쓰이므로, 가중치와 달리 실행 중에 양자화하고 되돌리는 비용이 든다.
+다만 KV cache는 생성 중에 계속 새로 쓰이므로, 가중치와 달리 실행 중에 양자화하고 dequantize하는 비용이 든다.
 
 ## 6. 양자화를 고려한 학습
 
@@ -393,7 +427,7 @@ Roofline으로 정리하면 다음과 같다.
 | FP4 연산을 지원하는 최신 GPU | 가중치 읽기나 행렬곱 연산 | MXFP4, NVFP4 |
 
 Weight-only와 weight-activation 양자화의 장점을 합치려는 시도도 있다.
-Lin 등의 QServe는 4-bit weight-only 방법이 가중치를 되돌리는 비용 때문에 큰 batch의 서빙에서는 이득이 없다고 지적했다.[^qserve]
+Lin 등의 QServe는 4-bit weight-only 방법이 가중치를 dequantize하는 비용 때문에 큰 batch의 서빙에서는 이득이 없다고 지적했다.[^qserve]
 그래서 가중치는 4-bit로 저장하되 실행 중에는 8-bit 정수까지만 싸게 되돌려, 행렬곱을 INT8로 한다(W4A8).
 형식을 고를 때는 쓰려는 GPU와 서빙 엔진이 그 형식의 kernel을 갖추었는지도 먼저 확인한다.
 
