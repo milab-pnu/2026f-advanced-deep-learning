@@ -64,7 +64,7 @@ V1의 주요 설계는 다음과 같다.[^vllm-v1][^vllm-arch]
 
 - **프로세스 분리.** Scheduling과 GPU worker의 모델 실행 조율만 맡는 Engine Core를 별도 프로세스의 반복문으로 두고,
   토큰화·detokenize·스트리밍은 API 서버 프로세스가 맡아 겹쳐 실행한다.
-  모델 실행은 GPU마다 하나씩 뜨는 GPU worker 프로세스가 맡는다.
+  모델은 GPU worker가 실행하는데, GPU가 한 대이면 worker가 Engine Core 프로세스 안에서 돌고 여러 대이면 GPU마다 worker 프로세스가 하나씩 뜬다.
 - **단계 구분이 없는 scheduler.** Scheduler의 결정은 "요청마다 이번에 처리할 토큰 수"라는 하나의 표에 담기고,
   그 합이 스텝당 토큰 예산을 넘지 않게 정해진다.
   예를 들어 새 요청 A에 4, 생성 중인 요청 B에 1을 적으면 A의 prefill 네 토큰과 B의 decode 한 토큰을 같은 스텝에 처리한다.
@@ -103,6 +103,8 @@ vLLM의 주요 설정 인자는 batching, KV cache, 병렬화, 양자화 같은 
 vLLM은 서버 내부 지표를 모니터링 도구 Prometheus가 수집할 수 있는 형식으로 내보내므로, 설정을 바꾸기 전후의 지표를 비교해 효과를 확인한다.[^vllm-metrics]
 KV cache 사용률은 `vllm:kv_cache_usage_perc`, 실행·대기 요청 수는 `vllm:num_requests_running`과 `vllm:num_requests_waiting`이다.
 Prefix cache 적중률은 토큰 수를 세는 `vllm:prefix_cache_hits`를 `vllm:prefix_cache_queries`로 나누어 구한다.
+Speculative decoding에서 요청 하나가 검증 한 번에 얻는 평균 토큰 수는 `vllm:spec_decode_num_accepted_tokens`를 `vllm:spec_decode_num_drafts`로 나눈 값에 1을 더해 구한다.[^vllm-spec-metrics]
+vLLM이 수락률이라 부르는 값은 수락 토큰 수를 draft 토큰 수(`vllm:spec_decode_num_draft_tokens`)로 나눈 것으로, 첫 거부 뒤에 버린 추측까지 분모에 세므로 추측 하나가 수락될 확률보다 대개 작다.
 
 ## 3. SGLang
 
@@ -147,6 +149,9 @@ Weight와 KV cache pool에 줄 GPU 메모리 비율은 `--mem-fraction-static`, 
 실행 순서의 기본값은 도착한 순서대로인 `fcfs`(first come, first served)이고,
 `lpm`(longest prefix match)을 고르면 cache-aware scheduling처럼 cache와 일치하는 prefix가 긴 요청부터 처리한다.
 다만 대기 요청이 128개를 넘으면 정렬 비용을 아끼려고 `fcfs`로 돌아간다.[^sglang-policy]
+개념은 대응해도 정의가 vLLM과 꼭 같지는 않다.
+`--chunked-prefill-size`는 prefill 조각의 크기이고 vLLM의 `--max-num-batched-tokens`는 decode 토큰까지 포함한 스텝당 예산이다.
+그래서 두 엔진에 같은 숫자를 넣어도 같은 조건이 되지는 않는다.
 
 SGLang의 튜닝 문서는 offline batch inference, 곧 지연 목표 없이 모아 둔 요청을 한꺼번에 처리하는 경우에 처리량을 높이려면 **batch를 크게 만드는 것이 가장 중요하다**고 요약한다.[^sglang-tune]
 작은 batch에서는 weight 읽기가 병목이라는 roofline 분석과 같은 결론이다.
@@ -252,7 +257,8 @@ TTFT와 대기 시간이 섞여 있어 1/TPOT와 다르므로, decode 중에 사
 다만 vLLM의 FP8 문서가 설명하는 online 모드(`fp8_per_tensor`)는 매 forward마다 activation의 scale을 새로 구하는 비용이 들어,
 문서도 이 모드의 지연 개선이 제한된다고 적는다.[^vllm-fp8w8a8]
 동시 요청이 많아 행렬곱 연산이 병목이 되면 FP8 Tensor Core로 처리량이 높아질 수 있다.
-결과가 예측과 다르면 동시 요청 1의 TPOT로 MBU(model bandwidth utilization)를 계산해 대역폭 지붕에서 얼마나 떨어져 있는지 보고,
+결과가 예측과 다르면 동시 요청 1의 TPOT로 MBU(model bandwidth utilization)를 계산해 대역폭 지붕에서 얼마나 떨어져 있는지 본다.
+이때 읽어야 할 bytes는 그 서버의 실제 저장 정밀도로 센다(FP8 서버라면 FP8 weight 기준).
 그래도 원인이 보이지 않으면 엔진의 profiler로 실행 기록(trace)을 떠서 kernel 사이에 GPU가 노는 구간과 attention·행렬곱의 비중을 확인한다.[^vllm-profile]
 
 양자화와 speculative decoding처럼 여러 기법을 함께 켤 때는 개별 이득을 단순히 곱해 예측할 수 없으므로,
@@ -317,3 +323,5 @@ Pareto 곡선은 자기보다 두 축이 모두 나은 점이 없는 점들을 �
 [^vllm-profile]: vLLM Project. (2026). Profiling vLLM. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/contributing/profiling/).
 
 [^vllm-sweep]: vLLM Project. (2026). Parameter Sweeps. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/benchmarking/sweeps/).
+
+[^vllm-spec-metrics]: vLLM Project. (2026). vllm/v1/spec_decode/metrics.py. *vLLM v0.31.0*. [github.com](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/v1/spec_decode/metrics.py).

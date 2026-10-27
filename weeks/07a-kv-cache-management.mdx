@@ -11,7 +11,7 @@ Inference 비용은 모델을 작게 만들어서도 줄일 수 있지만,
 모델은 그대로 두고 서빙 시스템 쪽에서 줄일 수도 있다.
 출발점은 H100 SXM GPU(graphics processing unit) 한 대에 Llama 3 8B를 BF16(bfloat16) weight 그대로 올려 본 메모리 계산과 roofline 분석이다.
 두 계산은 같은 결론에 닿았다.
-Batch를 키워 처리량(throughput)을 올리려 하면 선형층이 ridge point에 닿기 전에 KV(key-value) cache 공간이 먼저 모자란다.
+Batch를 키워 처리량(throughput)을 올리려 하면, 요청의 문맥이 길 때는 선형층이 ridge point에 닿기 전에 KV(key-value) cache 공간이 먼저 모자란다.
 GPU 메모리에서 weight와 workspace를 빼면 KV cache에 약 53.5 GB가 남고,
 토큰당 약 131 KB라서 요청마다 8,192토큰(약 1.07 GB)까지 자란다면 요청 49개까지 들어간다고 어림했다.
 그런데 이 계산은 공간을 한 칸도 낭비하지 않는다고 가정했고,
@@ -158,11 +158,11 @@ vLLM 원논문도 서비스 제공자가 미리 지정한 prefix는 여러 요�
 예를 들어 클라이언트는 요청마다 같은 시스템 프롬프트와 few-shot 예시를 앞에 붙여 보낸다.
 대화가 이어질 때마다 이전 대화를 다시 보내고, agent는 도구 결과를 받을 때마다 지금까지의 문맥을 다시 넣는다.[^sglang]
 Causal attention에서 어떤 위치의 key·value는 그 위치까지의 토큰에만 달려 있으므로,
-같은 모델과 같은 adapter를 쓰고 prefix가 같으면, 그 부분의 KV cache도 같다.
+같은 모델과 같은 LoRA(low-rank adaptation) adapter를 쓰고 prefix가 같으면, 그 부분의 KV cache도 같다.
 
 <Callout type="example">
 2,048토큰짜리 시스템 프롬프트를 모든 요청 앞에 붙이는 서비스를 생각하자.
-Llama 3 8B에서 이 프롬프트의 prefill은 약 34 TFLOP(tera floating-point operation)이라,
+Llama 3 8B에서 이 프롬프트의 prefill은 약 34 TFLOPs(tera floating-point operations)라,
 H100 SXM의 BF16 최대 연산 성능을 모두 내도 약 34 ms, 절반을 내면 약 69 ms가 든다.
 이 프롬프트의 KV cache는 $2{,}048\times131{,}072\ \text{bytes}\approx268\ \text{MB}$다.
 시스템 프롬프트를 한 번만 계산해 두고 재사용하면 요청마다 수십 ms의 prefill을 건너뛰어 TTFT(time to first token)가 짧아지고,
@@ -181,7 +181,7 @@ vLLM의 automatic prefix caching은 블록 단위로 찾는다.[^vllm-apc]
 블록마다 hash를 계산하는데, 그 블록의 토큰만이 아니라 **바로 앞 블록(부모 블록)의 hash**를 함께 넣는다.
 블록 크기가 4라면 둘째 블록의 hash는 첫 블록의 hash와 토큰 5–8로, 셋째 블록의 hash는 둘째 블록의 hash와 토큰 9–12로 만든다.
 그래서 hash가 충돌하지 않는다면 같은 hash는 그 블록까지의 prefix 전체가 같다는 뜻이 된다.
-토큰이 같아도 LoRA(low-rank adaptation) adapter가 다르거나 사용자끼리 cache를 분리해야 하면 KV cache를 함께 쓸 수 없으므로, 이런 부가 정보도 hash에 넣는다.
+토큰이 같아도 LoRA adapter가 다르거나 사용자끼리 cache를 분리해야 하면 KV cache를 함께 쓸 수 없으므로, 이런 부가 정보도 hash에 넣는다.
 새 요청이 오면 첫 블록부터 hash를 계산해 이미 있는 블록을 찾고, 처음으로 없는 블록부터 prefill한다.
 
 다른 요청이 재사용할 cache에는 꽉 찬 블록만 등록된다.
@@ -263,6 +263,7 @@ Cache가 정해 둔 크기(KV cache 예산)를 넘으면 최근 토큰을 보호
 나머지 가운데 지금까지의 query만으로 누적한 점수가 가장 낮은 토큰의 key·value를 지운다.
 실험한 OPT처럼 head마다 key·value를 따로 두는 모델에서는 head마다 자기 attention 점수로 남길 토큰을 고른다.
 예산이 찬 뒤에는 스텝마다 새 토큰이 하나씩 늘므로 head마다 하나씩 지운다.
+Llama 3 8B 같은 GQA 모델이라면 KV head를 함께 쓰는 query head들의 점수를 모아야 하는데, 원논문은 이 경우를 실험하지 않았다.
 예산을 모든 토큰을 남기는 full cache의 20%로 잡아 heavy hitter와 최근 토큰에 반씩 나누어도,
 H2O는 LLaMA-13B의 XSUM 요약 같은 task에서 full cache와 비슷한 성능을 냈다.
 
@@ -321,6 +322,9 @@ H2O처럼 생성 중에 head마다 다른 토큰을 지우면, 예를 들어 hea
 그 칸에는 아직 head B의 값이 있으므로 칸을 통째로 돌려줄 수 없다.
 SnapKV처럼 prefill 직후 head마다 같은 수의 위치를 골라 한 번 압축하면,
 head마다 남은 key·value를 차례로 새 블록에 채워 넣을 수 있다.
+그러면 같은 칸에 head마다 다른 토큰이 놓인다.
+그래도 attention은 key·value 쌍의 순서와 상관없이 합을 구한다.
+또 vLLM 같은 구현은 RoPE(rotary position embedding)를 적용한 뒤의 key를 저장하므로 위치 정보가 key에 이미 들어 있어, 결과가 같다.
 
 어떤 토큰을 고르든, eviction은 지운 토큰의 정보를 그대로 버린다.
 Zhang 등은 CaM(cache merging)을 제안하며 이 점을 짚었다.[^cam]

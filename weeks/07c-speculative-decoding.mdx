@@ -25,8 +25,8 @@ Xia 등의 서베이는 이 방식을 추측을 만드는 drafting과 추측을 
 
 앞에서 말한 남는 연산 능력을 수치로 보자.
 H100 SXM에서 요청 하나를 decode할 때 Llama 3 8B의 선형층은 intensity가 약 1이라 ridge point 295의 한참 왼쪽에 있다.
-문맥이 2,048토큰이라면 weight 16 GB와 KV cache 약 0.27 GB를 최대 대역폭 3.35 TB/s로 읽는 시간의 하한이 약 4.9 ms다.
-반면 계산은 약 17 GFLOP(선형층 16과 attention 1)이라, 최대 연산 성능 989 TFLOP/s로 계산한 하한은 0.02 ms다.
+문맥이 2,048토큰이라면 weight 16 GB와 KV(key-value) cache 약 0.27 GB를 최대 대역폭 3.35 TB/s로 읽는 시간의 하한이 약 4.9 ms다.
+반면 계산은 선형층 16 GFLOPs(giga floating-point operations)와 attention 1 GFLOPs, 모두 약 17 GFLOPs라, 최대 연산 성능 989 TFLOP/s(TFLOP/s는 초당 $10^{12}$번의 부동소수점 연산)로 계산한 하한은 0.02 ms다.
 같은 forward에 위치 5개를 넣어도 weight는 한 번만 읽고 계산은 약 0.09 ms로 늘 뿐이라,
 스텝 시간의 하한은 여전히 약 4.9 ms다.
 **이 하한 모형에서는 위치 1개를 처리하든 5개를 처리하든 걸리는 시간이 거의 같다.**
@@ -44,7 +44,7 @@ Speculative decoding은 토큰을 하나씩 확정하는 대신, 추측과 검�
 ### 1-2. Greedy 검증
 
 가장 단순한 경우는 target이 greedy decoding을 할 때다.
-지금까지 "the cat sat on"이 확정되었고, KV(key-value) cache에는 `sat`까지 들어 있으며 직전에 고른 `on`이 다음 입력이라고 하자.
+지금까지 "the cat sat on"이 확정되었고, KV cache에는 `sat`까지 들어 있으며 직전에 고른 `on`이 다음 입력이라고 하자.
 Draft가 그 뒤로 `the mat .`를 추측했다면($\gamma=3$),
 target은 `on the mat .` 네 토큰을 한 번에 입력해 네 위치의 출력을 낸다.
 아래 표의 argmax는 각 위치에서 target이 가장 높은 확률을 준 토큰이다.
@@ -95,6 +95,10 @@ $$
 
 Draft가 덜 뽑아 주는 토큰, 곧 $p$가 $q$보다 큰 부분만 남긴 분포다.
 이렇게 하면 수락으로 얻는 몫과 거부 뒤 새로 뽑는 몫을 더한 결과가 정확히 $p$가 된다.
+수락으로 $x$가 나올 확률은 $q(x)\min(1,p(x)/q(x))=\min(p(x),q(x))$다.
+$\sum_y p(y)=1$이므로 거부될 확률 $1-\sum_y\min(p(y),q(y))$는 $p'$의 분모 $\sum_y\max(0,p(y)-q(y))$와 같다.
+그래서 거부 확률에 $p'(x)$를 곱하면 분모가 지워져, 거부 뒤 $x$가 나올 몫은 $\max(0,p(x)-q(x))$다.
+둘을 더하면 $p(x)$다.
 
 <Callout type="example">
 어휘가 A·B·C 셋뿐이고 target은 $p=(0.5,\,0.3,\,0.2)$, draft는 $q=(0.2,\,0.6,\,0.2)$라고 하자.
@@ -136,9 +140,10 @@ $$
 \mathbb{E}[\text{토큰 수}]=\frac{1-\alpha^{\gamma+1}}{1-\alpha}
 $$
 
+토큰 수의 기댓값은 $k$번째 토큰을 얻을 확률을 모든 $k$에 대해 더한 것이다.
 첫 토큰은 항상 얻는다.
 둘째 토큰은 첫 추측이 수락될 확률 $\alpha$로, 셋째 토큰은 앞의 두 추측이 모두 수락될 확률 $\alpha^2$로 얻는다.
-그래서 기댓값은 $1+\alpha+\cdots+\alpha^\gamma$이고, 이 합을 정리한 것이 위 식이다.
+그래서 기댓값은 $S=1+\alpha+\cdots+\alpha^\gamma$이고, $S-\alpha S=(1-\alpha)S=1-\alpha^{\gamma+1}$이므로 양변을 $1-\alpha$로 나누면 위 식이 된다.
 $\alpha=0.7$, $\gamma=4$라면 $(1-0.7^5)/0.3\approx2.77$개, $\alpha=0.5$라면 1.94개다.
 $\alpha$가 1이면 추측이 모두 수락되어 $\gamma+1$개가 된다.
 여기에 draft를 $\gamma$번 돌리는 비용이 붙는다.
@@ -214,7 +219,9 @@ EAGLE도 후보를 나무로 펼쳐 한 번에 검증하지만 나무 모양은 
 EAGLE-2는 이 점을 손봤다.
 Draft가 높은 확률을 준 후보일수록 실제로도 잘 수락된다는 점을 이용해, 문맥마다 그럴듯한 경로에 노드를 더 배정해 나무를 키우며,
 세 모델 계열과 여섯 task에서 3.05–4.26배를 보고했다.[^eagle2]
-EAGLE-3는 draft가 **예측하는 대상**을 feature에서 다시 토큰으로 바꾸었다.
+
+그런데 EAGLE은 학습 데이터를 늘려도 이득이 크게 늘지 않았고, EAGLE-3의 저자들은 그 원인을 feature를 맞히게 하는 제약에서 찾았다.
+그래서 EAGLE-3는 draft가 **예측하는 대상**을 feature에서 다시 토큰으로 바꾸었다.
 대신 draft의 **입력**으로는 target의 마지막 층만이 아니라 낮은 층·중간 층·높은 층의 feature를 합쳐 쓴다.
 둘째 추측부터는 draft가 앞 단계에서 낸 중간 벡터를 target의 feature 대신 다시 입력으로 쓰므로, 학습 때 본 입력과 실제 생성 때의 입력이 달라질 수 있다.
 EAGLE-3는 학습 중에도 이런 여러 단계의 생성을 흉내 내어 이 차이를 줄이는데, 이를 training-time test라 한다.
@@ -269,6 +276,8 @@ Fu 등의 lookahead decoding은 프롬프트 대신 모델 자신이 만든 후�
 예를 들어 문맥 뒤의 임시 토큰이 `A B C`이고, forward 한 번에서 문맥 뒤에 `X`, `A` 뒤에 `Y`, `B` 뒤에 `Z`가 예측되었다면 다음 반복의 임시 토큰은 `X Y Z`가 된다.
 이전 반복의 토큰과 그 뒤에 예측된 토큰을 이으면 2-gram이 된다(위 예라면 `A Y`, `B Z`).
 다음 반복에서 `Y` 뒤에 `Q`가 예측되면 반복을 가로질러 `A Y Q`라는 3-gram도 만들 수 있다.
+임시 토큰이 모두 자기 앞 토큰들로 예측한 값과 같아지면 더 바뀌지 않는데, 이 결과는 greedy decoding으로 차례로 생성한 것과 같다.
+반복 중의 토큰도 모델이 앞 토큰을 보고 예측한 것이라, 아직 수렴하지 않았더라도 실제 생성에 나올 법한 묶음이 된다.
 이런 묶음을 pool에 쌓아 두고, 현재 문맥의 끝과 이어지는 묶음을 추측으로 쓴다.
 임시 토큰을 고치는 계산과 그 추측을 검증하는 계산은 같은 forward 하나에 함께 넣는다.
 보조 모델이나 데이터 저장소 없이, LLaMA-2-Chat 7B의 MT-bench에서 FlashAttention을 쓴 일반 greedy decoding보다 최대 1.8배 빨랐다.
@@ -335,7 +344,7 @@ DeepSeek-V3의 MTP는 학습 성능을 높이려고 pre-training 동안 본체�
 이제 둘째 가정이 batch 크기에 따라 어떻게 무너지는지 보자.
 이 가정은 decode가 memory-bound일 때 근사적으로 성립한다.
 Continuous batching 서버는 요청이 몰리면 batch를 키우고, 그만큼 선형층의 intensity가 오른다.
-Speculative decoding은 요청마다 위치를 $\gamma+1$개로 늘리므로 batch의 요청 수를 $b$라 하면 한 스텝의 토큰 수가 $b(\gamma+1)$개가 된다.
+Speculative decoding은 요청마다 위치를 $\gamma+1$개로 늘리므로 batch의 요청 수를 $b$라 하면 한 스텝의 토큰 수가 $b(\gamma+1)$개가 된다(나무로 추측하면 $\gamma+1$ 자리에 나무의 노드 수(뿌리인 직전 확정 토큰 포함)가 들어간다).
 Batch가 크면 이 값이 ridge point를 넘어 선형층이 compute-bound가 되고,
 그때부터는 수락되지 않을 추측을 검증하는 계산이 실제 시간을 잡아먹는다.
 
@@ -373,8 +382,9 @@ vLLM 팀은 H100 4대에서 Llama 3 70B를 돌려, 요약 데이터(CNN/DailyMai
 
 예시의 2,048토큰 행이 보여 주듯 긴 문맥에서는 이득이 덜 줄어든다.
 Sadhukhan 등의 MagicDec은 KV cache 읽기가 스텝을 지배하는 긴 문맥에서는 batch가 커도 target이 $\gamma+1$개 위치를 검증하는 시간이 위치 하나를 처리하는 시간과 거의 같다는 점을 짚었다.
-A100 8대에서 LLaMA-3.1-8B를 $\gamma=3$으로 두고, draft가 쓰는 KV cache를 512토큰으로 제한해 drafting 비용을 낮춘 설정의 이론 분석에서는,
+A100 8대에서 LLaMA-3.1-8B를 $\gamma=3$으로 두고, draft로 target 자신을 쓰되 KV cache만 512토큰으로 줄인 self-speculation 설정의 이론 분석에서는,
 문맥이 약 4,000토큰보다 짧으면 batch가 커질수록 이득이 줄지만 그보다 길면 오히려 커진다고 예측했다.[^magicdec]
+문맥이 길면 target의 스텝은 batch가 커질수록 요청마다 긴 KV cache를 읽느라 길어지지만 draft는 그만큼 길어지지 않아, draft 비용의 몫이 작아지기 때문이다.
 이 경계는 모델, 하드웨어, draft 방식에 따라 달라진다.
 
 ### 4-2. 서빙에서의 선택
@@ -384,13 +394,12 @@ Liu 등의 TurboSpec은 speculative decoding을 단순히 덧붙이면 서빙 �
 goodput을 보며 추측 길이를 실행 중에 바꾸는 제어 방식을 제안했다.[^turbospec]
 TurboSpec이 쓰는 goodput은 최종 출력에 남는 토큰 수를 실행 시간으로 나눈 값으로,
 서빙 지표에서 SLO(service-level objective)를 지키는 최대 요청률을 뜻하는 goodput과는 다른 정의다.
-vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-bound 상황에서 ITL(inter-token latency)을 줄이는 기능으로 설명한다.[^vllm-spec]
+vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-bound 상황에서 inter-token latency를 줄이는 기능으로 설명한다.[^vllm-spec]
 
-측정할 때는 ITL과 TPOT(time per output token)가 서로 달라진다는 점에 주의한다.
+측정할 때는 ITL(inter-token latency)과 TPOT(time per output token)가 서로 달라진다는 점에 주의한다.
 한 번의 forward에서 토큰 여러 개가 한 묶음으로 나오면, ITL은 묶음 사이의 간격을 기록한다.
 TPOT는 첫 토큰이 도착한 뒤부터 마지막 토큰까지 걸린 시간을, 첫 토큰을 뺀 출력 토큰 수로 나눈다.
-그래서 토큰이 묶여 도착하면 평균 ITL과 TPOT가 달라진다.
-그래서 토큰당 속도는 TPOT로 비교하고, 출력 사이의 대기 간격은 ITL 분포로 본다.
+그래서 speculative decoding의 토큰당 이득은 TPOT로 비교하고, 사용자가 출력 사이에 기다리는 간격은 ITL 분포로 본다.
 
 <Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.31.0/docs/assets/benchmarking/latency-metrics-speculative-decoding-light.svg" alt="'Latency with token bundling' 시간축 그림. 요청을 0 ms에 보내고, Output 1로 토큰 T1이 100 ms에, Output 2로 T2, T3, T4가 묶여 140 ms에, Output 3으로 T5가 180 ms에 도착한다. 0–100 ms가 TTFT 100 ms이고, 출력 사이 간격은 두 번 모두 ITL 40 ms다. 100–180 ms가 80 ms의 생성 구간이다. 아래 왼쪽 상자는 Mean ITL = (40 ms + 40 ms) ÷ 2 = 40 ms, 오른쪽 상자는 TPOT = (180 − 100) ms ÷ (5 − 1) = 20 ms/token이다." caption="토큰이 묶여 도착할 때의 ITL과 TPOT. 토큰 다섯 개가 출력 세 번에 나뉘어 도착하면 ITL은 관측된 간격 두 개의 평균인 40 ms이지만, TPOT는 첫 토큰 뒤 80 ms를 토큰 네 개로 나눈 20 ms다." source="vLLM Project (v0.31.0), Benchmark CLI 문서 · Apache-2.0" wide />
 
