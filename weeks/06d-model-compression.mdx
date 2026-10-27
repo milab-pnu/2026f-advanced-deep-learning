@@ -230,6 +230,9 @@ MaskLLM 논문이 A6000·batch 1에서 NVIDIA의 서빙 라이브러리 TensorRT
 그런데 2:4는 위치 정보를 함께 저장하므로 FP16(16-bit floating point) weight의 bytes를 절반이 아니라 약 44%만 줄인다.[^nvidia24]
 값 4개에 64 bits가 들던 것이 남은 값 2개(32 bits)와 위치(4 bits)를 합한 36 bits가 되기 때문이다.
 두 경우의 유효 메모리 대역폭이 같고 weight를 읽는 시간이 행렬곱 시간을 정한다고 가정하면, 빨라지는 상한은 64/36, 약 1.8배다.
+Checkpoint에 2:4 패턴이 있다는 것만으로 sparse kernel이 실행되지는 않는다.
+엔진과 GPU가 해당 형식을 지원하는지 확인하고, 실행 기록에서 sparse 행렬곱 kernel이 실제로 선택되었는지 확인해야 한다.
+Dense kernel이 실행된 측정값은 패턴의 품질이나 dense 실행 비용은 보여 주지만, sparse Tensor Core의 속도 이득을 보여 주지는 않는다.
 
 ## 3. Structured pruning
 
@@ -401,9 +404,17 @@ $WS$에서는 큰 activation이 들어오는 열에 상대적으로 큰 배율�
 층마다 민감도가 달라서 rank도 층마다 다르게 정한다.
 그 결과 LLaMA-7B의 파라미터를 5%, 10%, 15% 줄였을 때 perplexity가 5.78, 6.09, 6.80으로 유지되었다.[^asvd]
 Wang 등의 SVD-LLM은 channel별 크기뿐 아니라 channel 사이의 상관까지 반영한다.
+예를 들어 입력이 $X=\begin{pmatrix}1&1\\1&0\end{pmatrix}$이면 $XX^\top=\begin{pmatrix}2&1\\1&1\end{pmatrix}$이다.
+대각의 2와 1은 각 channel의 제곱합이고, 대각 밖의 1은 두 channel의 내적이다.
 Calibration 입력을 변환해 channel마다 값의 제곱합이 1이고 서로 다른 channel끼리의 내적이 0이 되게 만드는 것을 whitening이라 한다.
+여기서는 $XX^\top$이 양의 정부호라서 역행렬과 Cholesky 분해가 존재한다고 가정한다.
 SVD-LLM도 $WX=(WS)(S^{-1}X)$로 쓰되, $XX^\top$을 Cholesky 분해한 행렬 $S$($SS^\top=XX^\top$)를 써서 $S^{-1}X$가 whitening된 입력이 되게 하고 $WS$를 분해한다.
 $(S^{-1}X)(S^{-1}X)^\top=S^{-1}XX^\top S^{-\top}=I$이므로 $S^{-1}X$의 행끼리는 정규직교(orthonormal)이고, 이런 행렬을 오른쪽에 곱해도 Frobenius norm은 그대로다.
+예를 들어 calibration 입력이 $X=\operatorname{diag}(2,1)$이면 $S=\operatorname{diag}(2,1)$이고 $S^{-1}X=I$다.
+첫 입력 channel이 두 배 크므로 weight 오차가 같아도 첫 channel의 출력 오차는 두 배가 된다.
+예를 들어 $W-\hat W=\operatorname{diag}(0.1,0.2)$이면 출력 오차는 $(W-\hat W)X=\operatorname{diag}(0.2,0.2)$이고, $WS-\hat W S$도 같은 행렬이다.
+일반적으로 $A=S^{-1}X$는 정사각행렬이 아닐 수도 있지만 $AA^\top=I$이므로, 임의의 행렬 $B$에 대해 $\lVert BA\rVert_F^2=\operatorname{tr}(BAA^\top B^\top)=\lVert B\rVert_F^2$다.
+여기서 $\operatorname{tr}$은 행렬의 대각 성분의 합이고, $\lVert B\rVert_F^2$는 $B$의 모든 원소를 제곱해 더한 값이다.
 근사한 weight $\hat{W}$의 출력 오차는 다음과 같다.
 
 $$

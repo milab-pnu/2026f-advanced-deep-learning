@@ -72,6 +72,11 @@ $e^{x_j-m_{\text{old}}}\,e^{m_{\text{old}}-m_{\text{new}}}=e^{x_j-m_{\text{new}}
 마지막 블록까지 처리한 뒤 $a/\ell$이 출력이고, 이는 점수 전체로 한 번에 계산한 출력과 같다.
 이 방식을 online softmax라 부른다.[^online-softmax]
 
+예를 들어 첫 위치의 점수가 1이고 value가 10이면 $m=1$, $\ell=1$, $a=10$이다.
+다음 위치의 점수가 2, value가 20이면 새 최댓값은 2가 된다.
+기존 합을 $e^{1-2}\approx0.368$배로 바꾼 뒤 새 위치를 더해 $\ell\approx0.368+1=1.368$, $a\approx3.68+20=23.68$을 얻는다.
+두 위치만 처리한 출력은 $a/\ell\approx17.31$이고, 아직 더 처리할 위치가 있다면 이 값들을 들고 이어 간다.
+
 FlashAttention 1은 key·value 블록 하나를 불러 여러 query 블록에 차례로 적용한 뒤 다음 key·value 블록으로 넘어갔다.
 이 순서는 key·value 블록을 여러 query 블록에 재사용하는 데 맞춘 것이다.
 일을 SM에 나누는 단위는 batch와 attention head였다.
@@ -220,6 +225,9 @@ FlashInfer의 계획은 전체 12K를 4로 나눈 3K를 조각의 최대 길이�
 
 SGLang에 붙여 비교한 실험에서 FlashInfer는 Triton 언어로 작성한 attention backend보다 ITL(inter-token latency)을 29–69% 줄였다(Llama 3.1 8B는 H100 한 대, 70B는 네 대).[^flashinfer]
 지금은 vLLM과 SGLang 모두 FlashInfer를 attention backend의 하나로 쓴다.
+다만 엔진이 FlashInfer를 지원한다는 사실만으로 모든 설정에서 그것이 선택되는 것은 아니다.
+실제 측정에서는 엔진이 보고한 backend와 profiler 실행 기록을 확인해 어떤 attention kernel과 행렬곱 kernel이 시간을 쓰는지 본다.
+Attention 비중이 작다면 attention kernel만 바꾼 효과가 전체 지연에서는 작을 수 있다.
 
 ## 3. 선형층과 MoE의 kernel
 

@@ -105,6 +105,8 @@ KV cache 사용률은 `vllm:kv_cache_usage_perc`, 실행·대기 요청 수는 `
 Prefix cache 적중률은 토큰 수를 세는 `vllm:prefix_cache_hits`를 `vllm:prefix_cache_queries`로 나누어 구한다.
 Speculative decoding에서 요청 하나가 검증 한 번에 얻는 평균 토큰 수는 `vllm:spec_decode_num_accepted_tokens`를 `vllm:spec_decode_num_drafts`로 나눈 값에 1을 더해 구한다.[^vllm-spec-metrics]
 vLLM이 수락률이라 부르는 값은 수락 토큰 수를 draft 토큰 수(`vllm:spec_decode_num_draft_tokens`)로 나눈 것으로, 첫 거부 뒤에 버린 추측까지 분모에 세므로 추측 하나가 수락될 확률보다 대개 작다.
+따라서 이 비율을 독립 수락을 가정한 이론식의 확률에 그대로 넣기보다, 검증 한 번에 얻은 평균 토큰 수와 실제 지연·처리량을 함께 비교한다.
+같은 요청 분포와 부하에서 draft 방식과 추측 길이를 바꾸어 재면, 추측 비용까지 포함해 어느 설정이 이득인지 판단할 수 있다.
 
 ## 3. SGLang
 
@@ -129,7 +131,7 @@ FSM은 생성한 내용에 따라 상태를 바꾸고, 각 상태는 그 뒤에 
 SGLang 팀은 이렇게 정해진 구간을 건너뛰는 decoding을 jump-forward decoding이라 부른다.[^sglang-fsm]
 고정된 부분도 KV cache는 계산해야 하지만 순차 decode 스텝 수가 그만큼 줄어든다.
 
-<Figure src="https://raw.githubusercontent.com/lm-sys/lm-sys.github.io/105adb035528f55f3d1823329f170a30b48f2b19/public/images/blog/compressed_fsm/compare.png" alt="같은 프롬프트(Please fill in the following information about Harry Potter.)로 JSON을 생성하는 두 방식의 비교. 위의 Jump-Forward Decoding With Compressed FSM에서는 초록 prefill 상자 뒤에 여는 중괄호와 name 키를 담은 주황 상자 하나가 붙고, 파랑 decode 상자 Har, ry, _Pot, ter와 닫는 따옴표·쉼표를 담은 파랑 상자 뒤에 age 키를 담은 주황 상자, 파랑 1, 1, house 키를 담은 주황 상자, 파랑 G, ryffindor와 닫는 중괄호를 담은 주황 상자, 종료 토큰이 이어진다. 아래의 Normal Decoding With FSM에서는 같은 출력을 {, 줄바꿈, 공백, name, 따옴표 같은 파랑 decode 상자로 한 토큰씩 만들어 상자가 네 줄에 걸친다. 오른쪽에는 두 방식이 만든 같은 JSON(name Harry, age 15, house Gryffindor)이 있다. 범례는 초록 Prefill, 파랑 Decode, 주황 Jump-Forward다." caption="Compressed FSM을 쓴 jump-forward decoding(위)과 FSM으로 한 토큰씩 decode하는 일반 방식(아래). 초록은 프롬프트의 prefill, 파랑은 한 토큰씩 decode한 토큰, 주황은 형식이 정해진 문자열을 forward 한 번에 처리한 jump-forward 구간이다. 두 방식은 같은 JSON(오른쪽)을 만들지만, 위쪽은 키 이름과 따옴표·괄호를 건너뛰어 decode 스텝이 훨씬 적다." source="LMSYS Org (2024), Compressed FSM 블로그 · © 2023 LMSYS Org, MIT License" wide />
+<Figure src="https://raw.githubusercontent.com/lm-sys/lm-sys.github.io/105adb035528f55f3d1823329f170a30b48f2b19/public/images/blog/compressed_fsm/compare.png" alt="같은 프롬프트(Please fill in the following information about Harry Potter.)로 JSON을 생성하는 두 방식의 비교. 위의 Jump-Forward Decoding With Compressed FSM에서는 초록 prefill 상자 뒤에 여는 중괄호와 name 키를 담은 주황 상자 하나가 붙고, 파랑 decode 상자 Har, ry, _Pot, ter와 닫는 따옴표·쉼표를 담은 파랑 상자 뒤에 age 키를 담은 주황 상자, 파랑 1, 1, house 키를 담은 주황 상자, 파랑 G, ryffindor와 닫는 중괄호를 담은 주황 상자, 종료 토큰이 이어진다. 아래의 Normal Decoding With FSM에서는 비슷한 출력을 파랑 decode 상자로 한 토큰씩 만들어 상자가 네 줄에 걸친다. 왼쪽의 나이 토큰은 1, 1인데 오른쪽 JSON에는 age가 15로 적혀 있어 원본 그림 안의 값이 맞지 않는다. 범례는 초록 Prefill, 파랑 Decode, 주황 Jump-Forward다." caption="Compressed FSM을 쓴 jump-forward decoding(위)과 FSM으로 한 토큰씩 decode하는 일반 방식(아래). 초록은 프롬프트의 prefill, 파랑은 한 토큰씩 decode한 토큰, 주황은 형식이 정해진 문자열을 forward 한 번에 처리한 jump-forward 구간이다. 왼쪽 나이 토큰은 11인데 오른쪽 JSON은 15로, 원본 그림 안의 값이 일치하지 않으므로 토큰별 출력 예가 아닌 처리 방식의 비교로 읽는다." source="LMSYS Org (2024), Compressed FSM 블로그 · © 2023 LMSYS Org, MIT License" wide />
 
 엔진을 여러 인스턴스로 띄우면, 요청을 어느 인스턴스로 보내느냐도 prefix 재사용에 영향을 준다.
 SGLang v0.4는 이를 위한 cache-aware routing을 cache-aware load balancer로 구현했다.
@@ -226,6 +228,30 @@ DistServe의 goodput은 요청 중 정해진 비율 이상이 SLO를 지키는 �
 FP8 서버는 미리 FP8로 양자화한 checkpoint를 불러오거나(이때는 아래 `--model`도 그 이름으로 바꾼다),
 BF16 checkpoint를 불러오면서 `--quantization fp8_per_tensor`로 양자화하는 online 모드를 쓴다.
 어느 방식인지와 엔진 버전, 설정을 결과와 함께 적는다.
+예를 들어 vLLM 0.31.0에서 같은 H100 한 대로 차례로 잰다면, 먼저 BF16 서버를 다음처럼 띄운다.
+이 모델은 접근 권한이 필요한 Hugging Face 모델이므로, 실행 환경에서 해당 모델의 이용 조건을 확인하고 접근 권한과 인증을 갖춰야 한다.
+
+```bash
+vllm serve meta-llama/Llama-3.1-8B-Instruct \
+  --dtype bfloat16 --kv-cache-dtype auto --no-enable-prefix-caching \
+  --max-num-seqs 256 --max-num-batched-tokens 8192
+```
+
+서버가 준비되면 다른 터미널에서 아래 측정을 실행한다.
+측정이 끝나면 첫 서버를 종료하고, 같은 GPU에서 FP8 서버를 띄워 같은 측정을 반복한다.
+
+```bash
+vllm serve meta-llama/Llama-3.1-8B-Instruct \
+  --dtype bfloat16 --kv-cache-dtype auto --no-enable-prefix-caching \
+  --max-num-seqs 256 --max-num-batched-tokens 8192 \
+  --quantization fp8_per_tensor
+```
+
+이 설정의 `--kv-cache-dtype auto`는 모델 dtype을 따르므로 두 서버 모두 KV cache는 BF16이다.
+시작 로그와 실제 사용한 설정을 확인해 양자화 방식과 KV cache dtype, batch 관련 값이 의도한 대로 적용되었는지도 기록한다.
+여기서는 두 batch 상한을 명시해 서버마다 기본값이 달라지는 일을 막는다.
+두 서버를 동시에 올리는 것이 아니라 하나씩 띄워 GPU 메모리를 온전히 사용한다.
+기본 주소는 `http://localhost:8000`이고, `--served-model-name`을 따로 정하지 않았으므로 측정 명령의 `--model`은 서버가 불러온 모델 이름과 같다.[^vllm-bench][^vllm-fp8w8a8]
 두 서버에 각각 다음처럼 부하를 건다.
 
 ```bash
@@ -260,6 +286,12 @@ TTFT와 대기 시간이 섞여 있어 1/TPOT와 다르므로, decode 중에 사
 결과가 예측과 다르면 동시 요청 1의 TPOT로 MBU(model bandwidth utilization)를 계산해 대역폭 지붕에서 얼마나 떨어져 있는지 본다.
 이때 읽어야 할 bytes는 그 서버의 실제 저장 정밀도로 센다(FP8 서버라면 FP8 weight 기준).
 그래도 원인이 보이지 않으면 엔진의 profiler로 실행 기록(trace)을 떠서 kernel 사이에 GPU가 노는 구간과 attention·행렬곱의 비중을 확인한다.[^vllm-profile]
+예를 들어 vLLM 0.31.0의 진단용 서버 명령에 `--profiler-config '{"profiler":"torch","torch_profiler_dir":"./vllm_profile"}'`를 더하고,
+측정 명령에는 `--backend vllm --profile`을 더해 소수의 요청만 보내면 실행 기록이 해당 디렉터리에 저장된다.
+기존 서버를 종료한 뒤 진단용 서버를 같은 GPU에 다시 띄운다.
+기록을 Perfetto에서 열어 GPU timeline의 kernel 이름과 시간을 엔진의 backend 설정·로그와 함께 확인한다.
+Kernel 이름과 기록 범위는 버전과 GPU, CUDA graph 사용 여부에 따라 달라질 수 있으므로 이름 하나만으로 원하는 구현이라고 단정하지 않는다.
+Profiler는 실행을 느리게 만들 수 있어, 지연과 처리량의 본 측정은 profiler를 끈 상태에서 따로 한다.[^vllm-profile]
 
 양자화와 speculative decoding처럼 여러 기법을 함께 켤 때는 개별 이득을 단순히 곱해 예측할 수 없으므로,
 둘 다 끈 기준, 하나씩만 켠 경우, 둘 다 켠 경우를 같은 조건에서 따로 잰다.
@@ -268,7 +300,7 @@ TTFT와 대기 시간이 섞여 있어 1/TPOT와 다르므로, decode 중에 사
 vLLM은 이렇게 설정과 부하를 바꿔 가며 재는 일을 자동화하는 `vllm bench sweep`도 제공한다.
 서버 설정의 조합마다 측정을 돌리고, 부하 수준을 바꿔 지연과 처리량의 맞교환을 찾으며,
 위와 같은 정의의 사용자당 처리량과 GPU당 처리량으로 Pareto 곡선을 그린다.[^vllm-sweep]
-Pareto 곡선은 자기보다 두 축이 모두 나은 점이 없는 점들을 이은 선으로, 한 축을 더 얻으려면 다른 축을 내줘야 하는 경계다.
+Pareto 곡선은 두 축 모두 자신보다 나쁘지 않으면서 적어도 한 축은 더 나은 점이 없는 점들을 이은 경계다.
 결과를 보고할 때는 곡선과 함께 측정 조건 전체를 적어,
 다른 사람이 같은 조건에서 다시 잴 수 있게 한다.
 

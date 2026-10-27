@@ -228,6 +228,8 @@ $$
 두 scale은 합의 첨자 $k$와 무관하므로 합 밖으로 나온다.
 그래서 합은 정수끼리의 곱셈과 덧셈으로 하고, 마지막에 결과 원소마다 scale 두 개를 곱하면 된다.
 반대로 activation을 입력 channel $k$마다 나누거나 weight를 입력 방향의 group으로 나누면, 그 scale이 합 안에 남는다.
+예를 들어 weight scale을 1로 두고, 입력 channel 두 개의 정수 곱이 각각 2와 1인데 activation scale이 각각 1과 2라면, 복원한 합은 $1\times2+2\times1=4$다.
+정수 곱을 먼저 $2+1=3$으로 합치면 각 항에 서로 다른 scale을 적용할 수 없다.
 그러면 합을 그 단위마다 끊어 부분합마다 scale을 곱해야 하므로, 정수 행렬곱 한 번으로 끝나지 않고 추가 비용이 든다.[^nagel]
 그래서 정수 행렬곱에서는 activation은 per-token, weight는 per-channel로 두는 조합이 기본이다.
 Weight만 양자화하고 행렬곱 전에 16-bit로 dequantize한다면 이런 제약이 없어, 4-bit weight에는 per-group을 흔히 쓴다.
@@ -325,6 +327,9 @@ Weight만 반올림하는 가장 단순한 PTQ는 weight 값만 보고 scale을 
 그래서 학습된 모델에 대표 입력을 미리 넣어 activation의 범위와 통계를 재는데, 이 입력을 **calibration 데이터**라 한다.
 GPTQ, AWQ, SmoothQuant 같은 대표적인 PTQ 방법이 모두 이렇게 한다.
 따라서 calibration 데이터를 쓰는 PTQ의 결과는 그 데이터의 분포에 영향을 받는다.
+예를 들어 문서 질의응답에 쓸 모델이라면 실제 서비스에서 나올 언어와 문서·질문의 길이를 반영한 입력을 calibration에 쓴다.
+그와 겹치지 않는 별도 문서와 질문으로 원래 모델과 양자화 모델의 답변 품질을 같은 조건에서 비교한다.
+Calibration에 쓴 입력에서만 평가하면 그 입력에 맞춘 결과를 일반적인 성능으로 오해할 수 있다.
 
 ### 2-2. 양자화 대상
 
