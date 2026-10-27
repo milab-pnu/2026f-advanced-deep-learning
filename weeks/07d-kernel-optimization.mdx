@@ -5,7 +5,7 @@ order: 3
 ---
 
 Llama 3 8B를 H100 한 대에서 batch 1, 문맥 2,048토큰으로 돌릴 때 TPOT(time per output token)가 8.0 ms라면,
-Weight와 KV(key-value) cache를 BF16(bfloat16)으로 한 번씩 읽는 하한 4.9 ms의 약 1.6배이고,
+weight와 KV(key-value) cache를 BF16(bfloat16)으로 한 번씩 읽는 하한 4.9 ms의 약 1.6배이고,
 MBU(model bandwidth utilization)는 61%다.
 MBU만으로는 남은 39%가 어디서 새는지 나눌 수 없다.
 읽어야 할 데이터의 양은 하한에 이미 들어 있으므로, 먼저 의심할 곳은 **그 계산을 GPU(graphics processing unit)에서 실행하는 방식**이다.

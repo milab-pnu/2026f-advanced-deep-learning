@@ -181,11 +181,11 @@ $s=4.0/7\approx0.571$로 커져,
 
 ### 1-2. 양자화 단위
 
+앞의 예시에서 보았듯 큰 값 하나가 scale을 정하면, 같은 scale을 쓰는 나머지 값의 정밀도가 떨어진다.
+그래서 scale을 몇 개의 값이 함께 쓰느냐, 곧 양자화 단위(granularity)가 오차를 크게 좌우한다.[^survey]
 선형층에 들어가는 activation은 토큰×hidden 차원의 행렬이고,
 이 행렬의 열, 곧 hidden 차원 하나를 channel이라 부른다.
 Weight 행렬에서는 입력 차원 하나를 입력 channel, 출력 차원 하나를 출력 channel이라 부른다.
-
-예시가 보여 주듯 scale을 몇 개의 값이 함께 쓰느냐, 곧 양자화 단위(granularity)가 오차를 크게 좌우한다.[^survey]
 
 - **per-tensor**: 행렬 전체가 scale 하나를 쓴다.
 - **per-channel**: channel마다 scale을 둔다. Weight는 보통 출력 channel마다 둔다.
@@ -220,14 +220,14 @@ $$
 ### 1-3. FP8
 
 정수 대신 bits가 적은 부동소수점을 쓸 수도 있다.
-Micikevicius 등이 제안한 FP8은 두 가지다.
+Micikevicius 등이 제안한 FP8(8-bit floating point)은 두 가지다.
 지수 4 bits와 가수 3 bits의 E4M3는 최댓값이 448이고,
 지수 5 bits와 가수 2 bits의 E5M2는 최댓값이 57,344다.
 제안자들은 weight와 activation에는 정밀도가 높은 E4M3를,
 범위가 넓어야 하는 gradient에는 E5M2를 권했다.[^fp8]
 부동소수점은 0 근처에 격자가 촘촘하고 큰 값 쪽으로 성기므로,
 outlier가 섞인 분포에서는 정수 격자보다 손상이 적을 수 있다.
-16-bit로 학습한 GPT-3 6.7B를 weight는 channel별, activation은 텐서별 scale을 두고 사후 양자화했을 때 WikiText-103 perplexity가 16-bit 8.51, INT8 10.29, E4M3 8.41이었다.[^fp8]
+16-bit로 학습을 마친 GPT-3 6.7B를 weight는 channel별, activation은 텐서별 scale을 두고 양자화했을 때 WikiText-103 perplexity가 16-bit 8.51, INT8(8-bit integer) 10.29, E4M3 8.41이었다.[^fp8]
 
 FP8의 다른 장점은 하드웨어 지원이다.
 H100 SXM의 FP8 Tensor Core는 dense 기준 약 1,979 TFLOP/s로, BF16 dense 989 TFLOP/s의 두 배다.[^h100]
@@ -244,7 +244,7 @@ Scale은 지수만 있는 E8M0 형식이라 2의 거듭제곱만 표현한다.
 원소가 지수 2 bits와 가수 1 bit의 E2M1이면 MXFP4로,
 원소 하나가 표현하는 값은 0, 0.5, 1, 1.5, 2, 3, 4, 6과 그 음수다.
 원소당 저장량은 $4+8/32=4.25$ bits다.
-NVIDIA가 Blackwell GPU와 함께 내놓은 NVFP4는 블록을 16개로 줄이고,
+NVIDIA가 Blackwell GPU(graphics processing unit)와 함께 내놓은 NVFP4는 블록을 16개로 줄이고,
 블록 scale을 2의 거듭제곱 대신 FP8(E4M3)로 두며, 텐서 전체에 FP32 scale을 하나 더 둔다.
 원소당 약 4.5 bits다.[^nvfp4]
 
@@ -279,7 +279,7 @@ MoE weight가 전체 파라미터의 90% 이상을 차지하므로 116.8B 파라
 LLM은 다시 학습하는 비용이 매우 커서 대개 PTQ부터 쓰고,
 PTQ로는 품질을 지키기 어려운 낮은 bits에서 QAT를 쓴다.
 
-PTQ에서는 scale을 정하는 일이 곧 양자화다.
+PTQ에서 먼저 정할 것은 scale이다.
 Weight는 학습이 끝나면 값이 고정되므로 scale을 미리 정해 두면 된다.
 Activation은 입력마다 값이 달라서, 실행 중에 들어온 값의 최댓값으로 scale을 정하거나(dynamic),
 대표 입력을 미리 흘려 잰 범위로 고정된 scale을 쓴다(static).[^survey]
@@ -295,9 +295,9 @@ GPTQ, AWQ(activation-aware weight quantization), SmoothQuant 같은 대표적인
 무엇을 양자화하느냐로도 나눌 수 있다.
 선형층의 행렬곱에는 두 방식이 있다.
 하나는 **weight만** 낮은 bits로 저장하고,
-계산할 때 GPU(graphics processing unit) kernel 안에서 FP16(16-bit floating point)이나 BF16으로 dequantize해 16-bit 행렬곱을 하는 weight-only 양자화다.
+계산할 때 GPU kernel 안에서 FP16(16-bit floating point)이나 BF16으로 dequantize해 16-bit 행렬곱을 하는 weight-only 양자화다.
 Weight 4-bit, activation 16-bit라는 뜻에서 W4A16처럼 부른다.
-다른 하나는 weight와 **activation을 모두** 낮은 bits로 바꿔 INT8(8-bit integer)이나 FP8(8-bit floating point) 행렬곱을 직접 하는 weight-activation 양자화로,
+다른 하나는 weight와 **activation을 모두** 낮은 bits로 바꿔 INT8이나 FP8 행렬곱을 직접 하는 weight-activation 양자화로,
 W8A8처럼 부른다.
 
 선형층 밖에서는 attention이 읽는 KV cache도 낮은 bits로 저장할 수 있다.
@@ -368,19 +368,19 @@ Weight의 1%만 FP16으로 남겨도 양자화 오차가 크게 줄었는데, �
 Weight 크기가 아니라 **그 weight에 곱해지는 activation의 크기**로 고른 1%를 남겼을 때 효과가 컸다.
 INT3, group 128의 OPT-6.7B에서 RTN의 perplexity 23.54가,
 activation 기준으로 고른 1%를 FP16으로 두면 11.39가 되었지만,
-Weight 크기 기준으로 고르면 22.37에 그쳤다.
-LLM의 activation은 몇몇 channel에 다른 값보다 훨씬 큰 값(outlier)이 몰려 나타나는데,[^llmint8]
+weight 크기 기준으로 고르면 22.37에 그쳤다.
+LLM의 activation은 몇몇 channel에 outlier가 몰려 나타나는데,[^llmint8]
 그런 channel에 곱해지는 weight의 오차는 큰 activation과 곱해져 출력에서 크게 드러나기 때문이다.
 
 다만 weight 일부만 FP16으로 남기고 나머지를 양자화하는 방식은 한 행렬에 두 형식이 섞여 하드웨어에서 다루기 번거롭다.
-AWQ는 중요한 channel의 weight에 1보다 큰 배율 $s$를 곱해 키운 뒤 양자화하고,
+AWQ는 중요한 channel의 weight에 1보다 큰 배율 $c$를 곱해 키운 뒤 양자화하고,
 대응하는 activation을 그만큼 나눈다.
-배율을 곱해도 group의 최댓값이 거의 그대로라면 격자 간격도 그대로라서, 키운 weight의 반올림 오차가 상대적으로 $1/s$배로 준다.
-배율이 너무 크면 group의 격자 간격이 커져 나머지 weight의 오차가 늘어난다(OPT-6.7B에서 $s=2$의 perplexity가 11.92, $s=4$는 12.36).
+배율을 곱해도 group의 최댓값이 거의 그대로라면 격자 간격도 그대로라서, 키운 weight의 반올림 오차가 상대적으로 $1/c$배로 준다.
+배율이 너무 크면 group의 격자 간격이 커져 나머지 weight의 오차가 늘어난다(OPT-6.7B에서 $c=2$의 perplexity가 11.92, $c=4$는 12.36).
 
 <Callout type="example">
 격자 간격이 0.1인 group에서 중요한 weight $w=0.23$을 그대로 반올림하면 0.2가 되어 오차가 0.03이다.
-배율 $s=2$를 곱한 0.46을 반올림하면 0.5이고, 다시 2로 나누면 0.25라서 오차가 0.02다.
+배율 $c=2$를 곱한 0.46을 반올림하면 0.5이고, 다시 2로 나누면 0.25라서 오차가 0.02다.
 격자 간격은 그대로인데 $w$ 입장에서는 간격이 0.05로 촘촘해진 셈이라, 오차 상한도 0.05에서 0.025로 준다.
 대응하는 activation을 2로 나누므로 행렬곱의 결과는 그대로다.
 </Callout>
@@ -395,8 +395,8 @@ AWQ와 함께 공개한 inference 프레임워크 TinyChat은 batch 1로 200토�
 
 Weight-only의 이득은 batch가 커지거나 prefill로 가면 줄어든다.
 첫째, batch가 크면 읽는 데이터의 대부분이 KV cache다.
-문맥이 2,048토큰인 요청 192개를 묶은 decode 스텝은 67.8 GB를 읽는데 그중 weight는 16 GB뿐이라,
-Weight를 INT4로 줄여도 읽는 데이터는 약 56 GB로 18%쯤 주는 데 그친다.
+Llama 3 8B에서 문맥이 2,048토큰인 요청 192개를 묶은 decode 스텝은 67.8 GB를 읽는데 그중 weight는 16 GB뿐이라,
+weight를 INT4로 줄여도 읽는 데이터는 약 56 GB로 18%쯤 주는 데 그친다.
 둘째, weight-only는 bytes만 줄일 뿐 계산량은 그대로이고, weight를 dequantize하는 계산이 더해진다.
 작은 batch의 decode에서는 놀던 연산 장치가 이 계산을 맡지만,
 prefill처럼 선형층이 이미 compute-bound이면 줄일 읽기 시간은 없고 dequantize 계산만 비용으로 남는다.
@@ -415,8 +415,7 @@ Lin 등의 QServe는 4-bit weight-only 방법이 weight를 dequantize하는 비�
 
 AWQ가 중요한 weight를 고를 때 기댄 activation의 큰 값은, activation 자체를 양자화할 때는 걸림돌이 된다.
 8-bit 정도면 반올림만 해도 충분할 것 같지만, 큰 LLM에서는 그렇지 않았다.
-Dettmers 등은 activation의 몇몇 channel에 다른 값보다 훨씬 큰 값이 몰린다는 것을 보고했다.[^llmint8]
-이런 값은 여러 층과 토큰에 걸쳐 같은 channel에 반복해 나타나며, 원논문은 이를 outlier feature라 불렀다.
+Dettmers 등은 이 큰 값이 여러 층과 토큰에 걸쳐 같은 channel에 반복해 나타난다는 것을 보고하고, 이를 outlier feature라 불렀다.[^llmint8]
 6.7B 모델에서는 이런 값이 단 6개의 channel에 몰려 있었다.
 앞의 균일 양자화 예시처럼,
 이런 값이 있는 행렬을 per-tensor나 per-token으로 양자화하면 나머지 값의 정밀도가 무너진다.
@@ -444,7 +443,7 @@ Activation을 입력 channel마다 다른 scale로 양자화하면 정확도는 
 하지만 앞의 행렬곱 식에서 보았듯 입력 channel마다 둔 scale은 합 안에 남아, 빠른 정수 행렬곱 하나로 계산할 수 없다.
 
 SmoothQuant는 그 어려움을 weight 쪽으로 옮긴다.
-입력 channel $j$마다 smoothing factor $s_j$를 정해 activation을 $s_j$로 나누고 weight의 해당 행에 $s_j$를 곱하면,
+입력 channel $j$마다 smoothing factor $s_j$(양자화 scale과는 별개의 값)를 정해 activation을 $s_j$로 나누고 weight의 해당 행에 $s_j$를 곱하면,
 행렬곱의 결과는 그대로다.
 AWQ의 배율과 같은 등가 변환이지만, AWQ는 중요한 weight를 보호하려고 weight를 키웠고 SmoothQuant는 activation을 고르게 하려고 activation을 줄인다.
 
@@ -555,9 +554,8 @@ batch를 최대 4배 키워 처리량을 2.35–3.47배 높였다(Llama-2-7B, A1
 
 ### 6-1. STE
 
-지금까지 본 방법은 모두 학습을 마친 모델을 사후에 양자화하는 PTQ다.
-Bits를 더 낮추면 PTQ만으로는 품질을 지키기 어렵고,
-그때는 학습 중에 양자화의 효과를 반영하는 **QAT**를 쓴다.
+지금까지 본 방법은 모두 학습 없이 양자화하는 PTQ였다.
+**QAT**는 학습 중에 양자화를 넣는다.
 실수 weight를 따로 두고 갱신하되, forward에서는 그 weight를 양자화했다 되돌린 값으로 계산한다.
 Backward에서는 미분할 수 없는 반올림의 미분을 1로 보는 STE(straight-through estimator)로 gradient를 근사해,
 모델이 양자화 오차에 맞춰 적응하게 한다.[^nagel]
@@ -612,10 +610,10 @@ Weight가 $-1$, $0$, $1$뿐이면 행렬곱에서 곱셈이 사라진다.
 Weight가 0인 둘째 입력은 계산에서 빠진다.
 </Callout>
 
-100B 토큰으로 학습한 실험에서 BitNet b1.58은 3B부터 같은 데이터로 학습한 16-bit LLaMA 구조 모델과 perplexity가 비슷했다(9.91 대 10.04).
+100B 토큰으로 학습한 실험에서 BitNet b1.58은 3B부터 같은 데이터로 학습한 16-bit LLaMA 구조 모델과 perplexity가 비슷했다(BitNet b1.58 9.91, LLaMA 10.04).
 이때 GPU 메모리는 3.55배 적고 토큰당 지연은 2.71배 짧았다.[^bitnet158]
 이후 Ma 등은 이 방식으로 4T 토큰을 처음부터 학습한 2B 모델 BitNet b1.58 2B4T를 공개했다.[^bitnet2b4t]
-비교 대상인 Qwen2.5 1.5B를 GPTQ나 AWQ로 INT4까지 PTQ하면 여러 벤치마크의 평균 점수가 BF16의 55.72에서 52.15, 51.17로 떨어졌다.
+같은 보고서에서 Qwen2.5 1.5B를 GPTQ나 AWQ로 INT4까지 PTQ하면 여러 벤치마크의 평균 점수가 BF16의 55.72에서 52.15, 51.17로 떨어졌다.
 BitNet b1.58 2B4T는 embedding을 뺀 weight가 0.4 GB로 INT4판의 0.7 GB보다 작으면서 평균 55.01이었다.
 
 대가도 분명하다.

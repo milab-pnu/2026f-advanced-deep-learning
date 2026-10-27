@@ -354,7 +354,7 @@ Weight 오차(Frobenius norm)가 가장 작은 rank-$r$ 근사는 SVD(singular v
 Yuan 등의 ASVD(activation-aware singular value decomposition) 실험에서 LLaMA-7B의 파라미터를 SVD로 5%만 줄여도 WikiText-2 perplexity가 5.68에서 2,800으로 무너졌다.[^asvd]
 Weight의 오차를 최소화하는 SVD가 층 출력의 오차를 최소화하지는 않기 때문이다.
 Activation outlier가 있으면,
-Weight에서 작아 보이는 오차도 큰 activation과 곱해져 출력에서 크게 드러난다.
+weight에서 작아 보이는 오차도 큰 activation과 곱해져 출력에서 크게 드러난다.
 
 ### 5-2. Activation을 고려한 분해
 
