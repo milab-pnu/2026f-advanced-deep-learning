@@ -183,14 +183,37 @@ $s=4.0/7\approx0.571$로 커져,
 
 앞의 예시에서 보았듯 큰 값 하나가 scale을 정하면, 같은 scale을 쓰는 나머지 값의 정밀도가 떨어진다.
 그래서 scale을 몇 개의 값이 함께 쓰느냐, 곧 양자화 단위(granularity)가 오차를 크게 좌우한다.[^survey]
-선형층에 들어가는 activation은 토큰×hidden 차원의 행렬이고,
-이 행렬의 열, 곧 hidden 차원 하나를 channel이라 부른다.
-Weight 행렬에서는 입력 차원 하나를 입력 channel, 출력 차원 하나를 출력 channel이라 부른다.
 
-- **per-tensor**: 행렬 전체가 scale 하나를 쓴다.
-- **per-channel**: channel마다 scale을 둔다. Weight는 보통 출력 channel마다 둔다.
-- **per-token**: activation의 토큰(행)마다 scale을 둔다.
-- **per-group**: 연속된 원소 몇 개(예: 128개)마다 scale을 둔다.
+선형층 $Y=XW$에서 activation $X$는 토큰×입력 차원, weight $W$는 입력 차원×출력 차원의 행렬이다.
+Hidden 차원 하나를 channel이라 부르므로, $X$의 열 하나와 그와 곱해지는 $W$의 행 하나가 같은 입력 channel이고, $W$의 열 하나가 출력 channel이다.
+두 행렬 모두 행렬 전체가 scale 하나를 쓰는 **per-tensor**가 가장 단순하다.
+그보다 잘게 나누는 방법은 두 행렬에서 다르다.
+
+**Weight**는 학습이 끝나면 값이 고정되므로, 미리 원하는 만큼 잘게 나누어 scale을 정해 둘 수 있다.
+
+- **per-channel**: 출력 channel($W$의 열)마다 scale을 둔다.
+- **per-group**: 한 출력 channel 안에서 입력 방향으로 연속된 원소 몇 개(예: 128개)마다 scale을 둔다.
+
+**Activation**은 입력마다 값이 달라진다.
+
+- **per-token**: 토큰($X$의 행)마다 scale을 둔다.
+- **per-channel**: 입력 channel($X$의 열)마다 scale을 둔다. LLM activation의 큰 값은 몇몇 channel에 몰리므로 정밀도로는 이쪽이 유리하다.
+
+Weight와 activation을 모두 정수로 바꿔 정수 행렬곱을 하려면, scale을 어느 축에 두느냐가 정밀도뿐 아니라 계산 방식도 정한다.
+Activation은 토큰 $i$마다 scale $s_{X,i}$를, weight는 출력 channel $j$마다 scale $s_{W,j}$를 두고 대칭 양자화하면,
+
+$$
+Y_{ij}=\sum_k X_{ik}W_{kj}\approx\sum_k \bigl(s_{X,i}X^{q}_{ik}\bigr)\bigl(s_{W,j}W^{q}_{kj}\bigr)=s_{X,i}\,s_{W,j}\sum_k X^{q}_{ik}W^{q}_{kj}
+$$
+
+이다.
+두 scale은 합의 첨자 $k$와 무관하므로 합 밖으로 나온다.
+그래서 합은 정수끼리의 곱셈과 덧셈으로 하고, 마지막에 결과 원소마다 scale 두 개를 곱하면 된다.
+반대로 activation을 입력 channel $k$마다 나누거나 weight를 입력 방향의 group으로 나누면, 그 scale이 합 안에 남아 정수 행렬곱 하나로 계산할 수 없다.[^nagel]
+그래서 정수 행렬곱에서는 activation은 per-token, weight는 per-channel로 두는 조합이 기본이다.
+Weight만 양자화하고 행렬곱 전에 16-bit로 되돌린다면 이런 제약이 없어, 4-bit weight에는 per-group을 흔히 쓴다.
+
+<Figure src="https://arxiv.org/html/2211.10438v7/quant_scheme.svg" alt="Activation X(토큰 T × 입력 channel C_i, 초록)와 weight W(입력 channel C_i × 출력 channel C_o, 노랑)의 곱을 두 가지 양자화 단위로 그린 그림. (a) per-tensor 양자화에서는 X와 W가 각각 작은 사각형 하나로 표시된 scale Δ_X, Δ_W 하나씩을 쓴다. (b)에서는 X 왼쪽에 길이 T의 세로 막대 Δ_X가 붙어 토큰(행)마다 scale을 두는 per-token 양자화를, W 위에 길이 C_o의 가로 막대 Δ_W가 붙어 출력 channel(열)마다 scale을 두는 per-channel 양자화를 나타낸다. 빨간 점선이 X의 한 행과 W의 한 열을 묶는다." caption="그림의 Δ는 본문의 scale s다. (b)처럼 토큰 T마다, 출력 channel C_o마다 둔 scale은 합의 바깥 축에 있어 합 밖으로 꺼낼 수 있다. 반면 합을 도는 축인 입력 channel C_i에 scale을 두면 합 밖으로 꺼낼 수 없다." source="Xiao et al. (2023), Figure 3 · CC BY 4.0" />
 
 범위를 작게 나눌수록 큰 값의 영향이 그 묶음 안에 갇히지만, scale을 저장할 공간이 늘어난다.
 LLM의 4-bit weight 양자화에서는 원소 128개마다 scale을 두는 group 크기 128이 흔한 기본값이다.
@@ -200,22 +223,8 @@ GPTQ 논문은 이때 group마다 두는 scale과 zero-point 같은 부가 정�
 Llama 3 8B의 weight를 group 128의 INT4로 저장하고 group마다 16-bit scale 하나만 둔다면 원소당 $4+16/128=4.125$ bits다.
 부가 정보는 원소당 0.125 bits로, zero-point를 두지 않은 만큼 위의 약 0.15 bits보다 조금 작다.
 파라미터 8.03B개에 곱하면 약 4.1 GB로, BF16의 16.1 GB에서 약 4분의 1이 된다.
-H100 한 대에 올린 Llama 3 8B의 memory usage 계산에서는 KV(key-value) cache에 쓸 공간이 약 12 GB 늘어난다.
+H100(80 GB) 한 대에 올리면 KV(key-value) cache에 쓸 수 있는 공간이 약 12 GB 늘어난다.
 </Callout>
-
-Weight와 activation을 모두 정수로 바꿔 정수 행렬곱을 하려면, scale을 어느 축에 두느냐가 정밀도뿐 아니라 계산 방식도 정한다.
-Activation $X$(토큰×입력 차원)는 토큰 $i$마다 scale $s_{X,i}$를, weight $W$(입력 차원×출력 차원)는 출력 channel $j$마다 scale $s_{W,j}$를 두고 대칭 양자화하면,
-
-$$
-Y_{ij}=\sum_k X_{ik}W_{kj}\approx\sum_k \bigl(s_{X,i}X^{q}_{ik}\bigr)\bigl(s_{W,j}W^{q}_{kj}\bigr)=s_{X,i}\,s_{W,j}\sum_k X^{q}_{ik}W^{q}_{kj}
-$$
-
-이다.
-두 scale은 합의 첨자 $k$와 무관하므로 합 밖으로 나온다.
-그래서 합은 정수끼리의 곱셈과 덧셈으로 하고, 마지막에 결과 원소마다 scale 두 개를 곱하면 된다.
-반대로 입력 channel $k$마다 scale을 두면 그 scale이 합 안에 남아, 정수 행렬곱 하나로 계산할 수 없다.[^nagel]
-
-<Figure src="https://arxiv.org/html/2211.10438v7/quant_scheme.svg" alt="Activation X(토큰 T × 입력 channel C_i, 초록)와 weight W(입력 channel C_i × 출력 channel C_o, 노랑)의 곱을 두 가지 양자화 단위로 그린 그림. (a) per-tensor 양자화에서는 X와 W가 각각 작은 사각형 하나로 표시된 scale Δ_X, Δ_W 하나씩을 쓴다. (b)에서는 X 왼쪽에 길이 T의 세로 막대 Δ_X가 붙어 토큰(행)마다 scale을 두는 per-token 양자화를, W 위에 길이 C_o의 가로 막대 Δ_W가 붙어 출력 channel(열)마다 scale을 두는 per-channel 양자화를 나타낸다. 빨간 점선이 X의 한 행과 W의 한 열을 묶는다." caption="그림의 Δ는 본문의 scale s다. (b)처럼 토큰 T마다, 출력 channel C_o마다 둔 scale은 합의 바깥 축에 있어 합 밖으로 꺼낼 수 있다. 반면 합을 도는 축인 입력 channel C_i에 scale을 두면 합 밖으로 꺼낼 수 없다." source="Xiao et al. (2023), Figure 3 · CC BY 4.0" />
 
 ### 1-3. FP8
 
