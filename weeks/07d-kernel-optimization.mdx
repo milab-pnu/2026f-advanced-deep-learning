@@ -26,7 +26,8 @@ attention kernel을 두 배 빠르게 하면 스텝은 8분의 7로 줄어 약 1
 그래서 스텝 시간을 연산별로 나누어 보고, 시간을 많이 차지하는 부분부터 손댄다.
 
 Pan과 Li의 inference 시스템 서베이는 attention kernel이 작업을 GPU의 연산 단위에 나누어 주는 방식이 어떻게 바뀌어 왔는지를 계보로 정리한다.[^survey]
-이 노트는 그 계보를 따라 decode를 중심으로 attention kernel, 선형층과 MoE(mixture of experts)의 kernel,
+이 노트는 kernel이 GPU에서 실행되는 방식과 kernel의 시간을 재는 도구를 먼저 보고,
+그 계보를 따라 decode를 중심으로 attention kernel, 선형층과 MoE(mixture of experts)의 kernel,
 그리고 kernel 바깥에서 새는 시간을 차례로 본다.
 
 ## 1. GPU에서 kernel이 실행되는 방식
@@ -56,9 +57,92 @@ Decode에서는 특히 첫째 조건이 어렵다.
 처리할 query가 적어 query 방향으로 SM 전체에 나눌 일을 만들기 어렵다.
 한 스텝이 수 ms로 짧아 작은 비효율도 크게 드러난다.
 
-## 2. Attention kernel
+## 2. Kernel 시간의 측정
 
-### 2-1. FlashAttention의 병렬화
+스텝 시간을 연산별로 나누려면 실제 실행을 기록해 봐야 한다.
+엔진에 들어 있는 PyTorch profiler로도 kernel별 시간을 볼 수 있고, NVIDIA는 쓰임새가 다른 profiler 두 가지를 따로 제공한다.
+**Nsight Systems**는 스텝 전체의 시간이 어디에 쓰이는지를 타임라인으로 보여 주고,
+**Nsight Compute**는 kernel 하나가 GPU의 연산 장치와 메모리 대역폭을 얼마나 쓰는지 분석한다.
+보통은 Nsight Systems로 시간을 많이 쓰는 kernel과 빈 구간을 찾은 뒤, 그 kernel만 Nsight Compute로 들여다본다.
+
+### 2-1. Nsight Systems
+
+Nsight Systems(`nsys`)는 CPU thread, CUDA API 호출, GPU에서 실행된 kernel과 메모리 복사를 한 시간축 위에 그린다.[^nsys]
+`nsys profile -o report <실행 명령>`으로 실행하면 기록이 `report.nsys-rep` 파일에 저장되고, GUI에서 열면 타임라인이 보인다.
+이 타임라인에서 볼 것은 두 가지다.
+
+첫째는 kernel별 시간의 합이다.
+`nsys stats` 명령이 만드는 `cuda_gpu_kern_sum` 보고서는 kernel 이름마다 실행 횟수와 총 시간, 전체에서 차지하는 비율을 모아 준다.[^nsys]
+이 비율이 Amdahl의 법칙에서 말한 "스텝 시간에서 그 연산이 차지하는 몫"이다.
+도입의 예처럼 attention이 4분의 1이라면 attention kernel을 아무리 빠르게 해도 스텝은 4분의 3 아래로 줄지 않는다.
+
+둘째는 GPU 줄의 빈 구간이다.
+Kernel과 kernel 사이가 비어 있으면 GPU가 다음 kernel을 기다리고 있다는 뜻이고, 같은 시각 CPU 줄에서 무엇을 하고 있었는지 보면 원인을 좁힐 수 있다.
+코드에 NVTX(NVIDIA Tools Extension) 범위 표시를 넣으면 "decode 스텝", "12번째 층" 같은 구간 이름이 타임라인에 함께 나타나, 어느 구간의 kernel인지 찾기 쉽다.
+
+<figure>
+<svg viewBox="0 0 600 232" role="img" aria-label="Nsight Systems 타임라인의 개념도. 가로축은 시간이다. 맨 위 NVTX 줄에 decode step 구간이 표시되고, 그 아래 CPU thread 줄에서는 엔진의 Python 코드가 계속 실행된다. CUDA API 줄에는 kernel을 제출하는 launch가 일정한 간격으로 아홉 번 찍혀 있다. GPU kernel 줄에서는 앞부분에 긴 GEMM과 attention kernel 사이로 짧은 kernel들이 빈틈없이 이어지지만, 뒷부분에서는 짧은 kernel이 다음 launch보다 먼저 끝나 kernel 사이에 빈 구간이 생긴다. 그 아래 괄호가 빈 구간을 가리키며 GPU가 다음 launch를 기다린다고 적혀 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <defs><marker id="nsys-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker></defs>
+  <text x="300" y="22" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Nsight Systems 타임라인 (decode 한 스텝의 일부, 개념도)</text>
+  <text x="14" y="55" font-size="13" fill="#64748b">NVTX</text>
+  <text x="14" y="95" font-size="13" fill="#64748b">CPU thread</text>
+  <text x="14" y="135" font-size="13" fill="#64748b">CUDA API</text>
+  <text x="14" y="177" font-size="13" fill="#64748b">GPU kernel</text>
+  <rect x="110" y="40" width="360" height="22" rx="3" fill="#f1f5f9" stroke="#0f172a"/><text x="290" y="56" font-size="13" text-anchor="middle" fill="#0f172a">decode step</text>
+  <rect x="110" y="80" width="360" height="22" rx="3" fill="#f1f5f9" stroke="#94a3b8"/><text x="290" y="96" font-size="13" text-anchor="middle" fill="#64748b">엔진의 Python 코드</text>
+  <rect x="130" y="122" width="12" height="20" fill="#2a78d6"/>
+  <rect x="160" y="122" width="12" height="20" fill="#2a78d6"/>
+  <rect x="190" y="122" width="12" height="20" fill="#2a78d6"/>
+  <rect x="220" y="122" width="12" height="20" fill="#2a78d6"/>
+  <rect x="250" y="122" width="12" height="20" fill="#2a78d6"/>
+  <rect x="280" y="122" width="12" height="20" fill="#2a78d6"/>
+  <rect x="310" y="122" width="12" height="20" fill="#2a78d6"/>
+  <rect x="340" y="122" width="12" height="20" fill="#2a78d6"/>
+  <rect x="370" y="122" width="12" height="20" fill="#2a78d6"/>
+  <text x="400" y="137" font-size="13" fill="#2a78d6">launch</text>
+  <rect x="146" y="164" width="70" height="22" fill="#fde5d9" stroke="#eb6834"/><text x="181" y="180" font-size="13" text-anchor="middle" fill="#0f172a">GEMM</text>
+  <rect x="218" y="164" width="8" height="22" fill="#fde5d9" stroke="#eb6834"/>
+  <rect x="228" y="164" width="50" height="22" fill="#fde5d9" stroke="#eb6834"/><text x="253" y="180" font-size="13" text-anchor="middle" fill="#0f172a">attn</text>
+  <rect x="280" y="164" width="8" height="22" fill="#fde5d9" stroke="#eb6834"/>
+  <rect x="290" y="164" width="8" height="22" fill="#fde5d9" stroke="#eb6834"/>
+  <rect x="300" y="164" width="8" height="22" fill="#fde5d9" stroke="#eb6834"/>
+  <rect x="326" y="164" width="8" height="22" fill="#fde5d9" stroke="#eb6834"/>
+  <rect x="356" y="164" width="8" height="22" fill="#fde5d9" stroke="#eb6834"/>
+  <rect x="386" y="164" width="70" height="22" fill="#fde5d9" stroke="#eb6834"/><text x="421" y="180" font-size="13" text-anchor="middle" fill="#0f172a">GEMM</text>
+  <line x1="316" y1="143" x2="328" y2="162" stroke="#64748b" stroke-dasharray="3 2" marker-end="url(#nsys-arrow)"/>
+  <line x1="346" y1="143" x2="358" y2="162" stroke="#64748b" stroke-dasharray="3 2" marker-end="url(#nsys-arrow)"/>
+  <line x1="376" y1="143" x2="388" y2="162" stroke="#64748b" stroke-dasharray="3 2" marker-end="url(#nsys-arrow)"/>
+  <path d="M308,194 L308,200 L386,200 L386,194" fill="none" stroke="#0f172a"/>
+  <text x="347" y="220" font-size="13" text-anchor="middle" fill="#0f172a">빈 구간: GPU가 다음 launch를 기다림</text>
+</svg>
+<figcaption>Nsight Systems 타임라인의 개념도. CUDA API 줄의 launch는 CPU가 kernel을 제출한 시점이고, GPU kernel 줄의 상자는 실제 실행 구간이다. 이름 없는 좁은 상자는 정규화나 원소별 연산처럼 짧은 kernel이다. 긴 GEMM과 attention이 실행되는 동안에는 제출이 앞서 쌓이지만, 짧은 kernel이 이어지면 다음 제출보다 먼저 끝나 GPU 줄에 빈 구간이 생긴다. Nsight Systems의 화면 구성을 바탕으로 직접 구성했으며 시간 축척은 임의다.</figcaption>
+</figure>
+
+vLLM 문서는 Nsight Systems로 vLLM을 잴 때 `--trace-fork-before-exec=true`와 `--cuda-graph-trace=node`를 붙이라고 권한다.[^vllm-profile]
+앞의 옵션은 vLLM이 띄우는 worker 프로세스까지 기록하게 한다.
+뒤의 옵션은 여러 kernel을 묶어 한 번에 재생하는 CUDA graph 안의 kernel도 하나하나 기록하게 한다.
+Nsight Systems는 기본적으로 CUDA graph를 통째로 한 구간으로 기록하므로, 이 옵션이 없으면 그래프 안의 kernel별 시간을 볼 수 없다.[^nsys]
+대신 kernel 단위로 기록하는 만큼 측정 부담이 커지므로, 지연 자체는 profiler 없이 따로 잰다.
+
+### 2-2. Nsight Compute
+
+Nsight Compute(`ncu`)는 kernel 하나를 대상으로 GPU의 하드웨어 counter를 모아 분석한다.[^ncu]
+한 번 실행으로 모든 지표를 모을 수 없어서 같은 kernel을 여러 번 다시 실행하고(kernel replay),
+결과가 흔들리지 않도록 kernel들을 하나씩 차례로 실행하며 다시 실행하기 전마다 GPU cache를 비운다.[^ncu]
+그래서 Nsight Compute가 보여 주는 실행 시간은 실제 서빙 중의 시간과 다를 수 있고, 엔진 전체에 걸면 매우 느려진다.
+Nsight Systems로 고른 kernel의 이름 일부를 `-k regex:` 옵션으로, 잴 실행 횟수를 `-c` 옵션으로 정해 대상을 좁힌다.[^ncu-cli]
+예를 들어 `ncu --set full -k regex:flash -c 1 -o attn <실행 명령>`은 이름에 flash가 들어간 kernel의 첫 실행 하나만 모든 지표로 재서 attn이라는 이름의 보고서로 저장한다.
+
+보고서에서 먼저 볼 것은 Speed Of Light 절이다.
+연산 장치와 메모리 각각의 처리량을 이론 최댓값에 대한 비율로 보여 주므로,[^ncu]
+도입에서 스텝 전체로 계산한 MBU와 비슷한 지표를 kernel 하나 단위로 보는 셈이다.
+Roofline 차트는 그 kernel의 arithmetic intensity와 달성한 성능을 점 하나로 찍어 roofline의 지붕과 함께 보여 준다.[^ncu]
+점이 대역폭 쪽 지붕 아래에 있으면 memory-bound이고, 지붕에서 아래로 멀수록 kernel이 하드웨어를 덜 쓰고 있다는 뜻이다.
+일을 SM에 고르게 나누거나 읽기와 계산을 겹치는 최적화는 이 점을 위로 올리고, 중간값의 HBM 왕복을 없애는 fusion은 intensity를 높여 점을 오른쪽으로 옮긴다.
+
+## 3. Attention kernel
+
+### 3-1. FlashAttention의 병렬화
 
 FlashAttention은 query와 key·value를 각각 작은 블록으로 나눈다.
 Kernel은 query 블록 하나와 key 블록 하나로 작은 점수 타일을 계산하고, 이 타일을 하나씩 SM 안의 빠른 메모리(shared memory와 register)에서 처리한다(tiling).
@@ -97,7 +181,7 @@ SM 하나가 낼 수 있는 대역폭에 묶이기 쉽다.
 SM 132개가 함께 쓰도록 설계된 3.35 TB/s를 SM 32개만으로 끌어 쓰려는 셈이라 다 쓰기 어렵다.
 </Callout>
 
-### 2-2. Flash-Decoding
+### 3-2. Flash-Decoding
 
 Dao 등의 Flash-Decoding은 나눌 방향을 하나 더 만들었다.
 **Key·value의 시퀀스 길이**다.[^flashdecoding]
@@ -178,7 +262,7 @@ vLLM의 초기 PagedAttention kernel이 이 선택을 그대로 보여 준다.
 시퀀스를 512토큰 조각으로 나누어 계산하고 reduce kernel로 합치는 v2와 나누지 않는 v1이 있었고,
 최대 길이가 8,192토큰 이하이면서 시퀀스가 짧거나 batch × head만으로 thread block이 이미 충분하면 v1을 골랐다.[^vllm-pa]
 
-### 2-3. 흩어진 KV cache와 FlashInfer
+### 3-3. 흩어진 KV cache와 FlashInfer
 
 PagedAttention은 요청 하나의 KV cache를 GPU 메모리 곳곳의 블록에 흩어 두므로,
 attention kernel은 block table을 따라 흩어진 블록을 찾아 읽는 비용을 치른다.
@@ -192,7 +276,7 @@ PagedAttention의 흩어진 블록,
 여러 요청이 공유하는 prefix, 요청마다 다른 길이가 모두 이 형식 하나로 표현된다.
 Kernel은 흩어진 블록을 타일 단위로 GPU 메모리에서 shared memory의 연속된 공간에 모은 뒤,
 거기서 dense한 연산을 하고 다음 타일로 넘어간다.
-Query tile이 충분히 크면 Tensor Core를 쓰고, tile 크기가 1이면 CUDA Core를 쓴다.
+Query tile이 충분히 크면 Tensor Core를 쓰고, tile 크기가 1이면 CUDA Core를 쓴다.<Sidenote>CUDA Core는 원소 하나씩 덧셈과 곱셈을 하는 범용 연산 장치이고, Tensor Core는 작은 행렬 블록의 곱셈과 누산을 한 번에 처리하는 행렬곱 전용 장치다. Query가 하나뿐이면 Tensor Core에 넣을 행렬 블록을 채우지 못한다. 두 장치의 차이를 입문 수준에서 정리한 글로 GPU Mart의 [CUDA Cores vs Tensor Cores](https://www.gpu-mart.com/blog/cuda-cores-vs-tensor-cores)가 있다. 다만 이 글은 Tensor Core의 정밀도별 차이를 다루지 않고, core 수를 세대가 다른 GPU의 성능 지표처럼 설명한다.</Sidenote>
 공유 prefix를 읽는 query들은 이 행렬에서 여러 행을 한 블록으로 묶어 함께 계산해, shared memory에 한 번 복사한 KV를 여러 query가 재사용하게 한다.
 이를 위해 GPU 메모리에 저장된 KV cache를 재배치하지는 않고, 접근 관계를 나타내는 색인만 새로 만든다.
 예를 들어 두 요청의 KV 블록이 $[A,B,C]$와 $[A,B,D]$라면,
@@ -229,9 +313,9 @@ SGLang에 붙여 비교한 실험에서 FlashInfer는 Triton 언어로 작성한
 실제 측정에서는 엔진이 보고한 backend와 profiler 실행 기록을 확인해 어떤 attention kernel과 행렬곱 kernel이 시간을 쓰는지 본다.
 Attention 비중이 작다면 attention kernel만 바꾼 효과가 전체 지연에서는 작을 수 있다.
 
-## 3. 선형층과 MoE의 kernel
+## 4. 선형층과 MoE의 kernel
 
-### 3-1. 작은 batch의 행렬곱
+### 4-1. 작은 batch의 행렬곱
 
 Decode의 선형층은 batch가 작으면 행렬과 벡터의 곱에 가깝다.
 Weight가 16-bit라면 이런 연산의 intensity는 토큰 수와 거의 같다.
@@ -245,7 +329,7 @@ FlashDecoding++는 batch 쪽 타일을 Tensor Core가 한 번에 처리하는 8�
 일은 출력 차원 방향으로 thread block들에 나누고,
 출력 차원이 크면 weight 읽기가 병목이 되므로, shared memory 버퍼 두 개를 번갈아 써서 다음 weight 타일을 읽는 동안 현재 타일을 계산한다(double buffering).
 
-### 3-2. 양자화 weight의 kernel
+### 4-2. 양자화 weight의 kernel
 
 Weight-only 양자화(quantization)는 kernel 안에서 weight를 원래 정밀도로 되돌려야(dequantize) 한다.
 Frantar 등의 Marlin은 4-bit weight와 FP16 activation의 행렬곱을 위한 kernel이다.[^marlin]
@@ -267,7 +351,7 @@ H100에서는 이 값이 ridge point 295에 닿는 $b\approx74$까지 4-bit 쪽�
 이득은 약 $295/b$배로 줄다가 intensity가 $b$인 FP16 쪽도 compute-bound가 되는 $b\approx295$에서 사라진다.[^marlin]
 vLLM에 넣은 end-to-end 측정에서는 RTX A6000으로 Llama-2-7B를 서빙할 때 TPOT가 FP16 대비 약 2.8배 짧아졌다.[^marlin]
 
-### 3-3. MoE의 grouped GEMM
+### 4-3. MoE의 grouped GEMM
 
 MoE 층에서는 router가 토큰마다 expert 몇 개를 고르므로, batch의 토큰들이 서로 다른 expert로 흩어지고 expert마다 받는 토큰 수가 다르다.
 각 expert는 자기에게 온 토큰들에만 FFN(feed-forward network) 행렬곱을 하므로, expert마다 행렬곱의 크기가 달라진다.
@@ -284,9 +368,9 @@ vLLM의 fused MoE kernel은 토큰을 expert 순서로 정렬한 뒤,
 블록마다 어떤 expert의 weight를 쓸지를 표시해 같은 선형층에 속한 모든 expert의 행렬곱을 kernel 하나로 처리한다.[^vllm-fusedmoe]
 다만 첫 선형층, 활성화, 둘째 선형층까지 한 kernel로 합치지는 않고 따로 호출한다.
 
-## 4. Kernel 바깥의 시간
+## 5. Kernel 바깥의 시간
 
-### 4-1. Kernel launch와 CUDA graph
+### 5-1. Kernel launch와 CUDA graph
 
 Kernel 자체가 빨라도 그 사이가 빈다면 GPU는 논다.
 CPU는 kernel을 하나씩 GPU에 제출하는데, 제출마다 마이크로초 단위의 비용이 든다.
@@ -316,7 +400,7 @@ vLLM V1의 기본 설정은 모델을 attention을 경계로 나누어 컴파일
 이때 attention backend가 지원하면 요청마다 query 길이가 같은 decode batch는 전체를 그래프 하나로 기록하고,
 나머지는 attention 사이의 구간만 그래프로 기록한다.[^vllm-cg]
 
-### 4-2. 컴파일러
+### 5-2. 컴파일러
 
 Kernel을 하나하나 손으로 쓰지 않고 컴파일러에 맡기는 길도 있다.
 Tillet 등의 Triton은 GPU의 thread 대신 데이터 타일 단위로 연산을 쓰게 하는 언어이자 컴파일러로,
@@ -336,6 +420,14 @@ FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kern
 [^survey]: Pan, J., & Li, G. (2025). A Survey of LLM Inference Systems. [arXiv:2506.21901](https://arxiv.org/abs/2506.21901).
 
 [^hopper]: Andersch, M., Palmer, G., Krashinsky, R., Stam, N., Mehta, V., Brito, G., & Ramaswamy, S. (2022). NVIDIA Hopper Architecture In-Depth. *NVIDIA Technical Blog*. [developer.nvidia.com](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/).
+
+[^nsys]: NVIDIA. (2026). Nsight Systems User Guide (v2026.5). *NVIDIA documentation*. [docs.nvidia.com](https://docs.nvidia.com/nsight-systems/UserGuide/index.html).
+
+[^vllm-profile]: vLLM Project. (2026). Profiling vLLM. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/contributing/profiling/).
+
+[^ncu]: NVIDIA. (2026). Nsight Compute Kernel Profiling Guide (v2026.3.1). *NVIDIA documentation*. [docs.nvidia.com](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html).
+
+[^ncu-cli]: NVIDIA. (2026). Nsight Compute CLI (v2026.3.1). *NVIDIA documentation*. [docs.nvidia.com](https://docs.nvidia.com/nsight-compute/NsightComputeCli/index.html).
 
 [^fa1]: Dao, T., Fu, D. Y., Ermon, S., Rudra, A., & Ré, C. (2022). FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. *NeurIPS 2022*. [arXiv:2205.14135](https://arxiv.org/abs/2205.14135).
 
