@@ -129,8 +129,95 @@ Classifier-free guidance(CFG)를 쓰는 경우 조건부 예측과 조건을 제
 이 구성에서 바꿀 수 있는 것은 latent 공간만이 아니다.
 Denoiser를 U-Net에서 Transformer로 바꾸어도 latent와 반복 생성이라는 전체 관점은 유지할 수 있다.
 
+## 4. 기존 이미지의 편집
+
+### 4-1. Image-to-image와 noise 수준
+
+Text-to-image는 임의의 noise와 텍스트에서 새 이미지를 만든다.
+반면 image-to-image에서는 기존 이미지의 구도나 내용을 남기면서 일부를 바꾸고 싶다.
+한 가지 방법은 기존 이미지를 encoder로 latent $z_{\mathrm{in}}$으로 바꾸고, 선택한 단계 $t_0$에 해당하는 noise를 더한 다음 거기서부터 denoising하는 것이다.
+
+$$
+z_{t_0}=\sqrt{\bar\alpha_{t_0}}z_{\mathrm{in}}+\sqrt{1-\bar\alpha_{t_0}}\epsilon,
+\qquad \epsilon\sim\mathcal{N}(0,I).
+$$
+
+이후 text 조건을 주면서 $z_{t_0}$에서 낮은 noise 단계로 이동하고, 마지막 latent를 decoder로 이미지로 바꾼다.
+원본 정보가 남은 상태에서 시작하므로 완전히 새로운 noise에서 생성하는 경우보다 원본과 연결될 여지가 있다.
+SDEdit은 입력에 noise를 넣은 뒤 학습된 diffusion prior로 denoising하는 접근을 제안했다.[^sdedit]
+위 식은 같은 직관을 **latent DDPM의 표기**로 나타낸 것으로, SDEdit 원논문의 연속시간 SDE 식과 동일한 구현이라는 뜻은 아니다.
+
+예를 들어 원본이 낮에 찍은 거리 사진이고 텍스트 조건이 “밤의 거리”라 하자.
+Noise를 적게 넣으면 거리의 구도가 비교적 많이 남지만 밤으로 바뀌는 정도가 약할 수 있다.
+더 많이 넣으면 바뀔 여지가 커지는 대신 건물의 위치나 모양까지 달라질 수 있다.
+변화량은 noise 수준 외에도 prompt, 모델, sampler와 random seed에 영향을 받으며, 특정 영역의 보존이 보장되는 것은 아니다.
+
+### 4-2. 편집 지시와 학습 데이터
+
+“밤의 거리”는 결과 이미지의 설명이다.
+“낮 사진을 밤으로 바꿔 줘”는 입력 이미지에 대해 수행할 **편집 지시**다.
+InstructPix2Pix는 원본 이미지와 편집 지시를 함께 받아 편집 결과를 생성하도록 Stable Diffusion을 추가 학습한다.[^instructpix]
+이를 위해서는 `(원본 이미지, 지시, 편집된 이미지)`가 함께 필요하다.
+임의의 두 이미지만 모으면 지시와 대응되는 한 장면의 전후 관계를 알기 어렵다.
+
+<Figure src="https://arxiv.org/html/2211.09800v2/method.png" alt="왼쪽은 GPT-3가 원본 설명으로 편집 지시와 변경된 설명을 만들고 Stable Diffusion과 Prompt-to-Prompt가 전후 이미지 쌍을 만드는 과정이다. 오른쪽은 입력 이미지와 지시를 InstructPix2Pix에 넣어 편집된 이미지를 얻는 예다." caption="왼쪽은 합성 학습 데이터 생성, 오른쪽은 학습된 모델의 편집 예시다. 데이터 생성에 쓴 GPT-3와 Prompt-to-Prompt를 사용자의 이미지마다 다시 실행하는 구조는 아니다." source="Brooks et al. (2023), Figure 2 · CC BY 4.0" wide />
+
+그림은 [원논문](https://arxiv.org/abs/2211.09800)의 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 조건으로 제공된다.
+연구진은 사람이 작성한 예시로 GPT-3를 fine-tuning하고, 이미지 설명에서 편집 지시와 편집 후 설명을 생성했다.
+예를 들어 “말을 탄 사람”이라는 설명에서 “말을 용으로 바꿔 줘”라는 지시와 “용을 탄 사람”이라는 결과 설명을 만든다.
+이 텍스트 예시는 이해를 위한 번역이다.
+
+이어서 두 설명을 Stable Diffusion과 Prompt-to-Prompt에 넣어 편집 전후의 합성 이미지 쌍을 만든다.
+Prompt-to-Prompt는 원래 cross-attention을 조절해 두 이미지가 공유할 내용이 유지되도록 돕는 방법이다.[^prompt2prompt]
+InstructPix2Pix의 데이터 생성 구현은 이 아이디어를 변형해 두 이미지의 noise를 맞추고 일부 단계의 self-attention을 공유한다.[^instructpix]
+연구진은 여러 후보를 만들고 CLIP 기반 점수로 이미지 간 유사성과 지시에 맞는 변화 등을 확인해 학습에 사용할 쌍을 고른다.
+합성된 쌍에도 원치 않는 변화나 지시 불일치가 남을 수 있으므로 이 과정이 완벽한 정답을 보장하지는 않는다.
+
+### 4-3. 원본 이미지와 지시를 조건으로 학습
+
+원본 이미지를 $I$, 편집된 정답 이미지를 $Y$, 지시 텍스트를 $c$라 하자.
+각 이미지를 같은 autoencoder의 encoder $E$로 latent $z_I=E(I)$와 $z_Y=E(Y)$로 바꾼다.
+학습 시 noise를 더하는 대상은 **편집된 정답** $z_Y$다.
+임의의 시간 $t$와 표준 Gaussian noise $\epsilon$을 뽑아 $z_t=\sqrt{\bar\alpha_t}z_Y+\sqrt{1-\bar\alpha_t}\epsilon$을 만든다.
+모델은 $z_t$, 시간, 원본 latent $z_I$, 지시 $c$를 보고 추가한 noise를 예측한다.
+
+$$
+L=\mathbb{E}\left[\left\|\epsilon-\epsilon_\theta(z_t,t,z_I,c)\right\|^2\right].
+$$
+
+여기서 기대값은 학습 예제, 시간과 noise를 뽑는 경우들에 대한 평균이다.
+원본 latent는 모델에 원래 장면을 알려 주는 조건이고, noisy latent는 모델이 생성해야 할 편집 결과의 현재 상태다.
+원논문은 두 latent를 channel 방향으로 이어 U-Net의 첫 convolution 입력에 넣고, 지시는 text encoder와 cross-attention을 통해 전달한다.
+예를 들어 두 latent가 각각 $64\times64\times4$이면 연결된 U-Net 입력은 $64\times64\times8$이다.
+이는 입력 channel을 설명하는 예시이며, 원논문의 학습 이미지 해상도를 뜻하지 않는다.
+기존 Stable Diffusion weight로 초기화하되, 새 이미지 조건 channel에 대응하는 weight는 0에서 시작한다.
+
+### 4-4. 생성과 두 조건의 guidance
+
+사용할 때는 편집 정답 $Y$를 모른다.
+원본 이미지와 지시를 조건으로 두고 편집 결과의 latent는 Gaussian noise에서 시작한다.
+U-Net의 예측과 sampler를 여러 번 적용한 뒤 마지막 latent를 decoder에 넣는다.
+한 사용자의 이미지에 맞춰 매번 모델을 다시 학습하거나, 입력 이미지를 noise로 역변환하는 inversion을 수행할 필요는 없지만, diffusion의 denoising 단계들은 반복된다.
+
+InstructPix2Pix는 원본 이미지와 텍스트 지시의 영향을 따로 조절하기 위해 두 조건을 각각 또는 함께 제거한 예제도 학습한다.
+생성 시에는 조건이 모두 없는 예측, 이미지만 있는 예측, 이미지와 지시가 모두 있는 예측을 결합한다.
+이를 각각 $\epsilon_{\varnothing}$, $\epsilon_I$, $\epsilon_{I,c}$라 하면 원논문의 결합 방식은 다음과 같다.
+
+$$
+\hat\epsilon=\epsilon_{\varnothing}+s_I(\epsilon_I-\epsilon_{\varnothing})+s_T(\epsilon_{I,c}-\epsilon_I).
+$$
+
+$s_I$와 $s_T$가 둘 다 1이면 두 차이 항이 이어져 최종적으로 $\epsilon_{I,c}$가 된다.
+셋은 같은 현재 latent와 시간에서 조건만 달리하여 얻은 예측이다.
+이미지 guidance scale은 원본과의 유사성, 텍스트 guidance scale은 지시 반영 정도를 조절하는 데 쓰인다.
+두 값이 결과에 미치는 영향은 서로 얽혀 있고, 어느 값을 키운다고 원하는 속성만 완벽히 보존하거나 변경한다는 보장은 없다.
+ControlNet처럼 edge나 pose를 공간 조건으로 제공하는 방법은 제어할 정보를 보태는 다른 접근이다.
+
 [^survey]: Yang, L., Zhang, Z., Song, Y., et al. (2024). Diffusion Models: A Comprehensive Survey of Methods and Applications. *ACM Computing Surveys*, 56(4), 105:1–105:39. [논문](https://arxiv.org/abs/2209.00796).
 [^ldm]: Rombach, R., Blattmann, A., Lorenz, D., Esser, P., & Ommer, B. (2022). High-Resolution Image Synthesis with Latent Diffusion Models. *CVPR*. [논문](https://arxiv.org/abs/2112.10752).
 [^unet]: Ronneberger, O., Fischer, P., & Brox, T. (2015). U-Net: Convolutional Networks for Biomedical Image Segmentation. *MICCAI*. [논문](https://arxiv.org/abs/1505.04597).
 [^clip]: Radford, A., Kim, J. W., Hallacy, C., et al. (2021). Learning Transferable Visual Models From Natural Language Supervision. *ICML*. [논문](https://arxiv.org/abs/2103.00020).
 [^sd]: Rombach, R., et al. (2022). Stable Diffusion v1 Model Card. *Hugging Face*. [모델 카드](https://huggingface.co/CompVis/stable-diffusion-v1-4).
+[^sdedit]: Meng, C., He, Y., Song, Y., et al. (2022). SDEdit: Guided Image Synthesis and Editing with Stochastic Differential Equations. *ICLR*. [논문](https://arxiv.org/abs/2108.01073).
+[^instructpix]: Brooks, T., Holynski, A., & Efros, A. A. (2023). InstructPix2Pix: Learning to Follow Image Editing Instructions. *CVPR*. [논문](https://arxiv.org/abs/2211.09800).
+[^prompt2prompt]: Hertz, A., Mokady, R., Tenenbaum, J., et al. (2023). Prompt-to-Prompt Image Editing with Cross Attention Control. *ICLR*. [논문](https://arxiv.org/abs/2208.01626).
