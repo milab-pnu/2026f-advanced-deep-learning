@@ -6,7 +6,7 @@ order: 4
 
 일반적인 autoregressive(AR) 언어 모델은 이미 나온 token을 바탕으로 다음 token을 하나씩 생성한다.
 Diffusion language model은 텍스트를 손상시키는 과정과 이를 복원하는 과정을 정의해 생성하는 다른 접근이다.[^survey]
-이미지의 Gaussian noise를 token ID에 그대로 더하는 대신, 이산적인 token을 mask로 바꾸는 방식부터 살펴본다.
+텍스트를 연속 벡터로 다루는 방법과 이산적인 token을 mask로 바꾸는 방법을 비교한 뒤, mask를 이용한 학습과 생성을 살펴본다.
 
 ## 1. 텍스트의 생성과 손상
 
