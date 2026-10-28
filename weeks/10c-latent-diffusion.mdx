@@ -126,9 +126,6 @@ Classifier-free guidance(CFG)를 쓰는 경우 조건부 예측과 조건을 제
 두 예측의 차이에 guidance scale을 곱해 조건의 영향을 조절한다.
 결과 이미지는 prompt, 초기 noise, 학습된 모델, guidance scale과 sampler의 영향을 함께 받는다.
 
-이 구성에서 바꿀 수 있는 것은 latent 공간만이 아니다.
-Denoiser를 U-Net에서 Transformer로 바꾸어도 latent와 반복 생성이라는 전체 관점은 유지할 수 있다.
-
 ## 4. 기존 이미지의 편집
 
 ### 4-1. Image-to-image와 noise 수준
@@ -197,6 +194,8 @@ $$
 사용할 때는 편집 정답 $Y$를 모른다.
 원본 이미지와 지시를 조건으로 두고 편집 결과의 latent는 Gaussian noise에서 시작한다.
 U-Net의 예측과 sampler를 여러 번 적용한 뒤 마지막 latent를 decoder에 넣는다.
+Image-to-image에서 원본 latent에 noise를 더해 생성의 출발점으로 삼은 것과 달리, 여기서는 원본 latent를 매 단계 별도의 조건으로 제공한다.
+두 방법 모두 원본을 활용하지만, noise에서 복원할 대상과 원본을 전달하는 경로가 다르다.
 한 사용자의 이미지에 맞춰 매번 모델을 다시 학습하거나, 입력 이미지를 noise로 역변환하는 inversion을 수행할 필요는 없지만, diffusion의 denoising 단계들은 반복된다.
 
 InstructPix2Pix는 원본 이미지와 텍스트 지시의 영향을 따로 조절하기 위해 두 조건을 각각 또는 함께 제거한 예제도 학습한다.
@@ -212,6 +211,7 @@ $s_I$와 $s_T$가 둘 다 1이면 두 차이 항이 이어져 최종적으로 $\
 이미지 guidance scale은 원본과의 유사성, 텍스트 guidance scale은 지시 반영 정도를 조절하는 데 쓰인다.
 두 값이 결과에 미치는 영향은 서로 얽혀 있고, 어느 값을 키운다고 원하는 속성만 완벽히 보존하거나 변경한다는 보장은 없다.
 ControlNet처럼 edge나 pose를 공간 조건으로 제공하는 방법은 제어할 정보를 보태는 다른 접근이다.
+이런 조건부 생성에서 U-Net이 맡은 noise 예측을 Transformer로 구현해도 latent 공간에서 반복적으로 생성한다는 관점은 유지된다.
 
 [^survey]: Yang, L., Zhang, Z., Song, Y., et al. (2024). Diffusion Models: A Comprehensive Survey of Methods and Applications. *ACM Computing Surveys*, 56(4), 105:1–105:39. [논문](https://arxiv.org/abs/2209.00796).
 [^ldm]: Rombach, R., Blattmann, A., Lorenz, D., Esser, P., & Ommer, B. (2022). High-Resolution Image Synthesis with Latent Diffusion Models. *CVPR*. [논문](https://arxiv.org/abs/2112.10752).
