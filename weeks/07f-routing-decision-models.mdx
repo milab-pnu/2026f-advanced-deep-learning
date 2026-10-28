@@ -22,7 +22,8 @@ Inference 최적화 기법은 대개 요청 하나를 받은 뒤 그 요청을 �
 
 ### 1-1. Cascade와 router
 
-모델의 크기와 비용은 함께 커진다.
+같은 종류의 하드웨어와 실행 조건이라면 모델이 클수록 계산과 메모리 비용이 커진다.
+실제 호출 가격과 지연은 제공자, 하드웨어, 부하와 출력 길이에 따라서도 달라진다.
 큰 모델에 모든 요청을 보내면 작은 모델로도 맞힐 수 있었던 쉬운 요청에도 큰 모델의 비용을 낸다.
 큰 모델이 평균적으로 더 뛰어나더라도 모든 요청에서 작은 모델보다 나은 것은 아니다.
 쉬운 요청은 작은 모델에, 어려운 요청은 큰 모델에 보내면 품질을 크게 잃지 않고 비용을 줄일 수 있다.
@@ -86,11 +87,12 @@ Cascade에서 큰 모델로 넘어간 요청은 작은 모델이 답을 다 생�
 부를 API의 순서와 단계별 문턱값은 학습 데이터에서 고른다.
 평균 비용이 예산을 넘지 않는 조합 가운데 정확도가 가장 높은 것을 택한다.
 
-금 시세 방향을 뉴스 제목으로 맞히는 HEADLINES 데이터에서, FrugalGPT는 GPT-J, J1-L, GPT-4 순서의 cascade를 골랐다.
+금 시세 방향을 뉴스 제목으로 맞히는 HEADLINES 데이터에서, 예산을 6.5달러로 정한 사례의 FrugalGPT는 GPT-J, J1-L, GPT-4 순서의 cascade를 골랐다.
 GPT-J의 답은 점수가 0.96을 넘을 때만 받아들이고, 아니면 J1-L을 부른다.
 J1-L의 답은 점수가 0.37을 넘으면 받아들이고, 아니면 GPT-4를 부른다.
 가장 약한 GPT-J는 거의 확실할 때만 믿고, J1-L 다음에는 비싼 GPT-4만 남으므로 더 너그럽게 받아들이는 셈이다.
-이 데이터에서 GPT-4 단독과 같은 정확도를 내는 데 든 비용은 33.1달러에서 0.6달러로 98.3% 줄었다.
+같은 데이터에서 예산을 바꿔 가며 얻은 별도의 비교에서는, GPT-4 단독과 같은 정확도를 내는 데 든 비용이 33.1달러에서 0.6달러로 98.3% 줄었다.
+이 0.6달러는 방금 설명한 6.5달러 예산 사례의 비용이 아니다.
 다른 네 데이터의 절감률은 52.3%에서 75.4%로, 데이터마다 크게 달랐다.
 
 채점기의 비용과 품질은 맞바꾸는 관계다.
@@ -104,19 +106,22 @@ Router는 요청 $q$를 보고 큰 모델의 답이 더 나을 확률 $P(\text{w
 이 확률이 문턱값 $\alpha$ 이상이면 큰 모델에, 아니면 작은 모델에 보낸다.
 $\alpha$를 높이면 작은 모델로 가는 요청이 늘어 비용이 줄지만 품질이 내려갈 수 있다.
 학습 데이터는 사람들이 두 모델의 답을 비교해 고른 Chatbot Arena의 선호 기록이다.
-여기에 GPT-4를 LLM judge로 써서 붙인 선호 판정을 더하자, BERT 분류기와 Llama 3 8B 기반 분류기로 만든 router가 무작위 routing보다 뚜렷이 나아졌다.
+GSM8K에서는 여기에 GPT-4를 LLM judge로 써서 붙인 선호 판정을 더하자, BERT 분류기와 Llama 3 8B 기반 분류기로 만든 router가 무작위 routing보다 나아졌다.
+MMLU에서는 judge 대신 해당 task의 정답을 활용한 선호 데이터를 추가했다.
 GPT-4와 Mixtral 8x7B 사이에서 routing했을 때, MT Bench에서 GPT-4 점수의 95%를 내는 데 무작위 routing보다 GPT-4 호출을 3.66배 적게 썼다.
-같은 비교에서 MMLU는 1.41배, GSM8K는 1.49배로 이득이 작았다.
+MMLU에서는 GPT-4 점수의 92%를 내는 데 1.41배, GSM8K에서는 87%를 내는 데 1.49배 적게 썼다.
+세 수치는 각각 큰 모델과 작은 모델의 점수 차이 중 절반을 회복하는 목표를 쓴 결과이므로, 큰 모델 점수에 대한 비율은 서로 다르다.
 Router 자체의 비용은 가장 비싼 구조도 GPT-4로 생성하는 비용의 0.4%를 넘지 않았다.
 
 **Hybrid LLM**도 요청만 보고 고르는 router지만, 방향을 뒤집어 작은 모델의 답이 큰 모델의 답만큼 좋을 확률을 예측한다.[^hybrid]
 이득은 두 모델의 실력 차에 크게 달려 있었다.
-Llama 2 7B와 13B처럼 차이가 작으면 큰 모델 호출을 40% 줄여도 품질이 0.2% 떨어지는 데 그쳤지만,
-FLAN-T5 800M과 Llama 2 13B처럼 차이가 크면 같은 절감에서 품질이 10% 넘게 떨어졌다.
+MixInstruct 데이터에서 Llama 2 7B와 13B처럼 차이가 작으면 큰 모델 호출을 40% 줄여도 BARTScore 기준 품질이 0.2% 떨어지는 데 그쳤지만,
+FLAN-T5 800M과 Llama 2 13B처럼 차이가 크면 같은 호출 비율에서 품질이 10% 넘게 떨어졌다.
+논문이 비용 이점으로 센 값은 작은 모델로 보낸 요청의 비율이므로, 실제 금액 절감률은 각 모델의 호출 비용을 넣어 따로 계산해야 한다.
 
 ### 1-4. 문턱값과 검증 데이터
 
-Cascade의 $\tau$와 router의 $\alpha$는 정답이 있는 검증 데이터에서 문턱값을 바꿔 가며 비용과 품질을 재고, 목표에 맞는 값을 고른다.
+Cascade의 $\tau$와 router의 $\alpha$는 정답이나 답 사이의 선호를 평가할 수 있는 검증 데이터에서 문턱값을 바꿔 가며 비용과 품질을 재고, 목표에 맞는 값을 고른다.
 FrugalGPT, RouteLLM, Hybrid LLM 모두 이렇게 정한다.
 
 <Callout type="example">
@@ -135,9 +140,10 @@ FrugalGPT, RouteLLM, Hybrid LLM 모두 이렇게 정한다.
 이 절차는 점수의 순서만 쓴다.
 점수가 높은 답일수록 맞을 가능성이 높기만 하면, 점수의 값 자체가 실제 정답률과 맞지 않아도 문턱값은 검증 데이터가 알아서 맞춰 준다.
 점수의 값까지 믿을 수 있어야 하는 경우는 따로 있다.
-정답이 있는 검증 데이터 없이 "0.8 이상이면 받아들인다"처럼 확률의 뜻으로 문턱값을 정할 때,
-들어오는 요청의 분포가 검증 데이터와 달라졌을 때,
-그리고 점수를 기대 비용이나 위험을 계산하는 데 확률로 넣을 때다.
+정답이 있는 검증 데이터 없이 "0.8 이상이면 받아들인다"처럼 확률의 뜻으로 문턱값을 정하거나,
+점수를 기대 비용이나 위험을 계산하는 데 확률로 넣을 때다.
+다만 검증 데이터에서 calibration이 잘 되어 있어도 들어오는 요청의 분포가 달라지면 그 관계가 유지된다는 보장은 없다.
+새로운 요청에 대한 정답을 모아 calibration과 문턱값별 품질을 다시 확인해야 한다.
 
 ### 1-5. LLM 자기 검증
 
@@ -161,15 +167,17 @@ LLM에게 판단을 맡기는 흔한 방법은 답을 글로 쓰게 하고 그 �
 이 방식에는 세 가지 문제가 있다.
 
 첫째는 decode 비용이다.
-첫 출력 토큰은 prefill에서 나오지만, 그 뒤의 토큰마다 decode 스텝을 한 번씩 거쳐야 하고, decode 스텝 하나는 weight 전체를 메모리에서 읽어 오는 memory-bound 작업이다.
+첫 출력 토큰은 prefill에서 나오지만, 기본적인 생성에서는 그 뒤의 토큰마다 decode 스텝을 한 번씩 거쳐야 한다.
+작은 batch의 decode는 큰 weight 행렬을 메모리에서 읽는 데 시간이 많이 드는 memory-bound 작업이기 쉽다.
 판단 앞에 이유를 먼저 쓰게 하면 출력 토큰은 수백 개까지 늘어난다.
 
 <Callout type="example">
-Llama 3 8B를 H100 SXM에서 요청 하나만 처리한다고 하고, roofline으로 이론 하한을 어림하자.
+Llama 3.1 8B를 H100 SXM에서 요청 하나만 처리한다고 하고, 사양상 최대 속도로 이상적인 시간을 어림하자.
 1,000토큰 프롬프트의 prefill은 약 16 ms이고, decode 스텝 하나는 weight를 읽는 데 약 4.8 ms가 걸린다.
 답이 8토큰짜리 JSON이면 첫 토큰은 prefill에서 나오고 decode 7스텝이 이어져 약 $16+7\times4.8\approx50$ ms가 든다.
 이유를 200토큰 먼저 쓰게 하면 약 $16+207\times4.8\approx1{,}010$ ms로 늘어난다.
 반면 prefill이 끝난 시점에 이미 계산된 다음 토큰 분포에서 답을 바로 읽을 수 있다면 약 16 ms로 끝난다.
+이 값은 weight와 계산을 단순하게 센 어림이며, 실제 지연에는 추가 연산과 메모리 이동, 서버 처리 시간이 들어간다.
 여러 요청을 batch로 묶으면 decode 스텝 하나를 여러 요청이 나누어 써서 시스템 전체의 토큰당 자원 비용을 줄일 수 있다.
 다만 한 요청이 체감하는 지연까지 줄어드는 것은 아니며, 생성이 끝날 때까지 batch의 한 자리와 KV(key-value) cache를 계속 차지한다.
 </Callout>
@@ -204,6 +212,9 @@ $$
 이 값이 실제로 정답일 확률과 맞는지는 별도로 검증해야 한다.
 아무것도 생성하지 않으므로 decode가 없고, parsing할 문자열도 없으며, 문턱값과 비교할 확률이 함께 나온다.
 이 방식은 레이블이 한 토큰이어야 하고, 모델이 선택지를 보고 레이블로 답하는 형식에 익숙해야 잘 작동한다.
+정규화하기 전 레이블 토큰들의 확률 합도 살펴야 한다.
+예를 들어 A와 B에 각각 0.006, 0.004를 주면 정규화한 값은 0.6과 0.4지만, 모델의 전체 확률 중 답 레이블에 놓인 몫은 1%뿐이다.
+이 몫이 작으면 프롬프트가 모델이 실제로 답을 시작할 위치에서 끝났는지 점검해야 한다.[^anyjev]
 
 레이블 토큰의 확률을 판단으로 쓰는 방법은 오래전부터 쓰였다.
 Nogueira 등의 T5 reranker(monoT5)는 질의와 문서를 넣고 "true"와 "false" 두 토큰의 logit에만 softmax를 취해 문서의 순위를 매겼고, 두 단어를 고른 이유 가운데 하나가 둘 다 한 토큰이라는 점이었다.[^monot5]
@@ -231,7 +242,8 @@ $$
 $\operatorname{acc}(B_m)$은 구간 $B_m$에 든 판단의 정답률, $\operatorname{conf}(B_m)$은 그 판단들의 평균 확률이다.
 예를 들어 판단 10개 가운데 5개는 확률 0.9로 답해 3개가 맞고, 5개는 확률 0.6으로 답해 3개가 맞았다면,
 $\text{ECE}=0.5\times|0.6-0.9|+0.5\times|0.6-0.6|=0.15$다.
-확률 0.9로 답한 판단을 그대로 믿고 자동 처리하면 실제로는 10번 중 4번이 틀린다.
+이 예시에서 확률 0.9로 답한 판단은 다섯 개 중 두 개가 틀렸다.
+표본이 작으므로 이 비율이 앞으로도 유지된다고 단정할 수는 없다.
 
 Kadavath 등은 선택지를 (A), (B)처럼 나열하고 레이블 토큰의 확률만 읽었을 때,
 큰 사전학습 모델이 내놓는 확률이 실제 정답률과 꽤 잘 맞는다고 보고했다.[^kadavath]
@@ -260,7 +272,8 @@ llama-30B는 A를 34.6%, D를 15.8% 골랐고, gpt-3.5-turbo는 C를 32.3% 골�
 정답을 모두 A로 옮기기만 해도 llama-30B의 MMLU 정확도가 53.1%에서 68.2%로 올랐다.
 선택지 순서를 바꾸면 같은 문제의 정확도가 크게 달라진다는 보고도 있다.[^pezeshkpour]
 
-이 편향을 덜어 내는 방법은 여럿 나와 있고, 모두 정답이 필요 없다.
+이 편향을 덜어 내는 다음 방법들은 처리할 입력마다 정답을 요구하지 않는다.
+다만 보정 강도 같은 설정을 고르거나 효과를 평가할 때는 정답이 있는 별도 데이터가 필요할 수 있다.
 
 - **Cyclic permutation** (Zheng 등이 쓴 기준선):[^zheng]
   선택지 목록을 한 칸씩 돌려 가며 $K$번 prefill해 각 선택지가 각 레이블 자리에 한 번씩 놓이게 하고, 선택지마다 확률을 평균한다.
@@ -274,7 +287,8 @@ llama-30B는 A를 34.6%, D를 15.8% 골랐고, gpt-3.5-turbo는 C를 32.3% 골�
   GPT-3에게 부정 예시와 긍정 예시를 차례로 하나씩 보여 준 뒤 "N/A"를 물었더니 긍정에 61.8%를 주었는데, 이런 쏠림이 선택지 편향이다.
 - **Batch calibration** (Zhou 등):[^batch-cal]
   내용 없는 입력 대신, 실제로 처리한 입력들의 평균 분포를 사전 분포로 삼아 나눈다.
-  정답이 선택지들에 고르게 나뉜 입력이 들어온다면 이 평균은 균등해야 하므로, 균등에서 벗어난 만큼을 편향으로 본다.
+  이 방법은 입력들의 평균 분포가 특정 선택지에 크게 치우치지 않는다는 가정 아래, 균등에서 벗어난 만큼을 편향으로 본다.
+  정답이 고르게 나뉘어도 모델의 평균 확률이 반드시 균등한 것은 아니므로, 이 가정은 근사다.
   선택지 순서를 고정해 두면 그 순서에서의 위치 편향과 선택지 편향이 함께 사전 분포에 담긴다.
 
 뒤의 셋은 모두 사전 분포로 나누고 둘은 이름에 calibration이 들어가지만, 확률을 정답률에 맞추는 방법이 아니라 편향을 덜어 내는 방법이다.
@@ -288,7 +302,7 @@ cyclic permutation을 log 확률 평균으로 바꾼 것과 batch calibration을
 
 1. 선택지 순서를 한 칸씩 돌려 가며, A, B 같은 레이블을 붙인 프롬프트를 $K$번 prefill하고, 순서마다 레이블 토큰의 확률을 읽어 다시 정규화한다.
    $K$번의 prefill은 질문과 입력 부분이 같으므로 prefix cache를 함께 쓸 수 있다.
-2. 순서마다 그 확률을, 지금까지 처리한 입력들이 그 순서에서 받은 평균 분포로 나누고 다시 정규화한다(batch calibration).
+2. 순서마다 그 확률을, 누적된 입력들이 그 순서에서 받은 평균 분포로 나누고 다시 정규화한다(batch calibration).
 3. $K$개의 결과를 선택지마다 log 확률로 평균하고 다시 정규화한다.
 
 셋째 단계에서 확률이 아니라 log 확률을 평균하는 데는 이유가 있다.[^anyjev]
@@ -296,6 +310,10 @@ cyclic permutation을 log 확률 평균으로 바꾼 것과 batch calibration을
 한 순서 안에서 다시 정규화할 때 빼는 값은 그 순서의 모든 선택지에 같으므로 결과에 영향을 주지 않는다.
 모든 선택지가 모든 자리를 한 번씩 거쳤으므로 log 확률을 평균하면 모두 똑같이 $b_j$의 평균을 받고, 이 공통값도 다시 정규화할 때 사라져 $\operatorname{softmax}(c)$만 남는다.
 Softmax가 비선형이므로 확률을 평균하면 $b_j$가 이렇게 정확히 상쇄되지 않는다.
+이 정확한 상쇄는 사전 분포로 나누기 전의 확률에 대한 성질이다.
+기술 보고서는 이 이론적 성질을 설명할 때 보정 전 확률을 평균한다고 명시한다.
+반면 v0.3.0 코드의 기본 L0 경로는 사전 분포로 보정한 확률을 평균하므로, 위 절차와 예시는 그 구현을 따른다.[^anyjev][^anyjev-repo]
+순서마다 다른 사전 분포로 먼저 보정하면 추가되는 항이 선택지마다 달라질 수 있으므로, 보정 후에도 위치 편향이 정확히 사라진다고 보장하지는 않는다.[^anyjev]
 Log 확률을 평균하는 것은 확률의 기하평균을 구하는 것과 같으므로, 아래 예시에서는 제곱근으로 계산한다.
 
 <Callout type="example">
@@ -318,6 +336,7 @@ Log 확률을 평균하는 것은 확률의 기하평균을 구하는 것과 같
 긍정은 $\sqrt{0.650\times0.647}\approx0.648$, 부정은 $\sqrt{0.350\times0.353}\approx0.352$에 비례하므로, 다시 정규화한 최종 확률은 긍정 0.648이다.
 
 같은 결과를 log odds(긍정 대 부정)로 보면 각 단계가 무엇을 지우는지 보인다.
+앞에서 가정한 것처럼 내용과 자리의 효과가 더해진다고 보고 계산한다.
 리뷰의 log odds는 두 순서에서 $\ln(0.775/0.225)\approx1.24$와 $\ln(0.60/0.40)\approx0.41$이다.
 둘의 평균 0.82에는 A 자리의 몫이 빠지고, 차의 절반 0.42가 A 자리의 몫이다.
 평균 분포의 log odds는 $\ln(0.65/0.35)\approx0.62$와 $\ln(0.45/0.55)\approx-0.20$이고, 평균 0.21이 긍정 쪽으로 기운 몫, 차의 절반 0.41이 A 자리의 몫이다.
@@ -326,16 +345,19 @@ Log 확률을 평균하는 것은 확률의 기하평균을 구하는 것과 같
 </Callout>
 
 예시는 평균 분포로 그대로 나눴지만, AnyJev의 기본 설정은 같은 질문으로 입력이 8개 이상 쌓인 뒤부터 둘째 단계를 적용하고 평균 분포를 0.75제곱한 값으로 나누어 보정을 약하게 한다.
-그래서 둘째 단계가 아직 적용되지 않거나 약하게 걸릴 때 위치 편향을 지우는 것은 셋째 단계다.
+여러 입력을 한 번에 처리하면 그 batch의 입력들도 평균에 포함된다.
+이 0.75는 별도의 정답 데이터에서 여러 설정을 비교해 고른 값이다.[^anyjev]
+둘째 단계가 아직 적용되지 않거나 약하게 걸릴 때도 셋째 단계로 위치 편향을 줄인다.
 
 저자들은 BANKING77의 문의 유형 77개 가운데 20개를 선택지로 둔 300문항을 Qwen3-8B로 푼 결과를 저장소에 올렸다.[^anyjev-repo]
+기술 보고서에도 같은 정확도가 실려 있지만, 두 편향을 함께 보정한 수치가 위 버전의 코드와 정확히 같은 처리 순서로 계산되었는지는 명시되어 있지 않다.[^anyjev]
 레이블 확률을 그대로 읽으면 정확도가 0.747, ECE가 0.240이었고, 선택지 순서를 뒤집었을 때 답이 바뀌는 비율은 0.230이었다.
 두 편향 보정을 더하면 각각 0.803, 0.184, 0.073이 되었다.
 이 개선은 대부분 선택지 순서를 돌리는 데서 나왔고, 그것만으로도 0.800, 0.189, 0.077이었다.
 Logit이 내용과 자리의 합이라는 가정은 근사이고, 목록을 뒤집으면 이웃한 선택지도 달라지므로, 돌려 평균한 뒤에도 뒤집으면 답이 바뀔 수 있다.
 ECE 0.184는 여전히 작지 않은 값이다.
-저자들도 정확도는 바탕 모델의 실력을 넘지 못하고,
-한 선택지가 대부분인 데이터에서는 평균 분포가 균등하다는 전제가 깨져 사전 분포로 나누는 보정이 오히려 정확도를 떨어뜨릴 수 있다고 밝힌다.
+이 방법의 성능은 바탕 모델과 task에 따라 달라진다.
+저자들은 한 선택지가 대부분인 데이터에서는 평균 분포가 균등하다는 전제가 깨져 사전 분포로 나누는 보정이 오히려 정확도를 떨어뜨릴 수 있다고 밝힌다.
 레이블은 알파벳 한 글자이므로 선택지는 26개까지다.
 
 ## 3. Decision model
@@ -362,7 +384,8 @@ Score는 척도의 단계를, Noul은 예와 아니오를 선택지로 둔 Choic
 Jev는 답에 confidence도 붙이는데, 따로 예측한 값이 아니라 확률 분포에서 계산한 값이다.[^jev-confidence]
 예를 들어 Choice에서 선택지가 2개이고 가장 큰 확률이 0.6이면 confidence는 $(0.6-1/2)/(1-1/2)=0.2$다.
 이 0.2를 "맞을 확률 20%"로 읽으면 안 되므로, 확률의 뜻으로 문턱값을 정하거나 ECE를 잴 때는 선택지 확률을 쓴다.
-선택지 수가 다른 판단끼리 confidence를 비교해서도 안 된다.
+선택지 수가 다르면 같은 confidence에서도 가장 큰 선택지 확률은 달라진다.
+따라서 confidence가 같다는 이유만으로 서로 다른 판단의 정답률도 같다고 가정하지 말고, 실제 task별로 검증해야 한다.
 
 입력은 텍스트에서 이미지로 넓어지고 있다.
 Jev는 2026년 10월 1.14 버전과 함께 입력과 지시문 안에 이미지를 넣는 기능과,
@@ -391,7 +414,8 @@ $$
 s_i=\frac{(W_Q z)^\top(W_K h_i)}{\sqrt{d}},\qquad p_i=\frac{e^{s_i}}{\sum_{j=1}^{K}e^{s_j}}
 $$
 
-$d$는 $W_Q$, $W_K$가 바꾼 벡터의 차원으로 strands-decider에서는 256이고, head의 파라미터는 약 100만 개다.
+$d$는 $W_Q$, $W_K$가 바꾼 벡터의 차원으로 strands-decider의 단일 head에서는 256이고, head의 파라미터는 약 100만 개다.
+공개 v1 모델은 같은 구조의 head 세 개를 따로 학습한 뒤 각 선택지의 점수를 평균한다.[^strands-results]
 
 <figure>
 <svg viewBox="0 0 600 200" role="img" aria-label="Pointer head의 작동. 아래 줄에 입력과 질문, 선택지 배송 조회, 환불, 주소 변경, 그리고 답 자리가 차례로 놓인다. 이들을 이어 붙여 LM head가 없는 Transformer로 prefill 한 번에 처리한다. 각 선택지의 마지막 토큰 위치에서 hidden state h1, h2, h3을, 답 자리에서 z를 꺼낸다. 맨 위에서 점수 s_i는 W_Q z와 W_K h_i의 내적을 루트 d로 나눈 값이고, 선택지들에 대해서만 softmax하면 배송 조회 0.70, 환불 0.20, 주소 변경 0.10이 된다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -426,7 +450,8 @@ Head에는 선택지 자리마다 따로 붙은 파라미터가 없어서, A 자
 그래도 순서의 영향이 모두 사라지지는 않는다.
 Causal attention에서는 뒤쪽 선택지가 앞쪽 선택지를 읽지만 앞쪽 선택지는 뒤쪽을 읽지 못하므로, 같은 선택지라도 놓인 자리에 따라 표현이 달라진다.
 strands-decider 문서도 선택지 목록을 뒤집으면 확률 분포가 조금(문서의 수치로 약 0.016) 움직인다고 보고한다.[^strands-arch]
-Cloudflare의 Clef도 Qwen 모델의 weight를 고정하고 판단용 head와 low-rank adapter를 붙여 prefill 한 번에 선택지들의 점수를 매기지만, 수식이나 크기 같은 자세한 구조는 공개하지 않았다.[^clef]
+Cloudflare의 Clef도 Qwen 모델의 weight를 고정하고 판단용 head와 low-rank adapter를 붙여 prefill 한 번에 선택지들의 점수를 매긴다.
+선택지별로 입력에서 근거를 읽고 필드 사이에서도 attention을 수행한다고 설명하지만, head의 구체적인 수식과 행렬 크기는 공개하지 않았다.[^clef]
 
 ### 3-3. 학습 데이터와 목표
 
@@ -457,6 +482,7 @@ Clef는 정답 선택지에 대한 cross-entropy(label smoothing 적용)에 Brie
 Brier loss는 예측 확률 벡터와 정답의 one-hot 벡터 사이의 제곱 오차다.
 Cross-entropy도 확률의 크기에 벌점을 매기지만 확신하고 틀린 답의 벌점이 끝없이 커지는 반면, Brier loss의 벌점은 2를 넘지 않는다.
 Clef는 확률의 calibration을 다듬으려고 Brier loss를 더했다고 밝힌다.
+또한 순서가 있는 척도에서 이웃한 답에 부분 점수를 주고 기준 모델과의 차이에 penalty를 두는 강화학습도 보조 목표로 썼다고 설명한다.[^clef]
 
 공개된 재료를 모으면 decision model을 만드는 방법이 그려진다.
 공개 LLM에 pointer head 같은 판단 head를 붙이고,
@@ -485,7 +511,9 @@ LLM은 같은 질문을 여러 번 물어 답의 비율로 확률을 얻을 수�
 저자들은 속도가 필요하지 않다면 Jev의 뚜렷한 이점은 선택지 확률을 parsing 없이 받는다는 점뿐이라고 결론지었다.
 
 확률이 잘 맞더라도 입력을 고친 공격에는 약할 수 있다.
-JevAdvBench는 정답이 바뀌지 않는 범위에서 입력이나 선택지를 고치는 12가지 black-box 공격으로, Jev가 맞힌 판단의 46.3%를 뒤집었다.[^jevadv]
+JevAdvBench는 정답이 바뀌지 않는 범위에서 입력이나 선택지를 고치는 12가지 black-box 공격을 시험했다.
+Jev 1.13이 원래 맞힌 판단에 대해 공격 방법별로 유효한 변형을 모아 계산한 결과, 46.3%에서 답이 바뀌었다.[^jevadv]
+여러 후보를 탐색해 만든 변형을 대상으로 한 수치이므로, 임의의 입력 변경이나 서로 다른 질문 전체에 대한 실패율로 읽어서는 안 된다.
 같은 입력을 다시 물었을 때 답이 바뀐 비율은 0.17%였으므로, 뒤집힌 답은 무작위성보다는 공격의 효과로 볼 수 있다.
 저자들은 decision model의 입력을 신뢰할 수 없는 것으로 다루고, confidence만 보고 자동으로 실행하지 말라고 권한다.
 TypeSafe 문서도 Jev 1.13의 약점으로 첫 번째 선택지에 기우는 위치 편향, 계산과 날짜 비교, 무관한 내용이 긴 입력 등을 든다.[^jev-jagged]
@@ -509,9 +537,9 @@ calibration이 확인된 확률이라면 "0.8 이상이면 받아들인다"처�
 
 [^survey]: Moslem, Y., & Kelleher, J. D. (2026). Dynamic Model Routing and Cascading for Efficient LLM Inference: A Survey. *Transactions on Machine Learning Research*. [arXiv:2603.04445](https://arxiv.org/abs/2603.04445).
 
-[^frugalgpt]: Chen, L., Zaharia, M., & Zou, J. (2024). FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance. *Transactions on Machine Learning Research*. [openreview.net](https://openreview.net/forum?id=cSimKw5p6R).
+[^frugalgpt]: Chen, L., Zaharia, M., & Zou, J. (2024). FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance. *Transactions on Machine Learning Research*. [openreview.net](https://openreview.net/forum?id=cSimKw5p6R); [저자 PDF](https://lingjiaochen.com/papers/2024_FrugalGPT_TMLR.pdf).
 
-[^routellm]: Ong, I., Almahairi, A., Wu, V., et al. (2025). RouteLLM: Learning to Route LLMs from Preference Data. *ICLR 2025*. [arXiv:2406.18665](https://arxiv.org/abs/2406.18665).
+[^routellm]: Ong, I., Almahairi, A., Wu, V., et al. (2025). RouteLLM: Learning to Route LLMs with Preference Data. *ICLR 2025*. [arXiv:2406.18665](https://arxiv.org/abs/2406.18665).
 
 [^hybrid]: Ding, D., Mallick, A., Wang, C., et al. (2024). Hybrid LLM: Cost-Efficient and Quality-Aware Query Routing. *ICLR 2024*. [arXiv:2404.14618](https://arxiv.org/abs/2404.14618).
 
@@ -563,7 +591,7 @@ calibration이 확인된 확률이라면 "0.8 이상이면 받아들인다"처�
 
 [^clef]: Chen, M., Reneau, A., & Flansburg, K. (2026). Introducing Clef: our open-source decision models, and new RL fine-tuning platform. *Cloudflare Blog*. [blog.cloudflare.com](https://blog.cloudflare.com/clef-decision-models).
 
-[^kahneman]: Kahneman, D. (2011). *Thinking, Fast and Slow*. Farrar, Straus and Giroux.
+[^kahneman]: Kahneman, D. (2011). *Thinking, Fast and Slow*. Farrar, Straus and Giroux. [출판사 발췌](https://us.macmillan.com/books/9780374275631/thinkingfastandslow/).
 
 [^s2s1]: Yu, P., Xu, J., Weston, J., & Kulikov, I. (2024). Distilling System 2 into System 1. [arXiv:2407.06023](https://arxiv.org/abs/2407.06023).
 

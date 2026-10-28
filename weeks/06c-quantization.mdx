@@ -5,7 +5,7 @@ order: 2
 ---
 
 <strong>양자화(quantization)</strong>는 weight, activation, KV cache 등을 더 적은 bits로 표현하는 방법이다.
-Llama 3 8B의 weight를 BF16(bfloat16)에서 INT4(4-bit integer)로 바꾸면 16 GB가 약 4 GB가 된다.
+Llama 3.1 8B의 weight를 BF16(bfloat16)에서 INT4(4-bit integer)로 바꾸면 16 GB가 약 4 GB가 된다.
 대신 정밀도를 낮춘 만큼 오차가 생긴다.
 특히 LLM(large language model)의 activation에는 몇몇 channel(hidden 차원)에 유독 큰 값인 outlier가 반복해 나타나는데, 그 값에 범위를 맞추면 나머지 작은 값이 뭉개진다.[^survey]
 
@@ -278,6 +278,8 @@ $$
 다른 단위를 지원하는 전용 kernel이나 블록 단위 연산도 있으므로 모든 정수 행렬곱이 이 조합만 써야 한다는 뜻은 아니다.
 Weight만 양자화하고 행렬곱 전에 16-bit로 dequantize한다면 이런 제약이 없어, 4-bit weight에는 per-group을 흔히 쓴다.
 
+이 노트에서 CC BY 4.0으로 표시한 논문 그림에는 [CC BY 4.0 라이선스](https://creativecommons.org/licenses/by/4.0/)가 적용된다.
+
 <Figure src="https://arxiv.org/html/2211.10438v7/quant_scheme.svg" alt="Activation X(토큰 T × 입력 channel C_i, 초록)와 weight W(입력 channel C_i × 출력 channel C_o, 노랑)의 곱을 두 가지 양자화 단위로 그린 그림. (a) per-tensor 양자화에서는 X와 W가 각각 작은 사각형 하나로 표시된 scale Δ_X, Δ_W 하나씩을 쓴다. (b)에서는 X 왼쪽에 길이 T의 세로 막대 Δ_X가 붙어 토큰(행)마다 scale을 두는 per-token 양자화를, W 위에 길이 C_o의 가로 막대 Δ_W가 붙어 출력 channel(열)마다 scale을 두는 per-channel 양자화를 나타낸다. 빨간 점선이 X의 한 행과 W의 한 열을 묶는다." caption="그림의 Δ는 본문의 scale s다. (b)처럼 토큰 T마다, 출력 channel C_o마다 둔 scale은 합의 바깥 축에 있어 합 밖으로 꺼낼 수 있다. 반면 합을 도는 축인 입력 channel C_i에 scale을 두면 합 밖으로 꺼낼 수 없다." source="Xiao et al. (2023), Figure 3 · CC BY 4.0" />
 
 범위를 작게 나눌수록 큰 값의 영향이 그 묶음 안에 갇히지만, scale을 저장할 공간이 늘어난다.
@@ -285,11 +287,13 @@ LLM의 4-bit weight 양자화에서는 원소 128개마다 scale을 두는 group
 4-bit weight 양자화 방법인 GPTQ의 논문은 이때 group마다 두는 scale과 zero-point 같은 부가 정보에 원소당 약 0.15 bits가 더 든다고 보고했다.[^gptq]
 
 <Callout type="example">
-Llama 3 8B의 weight를 모두 group 128의 INT4로 저장하고 group마다 16-bit scale 하나만 둔다면 원소당 $4+16/128=4.125$ bits다.
+Llama 3.1 8B의 weight를 모두 group 128의 INT4로 저장하고 group마다 16-bit scale 하나만 둔다면 원소당 $4+16/128=4.125$ bits다.
 부가 정보는 원소당 0.125 bits로, zero-point를 두지 않은 만큼 위의 약 0.15 bits보다 조금 작다.
 파라미터 8.03B개에 곱하면 약 4.1 GB로, BF16의 16.1 GB에서 약 4분의 1이 된다.
 실제 배포에서는 embedding과 출력층(합쳐 약 1.05B개)을 16-bit로 남기는 경우가 많고, 그러면 전체 weight는 약 5.7 GB다.
-어느 쪽이든 H100(80 GB) 한 대에 올리면 KV(key-value) cache에 쓸 수 있는 공간이 10–12 GB 늘어난다.
+H100(80 GB) 한 대에서 엔진의 전체 메모리 예산과 다른 메모리 사용량이 같다면,
+절약한 약 10–12 GB를 KV(key-value) cache에 추가로 쓸 수 있다.
+실제로는 kernel과 설정이 바뀌면 작업 공간도 달라질 수 있다.
 </Callout>
 
 ### 1-3. FP8
@@ -335,7 +339,7 @@ Scale은 지수만 있는 E8M0 형식이라 2의 거듭제곱만 표현한다.
 
 NVIDIA가 Blackwell GPU(graphics processing unit)와 함께 내놓은 NVFP4는 블록 크기를 원소 16개로 줄이고, 블록 scale을 2의 거듭제곱 대신 FP8(E4M3)로 둔다.
 E4M3는 표현 범위가 좁으므로(최대 448), 블록마다 필요한 scale이 E4M3로 표현되도록 텐서 전체가 공유하는 FP32 scale을 하나 더 둔다.
-원소당 저장량은 $4+8/16=4.5$ bits다.[^nvfp4]
+블록이 가득 찼다고 하면 원소당 저장량은 $4+8/16=4.5$ bits에 텐서 전체 scale의 몫이 조금 더해진다.[^nvfp4]
 
 <Callout type="example">
 네 값 $(0.9,\,-2.7,\,0.2,\,5.1)$을 E2M1 원소와 블록 scale 하나로 저장한다고 하자(설명을 위해 정한 값).
@@ -396,9 +400,11 @@ Static 방식은 calibration 데이터로 미리 잰 범위로 scale을 고정�
 Weight-only는 읽는 weight bytes를 줄이므로, 읽는 데이터의 대부분이 weight인 작은 batch의 decode에서 효과가 크다.
 Weight-activation 양자화는 행렬곱을 BF16보다 빠른 저정밀 연산 장치로 하므로,
 긴 prefill처럼 행렬곱이 compute-bound인 경우에도 빨라질 수 있다.
-Decode도 요청을 약 350개 넘게 묶으면 선형층의 행렬곱은 compute-bound가 된다.
-이때도 attention은 요청마다 자기 KV cache를 읽으므로 memory-bound로 남는다.
-그런데 Llama 3 8B를 BF16으로 올린 H100 한 대라면 KV cache에 약 53.5 GB가 남으므로, 요청 350개를 담으려면 평균 문맥이 약 1,170토큰 이하여야 한다.
+H100에서 BF16 선형층의 이상적인 roofline으로 보면 decode 요청을 약 350개 넘게 묶을 때 연산 지붕에 닿는다.
+Attention은 요청마다 자기 KV cache를 읽으므로, 같은 조건에서도 메모리 대역폭이 병목일 수 있다.
+예를 들어 Llama 3.1 8B를 BF16으로 올린 H100 한 대에서 KV cache에 약 53.5 GB를 쓸 수 있다고 가정하자.
+토큰당 KV cache가 약 131 KB이므로, 요청 350개를 담으려면 평균 문맥이 약 1,170토큰 이하여야 한다.
+이 수치는 weight와 KV cache만의 단순한 근사이며, 실제 병목과 동시 요청 수는 kernel과 엔진 설정을 포함해 측정해야 한다.
 KV cache 양자화는 읽는 데이터의 대부분이 KV cache인 큰 batch와 긴 문맥의 decode에서 효과가 크다.
 
 ### 2-3. 하드웨어와 kernel
@@ -513,18 +519,20 @@ Weight를 자를 범위도 calibration 데이터에서 양자화 뒤 출력 오�
 범위를 최솟값·최댓값보다 조금 좁히면 끝의 값 몇 개는 잘리지만, 격자 간격이 줄어 나머지 값의 오차가 준다.
 
 AWQ는 calibration 데이터로 channel별 크기를 재고 $\alpha$와 자를 범위를 고를 뿐, GPTQ처럼 weight 하나하나의 오차를 다른 weight로 메우도록 고치지는 않는다.
-그래서 GPTQ보다 calibration 데이터의 분포에 덜 민감하다.
+AWQ 논문의 비교에서는 GPTQ보다 calibration 데이터의 분포에 덜 민감했다.
 OPT-6.7B를 INT3로 양자화할 때 calibration과 평가에 다른 분포의 데이터를 쓰면, GPTQ의 perplexity는 2.3–4.9 나빠졌지만 AWQ는 0.5–0.6 오르는 데 그쳤다.[^awq]
 
 두 갈래는 함께 쓸 수도 있다.
 AWQ로 배율을 정한 뒤 GPTQ로 양자화하면, INT2처럼 아주 낮은 bits에서 GPTQ만 쓸 때보다 perplexity가 더 낮았다.[^awq]
 AWQ와 함께 공개한 inference 프레임워크 TinyChat은 batch 1로 200토큰을 생성할 때 Hugging Face의 FP16 구현보다 RTX 4090에서 2.7–3.9배 빨랐다.[^awq]
+TinyChat은 양자화된 선형층 외에도 다른 연산을 최적화했으므로, 이 배율 전체를 weight의 정밀도를 낮춘 효과로 볼 수는 없다.
 
 ### 3-4. Weight-only의 한계
 
 Weight-only의 이득은 batch가 커지거나 prefill로 가면 줄어든다.
 첫째, batch가 크고 문맥이 길면 읽는 데이터의 대부분이 KV cache다.
-Llama 3 8B에서 문맥이 2,048토큰인 요청 192개를 묶은 decode 스텝은 67.8 GB를 읽는데 그중 weight는 16 GB뿐이라,
+Llama 3.1 8B에서 문맥이 2,048토큰인 요청 192개를 묶고 weight와 각 요청의 KV cache를 한 번씩 읽는다고 근사하면 decode 스텝은 약 67.8 GB를 읽는다.
+그중 weight는 약 16 GB이므로,
 weight를 INT4로 줄여도 읽는 데이터는 약 56 GB로 18%쯤 주는 데 그친다.
 둘째, weight-only는 bytes만 줄일 뿐 계산량은 그대로이고, weight를 dequantize하는 계산이 더해진다.
 작은 batch의 decode에서는 놀던 연산 장치가 이 계산을 맡지만,
@@ -661,14 +669,17 @@ QuaRot은 KV cache까지 4-bit로 두었지만, KV cache는 따로 다룰 만한
 앞의 192개 요청 예시처럼 batch가 크고 문맥이 길면, decode에서 읽는 데이터의 대부분이 weight가 아니라 KV cache이기 때문이다.
 KV cache 크기는 원소당 bytes에 비례하므로, 이를 줄이면 같은 메모리에 더 많은 토큰이 들어가고 스텝마다 읽는 bytes도 준다.
 vLLM 같은 서빙 엔진은 KV cache를 FP8로 저장하는 옵션을 제공한다.[^vllm-fp8]
-Llama 3 8B라면 토큰당 KV cache가 BF16의 약 131 KB에서 약 66 KB로 준다.
+Llama 3.1 8B라면 토큰당 KV cache가 BF16의 약 131 KB에서 약 66 KB로 준다.
 Weight를 BF16으로 두고 H100 한 대에서 vLLM으로 돌린다고 하자.
 엔진이 쓰는 GPU 메모리 73.6 GB(80 GB의 92%)에서 weight 16.1 GB와 작업 공간 약 4 GB를 뺀다고 가정하면 KV cache에 약 53.5 GB가 남는다.
 여기에 BF16이면 약 408,000토큰, FP8이면 약 816,000토큰이 들어간다(scale 같은 부가 정보 제외).
-요청 길이가 같다면 같은 메모리로 약 두 배의 batch를 받을 수 있다.
+요청 길이가 같다면 KV cache 공간만 따질 때 같은 메모리에 약 두 배의 요청이 들어간다.
+실제 동시 요청 수는 엔진의 설정과 다른 자원의 제한도 받는다.
 KV cache가 BF16이고 문맥이 2,048토큰이면, 요청 하나는 약 17 GFLOPs(giga floating-point operations)를 계산하는 동안 자기 KV cache 0.27 GB를 읽는다.
-Batch를 키우면 weight 16 GB는 여러 요청이 나눠 쓰지만 KV cache는 요청마다 따로 읽으므로, decode의 intensity는 약 $17/0.27\approx63$ FLOP/byte에 다가갈 뿐이다.
-FP8 KV cache는 요청 하나의 cache를 약 0.13 GB로 줄여, 이 한계를 약 두 배로 올린다.
+Weight를 batch 전체에서 한 번, 각 요청의 KV cache를 한 번 읽는다고 단순화하자.
+Batch를 키우면 weight 16 GB는 여러 요청이 나눠 쓰지만 KV cache는 요청마다 따로 읽으므로, 이 근사에서 decode의 intensity는 약 $17/0.27\approx63$ FLOP/byte에 다가간다.
+FP8 KV cache는 요청 하나의 cache를 약 0.13 GB로 줄여, 이 근사값을 약 두 배로 올린다.
+실제 전송량은 kernel의 KV 재사용과 다른 데이터의 이동에도 좌우된다.
 
 FP8은 cache를 절반으로 줄이는 데 그친다.
 2-bit처럼 더 내리면 scale을 어느 축으로 묶을지가 오차를 좌우한다.
@@ -705,8 +716,9 @@ KIVI는 query와 attention weight를 원래 정밀도로 두고, weight-only 양
 이때 각 channel에서 토큰 여러 개(예: 32개)를 한 group으로 묶어 group마다 scale을 둔다(per-channel을 토큰 방향의 group으로 나눈 것).
 Value는 토큰마다 바로 양자화할 수 있지만, 정확도를 위해 최근 토큰 일부는 역시 원래 정밀도로 둔다.
 
-KIVI는 이렇게 KV cache를 2-bit로 줄여 모델 weight를 포함한 최대 메모리를 2.6배 줄였고,
-batch를 최대 4배 키워 처리량을 2.35–3.47배 높였다(Llama 2 7B, A100 한 대).[^kivi]
+KIVI는 이렇게 KV cache를 2-bit로 줄여 모델 weight를 포함한 최대 메모리를 2.6배 줄였다(Llama 2 7B, A100 한 대).[^kivi]
+비슷한 최대 메모리 사용량에서 batch를 최대 4배 키우자 처리량은 2.35–3.47배 높아졌다.
+이 처리량 비교는 같은 batch 크기에서 양자화만 바꾼 효과가 아니다.
 다만 KV cache는 생성 중에 계속 새로 쓰이므로, weight와 달리 실행 중에 양자화하고 dequantize하는 비용이 든다.
 
 세 대상의 양자화는 한 시스템 안에서 합쳐지기도 한다.
@@ -748,7 +760,8 @@ Liu 등의 LLM-QAT는 원래 모델이 직접 생성한 텍스트로 양자화 �
 원논문은 activation까지 4-bit로 내리기에는 이 방법도 부족하다고 밝혔다.
 Google은 Gemma 3를 약 5,000스텝 동안 원래 정밀도 모델의 확률을 목표로 QAT해,
 로컬 실행용 프로그램 llama.cpp의 4-bit 형식(Q4_0)으로 양자화할 때 perplexity가 나빠지는 폭을, QAT 없이 양자화했을 때보다 54% 줄였다고 밝혔다.
-27B 모델이 BF16의 54 GB에서 INT4의 14.1 GB로 줄었다.[^gemma3qat]
+27B 모델의 weight를 올리는 데 필요한 GPU 메모리는 BF16의 54 GB에서 INT4의 14.1 GB로 줄었다.[^gemma3qat]
+실행 중에는 KV cache 등에도 메모리가 추가로 필요하다.
 
 ### 6-3. 처음부터 낮은 bits로 학습
 
@@ -784,7 +797,7 @@ Weight가 0인 둘째 입력은 계산에서 빠진다.
 </Callout>
 
 100B 토큰으로 학습한 실험에서 BitNet b1.58은 3B부터 같은 데이터로 학습한 16-bit Llama 구조 모델과 perplexity가 비슷했다(BitNet b1.58 9.91, Llama 10.04).
-이때 GPU 메모리는 3.55배 적고 토큰당 지연은 2.71배 짧았다.[^bitnet158]
+FasterTransformer에 2-bit kernel을 붙여 잰 GPU 메모리는 3.55배 적고 토큰당 지연은 2.71배 짧았다.[^bitnet158]
 이후 Ma 등은 이 방식으로 4T 토큰을 처음부터 학습한 2B 모델 BitNet b1.58 2B4T를 공개했다.[^bitnet2b4t]
 같은 보고서는 instruction tuning을 거친 모델끼리 비교했다.
 Qwen2.5 1.5B는 MMLU, GSM8K, IFEval 세 벤치마크의 평균이 BF16에서 55.72였고, INT4로 PTQ하면 GPTQ 52.15, AWQ 51.17로 떨어졌다.
@@ -806,7 +819,7 @@ Roofline으로 정리하면 다음과 같다.
 | 긴 문맥, 많은 동시 요청 | KV cache 읽기와 용량 | KV cache 양자화(FP8, KIVI) |
 
 이 표는 쓰려는 GPU와 서빙 엔진이 그 형식의 kernel을 갖추었다는 전제에서 성립한다.
-FP4를 지원하는 GPU라면 4-bit 자리에 MXFP4나 NVFP4를 쓸 수 있다.
+FP4를 지원하는 GPU에서도 MXFP4나 NVFP4 가운데 어떤 형식을 엔진과 kernel이 지원하는지 확인한다.
 PTQ로 품질이 모자라면 Gemma 3처럼 QAT를 더하고,
 사전학습부터 새로 할 수 있다면 BitNet b1.58처럼 처음부터 1.58-bit weight로 학습하는 길도 있다.
 

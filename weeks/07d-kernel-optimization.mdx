@@ -6,17 +6,17 @@ order: 3
 
 Batching은 한 번 읽은 weight를 여러 요청의 토큰에 나눠 써서 처리량을 높이고,
 speculative decoding은 한 번의 검증으로 출력 토큰 여러 개를 얻어 요청 하나의 토큰당 지연을 줄이려 한다.[^survey]
-두 경우 모두 roofline으로 구한 시간은 하한일 뿐이고, 실제 실행은 그보다 오래 걸린다.
-Llama 3 8B를 H100 한 대에서 batch 1로, speculative decoding 없이 돌린다.
+두 경우 모두 roofline으로 구한 시간은 정한 계산량과 데이터 이동량을 최대 속도로 처리할 때의 이상적인 값이다.
+실제 실행은 보통 그보다 오래 걸린다.
+Llama 3.1 8B를 H100 한 대에서 batch 1로, speculative decoding 없이 돌린다.
 문맥이 약 2,048토큰인 구간의 TPOT(time per output token), 곧 첫 토큰 이후 출력 토큰 하나에 걸린 평균 시간이 8.0 ms라고 하자(설명을 위한 값).
-그러면 TPOT는 weight와 KV(key-value) cache를 BF16(bfloat16)으로 한 번씩 읽는 하한 4.9 ms의 약 1.6배다.
-읽어야 할 bytes를 TPOT로 나눈 값이 최대 대역폭의 몇 %인지를 MBU(model bandwidth utilization)라 한다.
-하한 4.9 ms가 그 bytes를 최대 대역폭으로 나눈 값이므로, 여기서는 $4.9/8.0\approx61\%$다.
+그러면 TPOT는 weight와 KV(key-value) cache를 BF16(bfloat16)으로 한 번씩 읽는다고 단순화한 4.9 ms의 약 1.6배다.
+모델 weight와 KV cache의 크기를 TPOT로 나눈 값이 최대 대역폭의 몇 %인지를 MBU(model bandwidth utilization)라 한다.[^mbu]
+4.9 ms가 그 bytes를 최대 대역폭으로 나눈 값이므로, 여기서는 $4.9/8.0\approx61\%$다.
 MBU가 61%라는 사실만으로는 대역폭을 다 쓰지 못한 원인이 어디에 있는지 나눌 수 없다.
 이 값은 모델의 weight와 KV cache를 한 번 읽는다고 가정한 추정치다.
 실제 HBM에서 오간 모든 bytes를 하드웨어 counter로 잰 대역폭 사용률과는 다르다.
-Into AI 글에서는 실측한 대역폭을 peak 대역폭으로 나눈 값도 MBU로 소개한다.[^intoai]
-같은 이름이라도 분자에 실제 전송량을 쓰는지 모델이 읽어야 할 양을 추정해 쓰는지 먼저 확인해야 한다.
+대역폭 사용률을 비교할 때는 분자에 실제 전송량을 쓰는지 모델이 읽어야 할 양을 추정해 쓰는지 먼저 확인해야 한다.
 또 TPOT에 서버 대기나 네트워크 시간이 들어가면 GPU(graphics processing unit) 실행 시간만으로 구한 값과 비교할 수 없다.
 
 연산 쪽에는 MFU(model FLOPs utilization)가 있다.
@@ -24,7 +24,7 @@ Into AI 글에서는 실측한 대역폭을 peak 대역폭으로 나눈 값도 M
 예를 들어 같은 스텝에 모델 계산 약 17 GFLOPs와 GPU 실행 시간 8.0 ms를 가정하면, H100 BF16 peak 989 TFLOP/s 대비 MFU는 약 0.21%다.
 이 값은 모델의 필요한 계산량을 세므로 재계산이나 padding 등 실제 수행한 모든 연산을 포함하는 하드웨어 연산 사용률과 같지 않다.
 Decode처럼 메모리 이동이 병목인 경우 MFU가 낮다고 해서 그것만으로 kernel이 잘못되었다고 결론 내릴 수 없다.
-읽어야 할 데이터의 양은 하한에 이미 들어 있으므로, 먼저 의심할 곳은 **그 계산을 GPU에서 실행하는 방식**이다.
+이상적인 계산에서 정한 데이터의 양에 비해 실행이 느린 이유를 찾으려면 **그 계산을 GPU에서 실행하는 방식**을 살펴야 한다.
 Kernel 최적화는 두 가지 일을 한다.
 하나는 kernel fusion처럼 중간값의 HBM(high-bandwidth memory) 왕복을 없애 실제로 옮기는 bytes를 줄이는 것이다.
 같은 계산에 bytes가 줄면 intensity가 올라 roofline 위의 점이 오른쪽으로 옮겨 간다.
@@ -90,7 +90,9 @@ Amdahl의 법칙에 쓸 몫은 관심 있는 스텝의 타임라인에서 겹침
 도입의 예처럼 attention이 4분의 1이라면 attention kernel을 아무리 빠르게 해도 스텝은 4분의 3 아래로 줄지 않는다.
 
 둘째는 GPU 줄의 빈 구간이다.
-Kernel과 kernel 사이가 비어 있으면 GPU가 다음 kernel을 기다리고 있다는 뜻이고, 같은 시각 CPU 줄에서 무엇을 하고 있었는지 보면 원인을 좁힐 수 있다.
+Kernel과 kernel 사이가 비어 있으면 GPU가 그 구간에서 일을 하지 못한 이유를 살펴본다.
+CPU의 제출이 늦었을 수도 있지만, 데이터 복사나 다른 작업의 완료를 기다렸을 수도 있다.
+같은 시각의 CPU와 메모리 복사 줄, 작업 사이의 의존성을 함께 보면 원인을 좁힐 수 있다.
 코드에 NVTX(NVIDIA Tools Extension) 범위 표시를 넣으면 "decode 스텝", "12번째 층" 같은 구간 이름이 타임라인에 함께 나타나, 어느 구간의 kernel인지 찾기 쉽다.
 
 <figure>
@@ -134,21 +136,24 @@ Kernel과 kernel 사이가 비어 있으면 GPU가 다음 kernel을 기다리고
 vLLM 문서는 Nsight Systems로 vLLM을 잴 때 `--trace-fork-before-exec=true`와 `--cuda-graph-trace=node`를 붙이라고 권한다.[^vllm-profile]
 앞의 옵션은 vLLM이 띄우는 worker 프로세스까지 기록하게 한다.
 뒤의 옵션은 여러 kernel을 묶어 한 번에 재생하는 CUDA graph 안의 kernel도 하나하나 기록하게 한다.
-Nsight Systems는 기본적으로 CUDA graph를 통째로 한 구간으로 기록하므로, 이 옵션이 없으면 그래프 안의 kernel별 시간을 볼 수 없다.[^nsys]
+CUDA driver가 11.7 이상이면 Nsight Systems는 기본적으로 CUDA graph를 통째로 한 구간으로 기록하므로, 이 옵션이 없으면 그래프 안의 kernel별 시간을 볼 수 없다.[^nsys]
 대신 kernel 단위로 기록하는 만큼 측정 부담이 커지므로, 지연 자체는 profiler 없이 따로 잰다.
 
 ### 2-2. Nsight Compute
 
 Nsight Compute(`ncu`)는 kernel 하나를 대상으로 GPU의 하드웨어 counter를 모아 분석한다.[^ncu]
-한 번 실행으로 모든 지표를 모을 수 없어서 같은 kernel을 여러 번 다시 실행하고(kernel replay),
-결과가 흔들리지 않도록 kernel들을 하나씩 차례로 실행하며 다시 실행하기 전마다 GPU cache를 비운다.[^ncu]
+필요한 지표를 한 번에 모을 수 없을 때는 같은 kernel을 여러 번 다시 실행한다(kernel replay).
+기본 설정에서는 측정값의 변동을 줄이려고 kernel들을 차례로 실행하고 각 replay pass 전에 GPU cache를 비운다.[^ncu]
 그래서 Nsight Compute가 보여 주는 실행 시간은 실제 서빙 중의 시간과 다를 수 있고, 엔진 전체에 걸면 매우 느려진다.
 Nsight Systems로 고른 kernel의 이름 일부를 `-k regex:` 옵션으로, 잴 실행 횟수를 `-c` 옵션으로 정해 대상을 좁힌다.[^ncu-cli]
-예를 들어 `ncu --set full -k regex:flash -c 1 -o attn <실행 명령>`은 이름에 flash가 들어간 kernel의 첫 실행 하나만 모든 지표로 재서 attn이라는 이름의 보고서로 저장한다.
+예를 들어 `ncu --set full -k regex:flash -c 1 -o attn <실행 명령>`은 이름에 flash가 들어간 kernel의 첫 실행 하나를 `full` section set의 지표로 재서 attn이라는 이름의 보고서로 저장한다.
+`full`은 제공되는 모든 개별 지표를 뜻하는 것이 아니라 여러 분석 section을 묶은 설정이다.
 
 보고서에서 먼저 볼 것은 Speed Of Light 절이다.
 연산 장치와 메모리 각각의 처리량을 이론 최댓값에 대한 비율로 보여 주므로,[^ncu]
 도입에서 스텝 전체로 계산한 MBU와 비슷한 지표를 kernel 하나 단위로 보는 셈이다.
+다만 이 보고서는 실제 하드웨어 자원의 활동을 세며, 메모리 항목에는 HBM뿐 아니라 cache 등 여러 하위 자원이 포함된다.
+모델 크기로 추정한 MBU와 같은 값으로 해석하지 않는다.
 Roofline 차트는 그 kernel의 arithmetic intensity와 달성한 성능을 점 하나로 찍어 roofline의 지붕과 함께 보여 준다.[^ncu]
 해당 intensity에서 대역폭 지붕이 연산 지붕보다 낮으면 roofline의 이론적 한계는 메모리 대역폭이 정한다.
 실측 점이 그 지붕에서 멀다면 대역폭을 충분히 활용하지 못하거나 다른 비용이 있을 수 있으므로, 그 위치만으로 실제 병목을 확정하지 않는다.
@@ -187,7 +192,7 @@ Query 방향으로 나눌 것이 없으므로 병렬성은 batch × head만 남�
 Dao 등은 이렇게 생기는 thread block이 SM 수보다 적으면 이 연산이 GPU의 작은 일부만 쓴다고 지적했다.[^flashdecoding]
 
 <Callout type="example">
-Llama 3 8B를 batch 1로 decode한다고 하자.
+Llama 3.1 8B를 batch 1로 decode한다고 하자.
 KV cache를 시퀀스 방향으로 더 나누지 않고 query head마다 thread block 하나를 두면, thread block은 32개뿐이고 H100의 SM 132개 가운데 100개가 논다.
 문맥이 32,768토큰이고 head 차원이 128이라면, 한 층에서 KV head 하나의 key와 value(×2)는 원소당 2 bytes인 BF16으로 $32768\times128\times2\times2\ \text{bytes}\approx16.8$ MB다.
 각 thread block이 자기 KV head의 16.8 MB를 처음부터 끝까지 차례로 읽어야 하므로,
@@ -345,7 +350,8 @@ FlashDecoding++는 batch 쪽 타일을 Tensor Core가 한 번에 처리하는 8�
 
 ### 4-2. 양자화 weight의 kernel
 
-Weight-only 양자화(quantization)는 kernel 안에서 weight를 원래 정밀도로 되돌려야(dequantize) 한다.
+Weight-only 양자화(quantization)에서 낮은 정밀도로 저장한 weight를 더 높은 정밀도의 activation과 곱하려면,
+이 kernel처럼 곱셈에 맞는 정밀도로 weight를 변환할 수 있다(dequantize).
 Frantar 등의 Marlin은 4-bit weight와 FP16 activation의 행렬곱을 위한 kernel이다.[^marlin]
 다음 4-bit weight를 HBM에서 읽어 shared memory를 거쳐 레지스터로 가져오는 동안 이미 가져온 weight로 계산하고,
 레지스터 안에서 FP16으로 되돌려 Tensor Core에 넣는다.
@@ -358,6 +364,8 @@ Marlin은 전체 weight 타일 수를 SM 수로 나눈 값을 올림해 SM당 �
 그러면 SM마다 일이 거의 같아지고, 부분합을 더하는 일은 한 출력 열을 나누어 맡은 SM들 사이에서만 생긴다.[^marlin]
 
 <Figure src="https://arxiv.org/html/2408.11743v1/marlin-partition.svg" alt="Marlin의 striped partitioning 그림. 위쪽의 weight 행렬(Weights)이 세로 열 네 개로 나뉘고, 색이 다른 칸 일곱 개에 SM 번호 1부터 7이 적혀 있다. SM 1은 첫째 열의 위쪽을, SM 2는 첫째 열의 아래쪽과 둘째 열의 맨 위를, SM 3은 둘째 열의 가운데를, SM 4는 둘째 열의 맨 아래와 셋째 열의 위쪽을, SM 5는 셋째 열의 아래쪽을, SM 6과 7은 넷째 열의 위와 아래를 맡는다. 아래쪽 출력(Output) 띠의 네 칸에는 각 열을 함께 계산하는 SM이 1/2, 2/3/4, 4/5, 6/7로 적혀 있다." caption="Marlin의 striped partitioning(그림의 세로 라벨 Overlapped Partitioning이 이 배정 방식이다). Weight 행렬의 열 하나가 출력의 열 하나를 만들며, 칸 안의 숫자는 SM 번호, 아래 띠는 그 출력 열을 함께 계산해 합치는 SM이다. SM마다 같은 양을 맡고, 한 열의 끝에 닿으면 다음 열의 위에서 이어 받는다." source="Frantar et al. (2025), Figure 5 · CC BY 4.0" />
+
+그림은 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)으로 제공된다.
 
 Scale 저장과 activation 이동을 무시한 이상적인 roofline 계산으로 보면, 4-bit weight 하나는 0.5 byte인데 토큰 하나가 weight 하나마다 2 FLOPs(floating-point operations)를 쓰므로 batch $b$에서 intensity는 약 $4b$ FLOP/byte다.
 H100에서는 이 값이 ridge point 295에 닿는 $b\approx74$까지 4-bit 쪽도 memory-bound라, 읽는 bytes가 FP16의 4분의 1인 만큼 이상적으로 4배 빠르다.
@@ -435,7 +443,7 @@ FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kern
 
 [^palm]: Chowdhery, A., Narang, S., Devlin, J., et al. (2022). PaLM: Scaling Language Modeling with Pathways. [arXiv:2204.02311](https://arxiv.org/abs/2204.02311).
 
-[^intoai]: Bamania, A. (2026). 10 LLM Inference Metrics Every AI Engineer Must Know. *Into AI*. [intoai.pub](https://www.intoai.pub/p/llm-inference-metrics).
+[^mbu]: Agarwal, M., Qureshi, A., Sardana, N., Li, L., Quevedo, J., & Khudia, D. (2023). LLM Inference Performance Engineering: Best Practices. *Databricks Blog*. [databricks.com](https://www.databricks.com/blog/llm-inference-performance-engineering-best-practices).
 
 [^hopper]: Andersch, M., Palmer, G., Krashinsky, R., Stam, N., Mehta, V., Brito, G., & Ramaswamy, S. (2022). NVIDIA Hopper Architecture In-Depth. *NVIDIA Technical Blog*. [developer.nvidia.com](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/).
 
