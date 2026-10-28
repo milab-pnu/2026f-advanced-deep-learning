@@ -11,7 +11,7 @@ Kernel은 필요하면 양자화(quantization)한 weight로 계산하고, 경우
 이 모두를 한 프로그램 안에서 맞물려 돌리는 것이 **inference engine**이다.
 Park 등은 오픈소스와 상용 엔진 25개를 살펴보고, 엔진들이 쓰는 최적화를 batching, 병렬화, 압축, caching, attention 등으로 분류했다.[^survey]
 이 노트는 그 가운데 대표적인 공개 엔진인 vLLM과 SGLang이 이 기법들을 어떻게 묶는지 보고,
-엔진의 성능을 재는 절차로 inference 주제를 마무리한다.
+엔진의 성능을 재는 절차를 정리한다.
 
 ## 1. 엔진의 구성
 
