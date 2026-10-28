@@ -174,7 +174,7 @@ Transformer 층이 실제로 받는 것은 ID가 아니라 이 벡터들의 sequ
 - **이산 token**: 이미지를 재구성하도록 따로 학습한 image tokenizer를 쓴다.
   Tokenizer의 encoder가 위치별 feature를 만들고, 각 feature를 학습된 codebook(대표 벡터의 목록)에서 가장 가까운 항목의 번호로 바꾼다.
   이 번호를 어휘에 추가하면 이미지도 텍스트처럼 ID sequence가 되고, embedding table에서 벡터를 꺼내 넣는다.
-  Tokenizer의 decoder는 번호 sequence를 다시 픽셀로 되돌리도록 함께 학습하지만, 텍스트 tokenizer(예: byte-level BPE)가 ID에서 원문을 그대로 되살리는 것과 달리 되돌린 이미지가 원본과 정확히 같지는 않다.
+  Tokenizer의 decoder는 번호 sequence를 다시 픽셀로 되돌리도록 함께 학습하지만, 텍스트 tokenizer(예: byte-level BPE(byte pair encoding))가 ID에서 원문을 그대로 되살리는 것과 달리 되돌린 이미지가 원본과 정확히 같지는 않다.
 
 <figure class="lecture-figure lecture-figure--wide" aria-label="텍스트는 token ID를 embedding table에서 벡터로 바꾼다. 이미지는 encoder와 connector의 출력 벡터를 바로 넣는 연속 경로와, codebook에서 가장 가까운 항목의 번호를 어휘에 추가해 embedding table을 거치는 이산 경로가 있다. 세 경로 모두 같은 Transformer의 벡터 sequence로 들어간다.">
 <svg viewBox="0 0 600 222" role="img" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -479,7 +479,7 @@ CLIP이 이미지와 문장 표현의 유사도를 높이도록 학습하는 것
 Vision encoder와 C-Abstractor projector, 언어 모델을 결합하며, 앞의 Kanana-2 vision encoder가 이 모델의 구성 요소라고 명시된 것은 아니다.
 이 모델은 간단한 질문에는 짧게 답하고 복잡한 시각 문제에는 추론 과정을 거쳐 답하는 두 형식을 한 모델에서 다루도록 설계됐다.
 
-학습은 기초 멀티모달 학습으로 이미지 이해와 지시 이행을 익힌 다음, 긴 추론 과정에 대한 지도학습, offline RL, online RL을 순서대로 적용한다.
+학습은 기초 멀티모달 학습으로 이미지 이해와 지시 이행을 익힌 다음, 긴 추론 과정에 대한 지도학습, offline RL(reinforcement learning), online RL을 순서대로 적용한다.
 Offline RL 단계는 미리 마련된 응답 자료를 이용해 모델의 출력 분포와 추론 습관을 조정한다.
 이어지는 online RL에서는 현재 모델이 문제마다 새로 응답을 생성하고, 그 결과를 평가해 갱신한다.
 새 응답을 반복해서 만드는 online 단계는 현재 모델의 출력에 맞춰 개선할 수 있지만 생성과 평가에 비용이 든다.
@@ -508,7 +508,7 @@ Online RL 단계에서는 모델이 이미지 문제의 답을 생성하고, 정
 
 별도로 공개된 HyperCLOVAX-SEED-Vision-Instruct-3B는 SigLIP 기반 vision encoder, C-Abstractor connector와 언어 모델을 결합한 LLaVA 계열 VLM이다.[^naver-vision3b]
 이 모델의 언어 모델은 HyperCLOVAX-SEED-Text-Base-3B에서 출발한다.
-모델 카드는 SFT(supervised fine-tuning)와 GRPO 기반 RLHF를 이용한 후속 학습과, 시각 task를 위한 V-RLHF 데이터를 사용했다고 설명한다.
+모델 카드는 SFT(supervised fine-tuning)와 GRPO(group relative policy optimization) 기반 RLHF(reinforcement learning from human feedback)를 이용한 후속 학습과, 시각 task를 위한 V-RLHF 데이터를 사용했다고 설명한다.
 다만 이 자료만으로 vision encoder와 connector의 학습 단계별 데이터나 고정 여부까지 알 수는 없다.
 
 이 모델은 텍스트·이미지·video를 입력으로 받고 텍스트를 출력한다.
