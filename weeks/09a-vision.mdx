@@ -7,7 +7,7 @@ order: 0
 사진을 보여 주며 “이 표지판에 적힌 문구가 무엇이고, 어느 쪽으로 가야 하나?”라고 물으면 모델은 글자를 읽고, 이미지 안의 위치와 질문을 연결해 답해야 한다.
 이미지 전체를 한 범주로 분류하는 것만으로는 충분하지 않다.
 많은 멀티모달 대규모 언어 모델(multimodal large language model, MLLM)은 vision encoder가 만든 표현을 언어 모델에 전달하여 이런 입력과 지시를 함께 다룬다.[^survey]
-이 노트는 이미지가 Transformer의 입력이 되는 과정에서 시작해 이미지와 텍스트의 정렬, 생성 모델과의 연결, 해상도와 여러 이미지, 화면을 보며 행동하는 agent까지 차례로 살펴본다.
+이 노트는 이미지가 Transformer의 입력이 되는 과정과 vision encoder의 사전학습에서 시작해 이미지와 텍스트의 정렬, 언어 모델과의 연결, 해상도와 여러 이미지, 이미지 속 위치 찾기, 화면을 보며 행동하는 agent까지 차례로 살펴본다.
 
 먼저 다음 영상에서 이미지와 음성을 함께 다루는 Kanana-o의 개발 사례를 살펴보자.
 처음부터 구조와 학습 과정을 모두 이해할 필요는 없다.
@@ -16,7 +16,7 @@ order: 0
 
 <Video src="https://www.youtube.com/watch?v=S4CMtHfscis" caption="노병석, 눈으로 보고, 귀로 듣고, 입으로 말하는 AI – 통합 멀티모달 언어모델 Kanana-o 개발기 (if(kakao)25)" />
 
-## 1. 이미지와 Transformer
+## 1. Vision Transformer와 사전학습
 
 ### 1-1. 픽셀에서 patch로
 
@@ -59,13 +59,74 @@ Transformer encoder의 self-attention은 각 patch가 다른 patch의 정보를 
 분류 시에는 최종 `[CLS]` 표현을 classifier에 넣는다.
 입력 patch token은 사진의 작은 조각에서 출발하지만, 여러 층을 통과한 출력은 다른 위치의 정보를 포함하는 문맥화된 표현이다.
 
-### 1-2. 이미지 표현과 시각 task
+### 1-2. Masked image modeling
 
-이미지 분류기는 “고양이”, “자동차”처럼 학습 시 정한 범주를 예측한다.
-새 범주를 다루려면 출력과 학습 데이터를 바꾸어야 하는 경우가 많다.
-반면 시각적 질문에는 사물의 이름 외에도 색, 수량, 위치나 장면 간의 관계가 필요하다.
+ViT 원논문은 범주 라벨이 붙은 이미지를 분류하게 하여 encoder를 사전학습했다.
+CNN(convolutional neural network)은 가까운 픽셀끼리 먼저 묶는다는 가정을 구조에 담고 있지만, ViT의 self-attention에는 그런 가정이 없어 이를 데이터에서 배워야 한다.
+그래서 약 130만 장의 ImageNet만으로 학습하면 비슷한 크기의 CNN보다 정확도가 몇 %p 낮았다.
+1,400만 장의 ImageNet-21k로 사전학습하면 비슷한 수준이 되고, 3억 장 규모의 JFT-300M으로 사전학습해야 CNN을 앞섰다.
+라벨은 만들기 비싸고, 학습할 때 정한 범주만 담는다.
+“고양이”라는 라벨에는 털의 색이나 고양이가 놓인 위치, 옆에 있는 물체가 들어 있지 않다.
+라벨 없이 이미지 자체에서 학습 신호를 만드는 자기지도(self-supervised) 사전학습은 이 문제에서 출발해 크게 두 갈래로 발전했다.
+하나는 이미지의 일부를 가리고 복원하게 하는 masked image modeling이고, 다른 하나는 같은 이미지를 다르게 변형한 입력들이 같은 출력을 내게 하는 방식이다.
+
+텍스트에서는 BERT의 MLM(masked language modeling)이 문장의 일부 token을 가리고 문맥으로 원래 token을 맞히게 했다.
+MAE(masked autoencoder)는 같은 발상을 이미지 patch에 적용한 대표적인 masked image modeling 방법이다.[^mae]
+이미지를 patch로 나눈 뒤 무작위로 75%를 가리고, encoder에는 가려지지 않은 25%의 patch만 넣는다.
+작은 decoder는 encoder의 출력과 mask token을 함께 받는다.
+Mask token은 가려진 자리를 표시하는 학습 가능한 벡터이며, 위치 embedding을 더해 어느 자리인지 알려 준다.
+Decoder는 가려진 patch의 픽셀 값을 복원하고, 손실은 가려진 patch에서만 계산한다.
+픽셀 값은 어휘의 ID가 아니므로 MLM처럼 softmax로 고르지 않고, 원래 픽셀과의 평균 제곱 오차(mean squared error)를 줄이는 회귀로 학습한다.
+
+MLM이 token의 15%만 가리는 것과 달리 MAE가 75%나 가리는 이유는 이미지의 중복에 있다.
+문장에서 단어 하나를 지우면 주변 단어만으로 맞히기 쉽지 않지만, 이미지에서는 이웃한 patch끼리 비슷해서 몇 개를 지워도 주변을 이어 붙이듯 채울 수 있다.
+가리는 비율을 높여야 주변을 복사하는 것만으로는 풀 수 없고, 물체와 장면의 구조를 알아야 하는 task가 된다.
+Encoder가 보이는 patch만 처리하므로 사전학습 계산도 줄어든다.
+
+<Callout type="example">
+224×224 이미지를 16×16 patch로 나누면 196개의 patch가 생긴다.
+75%를 가리면 encoder는 49개의 patch만 처리한다.
+Decoder는 encoder 출력 49개와 mask token 147개, 모두 196개 위치를 받아 가려진 147개 patch의 픽셀을 복원한다.
+Attention 점수는 token 쌍마다 계산하므로, encoder의 attention 점수 계산은 196개를 모두 넣을 때의 $(49/196)^2=1/16$로 줄어든다.
+</Callout>
+
+MAE는 추가 라벨 데이터 없이 ImageNet의 이미지만으로 사전학습하고도, 미세조정한 큰 ViT가 높은 정확도를 낼 수 있음을 보였다.
+이렇게 사전학습한 encoder는 이미지 feature가 필요한 다른 모델에도 쓰인다.
+예를 들어 물체의 윤곽을 픽셀 단위로 칠한 영역을 그리는 SAM(Segment Anything Model)의 image encoder도 MAE로 사전학습한 ViT다.[^sam]
+다만 픽셀을 복원하는 task와 범주를 알아보는 task 사이에는 간극이 있다.
+MAE 원논문은 encoder를 고정하고 그 위에 선형 분류기만 학습하는 linear probing에서는, 같은 이미지의 변형을 맞추게 하는 갈래의 MoCo v3보다 정확도가 낮다고 보고한다.
+대신 위쪽 몇 층만 미세조정해도 MoCo v3를 앞선다.
+
+### 1-3. Self-distillation
+
+다른 갈래의 대표적인 방법인 DINO(self-distillation with no labels)는 MAE보다 조금 먼저 나왔다.[^dino]
+DINO는 픽셀을 복원하는 대신, 같은 이미지를 자르거나 색을 바꾸어 만든 변형본(view)들이 같은 출력을 내도록 학습한다.
+한 이미지에서 넓은 영역을 자른 global crop 두 장과 좁은 영역을 자른 local crop 여러 장을 만들고, 색이나 밝기도 무작위로 바꾼다.
+KD(knowledge distillation)에서는 미리 학습된 teacher의 출력 분포를 student가 따라 배운다.
+DINO도 구조가 같은 student와 teacher 두 네트워크를 두지만, 미리 학습된 teacher는 없다.
+Teacher는 global crop만, student는 모든 crop을 받는다.
+Teacher의 가중치는 기울기로 갱신하지 않고, student 가중치의 지수 이동 평균(exponential moving average)으로 천천히 따라가게 한다.
+Teacher가 student 자신의 과거 가중치를 평균한 모델이므로 self-distillation이라 부른다.
+각 네트워크는 crop마다 $K$차원 출력에 softmax를 적용한 확률 분포를 내고, student는 다른 crop에 대한 teacher의 분포를 맞히도록 cross-entropy로 학습한다.
+예를 들어 고양이 귀만 담은 local crop을 본 student가 고양이 전체를 담은 global crop에 대한 teacher의 출력을 맞히려면, 일부만 보고도 전체 물체를 알아보는 표현이 필요하다.
+
+다만 두 네트워크가 모든 이미지에 같은 출력을 내도 손실이 작아질 수 있다.
+이런 붕괴(collapse)를 막으려고 teacher 출력에서 평균을 빼는 centering과, 낮은 온도로 분포를 뾰족하게 만드는 sharpening을 함께 쓴다.
+KD에서 teacher의 온도를 높여 분포를 부드럽게 하는 것과는 반대 방향이다.
+이렇게 학습한 feature는 linear probing만으로도 범주를 잘 구분한다.
+라벨 없이 학습했는데도 마지막 층의 `[CLS]` token이 patch에 주는 attention이 물체의 영역을 따라가는 성질도 나타난다.
+
+DINO는 이미지 전체를 대표하는 `[CLS]` 출력만 맞추므로, patch 하나하나의 feature는 직접 학습 신호를 받지 않는다.
+DINOv2는 앞의 ImageNet-21k 같은 큐레이션 데이터에, 웹 이미지 가운데 이와 비슷한 것을 골라 더한 1억 4,200만 장으로 데이터를 늘렸다.[^dinov2]
+그리고 DINO의 목표에, 가린 patch마다 teacher의 출력을 맞히는 masked image modeling 목표를 함께 쓰는 iBOT의 학습을 이어받아 이를 보완했다.
+Student는 일부 patch가 가려진 이미지를 받고, 가려진 자리에서 teacher가 가리지 않은 이미지의 같은 patch에 내는 출력을 맞힌다.
+MAE처럼 가린 patch를 맞히되 픽셀이 아니라 teacher의 출력을 맞히는 방식으로, 두 갈래가 한 학습에서 합쳐졌다.
+DINOv2의 feature는 encoder를 고정한 채로도 분류, 픽셀마다 범주를 나누는 segmentation, 깊이 추정 같은 여러 task에 쓸 수 있다.
+
+MAE와 DINO는 라벨 없이 이미지만으로 학습해 범주 라벨의 한계를 피하지만, 학습된 feature가 “고양이”라는 단어와 연결되지는 않는다.
 ViT는 이미지를 벡터로 바꾸는 방법을 제공하지만, **어떤 의미를 그 벡터에 담을지는 학습 데이터와 objective가 결정한다.**
-이미지와 언어를 짝지어 학습하면 고정된 범주 이름에만 묶이지 않는 시각 표현을 얻을 수 있다.
+시각적 질문에 답하려면 사물의 이름뿐 아니라 색, 수량, 위치, 장면 속 관계를 언어와 연결해야 한다.
+이미지와 언어를 짝지어 학습하면 고정된 범주 이름에 묶이지 않으면서 언어와 연결된 시각 표현을 얻을 수 있다.
 
 <Callout type="note">
 [Kanana Vision Encoder: 글로벌 최고 수준에 도전하는 자체 비전 인코더 개발기](https://if.kakao.com/2026/session/time-table?sessionId=86)는 카카오가 자체 vision encoder를 개발한 과정을 소개하는 기술 세션이다.
@@ -143,7 +204,28 @@ $$
 이는 학습 원리를 보여 주는 가상 예시이며 실제 CLIP의 점수는 아니다.
 </Callout>
 
-### 2-2. Zero-shot 분류와 한계
+### 2-2. Softmax 대신 sigmoid
+
+CLIP의 손실은 정답 쌍의 점수를 같은 행이나 열의 모든 후보 점수와 비교해 정규화한다.
+그래서 한 쌍의 손실을 계산하려면 batch 전체의 유사도가 필요하고, 여러 장치에 batch를 나누어 학습할 때도 모든 장치의 표현을 모아 $N\times N$ 행렬 전체를 다루어야 한다.
+SigLIP(sigmoid loss for language-image pre-training)은 이 정규화를 없애고 행렬의 각 칸을 따로 판정한다.[^siglip]
+이미지 $i$와 텍스트 $j$가 짝이면 $z_{ij}=1$, 아니면 $z_{ij}=-1$로 두고, 모든 칸에서 “이 둘이 짝인가”를 이진 분류한다.
+$\sigma$를 sigmoid 함수, $b$를 학습 가능한 bias라 하면 손실은 다음과 같다.
+
+$$
+L=-\frac{1}{N}\sum_{i=1}^{N}\sum_{j=1}^{N}\log\sigma\left(z_{ij}\left(v_i^\top t_j/\tau+b\right)\right).
+$$
+
+앞의 점수 행렬에서 사진 2의 행 `[1, 3]`을 $b=0$으로 보자.
+Softmax 손실은 두 점수의 차이만 보므로 정답 확률이 $e^3/(e^1+e^3)\approx 0.88$이다.
+Sigmoid 손실은 칸마다 따로 판정해, 정답 칸의 짝일 확률 $\sigma(3)\approx 0.95$는 1로, 오답 칸의 짝일 확률 $\sigma(1)\approx 0.73$은 0으로 보내는 방향으로 학습한다.
+두 점수를 함께 1씩 올려도 softmax의 정답 확률은 그대로지만, sigmoid 손실에서는 오답 칸의 손실이 커진다.
+각 칸의 손실은 다른 칸의 점수와 무관하므로 행이나 열 전체를 모으지 않아도 계산할 수 있다.
+덕분에 장치마다 자기 몫의 칸을 나누어 계산해 메모리 부담을 줄일 수 있고, 원논문은 batch가 작을 때 softmax 손실보다 성능이 좋다고 보고한다.
+한 batch에서 정답 칸은 $N$개뿐이고 나머지 $N^2-N$개는 짝이 아닌 칸이므로, 학습 초기에는 오답 칸의 손실이 전체를 압도할 수 있다.
+이를 막으려고 $b$를 큰 음수에서 시작해 처음에는 “짝이 아니다”를 기본으로 두게 한다.
+
+### 2-3. Zero-shot 분류와 한계
 
 학습이 끝난 뒤 고양이와 개 사진을 구분하고 싶다고 하자.
 “a photo of a cat”, “a photo of a dog”를 각각 텍스트 encoder에 넣어 두 후보 벡터를 만들고, 이미지 벡터와 유사도가 높은 문장을 고른다.
@@ -272,6 +354,14 @@ LLaVA의 visual token은 앞에서 본 연속 표현에 해당한다.
 
 <Figure src="https://arxiv.org/html/2304.08485v2/x1.png" alt="LLaVA 구조. 이미지가 vision encoder와 학습 가능한 projection을 거쳐 시각 토큰이 되고 질문과 함께 언어 모델에 전달되어 응답을 생성한다." caption="CLIP vision encoder의 출력을 projection으로 변환해 질문과 함께 언어 모델에 전달한다." source="Liu et al. (2023), Figure 1 · CC BY 4.0" wide />
 
+VLM의 vision encoder로는 CLIP과 SigLIP 계열이 널리 쓰여 왔다.
+언어로 감독한 encoder는 이미지를 문장과 맞추도록 학습하므로, 문장에 잘 드러나지 않는 위치나 patch 단위의 세부는 덜 담을 수 있다.
+이를 보완하는 방법은 두 갈래다.
+SigLIP 2는 한 encoder의 학습 안에서 보완한다.
+Sigmoid 손실에 캡션과 지시 표현에 해당하는 상자 좌표를 생성하는 decoder 목표, 그리고 앞에서 본 self-distillation과 masked image modeling 목표를 더했다.[^siglip2]
+Prismatic VLMs는 두 encoder의 feature를 합친다.
+같은 이미지에서 얻은 DINOv2와 SigLIP의 patch feature를 위치마다 이어 붙여 connector에 넣고, 이렇게 하면 위치를 찾는 task에서 성능이 오른다고 보고한다.[^prismatic]
+
 ### 3-3. 시각 정렬과 instruction tuning
 
 LLaVA는 두 단계로 학습한다.
@@ -290,7 +380,7 @@ Projector는 고정된 언어 모델이 이미지에 관한 단어를 예측하�
 이렇게 배운 모델은 추론 시 주어진 이미지와 지시를 받아 새로운 응답을 생성한다.
 모든 VLM이 이 고정·학습 조합을 따르는 것은 아니다.
 
-초기 LLaVA의 instruction 데이터는 GPT-4에 이미지 자체 대신 사람이 작성한 캡션과 bounding box 정보를 제공해 대화를 생성하는 방식으로 만들었다.[^llava]
+초기 LLaVA의 instruction 데이터는 GPT-4에 이미지 자체 대신 사람이 작성한 캡션과 상자(bounding box) 정보를 제공해 대화를 생성하는 방식으로 만들었다.[^llava]
 따라서 생성된 답이 이미지의 세부와 일치하는지는 별도 문제이며, instruction 데이터가 많다는 사실만으로 시각적 오류가 사라지는 것은 아니다.
 예를 들어 캡션과 상자 정보에 컵의 색이 없다면 GPT-4는 실제 사진에서 빨간색을 직접 확인할 수 없다.
 
@@ -405,24 +495,64 @@ Qwen 계열의 **Qwen3-VL**은 이미지·텍스트가 섞인 입력을 다루�
 Multimodal C4는 텍스트 문서에 이미지들을 배치할 때 CLIP feature를 이용해 관련 문장과 이미지의 대응을 추정한다.[^mmc4]
 이는 문맥이 긴 이미지–텍스트 자료를 구성하는 방법의 예이며, 자동으로 만든 정렬이 언제나 정확하다는 뜻은 아니다.
 
-## 5. 화면 이해와 컴퓨터 사용
+## 5. Grounding과 컴퓨터 사용
 
-### 5-1. Grounding과 행동
+### 5-1. 이미지의 visual grounding
+
+VLM은 “탁자 위에 컵이 있다”고 답할 수 있지만, 그 컵이 이미지의 어디에 있는지는 따로 표현해야 한다.
+로봇이 컵을 집거나 사진에서 특정 물체만 편집하려면 위치를 상자나 물체의 윤곽을 따라 칠한 픽셀 영역으로 받아야 한다.
+Visual grounding은 “빨간 컵” 같은 표현을 이미지 속의 특정 영역이나 좌표와 연결하는 일이다.
+Object detector는 이미지 속 물체마다 상자와 범주를 예측하는 모델이다.
+그런데 기존 detector는 학습 때 정한 범주만 찾으므로 “빨간 컵”처럼 자유로운 표현을 다루기 어렵다.
+
+Grounding DINO는 학습 때 없던 대상도 텍스트로 지정해 찾는 open-set object detector다.[^groundingdino]
+BERT로 인코딩한 텍스트 feature와 이미지 backbone(feature를 뽑는 주 신경망)의 feature를 여러 층에서 cross-attention으로 섞는다.
+그다음 텍스트와 관련된 영역의 상자를 예측하면서, 각 상자가 텍스트의 어느 부분에 해당하는지 점수를 낸다.
+CLIP처럼 이미지와 언어를 연결하지만 출력은 상자이며, 문장을 생성하거나 여러 단계로 추론하지는 않는다.
+이름의 DINO는 이 모델이 바탕으로 삼은 detector의 이름이며, self-distillation 방법 DINO와는 관계없다.
+
+상자는 물체의 경계를 따르지 않으므로, 물체만 정확히 오려 내려면 픽셀 단위의 영역이 필요하다.
+이 영역을 segmentation mask라 하며, MAE에서 patch를 가리는 mask와는 다른 뜻이다.
+SAM은 위치를 알려 주면 그 물체의 mask를 그리는 promptable segmentation 모델이다.
+MAE로 사전학습한 ViT encoder가 이미지 feature를 한 번 계산하고, 사용자가 찍은 점이나 그린 상자는 prompt encoder가 벡터로 바꾼다.
+가벼운 mask decoder가 둘을 받아 mask를 낸다.
+점 하나만으로는 셔츠를 가리키는지 셔츠를 입은 사람을 가리키는지 모호하므로, decoder는 mask 후보를 여러 개 내고 각각의 품질 점수를 함께 예측한다.
+원논문은 텍스트 prompt를 실험적으로만 다뤘고, 공개된 SAM은 텍스트 prompt를 받지 않는다.
+대신 Grounding DINO가 낸 상자를 SAM의 prompt로 넣으면 텍스트로 지정한 물체의 mask를 얻을 수 있으며, SAM 3 원논문도 이 조합을 비교 기준으로 쓴다.[^sam3]
+SAM 3는 “노란 스쿨버스” 같은 짧은 명사구나, 이미지 안의 예시 물체에 그린 상자를 받아 해당하는 모든 물체의 mask를 찾도록 확장했다.
+다만 긴 지시나 추론이 필요한 질의는 다루도록 설계하지 않았다고 원논문이 밝힌다.
+
+추론이 필요한 질의를 다루려면 언어 모델이 질의를 해석하고, 그 결과를 위치로 내놓아야 한다.
+언어 모델이 위치를 내놓는 방식은 크게 세 가지다.
+
+- **도구로 호출**: MLLM이 외부 모델을 함수처럼 부르는 방식이다.
+  MLLM이 복잡한 요청을 짧은 명사구로 바꾸어 SAM 3를 호출하고, 돌아온 mask를 보고 필요한 것을 고르거나 다시 호출한다.
+  SAM 3 원논문은 이런 구성을 SAM 3 Agent라 부른다.
+  예를 들어 “왼쪽에서 두 번째 컵”이라면 “컵”으로 모든 컵의 mask를 받은 뒤 위치를 비교해 하나를 고른다.
+- **좌표를 텍스트로 출력**: Qwen2.5-VL은 상자의 좌표를 이미지 크기에 대한 비율로 정규화하지 않고, 모델에 들어간 입력 이미지의 실제 픽셀 기준 숫자로 생성한다.[^qwen25vl]
+  예를 들어 `[120, 45, 210, 160]`처럼 상자의 왼쪽 위와 오른쪽 아래 좌표를 쓴다.
+  위치도 텍스트 token으로 쓰므로 별도 모듈이 필요 없지만, 복잡한 모양의 mask를 숫자 몇 개로 나타내기는 어렵다.
+- **Hidden state를 mask decoder에 전달**: LISA(large language instructed segmentation assistant)는 어휘에 `<SEG>` token을 추가한다.[^lisa]
+  LLM이 이 token을 생성하면 그 위치의 마지막 층 hidden state를 MLP(multi-layer perceptron)로 투영해, SAM의 image encoder가 만든 이미지 feature와 함께 SAM 구조의 mask decoder에 넘긴다.
+  LLM의 softmax는 어휘의 ID만 고르므로 픽셀 단위의 mask를 직접 낼 수 없고, 연속 벡터인 hidden state를 넘겨 별도의 decoder가 mask를 만든다.
+  LLM이 질의를 해석한 결과가 `<SEG>`의 hidden state에 담기므로, “비타민 C가 가장 많은 음식”처럼 추론이 필요한 질의에도 decoder가 그 물체의 mask를 그릴 수 있다.
+
+### 5-2. 화면 grounding과 행동
 
 이미지에 관한 답변은 텍스트로 끝나지만, 화면을 조작하려면 모델의 판단을 실제 행동으로 연결해야 한다.
-Visual grounding은 “저장 버튼” 같은 표현을 현재 화면의 특정 영역이나 좌표와 연결하는 일이다.
+화면에서는 “저장 버튼” 같은 표현이 grounding의 대상이고, 그 결과를 클릭할 좌표로 쓴다.
 화면을 입력받은 모델이 “저장 버튼 중심이 (320, 80)”이라고 예측했다고 하자.
 시스템은 이 값을 클릭 도구의 인자로 전달하고, 도구가 실제 환경에서 클릭을 수행한다.
 이어 새 화면을 관찰해 저장 창이 열렸는지 확인할 수 있다.
 
-Tool calling은 모델이 사용할 함수와 인자를 표현해 실행 환경에 요청하는 인터페이스다.
+Tool calling은 모델이 사용할 함수와 인자를 표현해 실행 환경에 요청하는 인터페이스이며, 앞의 SAM 3 Agent도 이 방식으로 SAM 3를 부른다.
 CUA(computer-using agent)는 화면이나 accessibility tree 같은 관찰을 받아 클릭·키 입력·스크롤을 반복하는 전체 agent를 뜻한다.
 Accessibility tree는 화면의 버튼·입력창 같은 요소와 그 이름, 역할 등을 프로그램이 읽을 수 있도록 나타낸 구조다.
 예를 들어 화면의 버튼을 좌표로 찾는 대신 이름이 “저장”인 버튼 요소를 선택하는 데 활용할 수 있다.
 CUA가 사용하는 도구에는 좌표 클릭이 있을 수 있지만 accessibility tree에서 얻은 요소를 선택하거나, 다른 프로그램 인터페이스를 사용할 수도 있다.
 어떤 정보를 관찰하고 어떤 행동을 허용하는지는 시스템마다 다르다.
 
-### 5-2. 관찰과 실행의 반복
+### 5-3. 관찰과 실행의 반복
 
 “스프레드시트에서 매출 합계를 계산하고 파일을 저장하라”는 지시는 한 번의 이미지 설명으로 끝나지 않는다.
 Agent는 현재 앱을 확인하고, 셀을 선택해 수식을 입력하고, 계산 결과를 보고, 저장 대화상자의 경로를 확인해야 한다.
@@ -541,3 +671,14 @@ Video를 이해할 때는 frame별 token 수를 조절해 긴 입력의 비용�
 [^naver-vision3b]: NAVER Cloud. (2025). HyperCLOVAX-SEED-Vision-Instruct-3B. *Hugging Face model card*. [모델 카드](https://huggingface.co/naver-hyperclovax/HyperCLOVAX-SEED-Vision-Instruct-3B).
 [^honeybee]: Cha, J., et al. (2024). Honeybee: Locality-enhanced Projector for Multimodal LLM. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2312.06742).
 [^chameleon]: Chameleon Team. (2024). Chameleon: Mixed-Modal Early-Fusion Foundation Models. *arXiv*. [논문](https://arxiv.org/abs/2405.09818).
+[^mae]: He, K., Chen, X., Xie, S., et al. (2022). Masked Autoencoders Are Scalable Vision Learners. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2111.06377).
+[^sam]: Kirillov, A., Mintun, E., Ravi, N., et al. (2023). Segment Anything. *Proceedings of the IEEE/CVF International Conference on Computer Vision*. [논문](https://arxiv.org/abs/2304.02643).
+[^dino]: Caron, M., Touvron, H., Misra, I., et al. (2021). Emerging Properties in Self-Supervised Vision Transformers. *Proceedings of the IEEE/CVF International Conference on Computer Vision*. [논문](https://arxiv.org/abs/2104.14294).
+[^dinov2]: Oquab, M., Darcet, T., Moutakanni, T., et al. (2024). DINOv2: Learning Robust Visual Features without Supervision. *Transactions on Machine Learning Research*. [논문](https://arxiv.org/abs/2304.07193).
+[^siglip]: Zhai, X., Mustafa, B., Kolesnikov, A., & Beyer, L. (2023). Sigmoid Loss for Language Image Pre-Training. *Proceedings of the IEEE/CVF International Conference on Computer Vision*. [논문](https://arxiv.org/abs/2303.15343).
+[^siglip2]: Tschannen, M., Gritsenko, A., Wang, X., et al. (2025). SigLIP 2: Multilingual Vision-Language Encoders with Improved Semantic Understanding, Localization, and Dense Features. *arXiv*. [논문](https://arxiv.org/abs/2502.14786).
+[^prismatic]: Karamcheti, S., Nair, S., Balakrishna, A., et al. (2024). Prismatic VLMs: Investigating the Design Space of Visually-Conditioned Language Models. *International Conference on Machine Learning*. [논문](https://arxiv.org/abs/2402.07865).
+[^groundingdino]: Liu, S., Zeng, Z., Ren, T., et al. (2024). Grounding DINO: Marrying DINO with Grounded Pre-Training for Open-Set Object Detection. *European Conference on Computer Vision*. [논문](https://arxiv.org/abs/2303.05499).
+[^sam3]: Carion, N., Gustafson, L., Hu, Y.-T., et al. (2026). SAM 3: Segment Anything with Concepts. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2511.16719).
+[^qwen25vl]: Bai, S., Chen, K., Liu, X., et al. (2025). Qwen2.5-VL Technical Report. *arXiv*. [논문](https://arxiv.org/abs/2502.13923).
+[^lisa]: Lai, X., Tian, Z., Chen, Y., et al. (2024). LISA: Reasoning Segmentation via Large Language Model. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2308.00692).
