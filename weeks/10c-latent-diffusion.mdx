@@ -1,0 +1,119 @@
+---
+title: "Latent Diffusion과 Stable Diffusion"
+week: 10
+order: 2
+---
+
+고해상도 이미지에 diffusion을 적용하면 매 단계에서 큰 이미지 배열을 신경망으로 처리해야 한다.
+Latent diffusion은 먼저 이미지를 압축한 표현에서 반복적인 denoising을 수행해 이 비용을 줄인다.[^survey]
+Stable Diffusion의 초기 text-to-image 모델을 기준으로 autoencoder, text encoder, U-Net이 학습과 생성에서 어떻게 연결되는지 살펴본다.[^ldm]
+
+## 1. Pixel에서 latent로
+
+### 1-1. 압축 표현
+
+$512\times512$ RGB 이미지는 색 채널을 포함해 786,432개의 값을 가진다.
+이 공간에서 수십 번 denoising하면 매번 큰 공간 배열을 처리해야 한다.
+Latent diffusion은 encoder $E$로 이미지를 더 작은 latent $z_0=E(x)$로 바꾸고 decoder $D$가 latent에서 이미지를 복원하도록 학습한다.
+이 autoencoder는 이미지의 중요한 구조를 남기면서 공간 해상도를 줄인다.
+
+<Callout type="example">
+초기 Stable Diffusion 계열에서 흔히 사용하는 예로 $512\times512\times3$ 이미지를 $64\times64\times4$ latent로 바꾸면 배열 원소 수가 786,432개에서 16,384개로 줄어든다.
+원소 수가 48분의 1이라고 해서 전체 실행 시간이 정확히 48분의 1이 되는 것은 아니다.
+신경망의 채널 수, attention, 구현과 decoder 비용이 함께 영향을 준다.
+</Callout>
+
+압축에는 대가가 있다.
+Decoder가 잃어버린 세부 정보를 완벽하게 복원할 수 없다면 diffusion 모델이 latent를 잘 만들어도 최종 이미지의 세부 표현에 한계가 생긴다.
+$D(E(x))$는 일반적으로 원본 $x$와 정확히 같지 않다.
+Latent는 사람이 해석하기 쉬운 개별 개념의 목록이 아니라 이미지 정보를 담도록 학습한 연속 배열이다.
+
+### 1-2. 두 단계 학습
+
+Latent diffusion은 먼저 이미지 autoencoder를 학습하고, 그 encoder가 만든 latent를 대상으로 diffusion model을 학습한다.[^ldm]
+Autoencoder의 학습에는 복원 품질과 latent 공간의 성질을 조절하는 항들이 사용된다.
+구체적인 정규화 방식은 모델마다 다르며, 모든 autoencoder가 같은 VAE 구조인 것은 아니다.
+Diffusion을 학습할 때는 학습된 encoder로 이미지 $x$를 $z_0$로 바꾸고, 임의의 시간과 noise를 뽑아 $z_t$를 만든다.
+Text 조건 $c$가 있는 noise 예측 손실은 다음과 같이 쓴다.
+
+$$
+L=\mathbb{E}_{z_0,c,t,\epsilon}\left[\left\|\epsilon-\epsilon_\theta(z_t,t,c)\right\|^2\right],
+\qquad z_t=\sqrt{\bar\alpha_t}z_0+\sqrt{1-\bar\alpha_t}\epsilon.
+$$
+
+여기서 $\epsilon$은 표준 Gaussian noise이고 $\bar\alpha_t$는 단계 $t$에서 원본 신호가 남는 정도를 정하는 계수다.
+식의 형태는 pixel 공간의 denoising diffusion probabilistic model(DDPM)과 같지만 데이터가 $x_0$ 대신 $z_0$라는 점이 다르다.
+Encoder와 decoder는 반복 denoising의 대체물이 아니다.
+Encoder는 학습 이미지를 latent로 바꾸고, denoiser는 latent 분포를 배우며, decoder는 생성된 latent를 이미지로 바꾼다.
+
+## 2. U-Net과 텍스트 조건
+
+### 2-1. U-Net의 공간 처리
+
+초기 Stable Diffusion의 denoiser는 U-Net 계열이다.
+U-Net은 입력에서 시작해 공간 해상도를 단계적으로 낮추며 특징을 추출하고, 가운데를 통과한 다음 해상도를 다시 높인다.
+낮은 해상도에서는 더 넓은 영역의 정보를 결합하기 쉽고, 높은 해상도에서는 공간적 세부 정보를 유지하기 쉽다.
+Downsampling 경로에서 얻은 특징을 같은 해상도의 upsampling 경로로 넘기는 skip connection은 복원 단계에 세부 정보를 전달한다.[^unet]
+
+이 U-Net은 segmentation을 위해 처음 제안된 U-Net을 그대로 사용하는 것은 아니다.
+Diffusion에 맞춰 noisy latent와 timestep을 입력으로 받고 residual block, attention과 conditioning을 결합해 noise를 예측하도록 구성한다.
+시간 embedding은 현재 noise 수준을 각 처리 단계에 알려 준다.
+같은 형태의 $z_t$라도 $t$가 다르면 섞인 noise의 정도가 다르므로 이를 구별해야 한다.
+
+### 2-2. Text encoder와 cross-attention
+
+“빨간 우산을 든 사람”이라는 prompt는 text encoder를 통해 token별 문맥 벡터로 바뀐다.
+Cross-attention은 U-Net의 이미지 특징에서 query $Q$를, 텍스트 표현에서 key $K$와 value $V$를 만들어 다음과 같이 계산한다.
+
+$$
+\operatorname{Attention}(Q,K,V)=\operatorname{softmax}\left(\frac{QK^\top}{\sqrt{d_k}}\right)V.
+$$
+
+$d_k$는 query와 key 벡터의 차원이며, 제곱근으로 나누어 내적의 크기를 조절한다.
+이미지 쪽 각 위치의 query가 텍스트 token들과의 관련성을 계산해 텍스트 정보를 받아온다.
+이로써 서로 다른 이미지 위치가 prompt의 서로 다른 부분을 참고할 수 있다.
+초기 Stable Diffusion에서는 CLIP 계열 text encoder를 사용한다.
+CLIP은 이미지와 그에 맞는 텍스트 표현을 가깝게 만드는 contrastive 학습으로 이미지와 언어의 관계를 익힌다.[^clip]
+그중 text encoder의 출력을 이미지 생성의 조건으로 사용하며, CLIP의 정렬 학습과 diffusion 모델의 noise 예측 학습은 서로 다르다.[^sd]
+Text encoder의 종류와 학습 여부는 버전마다 확인해야 한다.
+
+<Figure src="https://upload.wikimedia.org/wikipedia/commons/f/f6/Stable_Diffusion_architecture.png" alt="입력 이미지가 encoder를 통해 latent로 압축되고 latent U-Net에서 반복 처리된 뒤 decoder를 통해 이미지로 복원된다. 텍스트 등 조건은 cross-attention을 거쳐 U-Net에 전달된다." caption="Latent diffusion의 전체 구조. Encoder와 decoder 사이에서 diffusion을 수행하고 조건 표현을 cross-attention으로 전달한다." source="Machine Vision and Learning Group, LMU Munich · MIT License" wide />
+
+그림의 [원본과 이용 조건](https://commons.wikimedia.org/wiki/File:Stable_Diffusion_architecture.png)을 함께 확인할 수 있다.
+
+<Details summary="그림의 MIT License 전문">
+
+Copyright © Machine Vision and Learning Group, LMU Munich
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+</Details>
+## 3. 생성의 전체 경로
+
+학습 시에는 실제 이미지와 그에 대응하는 텍스트가 필요하다.
+생성 시에는 실제 이미지 대신 Gaussian latent noise에서 출발하고 prompt를 조건으로 준다.
+
+| 단계 | 학습 | 생성 |
+|---|---|---|
+| 시작 | 실제 이미지를 encoder로 latent로 변환 | 임의의 latent noise 생성 |
+| 조건 | 이미지에 대응하는 텍스트 인코딩 | 사용자의 prompt 인코딩 |
+| denoising | 임의 단계에서 추가된 noise를 맞히도록 학습 | 예측과 sampler를 이용해 여러 단계 갱신 |
+| 이미지 | autoencoder의 복원 학습에 사용 | 완성된 latent를 decoder로 변환 |
+
+생성 중 U-Net은 매 단계 현재 latent, 시간, 텍스트 조건을 입력받는다.
+Sampler가 이 예측으로 다음 latent를 만들고, 마지막 latent를 decoder가 pixel 공간의 이미지로 바꾼다.
+Classifier-free guidance(CFG)를 쓰는 경우 조건부 예측과 조건을 제거한 예측을 결합해 sampler에 전달한다.
+두 예측의 차이에 guidance scale을 곱해 조건의 영향을 조절한다.
+결과 이미지는 prompt, 초기 noise, 학습된 모델, guidance scale과 sampler의 영향을 함께 받는다.
+
+이 구성에서 바꿀 수 있는 것은 latent 공간만이 아니다.
+Denoiser를 U-Net에서 Transformer로 바꾸어도 latent와 반복 생성이라는 전체 관점은 유지할 수 있다.
+
+[^survey]: Yang, L., Zhang, Z., Song, Y., et al. (2024). Diffusion Models: A Comprehensive Survey of Methods and Applications. *ACM Computing Surveys*, 56(4), 105:1–105:39. [논문](https://arxiv.org/abs/2209.00796).
+[^ldm]: Rombach, R., Blattmann, A., Lorenz, D., Esser, P., & Ommer, B. (2022). High-Resolution Image Synthesis with Latent Diffusion Models. *CVPR*. [논문](https://arxiv.org/abs/2112.10752).
+[^unet]: Ronneberger, O., Fischer, P., & Brox, T. (2015). U-Net: Convolutional Networks for Biomedical Image Segmentation. *MICCAI*. [논문](https://arxiv.org/abs/1505.04597).
+[^clip]: Radford, A., Kim, J. W., Hallacy, C., et al. (2021). Learning Transferable Visual Models From Natural Language Supervision. *ICML*. [논문](https://arxiv.org/abs/2103.00020).
+[^sd]: Rombach, R., et al. (2022). Stable Diffusion v1 Model Card. *Hugging Face*. [모델 카드](https://huggingface.co/CompVis/stable-diffusion-v1-4).

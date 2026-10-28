@@ -1,0 +1,138 @@
+---
+title: "Diffusion 제어와 샘플링"
+week: 10
+order: 1
+---
+
+같은 diffusion model이라도 어떤 조건을 주고 어떤 단계로 샘플링하느냐에 따라 생성 결과와 비용이 달라진다.[^survey]
+모델이 예측을 만드는 방법, 예측을 강화하는 방법, 다음 상태로 이동하는 방법은 서로 연결되지만 같은 선택은 아니다.
+여기서는 text conditioning과 classifier-free guidance(CFG), noise schedule과 sampler를 구분해 살펴본다.
+
+## 1. 조건을 반영하는 생성
+
+### 1-1. 조건부 모델
+
+조건 없는 모델은 학습 데이터 전체의 분포에서 표본을 생성한다.
+개 사진을 원한다면 조건 $c$에 개라는 class를, text-to-image에서는 문장의 표현을 담아 모델에 전달할 수 있다.
+현재 noise가 섞인 상태를 $x_t$, noise 수준을 나타내는 단계를 $t$라 하자.
+조건부 noise 예측은 $\epsilon_\theta(x_t,t,c)$로 쓴다.
+여기서 $c$는 예측을 바꾸는 입력이고, 이것만으로 각 단계를 어떻게 갱신할지 결정되는 것은 아니다.
+
+Text 조건은 먼저 text encoder가 token별 벡터로 바꾼다.
+Cross-attention을 쓰는 모델은 이미지 표현에서 query를, text 표현에서 key와 value를 만들어 이미지의 각 위치가 문장 정보를 참조하게 한다.
+조건을 넣는 구체적인 위치와 방식은 backbone에 따라 다르다.
+
+### 1-2. Classifier-free guidance
+
+Classifier guidance는 별도 classifier의 gradient를 이용해 생성 방향을 조절한다.
+예를 들어 현재 noisy 이미지가 개라는 class일 확률을 높이는 방향을 classifier에 물어 denoising에 반영한다.
+여러 noise 수준의 이미지를 판단할 수 있는 classifier가 따로 필요하다.
+CFG는 별도 classifier 없이 조건부 예측과 조건 없는 예측을 결합한다.[^cfg]
+흔히 같은 모델을 학습할 때 일부 예제의 조건을 의도적으로 제거해 두 가지 입력에 모두 대응하도록 만든다.
+생성 시 같은 $x_t$와 $t$에서 조건 없는 예측 $\epsilon_u$와 조건부 예측 $\epsilon_c$를 구하고 다음과 같이 결합한다.
+
+$$
+\epsilon_{\mathrm{cfg}}=\epsilon_u+s(\epsilon_c-\epsilon_u).
+$$
+
+$s$는 guidance scale이다.
+이 표기에서 $s=0$이면 조건 없는 예측이고 $s=1$이면 조건부 예측 그대로다.
+$s$가 1보다 크면 조건부 예측이 조건 없는 예측에서 벗어난 방향을 더 강하게 적용한다.
+논문이나 구현에 따라 scale의 정의가 달라 같은 숫자가 같은 강도를 뜻하지 않을 수 있다.
+
+<Callout type="example">
+어느 한 좌표에서 $\epsilon_u=0.2$, $\epsilon_c=0.3$, $s=3$이라면 결합 결과는 $0.2+3(0.3-0.2)=0.5$다.
+실제로는 이미지 전체에 대응하는 벡터에 같은 연산을 적용한다.
+이 값은 이해를 위한 가상 예이며, 숫자가 클수록 픽셀이 밝아진다는 뜻은 아니다.
+</Callout>
+
+조건을 더 강하게 반영할 수 있지만 scale을 계속 높이면 다양성이나 결과 품질이 나빠질 수 있다.
+조건 유무에 따른 두 예측이 필요하므로 계산과 메모리 비용도 고려해야 한다.
+Negative prompt를 조건 없는 기준 대신 쓰는 구현도 있으나, 진짜 무조건부 예측과는 구별해야 한다.
+
+### 1-3. 공간 조건과 편집
+
+Text prompt는 내용과 분위기를 지정하지만 특정 선이나 자세를 정확히 지키기는 어렵다.
+ControlNet은 기존에 학습된 text-to-image 모델에 edge map이나 사람의 자세 같은 공간 조건을 전달하는 별도 경로를 학습한다.[^controlnet]
+이는 prompt를 더 강하게 반영하는 CFG와 해결하려는 문제가 다르다.
+전자는 생성할 위치별 구조를 추가로 제공하고, 후자는 기존 조건과 무조건부 예측의 차이를 조절한다.
+
+## 2. Noise schedule과 sampler
+
+### 2-1. 학습에서의 noise 수준
+
+DDPM의 forward 과정에서 $\beta_t$는 각 단계에 더하는 noise의 분산이고 $\bar\alpha_t=\prod_{s=1}^{t}(1-\beta_s)$는 원본 신호의 잔존 정도를 결정한다.
+어떤 단계에 어떤 noise 수준을 배정하는지가 noise schedule이다.
+예를 들어 선형 또는 cosine 형태의 schedule은 시간에 따라 신호와 noise의 비율을 다르게 변화시킨다.[^improved]
+학습 시 $t$를 뽑는 분포도 각 noise 수준을 얼마나 자주 학습하는지에 영향을 준다.
+
+### 2-2. 생성에서의 단계와 갱신식
+
+Sampler는 현재 상태와 모델 예측을 이용해 다음 상태를 계산한다.
+생성 시 어느 시간 단계를 방문할지도 정해야 한다.
+일부 도구에서는 이 시간표와 갱신 알고리즘을 묶어 scheduler라고 부르므로, 이름만 보고 학습 noise schedule과 같은 것이라고 판단하면 안 된다.
+
+DDPM의 기본 역방향 갱신은 예측 평균을 만들고 적절한 분산의 noise를 더해 표본을 뽑는다.
+DDIM은 같은 방식으로 학습한 noise 예측 모델을 활용하면서 다른 생성 경로를 구성해 더 적은 단계로 샘플링할 수 있다.[^ddim]
+DDIM은 설정에 따라 결정론적으로 만들 수도 있다.
+다만 동일한 초기 noise라도 sampler나 단계 수가 다르면 일반적으로 다른 결과가 나온다.
+단계 수를 줄이면 호출 횟수와 지연이 줄 수 있지만, 모델과 sampler에 따라 품질이 달라지므로 특정 단계 수가 항상 최적은 아니다.
+DPM-Solver는 생성 과정을 미분방정식으로 해석하고 수치해법을 설계해 적은 모델 호출로 근사하는 또 다른 접근이다.[^solver]
+같은 이름의 scheduler라도 모델이 학습한 noise 수준과 예측 대상에 맞게 설정해야 한다.
+호출 횟수만 같아도 각 solver가 요구하는 계산과 생성 결과는 달라질 수 있다.
+
+### 2-3. DDIM의 한 단계 계산
+
+Sampler가 실제로 하는 일을 결정론적 DDIM으로 살펴보자.
+현재 시간 $t$에서 더 이른 시간 $r$로 이동한다고 하자. 여기서 $r<t$이며 중간 시간을 건너뛸 수도 있다.
+현재 상태 $x_t$와 모델 예측 $\hat\epsilon=\epsilon_\theta(x_t,t)$에서 먼저 원본을 추정한다.
+
+$$
+\hat x_0=\frac{x_t-\sqrt{1-\bar\alpha_t}\hat\epsilon}{\sqrt{\bar\alpha_t}},
+\qquad
+x_r=\sqrt{\bar\alpha_r}\hat x_0+\sqrt{1-\bar\alpha_r}\hat\epsilon.
+$$
+
+두 번째 식에서 더 적은 noise 수준의 신호와 예측 noise를 다시 조합한다.
+이 예는 새 무작위 noise를 더하지 않는 결정론적 설정이다.
+일반적인 DDIM은 추가 noise를 사용하는 설정도 제공한다.
+
+<Callout type="example">
+현재 $x_t=1.9$, $\bar\alpha_t=0.64$, $\hat\epsilon=0.5$라면 원본 추정은 $\hat x_0=2$다.
+다음에 방문할 단계의 $\bar\alpha_r=0.81$이라면 $x_r=0.9\times2+\sqrt{0.19}\times0.5\approx2.018$이다.
+이 값은 다음 모델 호출의 입력이 된다.
+Sampler는 모델의 parameter를 갱신하지 않는다.
+단계별 noise 수준과 방문 순서가 주어졌을 때 현재 예측을 이용해 다음 상태를 계산한다.
+</Callout>
+
+## 3. 예측 대상과 생성 경로
+
+### 3-1. Noise, 원본, velocity
+
+같은 noisy 상태에서 모델이 예측하도록 정할 수 있는 대상은 noise $\epsilon$, 원본 $x_0$, 또는 이들을 조합한 velocity 등이다.
+예를 들어 $x_t=a_t x_0+b_t\epsilon$에서 $a_t=\sqrt{\bar\alpha_t}$, $b_t=\sqrt{1-\bar\alpha_t}$라 하자.
+한 가지 velocity 정의는 $v_t=a_t\epsilon-b_t x_0$이다.
+$a_t^2+b_t^2=1$이므로 $x_0=a_t x_t-b_t v_t$, $\epsilon=b_t x_t+a_t v_t$로 서로 바꿀 수 있다.
+
+이는 같은 정보를 표현하는 방식이 연결된다는 뜻이지 학습 손실의 가중치나 수치적 성질까지 완전히 같다는 뜻은 아니다.
+Velocity 기호는 다른 문헌에서 다른 정의로도 쓰이므로 해당 모델의 정의를 확인해야 한다.[^v]
+
+### 3-2. Flow matching과의 관계
+
+생성 과정의 다른 선택으로 flow matching이 있다.
+데이터와 noise를 잇는 시간별 경로 위에서 모델이 이동 방향을 나타내는 vector field를 예측하도록 학습하고, 생성 시 그 방향을 따라 미분방정식을 푼다.[^flow]
+Diffusion과 연결해 이해할 수 있지만, DDPM의 noise 예측과 같은 목표라고 무조건 취급하지 않는다.
+예를 들어 Stable Diffusion 3 연구는 rectified flow와 Transformer backbone을 함께 사용한다.[^sd3]
+경로, 학습 목표, backbone은 각각 확인할 선택이다.
+
+이제 계산을 줄이기 위해 diffusion 자체를 이미지의 pixel이 아닌 압축된 latent 표현에서 수행하는 방법을 살펴볼 수 있다.
+
+[^survey]: Yang, L., Zhang, Z., Song, Y., et al. (2024). Diffusion Models: A Comprehensive Survey of Methods and Applications. *ACM Computing Surveys*, 56(4), 105:1–105:39. [논문](https://arxiv.org/abs/2209.00796).
+[^controlnet]: Zhang, L., Rao, A., & Agrawala, M. (2023). Adding Conditional Control to Text-to-Image Diffusion Models. *ICCV*. [논문](https://arxiv.org/abs/2302.05543).
+[^solver]: Lu, C., Zhou, Y., Bao, F., et al. (2022). DPM-Solver: A Fast ODE Solver for Diffusion Probabilistic Model Sampling in Around 10 Steps. *NeurIPS*. [논문](https://arxiv.org/abs/2206.00927).
+[^cfg]: Ho, J., & Salimans, T. (2022). Classifier-Free Diffusion Guidance. *NeurIPS Workshop*. [논문](https://arxiv.org/abs/2207.12598).
+[^improved]: Nichol, A. Q., & Dhariwal, P. (2021). Improved Denoising Diffusion Probabilistic Models. *ICML*. [논문](https://proceedings.mlr.press/v139/nichol21a.html).
+[^ddim]: Song, J., Meng, C., & Ermon, S. (2021). Denoising Diffusion Implicit Models. *ICLR*. [논문](https://arxiv.org/abs/2010.02502).
+[^v]: Salimans, T., & Ho, J. (2022). Progressive Distillation for Fast Sampling of Diffusion Models. *ICLR*. [논문](https://arxiv.org/abs/2202.00512).
+[^flow]: Lipman, Y., Chen, R. T. Q., Ben-Hamu, H., Nickel, M., & Le, M. (2023). Flow Matching for Generative Modeling. *ICLR*. [논문](https://arxiv.org/abs/2210.02747).
+[^sd3]: Esser, P., Kulal, S., Blattmann, A., et al. (2024). Scaling Rectified Flow Transformers for High-Resolution Image Synthesis. *ICML*. [논문](https://arxiv.org/abs/2403.03206).

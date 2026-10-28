@@ -1,0 +1,161 @@
+---
+title: "Diffusion Transformer"
+week: 10
+order: 3
+---
+
+Latent diffusion은 autoencoder가 압축한 이미지 표현인 latent 공간에서 noise를 추가하고 제거한다.
+Denoiser는 현재 noisy latent와 시간, 조건을 받아 생성에 필요한 예측을 만든다.
+이 역할을 하는 신경망은 U-Net으로만 구성할 필요가 없다.[^survey]
+Diffusion Transformer(DiT)는 latent를 patch token으로 바꾸고 Transformer로 처리한다.[^dit]
+Diffusion의 학습과 반복 sampling은 유지하면서 backbone을 바꾼다는 점에서 출발한다.
+
+## 1. U-Net에서 Transformer로
+
+U-Net은 공간 해상도를 낮추고 높이는 계층 구조와 skip connection을 사용한다.
+DiT는 latent의 일정 크기 조각들을 token으로 바꾸고, 여러 Transformer block에서 이 token들이 self-attention으로 정보를 교환하게 한다.
+U-Net에도 attention을 넣을 수 있으므로 둘의 차이를 attention의 유무로 설명하면 안 된다.
+차이는 denoiser 전체를 구성하는 방식에 있다.
+
+두 구조 모두 noisy 입력, 시간 정보, 조건을 처리하고 sampler에 전달할 출력을 만든다.
+반복적으로 호출해야 한다는 diffusion의 비용도 그대로 남는다.
+DiT의 주요 질문은 Transformer의 크기와 token 수를 늘렸을 때 이미지 생성 품질이 어떻게 달라지는가이다.
+
+## 2. Latent를 token으로
+
+### 2-1. Patchify
+
+이미지 autoencoder가 $256\times256$ 이미지를 높이와 너비가 각각 32이고 채널이 4인 latent로 바꾼다고 하자.
+Latent diffusion의 forward 과정은 이 latent에 noise를 더해 $z_t$를 만든다.
+DiT는 $z_t$를 한 변이 $p$인 patch로 나눈다.
+높이 $H$, 너비 $W$가 $p$로 나누어떨어지면 token 수는 다음과 같다.
+
+$$
+N=\frac{H}{p}\frac{W}{p}.
+$$
+
+예를 들어 $32\times32\times4$ latent에 $2\times2$ patch를 쓰면 각 patch는 $2\times2\times4=16$개의 값을 갖고 전체 patch는 $16\times16=256$개다.
+공유된 학습 가능한 선형 투영은 각 16차원 patch를 hidden dimension $D$인 벡터로 바꾼다.
+그 결과 Transformer에 들어가는 배열의 크기는 $N\times D$다.
+
+이미지 원본을 patch로 나누는 ViT와 달리 여기서는 **이미 압축된 noisy latent**를 patch로 나눈다.
+각 token에 공간 위치 정보를 더해 원래 격자에서 어느 위치에 있었는지 알려 준다.
+원논문은 고정된 2차원 sinusoidal position embedding을 사용한다.
+
+### 2-2. Patch 크기와 비용
+
+같은 $32\times32$ latent에서 $p=4$이면 token은 64개이고 $p=2$이면 256개다.
+각 token은 더 작은 영역을 나타내므로 세밀한 정보를 다룰 여지가 생기지만 attention이 계산해야 할 token 쌍도 많아진다.
+일반적인 dense self-attention의 token 간 점수 행렬은 $N\times N$이다.
+Token 수를 4배로 늘리면 그 행렬의 원소 수는 16배가 된다.
+전체 모델의 계산량이 반드시 정확히 16배가 되는 것은 아니다.
+선형 투영과 MLP에도 비용이 들기 때문이다.
+
+<Figure src="https://biechi.github.io/assets/img/blog/world-action-modeling/dit_paper_fig3.png" alt="왼쪽에는 noisy latent가 patchify, DiT block, 선형 변환을 거쳐 noise와 분산 예측으로 바뀌는 구조가 있다. 오른쪽에는 조건을 주입하는 adaLN-Zero, cross-attention, in-context block의 비교가 있다." caption="DiT의 전체 경로와 조건을 주입하는 세 가지 block. 왼쪽 아래의 timestep과 class label이 조건을 구성하며, 가운데 adaLN-Zero block에서는 조건이 각 residual 경로의 scale과 shift를 만든다." source="Peebles & Xie (2023), Figure 3 · CC BY 4.0" wide />
+
+그림은 [DiT 원논문](https://arxiv.org/abs/2212.09748)의 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 조건으로 제공된다.
+오른쪽의 흐린 두 block은 대안으로 비교한 방식이며, 이어지는 설명은 가운데 adaLN-Zero block을 기준으로 한다.
+## 3. DiT block의 조건 주입
+
+### 3-1. Self-attention과 MLP
+
+Transformer block은 우선 각 token이 다른 위치의 token을 참고하도록 self-attention을 계산하고, 각 token에 MLP를 적용한다.
+Residual connection은 입력을 각 연산의 출력에 더해 정보와 gradient가 깊은 네트워크를 통과하도록 돕는다.
+따라서 특정 patch의 출력은 그 위치의 noise 정보뿐 아니라 다른 위치에서 전달된 문맥도 담을 수 있다.
+이는 Transformer가 이미지 구조를 학습할 수 있다는 설명이지 한 block만으로 장면의 모든 관계를 정확하게 파악한다는 보장은 아니다.
+
+DiT의 입력은 token만이 아니다.
+모델은 현재 $t$에 해당하는 timestep embedding과 생성할 class의 embedding을 조건으로 받는다.
+원논문의 기본 실험은 text prompt가 아니라 ImageNet의 class 조건 생성이다.
+Timestep은 현재 noise 수준을 구분하고 class embedding은 만들 이미지의 범주를 알려 준다.
+
+한 attention head에서 입력 token 행렬을 $X\in\mathbb{R}^{N\times D}$라고 하자.
+각 token에 같은 학습 가능한 투영을 적용해 query $Q$, key $K$, value $V$를 만든다.
+Head의 차원을 $d_h$라 하면 $Q,K,V$는 각각 $N\times d_h$이고 다음 연산은 $N\times d_h$ 출력을 만든다.
+
+$$
+A=\operatorname{softmax}\left(\frac{QK^\top}{\sqrt{d_h}}\right),
+\qquad O=AV.
+$$
+
+$A$의 각 행은 한 patch가 모든 patch의 value를 얼마나 참고하는지 나타낸다.
+앞의 256-token 예에서는 head마다 $256\times256$개의 관계 점수가 생긴다.
+여러 head의 출력을 이어서 투영한 뒤 residual 경로에 합친다.
+Self-attention이 patch 사이에서 정보를 섞는 반면 MLP는 같은 학습된 변환을 각 token에 적용해 hidden 차원 안의 특징을 변환한다.
+
+### 3-2. Adaptive layer normalization
+
+Layer normalization은 token의 hidden 차원에 걸친 값을 정규화한다.
+DiT의 adaptive layer normalization(adaLN)은 시간과 class에서 만든 조건 벡터를 이용해 정규화 결과의 크기와 이동량을 조절한다.
+조건에 의해 생성된 벡터를 $\gamma(c)$와 $\beta(c)$라 하면 다음과 같이 쓸 수 있다.
+
+$$
+\operatorname{adaLN}(h,c)=\bigl(1+\gamma(c)\bigr)\odot\operatorname{LN}(h)+\beta(c).
+$$
+
+$h$는 token의 hidden vector, $\odot$는 원소별 곱이다.
+이 표기에서 $\gamma=0$, $\beta=0$이면 정규화 결과가 그대로 전달된다.
+조건에 따라 각 hidden 차원을 얼마나 증폭하고 이동할지 바꾸므로, 같은 token도 시간과 class에 따라 다른 방식으로 처리된다.
+여기의 $\beta$는 diffusion noise schedule의 $\beta_t$와 다른 값이다.
+
+### 3-3. AdaLN-Zero와 residual gate
+
+원논문에서 주로 쓰는 adaLN-Zero는 attention과 MLP 각각에 조건으로 만든 scale과 shift를 적용하고, 각 연산의 출력이 residual 경로에 더해지기 전에 별도의 gate를 곱한다.
+간략하게 하나의 경로를 쓰면 다음과 같다.
+
+$$
+h'=h+g(c)\odot F\bigl(\operatorname{adaLN}(h,c)\bigr).
+$$
+
+$F$는 attention 또는 MLP이고 $g(c)$는 조건에서 만든 차원별 gate다.
+초기화 시 gate 출력을 0으로 만들어 각 block이 처음에는 입력을 그대로 전달하도록 한다.
+학습이 진행되면 gate와 조건부 변환이 함께 학습된다.
+예를 들어 어떤 차원에서 입력이 2이고 $F$의 출력이 0.4라면 gate가 0일 때 출력은 2, gate가 0.5일 때 출력은 2.2다.
+초기에는 gate 쪽 parameter가 gradient를 받을 수 있고, gate가 0이 아닌 값으로 바뀌면 residual branch의 내부 parameter에도 gradient가 전달된다.
+이 초기화는 처음부터 모든 block이 아무것도 배우지 않는다는 뜻이 아니다.
+Residual 경로를 점차 활용할 수 있도록 시작점을 정하는 것이다.
+원논문은 조건을 token으로 붙이거나 cross-attention으로 주는 방식 등과 비교한 뒤 adaLN-Zero를 주 구성으로 선택했다.[^dit]
+
+## 4. 출력을 latent로 되돌리기
+
+마지막 Transformer block의 출력은 여전히 $N$개의 벡터다.
+각 벡터를 선형 변환해 해당 patch 위치의 출력 값으로 만들고, 격자 순서에 맞추어 다시 이어 붙인다.
+이를 unpatchify라고 한다.
+앞의 $32\times32$, $p=2$ 예에서는 256개 출력 patch를 다시 $32\times32$ 격자로 조립한다.
+원논문 모델의 출력에는 noise 예측과 분산에 관한 예측이 포함되므로 채널 수를 입력과 무조건 같다고 가정하면 안 된다.
+예를 들어 입력 latent가 4채널이고 noise와 분산에 각각 4채널을 내는 설정이라면, patch마다 $2\times2\times8=32$개의 출력 값을 예측하고 이를 이어 $32\times32\times8$ 배열로 만든다.
+앞의 4채널 입력 patch를 $D$차원으로 투영한 것과 출력 token을 8채널 patch로 투영하는 것은 별개의 선형 변환이다.
+
+이 출력은 완성된 이미지가 아니다.
+Sampler가 모델의 예측을 사용해 더 낮은 noise 수준의 latent를 만들고, 다음 시간에 같은 DiT를 다시 호출한다.
+반복이 끝난 latent를 autoencoder의 decoder에 넣으면 이미지가 나온다.
+학습에서는 정답 latent에 noise를 넣고 선택된 시간의 예측을 학습하며, 생성에서는 noise만으로 시작한다.
+
+## 5. 이미지에서 video로
+
+### 5-1. Text와 이미지 token의 결합
+
+원래 DiT의 class 조건을 모든 후속 DiT의 조건 방식으로 일반화하면 안 된다.
+Stable Diffusion 3 연구의 multimodal diffusion transformer(MMDiT)는 이미지와 텍스트 표현에 별도의 가중치를 사용하면서 두 종류의 token이 attention을 통해 정보를 교환하도록 설계한다.[^sd3]
+더 구체적으로 이미지 token과 텍스트 token은 각자의 가중치로 query, key, value를 만든다.
+그다음 두 종류의 query·key·value를 sequence 방향으로 결합해 joint attention을 계산하므로 이미지 token은 텍스트 token을 참고할 수 있고 텍스트 token도 이미지 token을 참고할 수 있다.
+Attention 결과를 각 modality의 token으로 다시 나누고 각 경로의 후속 변환으로 처리한다.
+이는 이미지 query가 텍스트 key와 value만 읽는 기본 cross-attention과 정보가 오가는 방식이 다르다.
+이 모델은 rectified flow도 사용한다.
+Transformer를 쓴다는 구조적 선택과 rectified flow라는 경로·학습 선택을 따로 보아야 한다.
+
+### 5-2. Spacetime patch와 Sora
+
+Video에는 가로·세로뿐 아니라 시간축이 있다.
+이미지 patch가 공간 조각을 나타낸다면 spacetime patch는 시간과 공간에 걸친 latent의 조각을 token으로 표현할 수 있다.
+한 장면의 여러 시점이 함께 처리되므로 생성 모델은 프레임 사이의 움직임과 일관성도 다루어야 한다.
+Video latent의 모양과 patch 크기에 따라 token 수와 계산량이 크게 달라진다.
+
+OpenAI는 Sora를 이미지와 video latent의 spacetime patch를 처리하는 diffusion transformer로 설명한다.[^sora]
+보고서에는 모델과 구현 세부가 포함되어 있지 않으므로 원래 DiT의 모든 block, conditioning, sampler가 Sora에서도 동일하다고 결론 내릴 수 없다.
+Video 결과가 현실과 비슷해 보여도 물리적 일관성이나 모든 장면의 정확성을 보장하지 않는다는 한계도 함께 살펴야 한다.
+
+[^survey]: Yang, L., Zhang, Z., Song, Y., et al. (2024). Diffusion Models: A Comprehensive Survey of Methods and Applications. *ACM Computing Surveys*, 56(4), 105:1–105:39. [논문](https://arxiv.org/abs/2209.00796).
+[^dit]: Peebles, W., & Xie, S. (2023). Scalable Diffusion Models with Transformers. *ICCV*. [논문](https://arxiv.org/abs/2212.09748).
+[^sd3]: Esser, P., Kulal, S., Blattmann, A., et al. (2024). Scaling Rectified Flow Transformers for High-Resolution Image Synthesis. *ICML*. [논문](https://arxiv.org/abs/2403.03206).
+[^sora]: OpenAI. (2024). Video generation models as world simulators. *OpenAI*. [기술 보고](https://openai.com/index/video-generation-models-as-world-simulators/).
