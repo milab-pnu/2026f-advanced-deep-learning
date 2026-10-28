@@ -23,7 +23,8 @@ Inference 최적화 기법은 대개 요청 하나를 받은 뒤 그 요청을 �
 ### 1-1. Cascade와 router
 
 모델의 크기와 비용은 함께 커진다.
-가장 큰 모델에 모든 요청을 보내면 품질은 가장 높지만, 작은 모델로도 맞힐 수 있었던 쉬운 요청에도 같은 비용을 낸다.
+큰 모델에 모든 요청을 보내면 작은 모델로도 맞힐 수 있었던 쉬운 요청에도 큰 모델의 비용을 낸다.
+큰 모델이 평균적으로 더 뛰어나더라도 모든 요청에서 작은 모델보다 나은 것은 아니다.
 쉬운 요청은 작은 모델에, 어려운 요청은 큰 모델에 보내면 품질을 크게 잃지 않고 비용을 줄일 수 있다.
 문제는 어느 요청이 쉬운지 미리 알 수 없다는 것이다.
 이를 정하는 방식은 판단하는 시점에 따라 두 갈래로 나뉜다.[^survey]
@@ -101,7 +102,7 @@ FrugalGPT에서 채점기를 DistilBERT(67M 파라미터)에서 11M 파라미터
 **RouteLLM**은 큰 모델과 작은 모델 두 개 사이에서 고르는 router를 학습한다.[^routellm]
 Router는 요청 $q$를 보고 큰 모델의 답이 더 나을 확률 $P(\text{win}_s\mid q)$를 예측한다($s$는 원논문의 strong).
 이 확률이 문턱값 $\alpha$ 이상이면 큰 모델에, 아니면 작은 모델에 보낸다.
-$\alpha$를 높이면 작은 모델로 가는 요청이 늘어 비용이 줄고 품질도 내려간다.
+$\alpha$를 높이면 작은 모델로 가는 요청이 늘어 비용이 줄지만 품질이 내려갈 수 있다.
 학습 데이터는 사람들이 두 모델의 답을 비교해 고른 Chatbot Arena의 선호 기록이다.
 여기에 GPT-4를 LLM judge로 써서 붙인 선호 판정을 더하자, BERT 분류기와 Llama 3 8B 기반 분류기로 만든 router가 무작위 routing보다 뚜렷이 나아졌다.
 GPT-4와 Mixtral 8x7B 사이에서 routing했을 때, MT Bench에서 GPT-4 점수의 95%를 내는 데 무작위 routing보다 GPT-4 호출을 3.66배 적게 썼다.
@@ -176,7 +177,8 @@ Llama 3 8B를 H100 SXM에서 요청 하나만 처리한다고 하고, roofline�
 둘째는 형식 오류다.
 모델이 지시한 형식을 어기면 parsing이 실패한다.
 여러 모델에게 JSON 같은 형식으로 답하게 한 실험에서 parsing 오류율은 모델, 형식, task에 따라 1% 미만에서 60% 이상까지 달랐다.[^speak-freely]
-Constrained decoding은 출력이 정해진 형식이나 선택지를 벗어나지 않게 막아 이 문제를 없앤다.
+Constrained decoding은 생성 중 허용하는 토큰을 제한해 형식 오류를 줄인다.
+다만 출력이 길이 제한이나 중단으로 완성되지 않으면 형식 검사가 여전히 실패할 수 있다.
 
 셋째는 확률이 없다는 점이다.
 생성된 답은 "부정"이라는 단정뿐이어서, routing처럼 문턱값과 비교할 점수가 필요한 곳에 그대로 쓸 수 없다.
@@ -198,7 +200,8 @@ p_k=\frac{p_\theta(\ell_k\mid x)}{\sum_{j=1}^{K}p_\theta(\ell_j\mid x)},\qquad k
 $$
 
 전체 어휘에 대한 분포에서 레이블 토큰만 남기고 합이 1이 되게 다시 나눈 것으로, 레이블 토큰들의 logit에만 softmax를 취한 것과 같다.
-가장 큰 $p_k$의 선택지가 답이고, $p_k$ 자체가 그 답의 확률이 된다.
+가장 큰 $p_k$의 선택지를 답으로 고를 수 있고, $p_k$는 모델이 레이블 후보들에 할당한 상대적인 확률이다.
+이 값이 실제로 정답일 확률과 맞는지는 별도로 검증해야 한다.
 아무것도 생성하지 않으므로 decode가 없고, parsing할 문자열도 없으며, 문턱값과 비교할 확률이 함께 나온다.
 이 방식은 레이블이 한 토큰이어야 하고, 모델이 선택지를 보고 레이블로 답하는 형식에 익숙해야 잘 작동한다.
 
@@ -237,10 +240,11 @@ Post-training은 이 calibration을 흐트러뜨릴 수 있다.
 GPT-4 기술 보고서에서 사전학습 모델은 MMLU 일부 문제의 A, B, C, D 확률로 잰 ECE가 0.007이었지만, post-training 뒤에는 0.074로 커졌다.[^gpt4]
 Chat 모델은 대개 post-training을 거친 모델이므로, 레이블 확률을 그대로 쓰기 전에 calibration을 확인해야 한다.
 
-정답이 있는 데이터가 조금 있으면 **temperature scaling**으로 고칠 수 있다.
+정답이 있는 데이터로 **temperature scaling**을 적용해 확률의 calibration을 개선할 수 있다.
 모든 logit을 하나의 temperature $T$로 나눈 뒤 softmax하는 방법으로, $T$는 정답 데이터에서 negative log-likelihood가 가장 작아지도록 고른다.[^guo]
 $T>1$이면 분포가 평평해져 과신이 줄고, 모든 logit을 같은 값으로 나누므로 가장 큰 선택지, 곧 정확도는 바뀌지 않는다.
 Kadavath 등은 RLHF(reinforcement learning from human feedback)를 거친 모델의 확률이 $T=2.5$ 하나로 크게 나아졌다고 보고했다.[^kadavath]
+맞춘 데이터와 별도의 평가 데이터에서도 개선되는지 확인해야 한다.
 다만 temperature scaling은 선택지의 순위를 바꾸지 않으므로, 확률이 내용과 상관없는 쪽으로 쏠려 틀린 답은 고치지 못한다.
 
 ### 2-4. 위치 편향과 선택지 편향
@@ -498,8 +502,9 @@ Jev의 구조는 알 수 없지만, causal attention으로 선택지를 읽는 �
 | 선택지가 많다(공개 decision model), 또는 모델 운영을 맡기고 싶다(Jev 같은 API) | Decision model | 같은 지표와 입력을 고쳤을 때의 답 변화를 자기 데이터에서 |
 
 두 질문은 한 곳에서 만난다.
-레이블 확률이나 decision model이 내는 확률은 그대로 cascade의 채점기 점수 $g$나 router의 확률 $P$로 쓸 수 있고,
-calibration이 확인된 확률이라면, 문턱값을 바꿔 가며 비용과 품질을 재는 탐색 없이 "0.8 이상이면 받아들인다"처럼 확률의 뜻으로 문턱값을 정할 수 있다.
+레이블 확률이나 decision model이 내는 확률은 답의 정확성이나 큰 모델의 우위를 묻는 판단에 적용하면 cascade의 채점기 점수 $g$나 router의 확률 $P$로 활용할 수 있고,
+calibration이 확인된 확률이라면 "0.8 이상이면 받아들인다"처럼 확률의 뜻으로 문턱값을 정할 수 있다.
+다만 그 문턱값이 비용과 품질의 목표에 맞는지는 큰 모델의 성능과 호출 비용까지 포함해 따로 평가해야 한다.
 
 [^survey]: Moslem, Y., & Kelleher, J. D. (2026). Dynamic Model Routing and Cascading for Efficient LLM Inference: A Survey. *Transactions on Machine Learning Research*. [arXiv:2603.04445](https://arxiv.org/abs/2603.04445).
 

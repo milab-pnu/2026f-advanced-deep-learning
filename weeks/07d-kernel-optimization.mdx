@@ -73,7 +73,9 @@ Nsight Systems(`nsys`)는 CPU thread, CUDA API 호출, GPU에서 실행된 kerne
 
 첫째는 kernel별 시간의 합이다.
 `nsys stats` 명령이 만드는 `cuda_gpu_kern_sum` 보고서는 kernel 이름마다 실행 횟수와 총 시간, 전체에서 차지하는 비율을 모아 준다.[^nsys]
-이 비율이 Amdahl의 법칙에서 말한 "스텝 시간에서 그 연산이 차지하는 몫"이다.
+이 비율은 보고서에 포함된 kernel 실행 시간의 합을 분모로 쓰므로, GPU가 빈 시간이나 메모리 복사까지 포함한 스텝 전체 시간의 비율은 아니다.[^nsys-analysis]
+또 여러 stream의 kernel이 겹쳐 실행되면 각 실행 시간의 합이 실제 경과 시간보다 클 수 있다.
+Amdahl의 법칙에 쓸 몫은 관심 있는 스텝의 타임라인에서 겹침과 빈 구간을 함께 살펴 추정한다.
 도입의 예처럼 attention이 4분의 1이라면 attention kernel을 아무리 빠르게 해도 스텝은 4분의 3 아래로 줄지 않는다.
 
 둘째는 GPU 줄의 빈 구간이다.
@@ -137,7 +139,8 @@ Nsight Systems로 고른 kernel의 이름 일부를 `-k regex:` 옵션으로, �
 연산 장치와 메모리 각각의 처리량을 이론 최댓값에 대한 비율로 보여 주므로,[^ncu]
 도입에서 스텝 전체로 계산한 MBU와 비슷한 지표를 kernel 하나 단위로 보는 셈이다.
 Roofline 차트는 그 kernel의 arithmetic intensity와 달성한 성능을 점 하나로 찍어 roofline의 지붕과 함께 보여 준다.[^ncu]
-점이 대역폭 쪽 지붕 아래에 있으면 memory-bound이고, 지붕에서 아래로 멀수록 kernel이 하드웨어를 덜 쓰고 있다는 뜻이다.
+해당 intensity에서 대역폭 지붕이 연산 지붕보다 낮으면 roofline의 이론적 한계는 메모리 대역폭이 정한다.
+실측 점이 그 지붕에서 멀다면 대역폭을 충분히 활용하지 못하거나 다른 비용이 있을 수 있으므로, 그 위치만으로 실제 병목을 확정하지 않는다.
 일을 SM에 고르게 나누거나 읽기와 계산을 겹치는 최적화는 이 점을 위로 올리고, 중간값의 HBM 왕복을 없애는 fusion은 intensity를 높여 점을 오른쪽으로 옮긴다.
 
 ## 3. Attention kernel
@@ -422,6 +425,8 @@ FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kern
 [^hopper]: Andersch, M., Palmer, G., Krashinsky, R., Stam, N., Mehta, V., Brito, G., & Ramaswamy, S. (2022). NVIDIA Hopper Architecture In-Depth. *NVIDIA Technical Blog*. [developer.nvidia.com](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/).
 
 [^nsys]: NVIDIA. (2026). Nsight Systems User Guide (v2026.5). *NVIDIA documentation*. [docs.nvidia.com](https://docs.nvidia.com/nsight-systems/UserGuide/index.html).
+
+[^nsys-analysis]: NVIDIA. Post-Collection Analysis Guide. *Nsight Systems documentation*. [docs.nvidia.com](https://docs.nvidia.com/nsight-systems/AnalysisGuide/index.html).
 
 [^vllm-profile]: vLLM Project. (2026). Profiling vLLM. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/contributing/profiling/).
 
