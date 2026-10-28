@@ -4,7 +4,7 @@ week: 6
 order: 2
 ---
 
-<strong>양자화(quantization)</strong>는 weight와 activation을 더 적은 bits로 표현하는 방법이다.
+<strong>양자화(quantization)</strong>는 weight, activation, KV cache 등을 더 적은 bits로 표현하는 방법이다.
 Llama 3 8B의 weight를 BF16(bfloat16)에서 INT4(4-bit integer)로 바꾸면 16 GB가 약 4 GB가 된다.
 대신 정밀도를 낮춘 만큼 오차가 생긴다.
 특히 LLM(large language model)의 activation에는 몇몇 channel(hidden 차원)에 유독 큰 값인 outlier가 반복해 나타나는데, 그 값에 범위를 맞추면 나머지 작은 값이 뭉개진다.[^survey]

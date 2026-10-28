@@ -388,7 +388,7 @@ vLLM의 fused MoE kernel은 토큰을 expert 순서로 정렬한 뒤,
 
 Kernel 자체가 빨라도 그 사이가 빈다면 GPU는 논다.
 CPU는 kernel을 하나씩 GPU에 제출하는데, 제출마다 마이크로초 단위의 비용이 든다.
-제출한 kernel은 GPU의 대기열에 쌓이고 GPU는 그 순서대로 꺼내 실행하므로, kernel 하나의 실행이 제출 비용보다 짧으면 대기열이 비어 GPU가 다음 제출을 기다린다.
+같은 stream에 제출한 kernel은 순서대로 실행되므로, kernel 하나의 실행이 제출 비용보다 짧으면 대기열이 비어 GPU가 다음 제출을 기다릴 수 있다.
 NVIDIA의 측정에서 V100에서 실행 시간 2.9 μs짜리 kernel을 제출할 때마다 끝나기를 기다리면, kernel당 9.6 μs가 걸렸다.[^cudagraph-nv]
 Decode 한 스텝은 층마다 정규화, 투영,
 attention, 활성화 같은 kernel 여러 개를 수십 층에 걸쳐 실행하므로, fusion 정도에 따라 kernel이 수백 개에 이를 수 있다.

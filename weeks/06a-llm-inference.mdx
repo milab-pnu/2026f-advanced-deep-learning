@@ -425,7 +425,7 @@ $$
 =\underbrace{2}_{K,\,V}\cdot\underbrace{L}_{\text{층 수}}\cdot\underbrace{n_{kv}}_{\text{KV head 수}}\cdot\underbrace{d_h}_{\text{head 차원}}\cdot\underbrace{T}_{\text{토큰 수(sequence 길이)}}\cdot\underbrace{p}_{\text{precision}}
 $$
 
-토큰 수 $T$는 그 요청의 sequence 길이, 곧 입력 토큰과 지금까지 생성한 출력 토큰 수의 합이다.
+토큰 수 $T$는 그 요청에서 모델에 입력해 KV를 계산하고 저장한 토큰 수다. 보통 입력 토큰과 이미 처리한 출력 토큰을 합한 길이이며, 방금 생성했지만 아직 다음 forward에 넣지 않은 토큰은 포함하지 않는다.
 Precision $p$는 원소 하나를 저장하는 데 드는 bytes로, BF16이면 2 bytes, FP8이면 1 byte다.
 Llama 3 8B를 BF16으로 두면 토큰 하나에 드는 KV cache는
 
