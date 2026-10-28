@@ -12,7 +12,7 @@ order: 1
 
 ### 1-1. 조건부 모델
 
-조건 없는 모델은 학습 데이터 전체의 분포에서 표본을 생성한다.
+조건 없는 모델은 학습 데이터 전체의 분포를 근사하고, 그 모델 분포에서 표본을 생성한다.
 개 사진을 원한다면 조건 $c$에 개라는 class를, text-to-image에서는 문장의 표현을 담아 모델에 전달할 수 있다.
 현재 noise가 섞인 상태를 $x_t$, noise 수준을 나타내는 단계를 $t$라 하자.
 조건부 noise 예측은 $\epsilon_\theta(x_t,t,c)$로 쓴다.
@@ -105,6 +105,7 @@ DPM-Solver는 생성 과정을 미분방정식으로 해석하고 수치해법�
 
 Sampler가 실제로 하는 일을 결정론적 DDIM으로 살펴보자.
 현재 시간 $t$에서 더 이른 시간 $r$로 이동한다고 하자. 여기서 $r<t$이며 중간 시간을 건너뛸 수도 있다.
+Forward 과정에서 noise를 더할수록 $\bar\alpha$가 감소하므로, 역방향의 $r$에서는 $\bar\alpha_r>\bar\alpha_t$다.
 현재 상태 $x_t$와 모델 예측 $\hat\epsilon=\epsilon_\theta(x_t,t)$에서 먼저 원본을 추정한다.
 
 $$
@@ -147,12 +148,10 @@ Diffusion과 연결해 이해할 수 있지만, DDPM의 noise 예측과 같은 �
 예를 들어 Stable Diffusion 3 연구는 rectified flow와 Transformer backbone을 함께 사용한다.[^sd3]
 경로, 학습 목표, backbone은 각각 확인할 선택이다.
 
-이제 계산을 줄이기 위해 diffusion 자체를 이미지의 pixel이 아닌 압축된 latent 표현에서 수행하는 방법을 살펴볼 수 있다.
-
 [^survey]: Yang, L., Zhang, Z., Song, Y., et al. (2024). Diffusion Models: A Comprehensive Survey of Methods and Applications. *ACM Computing Surveys*, 56(4), 105:1–105:39. [논문](https://arxiv.org/abs/2209.00796).
 [^controlnet]: Zhang, L., Rao, A., & Agrawala, M. (2023). Adding Conditional Control to Text-to-Image Diffusion Models. *ICCV*. [논문](https://arxiv.org/abs/2302.05543).
 [^solver]: Lu, C., Zhou, Y., Bao, F., et al. (2022). DPM-Solver: A Fast ODE Solver for Diffusion Probabilistic Model Sampling in Around 10 Steps. *NeurIPS*. [논문](https://arxiv.org/abs/2206.00927).
-[^cfg]: Ho, J., & Salimans, T. (2022). Classifier-Free Diffusion Guidance. *NeurIPS Workshop*. [논문](https://arxiv.org/abs/2207.12598).
+[^cfg]: Ho, J., & Salimans, T. (2022). Classifier-Free Diffusion Guidance. *arXiv*. [논문](https://arxiv.org/abs/2207.12598).
 [^improved]: Nichol, A. Q., & Dhariwal, P. (2021). Improved Denoising Diffusion Probabilistic Models. *ICML*. [논문](https://proceedings.mlr.press/v139/nichol21a.html).
 [^ddim]: Song, J., Meng, C., & Ermon, S. (2021). Denoising Diffusion Implicit Models. *ICLR*. [논문](https://arxiv.org/abs/2010.02502).
 [^v]: Salimans, T., & Ho, J. (2022). Progressive Distillation for Fast Sampling of Diffusion Models. *ICLR*. [논문](https://arxiv.org/abs/2202.00512).

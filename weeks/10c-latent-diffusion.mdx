@@ -17,6 +17,9 @@ $512\times512$ RGB 이미지는 색 채널을 포함해 786,432개의 값을 가
 이 공간에서 수십 번 denoising하면 매번 큰 공간 배열을 처리해야 한다.
 Latent diffusion은 encoder $E$로 이미지를 더 작은 latent $z_0=E(x)$로 바꾸고 decoder $D$가 latent에서 이미지를 복원하도록 학습한다.
 이 autoencoder는 이미지의 중요한 구조를 남기면서 공간 해상도를 줄인다.
+여기서 $E(x)$는 필요한 표본 추출과 크기 조정을 포함하고, $D$는 decoding 전 역변환을 포함하는 간략한 표기다.
+예를 들어 Stable Diffusion v1-4는 encoder에서 얻은 latent에 설정된 scaling factor 0.18215를 곱해 diffusion에 사용하고, decoder에 넣기 전에는 그 계수로 나눈다.[^sd]
+이 계수는 모델의 설정에 따라 다르며 모든 latent diffusion에 같은 값을 쓰지는 않는다.
 
 <Callout type="example">
 초기 Stable Diffusion 계열에서 흔히 사용하는 예로 $512\times512\times3$ 이미지를 $64\times64\times4$ latent로 바꾸면 배열 원소 수가 786,432개에서 16,384개로 줄어든다.
@@ -98,7 +101,7 @@ CLIP은 이미지와 그에 맞는 텍스트 표현을 가깝게 만드는 contr
 그중 text encoder의 출력을 이미지 생성의 조건으로 사용하며, CLIP의 정렬 학습과 diffusion 모델의 noise 예측 학습은 서로 다르다.[^sd]
 Text encoder의 종류와 학습 여부는 버전마다 확인해야 한다.
 
-<Figure src="https://upload.wikimedia.org/wikipedia/commons/f/f6/Stable_Diffusion_architecture.png" alt="입력 이미지가 encoder를 통해 latent로 압축되고 latent U-Net에서 반복 처리된 뒤 decoder를 통해 이미지로 복원된다. 텍스트 등 조건은 cross-attention을 거쳐 U-Net에 전달된다." caption="Latent diffusion의 전체 구조. Encoder와 decoder 사이에서 diffusion을 수행하고 조건 표현을 cross-attention으로 전달한다." source="Machine Vision and Learning Group, LMU Munich · MIT License" wide />
+<Figure src="https://upload.wikimedia.org/wikipedia/commons/f/f6/Stable_Diffusion_architecture.png" alt="입력 이미지가 encoder를 통해 latent로 압축되고 latent U-Net에서 반복 처리된 뒤 decoder를 통해 이미지로 복원된다. 텍스트 등 조건은 cross-attention을 거쳐 U-Net에 전달된다." caption="Latent diffusion의 전체 구조. Encoder와 decoder 사이에서 diffusion을 수행하고 조건 표현을 cross-attention으로 전달한다." source="Copyright © Machine Vision and Learning Group, LMU Munich · MIT License" wide />
 
 그림의 [원본과 이용 조건](https://commons.wikimedia.org/wiki/File:Stable_Diffusion_architecture.png)을 함께 확인할 수 있다.
 
@@ -177,7 +180,9 @@ InstructPix2Pix의 데이터 생성 구현은 이 아이디어를 변형해 두 
 ### 4-3. 원본 이미지와 지시를 조건으로 학습
 
 원본 이미지를 $I$, 편집된 정답 이미지를 $Y$, 지시 텍스트를 $c$라 하자.
-각 이미지를 같은 autoencoder의 encoder $E$로 latent $z_I=E(I)$와 $z_Y=E(Y)$로 바꾼다.
+같은 autoencoder를 사용하되, 원본 조건용 변환을 $C$라 하여 $z_I=C(I)$, diffusion 대상 변환을 $E$라 하여 $z_Y=E(Y)$로 구분한다.
+예를 들어 Diffusers의 InstructPix2Pix 학습 구현은 편집된 이미지의 posterior에서 표본을 뽑아 scaling factor를 곱하지만, 원본 조건에는 posterior의 mode를 scaling 없이 사용한다.[^instructpix-implementation]
+같은 encoder를 쓴다는 사실만으로 두 경로의 표본 추출과 크기 조정이 같다고 가정하면 안 된다.
 학습 시 noise를 더하는 대상은 **편집된 정답** $z_Y$다.
 임의의 시간 $t$와 표준 Gaussian noise $\epsilon$을 뽑아 $z_t=\sqrt{\bar\alpha_t}z_Y+\sqrt{1-\bar\alpha_t}\epsilon$을 만든다.
 모델은 $z_t$, 시간, 원본 latent $z_I$, 지시 $c$를 보고 추가한 noise를 예측한다.
@@ -215,13 +220,13 @@ $s_I$와 $s_T$가 둘 다 1이면 두 차이 항이 이어져 최종적으로 $\
 이미지 guidance scale은 원본과의 유사성, 텍스트 guidance scale은 지시 반영 정도를 조절하는 데 쓰인다.
 두 값이 결과에 미치는 영향은 서로 얽혀 있고, 어느 값을 키운다고 원하는 속성만 완벽히 보존하거나 변경한다는 보장은 없다.
 ControlNet처럼 edge나 pose를 공간 조건으로 제공하는 방법은 제어할 정보를 보태는 다른 접근이다.
-이런 조건부 생성에서 U-Net이 맡은 noise 예측을 Transformer로 구현해도 latent 공간에서 반복적으로 생성한다는 관점은 유지된다.
 
 [^survey]: Yang, L., Zhang, Z., Song, Y., et al. (2024). Diffusion Models: A Comprehensive Survey of Methods and Applications. *ACM Computing Surveys*, 56(4), 105:1–105:39. [논문](https://arxiv.org/abs/2209.00796).
 [^ldm]: Rombach, R., Blattmann, A., Lorenz, D., Esser, P., & Ommer, B. (2022). High-Resolution Image Synthesis with Latent Diffusion Models. *CVPR*. [논문](https://arxiv.org/abs/2112.10752).
 [^unet]: Ronneberger, O., Fischer, P., & Brox, T. (2015). U-Net: Convolutional Networks for Biomedical Image Segmentation. *MICCAI*. [논문](https://arxiv.org/abs/1505.04597).
 [^clip]: Radford, A., Kim, J. W., Hallacy, C., et al. (2021). Learning Transferable Visual Models From Natural Language Supervision. *ICML*. [논문](https://arxiv.org/abs/2103.00020).
-[^sd]: Rombach, R., et al. (2022). Stable Diffusion v1 Model Card. *Hugging Face*. [모델 카드](https://huggingface.co/CompVis/stable-diffusion-v1-4).
+[^sd]: Rombach, R., & Esser, P. (2022). Stable Diffusion v1 Model Card. *Hugging Face*. [모델 카드](https://huggingface.co/CompVis/stable-diffusion-v1-4), [VAE 설정](https://huggingface.co/CompVis/stable-diffusion-v1-4/blob/main/vae/config.json).
 [^sdedit]: Meng, C., He, Y., Song, Y., et al. (2022). SDEdit: Guided Image Synthesis and Editing with Stochastic Differential Equations. *ICLR*. [논문](https://arxiv.org/abs/2108.01073).
 [^instructpix]: Brooks, T., Holynski, A., & Efros, A. A. (2023). InstructPix2Pix: Learning to Follow Image Editing Instructions. *CVPR*. [논문](https://arxiv.org/abs/2211.09800).
+[^instructpix-implementation]: Hugging Face. (v0.35.1). InstructPix2Pix. *Diffusers documentation*. [문서](https://huggingface.co/docs/diffusers/v0.35.1/training/instructpix2pix).
 [^prompt2prompt]: Hertz, A., Mokady, R., Tenenbaum, J., et al. (2023). Prompt-to-Prompt Image Editing with Cross Attention Control. *ICLR*. [논문](https://arxiv.org/abs/2208.01626).

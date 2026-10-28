@@ -63,8 +63,10 @@ Transformer encoder의 self-attention은 각 patch가 다른 patch의 정보를 
 
 ViT 원논문은 범주 라벨이 붙은 이미지를 분류하게 하여 encoder를 사전학습했다.
 CNN(convolutional neural network)은 가까운 픽셀끼리 먼저 묶는다는 가정을 구조에 담고 있지만, ViT의 self-attention에는 그런 가정이 없어 이를 데이터에서 배워야 한다.
-그래서 약 130만 장의 ImageNet만으로 학습하면 비슷한 크기의 CNN보다 정확도가 몇 %p 낮았다.
-1,400만 장의 ImageNet-21k로 사전학습하면 비슷한 수준이 되고, 3억 장 규모의 JFT-300M으로 사전학습해야 CNN을 앞섰다.
+원논문의 비교에서는 약 130만 장의 ImageNet으로 사전학습한 ViT가 비교 대상인 CNN보다 낮은 정확도를 보였지만, 더 큰 데이터로 사전학습할 때는 ViT가 CNN을 앞서는 결과도 나왔다.
+다른 실험에서는 JFT의 9,000만 장 부분집합으로 사전학습한 ViT-B/32가 계산 비용이 비슷한 ResNet50보다 높은 few-shot 정확도를 보였다.
+이 평가는 사전학습한 표현 위에 적은 수의 라벨 예제로 선형 분류기를 맞추어 측정했다.
+결과는 모델 크기와 데이터, 학습·평가 설정에 따라 달라지며 특정 데이터 규모가 필수라는 뜻은 아니다.
 라벨은 만들기 비싸고, 학습할 때 정한 범주만 담는다.
 “고양이”라는 라벨에는 털의 색이나 고양이가 놓인 위치, 옆에 있는 물체가 들어 있지 않다.
 라벨 없이 이미지 자체에서 학습 신호를 만드는 자기지도(self-supervised) 사전학습은 이 문제에서 출발해 크게 두 갈래로 발전했다.
@@ -78,7 +80,8 @@ Mask token은 가려진 자리를 표시하는 학습 가능한 벡터이며, �
 Decoder는 가려진 patch의 픽셀 값을 복원하고, 손실은 가려진 patch에서만 계산한다.
 픽셀 값은 어휘의 ID가 아니므로 MLM처럼 softmax로 고르지 않고, 원래 픽셀과의 평균 제곱 오차(mean squared error)를 줄이는 회귀로 학습한다.
 
-MLM이 token의 15%만 가리는 것과 달리 MAE가 75%나 가리는 이유는 이미지의 중복에 있다.
+BERT의 MLM은 token의 15%를 예측 대상으로 고르지만 MAE는 patch의 75%를 가린다.
+MAE에서 가리는 비율을 높이는 이유는 이미지의 중복에 있다.
 문장에서 단어 하나를 지우면 주변 단어만으로 맞히기 쉽지 않지만, 이미지에서는 이웃한 patch끼리 비슷해서 몇 개를 지워도 주변을 이어 붙이듯 채울 수 있다.
 가리는 비율을 높여야 주변을 복사하는 것만으로는 풀 수 없고, 물체와 장면의 구조를 알아야 하는 task가 된다.
 Encoder가 보이는 patch만 처리하므로 사전학습 계산도 줄어든다.
@@ -86,16 +89,17 @@ Encoder가 보이는 patch만 처리하므로 사전학습 계산도 줄어든�
 <Callout type="example">
 224×224 이미지를 16×16 patch로 나누면 196개의 patch가 생긴다.
 75%를 가리면 encoder는 49개의 patch만 처리한다.
-Decoder는 encoder 출력 49개와 mask token 147개, 모두 196개 위치를 받아 가려진 147개 patch의 픽셀을 복원한다.
-Attention 점수는 token 쌍마다 계산하므로, encoder의 attention 점수 계산은 196개를 모두 넣을 때의 $(49/196)^2=1/16$로 줄어든다.
+Decoder는 patch에 해당하는 encoder 출력 49개와 mask token 147개를 받아 가려진 147개 patch의 픽셀을 복원한다.
+Attention 점수는 token 쌍마다 계산하므로, 특수 token을 제외한 encoder의 patch 간 점수 개수는 196개를 모두 넣을 때의 $(49/196)^2=1/16$로 줄어든다.
+실제 MAE 구현은 CLS token도 추가하므로 전체 점수 행렬의 비율은 $(50/197)^2\approx0.0644$다.
 </Callout>
 
 MAE는 추가 라벨 데이터 없이 ImageNet의 이미지만으로 사전학습하고도, 미세조정한 큰 ViT가 높은 정확도를 낼 수 있음을 보였다.
 이렇게 사전학습한 encoder는 이미지 feature가 필요한 다른 모델에도 쓰인다.
 예를 들어 물체의 윤곽을 픽셀 단위로 칠한 영역을 그리는 SAM(Segment Anything Model)의 image encoder도 MAE로 사전학습한 ViT다.[^sam]
 다만 픽셀을 복원하는 task와 범주를 알아보는 task 사이에는 간극이 있다.
-MAE 원논문은 encoder를 고정하고 그 위에 선형 분류기만 학습하는 linear probing에서는, 같은 이미지의 변형을 맞추게 하는 갈래의 MoCo v3보다 정확도가 낮다고 보고한다.
-대신 위쪽 몇 층만 미세조정해도 MoCo v3를 앞선다.
+MAE 원논문의 ImageNet-1K와 ViT-L 비교에서는 encoder를 고정하고 그 위에 선형 분류기만 학습하는 linear probing에서, 같은 이미지의 변형을 맞추게 하는 갈래의 MoCo v3보다 정확도가 낮다.[^mae]
+반면 이 비교에서 encoder의 마지막 block을 하나 이상 미세조정하면 MAE가 앞선다.
 
 ### 1-3. Self-distillation
 
@@ -128,10 +132,6 @@ ViT는 이미지를 벡터로 바꾸는 방법을 제공하지만, **어떤 의�
 시각적 질문에 답하려면 사물의 이름뿐 아니라 색, 수량, 위치, 장면 속 관계를 언어와 연결해야 한다.
 이미지와 언어를 짝지어 학습하면 고정된 범주 이름에 묶이지 않으면서 언어와 연결된 시각 표현을 얻을 수 있다.
 
-<Callout type="note">
-[Kanana Vision Encoder: 글로벌 최고 수준에 도전하는 자체 비전 인코더 개발기](https://if.kakao.com/2026/session/time-table?sessionId=86)는 카카오가 자체 vision encoder를 개발한 과정을 소개하는 기술 세션이다.
-같은 encoder의 개발 글은 다음 token 예측으로 encoder를 학습했다고 설명하며, 이는 이어서 살펴볼 CLIP의 contrastive 학습과 비교해 볼 수 있는 접근이다.
-</Callout>
 
 ## 2. 이미지와 텍스트의 정렬
 
@@ -207,7 +207,9 @@ $$
 ### 2-2. Softmax 대신 sigmoid
 
 CLIP의 손실은 정답 쌍의 점수를 같은 행이나 열의 모든 후보 점수와 비교해 정규화한다.
-그래서 한 쌍의 손실을 계산하려면 batch 전체의 유사도가 필요하고, 여러 장치에 batch를 나누어 학습할 때도 모든 장치의 표현을 모아 $N\times N$ 행렬 전체를 다루어야 한다.
+그래서 한 쌍의 손실을 계산하려면 그 행과 열에 속한 batch 전체 후보의 유사도가 필요하다.
+여러 장치에 batch를 나누면 장치 사이의 정보 교환이 필요하지만, 전체 $N\times N$ 행렬을 한 장치에 모아야 하는 것은 아니다.
+점수를 나누어 계산하고 정규화에 필요한 값을 합치는 구현도 가능하다.
 SigLIP(sigmoid loss for language-image pre-training)은 이 정규화를 없애고 행렬의 각 칸을 따로 판정한다.[^siglip]
 이미지 $i$와 텍스트 $j$가 짝이면 $z_{ij}=1$, 아니면 $z_{ij}=-1$로 두고, 모든 칸에서 “이 둘이 짝인가”를 이진 분류한다.
 $\sigma$를 sigmoid 함수, $b$를 학습 가능한 bias라 하면 손실은 다음과 같다.
@@ -237,14 +239,63 @@ Sigmoid 손실은 칸마다 따로 판정해, 정답 칸의 짝일 확률 $\sigm
 더구나 후보 중 가장 비슷한 것을 고르는 작업과 질문에 맞는 문장을 한 token씩 만들어 내는 작업은 다르다.
 “표지판에 적힌 글을 읽고 경로를 설명하라”처럼 답의 형태가 열려 있는 task에는 언어 생성이 필요하다.
 
+### 2-4. 정렬과 다음 token 예측
+
+카카오가 별도로 공개한 `kanana-2-vision-encoder-medium`은 **이미지 feature를 추출하는 encoder**다.[^kanana-vision-encoder]
+텍스트 생성 모듈이 빠져 있으므로 이 encoder만으로 이미지에 관한 질문에 답할 수 없다.
+질문 응답을 만들려면 시각 feature를 언어 모델에 연결하고 함께 사용할 수 있도록 학습해야 한다.
+
+2026년 공개된 Kanana-2 vision encoder의 개발 글은 이미지와 상세한 설명을 함께 주고 **다음 텍스트 token을 예측**하도록 학습하는 과정을 소개한다.[^kanana-encoder-blog]
+예를 들어 메뉴판의 글자와 가격이 설명에 들어 있다면, 정답 token을 예측하려면 이미지의 세부 정보를 활용해야 한다.
+CLIP이 이미지와 문장 표현의 유사도를 높이도록 학습하는 것과는 학습 목표가 다르다.
+이 학습에서는 외부의 사전학습된 vision encoder를 가져오지 않았지만, 통합 Transformer는 이미 학습된 Kanana-2 LLM(large language model)의 가중치로 초기화했다.
+이미지 patch embedding과 설명의 텍스트 embedding을 하나의 통합 Transformer에 넣고, 이미지와 앞의 설명을 조건으로 다음 설명 token을 예측하게 한다.
+학습된 Transformer는 이후 이미지 feature를 만드는 vision encoder로 활용한다.
+이때 텍스트 token을 생성하기 위한 언어 모델 head가 없어도 이미지 표현을 추출할 수 있다.
+따라서 외부 vision encoder 없이 개발했다는 사실을 모든 가중치를 무작위로 초기화했다는 뜻으로 읽으면 안 된다.
+
+학습은 이미지의 크기와 종횡비를 달리하는 세 단계로 진행하며 각 단계에서 전체 parameter를 갱신한다.
+처음에는 이미지를 224×224로 조정하고, 다음에는 원본 종횡비를 유지하면서 최대 해상도를 640², 마지막에는 1280²으로 늘린다고 개발 글은 설명한다.
+모든 이미지를 640×640이나 1280×1280 정사각형으로 만든다는 뜻은 아니다.
+처음에는 낮은 해상도로 이미지와 텍스트를 연결하고, 이후 더 큰 이미지로 세밀한 정보를 학습하도록 하는 구성이다.
+
+경량 모델은 큰 모델에서 시작해 일부 구조를 덜어 내는 pruning과 teacher의 출력 분포를 따라 학습하는 distillation을 사용한다.
+가장 작은 Tiny에는 학생 모델이 직접 생성한 답변 경로에서 교사의 분포를 참고하는 on-policy distillation도 적용한다.
+개발 글은 상세 캡션과 학습 단계를 설명하지만 전체 데이터 구성과 수량, optimizer와 학습률 등 재현에 필요한 모든 설정을 공개하지는 않는다.
+
+`kanana-2-vision-encoder-medium`의 모델 카드는 이미지 종횡비를 유지하면서 다양한 해상도를 처리하는 native resolution과, 고해상도 처리 비용을 줄이기 위한 sliding window attention과 grouped query attention을 설명한다.[^kanana-vision-encoder]
+이는 이미지 크기에 따른 정보 보존과 계산량의 균형을 실제 encoder에서 어떻게 다루는지 살펴볼 사례다.
+제공된 가중치의 이용 조건은 모델 카드의 라이선스를 별도로 확인해야 한다.
+
+<Callout type="note">
+[Kanana Vision Encoder: 글로벌 최고 수준에 도전하는 자체 비전 인코더 개발기](https://if.kakao.com/2026/session/time-table?sessionId=86)는 카카오가 자체 vision encoder를 개발한 과정을 소개하는 기술 세션이다.
+같은 encoder의 개발 글은 다음 token 예측으로 encoder를 학습했다고 설명한다.
+</Callout>
+
+네이버의 HyperCLOVA X CLIP은 이미지와 텍스트를 공유 표현 공간에 맞추도록 무작위 초기화부터 학습한 vision encoder다.[^naver-seed4b]
+그 뒤 작은 LLM과 encoder를 연결해 이미지와 텍스트를 함께 학습하고, 학습에 사용한 LLM을 떼어 낸 뒤 개선된 encoder를 HyperCLOVA X SEED 4B에 사용한다.
+이미지 전체와 문장의 대응을 배우는 CLIP 학습에 더해, 언어 모델이 필요로 하는 세부 정보를 encoder가 표현하도록 추가로 조정하는 것이다.
+이 과정에서 처음에는 낮은 해상도로 학습하고 점차 해상도를 높이며, 이미지의 작은 window 안에서 attention을 계산해 고해상도 처리 비용을 다룬다.
+
+두 사례 모두 시각 표현을 언어와 연결하지만 출발하는 학습 목표가 다르다.
+사용하는 모델과 데이터도 다르므로 목표 하나만으로 성능 차이를 판단할 수는 없다.
+
+| 사례 | 시작할 때의 주요 학습 목표 | 이후 encoder의 활용 |
+| --- | --- | --- |
+| Kanana-2 vision encoder | 이미지와 상세 설명으로 다음 텍스트 token 예측 | 학습된 Transformer를 이미지 feature 추출에 활용 |
+| HyperCLOVA X CLIP | 이미지–텍스트 쌍을 공유 공간에 정렬하는 CLIP식 학습 | 작은 LLM과 추가 학습한 뒤 개선된 encoder를 SEED 4B에 사용 |
+
+두 encoder 모두 단독으로 질문에 답하는 완성된 VLM(vision-language model)은 아니다.
+
 ## 3. 시각 표현과 언어 생성의 연결
 
 ### 3-1. 연속 표현과 이산 token
 
-이미지를 언어 모델에 넣기 전에, 텍스트 LLM(large language model)이 입력을 어떻게 받는지 다시 보자.
+이미지를 언어 모델에 넣기 전에, 텍스트 LLM이 입력을 어떻게 받는지 다시 보자.
 Tokenizer는 문장을 유한한 어휘의 token ID sequence로 바꾸고, LLM은 embedding table에서 각 ID에 해당하는 행을 꺼내 $D$차원 벡터로 만든다.
 Transformer 층이 실제로 받는 것은 ID가 아니라 이 벡터들의 sequence다.
-출력 쪽에서는 마지막 hidden state를 어휘의 ID마다 하나씩인 점수(logit)로 바꾸고, softmax로 다음 ID를 고른다.
+출력 쪽에서는 마지막 hidden state를 어휘의 ID마다 하나씩인 점수(logit)로 바꾸고, softmax로 확률을 계산한다.
+Decoding은 이 분포를 이용해 다음 ID를 고른다.
 
 텍스트가 ID를 거치는 이유는 글자가 원래 유한한 기호이고, 단어나 subword처럼 반복해서 쓰이는 의미 단위의 목록을 미리 정할 수 있기 때문이다.
 이미지에는 그런 어휘가 없다.
@@ -310,22 +361,22 @@ $D=3$이고 텍스트 어휘가 ID 0부터 4까지 다섯 개이며, 이미지 c
 
 두 방식의 차이는 두 군데서 생긴다.
 첫째는 정보다.
-이산 token은 tokenizer feature를 가장 가까운 codebook 항목으로 대신하고 그 번호만 남기므로, 위 예에서 feature [0.52, 0.31, 0.08]와 항목 [0.50, 0.30, 0.10]의 차이만큼 세부가 사라진다.
-Feature가 조금씩 다른 patch들이 같은 번호를 받으면 그 뒤의 LLM은 이들을 구별할 수 없다.
+이산 token은 tokenizer feature를 가장 가까운 codebook 항목으로 대신하고 그 번호만 남기므로, 위 예의 feature [0.52, 0.31, 0.08]와 항목 [0.50, 0.30, 0.10] 사이에 양자화 오차가 생긴다.
+Feature가 조금씩 다른 patch들이 같은 번호를 받으면 LLM은 그 번호만으로는 feature의 차이를 구별할 수 없다.
 작은 글자처럼 미세한 정보가 특히 취약하다.
 Chameleon은 이미지를 이산 token으로 다루는 모델인데, 글자가 많은 이미지를 재구성하기 어렵다는 점을 자기 tokenizer의 핵심 약점으로 든다.[^chameleon]
 둘째는 출력이다.
-LLM의 출력층은 어휘 위의 softmax로 ID를 고르도록 되어 있다.
-이미지가 이산 ID라면 어휘에 그 ID를 추가해 텍스트와 같은 softmax로 image token을 고르고, tokenizer의 decoder가 ID를 픽셀로 되돌리면 된다.
+LLM은 출력층이 계산한 어휘별 확률을 이용해 ID를 고른다.
+이미지가 이산 ID라면 어휘에 그 ID를 추가해 텍스트와 같은 방식으로 image token을 고르고, tokenizer의 decoder가 ID를 픽셀로 되돌리면 된다.
 연속 벡터는 softmax로 고를 수 없다.
 실수 벡터를 회귀로 직접 맞추게 할 수도 있지만, 같은 조건에서 그럴듯한 답이 여러 개인 이미지에서는 그 평균에 가까운 흐릿한 결과가 나오기 쉽다.
-따라서 연속 표현을 생성하려면 diffusion 같은 별도의 생성 장치가 필요하다.
+같은 조건에 가능한 결과가 여럿일 때는 diffusion 같은 확률적 생성 모델을 별도로 연결하는 방법도 있다.
 
-이런 차이 때문에 이미지를 이해하고 텍스트로 답하는 VLM(vision-language model)은 대부분 연속 표현을 입력으로 쓰고, 이산 image token은 LLM이 다음 token 예측으로 이미지를 직접 생성하려는 모델에서 주로 쓰인다.
+이런 차이 때문에 이미지를 이해하고 텍스트로 답하는 VLM은 대부분 연속 표현을 입력으로 쓰고, 이산 image token은 LLM이 다음 token 예측으로 이미지를 직접 생성하려는 모델에서 주로 쓰인다.
 이미지 생성 전체로 보면 연속 latent를 다루는 diffusion 모델도 널리 쓰인다.
 이처럼 두 형식이 함께 쓰이므로 token이라는 이름만으로는 표현 형식을 알 수 없다.
 연속 벡터 한 위치도 visual token이라 부르고, codebook 번호도 image token이라 부른다.
-이 노트에서 다루는 VLM은 모두 시각 입력을 연속 벡터로 받고 텍스트를 출력한다.
+이어지는 LLaVA와 비디오 이해 사례는 시각 입력을 연속 벡터로 받고 텍스트를 출력한다.
 
 ### 3-2. 사전학습된 모델의 결합
 
@@ -437,6 +488,36 @@ C-Abstractor는 시각 feature를 줄이면서 주변 위치의 관계를 활용
 이미지와 무관하게도 답할 수 있는 질문만으로는 시각 정보를 실제로 활용하는지 판단하기 어렵다.
 이를 확인할 때는 이미지의 일부가 바뀔 때 정답도 달라지는 예시와 세부 위치·문자 인식 task가 도움이 된다.
 
+### 3-5. Connector와 후속 학습
+
+카카오의 Kanana-v는 이미지와 텍스트를 입력받아 텍스트로 응답하는 vision-language model 계열이다.[^kanana-v]
+예를 들어 음식 사진과 “이 접시에 무엇이 있나?”라는 질문을 함께 받아 사진에 근거한 답을 생성한다.
+이때 이미지를 표현하는 encoder와 질문에 맞는 답을 만드는 언어 모델은 서로 다른 역할을 한다.
+
+2026년 공개된 개발 글의 Kanana-v-4b-hybrid는 이미지와 텍스트를 받아 응답하는 별도의 VLM이다.[^kanana-v-hybrid]
+Vision encoder와 C-Abstractor projector, 언어 모델을 결합한다.
+앞에서 설명한 Kanana-2 vision encoder가 이 모델의 구성 요소라고 명시된 것은 아니다.
+이 모델은 간단한 질문에는 짧게 답하고 복잡한 시각 문제에는 추론 과정을 거쳐 답하는 두 형식을 한 모델에서 다루도록 설계됐다.
+
+학습은 기초 멀티모달 학습으로 이미지 이해와 지시 이행을 익힌 다음, 긴 추론 과정에 대한 지도학습, offline RL(reinforcement learning), online RL을 순서대로 적용한다.
+Offline RL 단계는 미리 마련된 응답 자료를 이용해 모델의 출력 분포와 추론 습관을 조정한다.
+이어지는 online RL에서는 현재 모델이 문제마다 새로 응답을 생성하고, 그 결과를 평가해 갱신한다.
+새 응답을 반복해서 만드는 online 단계는 현재 모델의 출력에 맞춰 개선할 수 있지만 생성과 평가에 비용이 든다.
+Online RL 단계에서는 모델이 이미지 문제의 답을 생성하고, 정답을 검증할 수 있는 문제에서 얻은 검증 보상으로 응답을 개선한다.
+예를 들어 그래프에서 값을 찾아 계산하는 문제는 정답과 생성 결과를 비교할 수 있지만, 정답을 명확히 정하기 어려운 모든 시각 질문을 같은 방식으로 검증할 수 있는 것은 아니다.
+개발 글은 학습 단계와 데이터의 목적을 설명하지만 사용된 전체 데이터와 모든 설정을 공개한 재현용 학습 명세는 아니다.
+
+별도로 공개된 HyperCLOVAX-SEED-Vision-Instruct-3B는 SigLIP 기반 vision encoder, C-Abstractor connector와 언어 모델을 결합한 LLaVA 계열 VLM이다.[^naver-vision3b]
+이 모델의 언어 모델은 HyperCLOVAX-SEED-Text-Base-3B에서 출발한다.
+모델 카드는 SFT(supervised fine-tuning)와 GRPO(group relative policy optimization) 기반 RLHF(reinforcement learning from human feedback)를 이용한 후속 학습과, 시각 task를 위한 V-RLHF 데이터를 사용했다고 설명한다.
+다만 이 자료만으로 vision encoder와 connector의 학습 단계별 데이터나 고정 여부까지 알 수는 없다.
+
+이 모델은 텍스트·이미지·video를 입력으로 받고 텍스트를 출력한다.
+Video를 이해할 때는 frame별 token 수를 조절해 긴 입력의 비용을 줄인다.
+이는 video를 받는 경로가 있는 VLM의 사례이며, video의 소리까지 함께 듣거나 video를 생성한다는 뜻은 아니다.
+
+이 3B 모델의 SigLIP 기반 encoder를 SEED 4B의 자체 HyperCLOVA X CLIP과 같은 encoder로 혼동하지 않는다.
+
 ## 4. 해상도와 비디오
 
 ### 4-1. 고정 해상도의 손실과 비용
@@ -458,8 +539,8 @@ Qwen2-VL은 해상도에 따라 달라지는 시각 token 수를 사용하고, �
 Liquid AI의 **LFM3-VL-2B**는 같은 문제를 작은 모델의 배포 관점에서 생각하게 하는 사례다.[^lfm3vl]
 이 모델은 vision encoder와 projector를 거쳐 이미지·비디오 정보를 언어 모델에 전달하며 텍스트를 출력한다.
 16×16 픽셀을 하나의 patch로 만들고 인접한 2×2 patch를 하나의 시각 token으로 합친다.
-예를 들어 512×512 이미지라면 32×32개의 patch가 16×16개, 즉 256개의 시각 token이 된다.
-기본 설정에는 최소 픽셀 수가 있어 224×224처럼 작은 이미지는 먼저 확대된다.
+전처리 후 이미지가 512×512라면 32×32개의 patch가 16×16개, 즉 256개의 시각 token이 된다.
+원본 크기가 그대로 유지되는지는 전처리 설정에 달려 있다.
 모델의 전체 크기는 약 19억 parameter다.
 입력 해상도와 token 수가 곧 연산 비용에 영향을 주므로, 작은 모델에서도 이미지 크기를 정하는 문제가 남는다.
 
@@ -546,6 +627,7 @@ Frame 수와 각 frame의 해상도, 압축률은 입력 예산을 나누는 선
 여러 frame의 표현을 시간 순서와 함께 전달하고 서로 비교할 수 있어야 변화에 관한 답을 만들 수 있다.
 초기 비디오 언어 모델인 **Video-LLaMA**는 이 문제를 Q-Former로 다루었다.[^videollama]
 사전학습된 이미지 encoder가 frame별 feature를 만들고, frame 위치 embedding을 더해 순서를 표시한다.
+이 이미지 encoder는 BLIP-2의 ViT와 이미지 Q-Former를 포함하며, Video Q-Former는 그 뒤에 별도로 붙는다.
 Video Q-Former는 학습 가능한 query로 여러 frame의 feature를 함께 읽어 고정 개수의 비디오 표현을 만든다.
 여기서 query는 사용자가 입력한 질문이 아니라, 학습을 통해 조정되는 벡터다.
 각 query는 attention으로 frame feature들을 서로 다른 비중으로 섞어 자기 출력 벡터를 갱신한다.
@@ -599,7 +681,7 @@ Qwen3-VL은 시간 patch 앞에 시간 표시를 넣는다.
 두 모델 모두 시간을 텍스트로 표현해 시각 정보에 시간의 단서를 더한다.
 시간축 압축을 거쳐도 긴 영상의 시각 token 전체를 고정된 소수의 query로 요약하는 Video Q-Former와는 구성이 다르며, token 수는 여전히 입력의 길이와 해상도에 영향을 받는다.
 
-<Figure src="https://arxiv.org/html/2507.01006v6/glm-4v-thinking.png" alt="GLM-V의 이미지와 비디오 처리 구조. 아래에 크기가 다른 이미지 두 장과 여러 frame으로 구성된 20초 비디오가 있다. ViT encoder가 이를 처리하며 비디오는 시간 방향으로 두 배 압축한다. MLP projector의 출력을 언어 decoder의 입력 sequence에 넣으며, 비디오 표현 사이에 0, 2, 4, 6과 같은 시간 index token이 표시되어 있다. 이미지와 비디오 뒤에는 질문과 생성할 답변 token이 이어진다." caption="GLM-V의 입력 경로. 이미지와 비디오를 ViT와 projector로 표현하고, 비디오에는 시간 index를 함께 넣어 언어 decoder가 질문에 답한다. 그림의 token 수는 표시된 입력에 대한 예다." source="GLM-V Team (2025), Figure 2 · CC BY 4.0" wide />
+<Figure src="https://arxiv.org/html/2507.01006v6/glm-4v-thinking.png" alt="GLM-V의 이미지와 비디오 처리 구조. 아래에 크기가 다른 이미지 두 장과 여러 frame으로 구성된 20초 비디오가 있다. ViT encoder가 이를 처리하며 비디오는 시간 방향으로 두 배 압축한다. MLP projector의 출력을 언어 decoder의 입력 sequence에 넣으며, 비디오 표현 사이에 0, 2, 4, 6과 같은 시간 index token이 표시되어 있다. 이미지와 비디오 뒤에는 질문과 생성할 답변 token이 이어진다." caption="GLM-V의 입력 경로. 이미지와 비디오를 ViT와 projector로 표현하고, 비디오에는 시간 index를 함께 넣어 언어 decoder가 질문에 답한다. 그림의 token 수는 표시된 입력에 대한 예다." source="GLM-V Team (2026), Figure 2 · CC BY 4.0" wide />
 
 GLM-V의 학습 자료에는 비디오와 설명문이 포함되며, 개발팀은 복잡한 동작과 화면 속 글자 등을 놓치지 않도록 사람의 세밀한 주석을 활용했다고 설명한다.[^glmv]
 보고서는 비디오와 긴 입력으로 학습을 이어 간 뒤 지도학습과 강화학습을 적용한다고 설명한다.
@@ -616,7 +698,7 @@ GLM-V의 학습 자료에는 비디오와 설명문이 포함되며, 개발팀�
 이런 비교는 모델이 어떤 시각 단서에 의존하는지 점검하는 방법이지, 실제 세계의 인과관계까지 이해했다는 증거는 아니다.
 TemporalBench는 사건의 순서뿐 아니라 동작 횟수와 움직임의 크기처럼 세밀한 시간 차이를 묻는 평가의 예다.[^temporalbench]
 
-Video-MME는 서로 다른 길이와 주제의 비디오에 대한 질문으로 모델을 평가하며, 자막과 오디오를 함께 쓸 수 있는 설정도 포함한다.[^videomme]
+Video-MME는 서로 다른 길이와 주제의 비디오에 대한 질문으로 모델을 평가하며, 영상에 자막이나 오디오를 추가하는 설정도 포함한다.[^videomme]
 결과를 비교할 때는 모델 이름뿐 아니라 추출한 frame 수와 해상도, 자막·오디오의 제공 여부를 함께 확인해야 한다.
 자막에 정답 단서가 있으면 시각 정보 없이도 맞힐 수 있고, 필요한 순간을 표본에서 놓치면 시간 추론 능력과 별개로 답하기 어렵다.
 
@@ -668,8 +750,8 @@ SAM 3는 “노란 스쿨버스” 같은 짧은 명사구나, 이미지 안의 
   예를 들어 `[120, 45, 210, 160]`처럼 상자의 왼쪽 위와 오른쪽 아래 좌표를 쓴다.
   위치도 텍스트 token으로 쓰므로 별도 모듈이 필요 없지만, 복잡한 모양의 mask를 숫자 몇 개로 나타내기는 어렵다.
 - **Hidden state를 mask decoder에 전달**: LISA(large language instructed segmentation assistant)는 어휘에 `<SEG>` token을 추가한다.[^lisa]
-  LLM이 이 token을 생성하면 그 위치의 마지막 층 hidden state를 MLP(multi-layer perceptron)로 투영해, SAM의 image encoder가 만든 이미지 feature와 함께 SAM 구조의 mask decoder에 넘긴다.
-  LLM의 softmax는 어휘의 ID만 고르므로 픽셀 단위의 mask를 직접 낼 수 없고, 연속 벡터인 hidden state를 넘겨 별도의 decoder가 mask를 만든다.
+  LLM이 이 token을 생성하면 그 위치의 마지막 층 hidden state를 MLP로 투영해, SAM의 image encoder가 만든 이미지 feature와 함께 SAM 구조의 mask decoder에 넘긴다.
+  LLM은 어휘별 확률에서 ID를 선택하므로 픽셀 단위의 mask를 직접 낼 수 없고, 연속 벡터인 hidden state를 넘겨 별도의 decoder가 mask를 만든다.
   LLM이 질의를 해석한 결과가 `<SEG>`의 hidden state에 담기므로, “비타민 C가 가장 많은 음식”처럼 추론이 필요한 질의에도 decoder가 그 물체의 mask를 그릴 수 있다.
 
 ### 5-2. 화면 grounding과 행동
@@ -704,101 +786,23 @@ OSWorld는 실제 컴퓨터 환경을 이용해 이런 여러 단계의 task를 
 파일이 실제로 원하는 위치와 내용으로 저장되었는지 실행 결과를 확인해야 한다.
 시각적 정답과 행동 성공의 차이는 모델 선택뿐 아니라 관찰, 도구 인터페이스, 상태 확인을 포함한 전체 시스템 설계의 문제다.
 
-## 6. 국내 vision encoder와 VLM
-
-카카오의 Kanana-v는 이미지와 텍스트를 입력받아 텍스트로 응답하는 vision-language model 계열이다.[^kanana-v]
-예를 들어 음식 사진과 “이 접시에 무엇이 있나?”라는 질문을 함께 받아 사진에 근거한 답을 생성한다.
-이때 이미지를 표현하는 encoder와 질문에 맞는 답을 만드는 언어 모델은 서로 다른 역할을 한다.
-
-별도로 공개된 `kanana-2-vision-encoder-medium`은 **이미지 feature를 추출하는 encoder**다.[^kanana-vision-encoder]
-텍스트 생성 모듈이 빠져 있으므로 이 encoder만으로 질문에 답하는 완성된 Kanana-v 모델을 뜻하지 않는다.
-질문 응답을 만들려면 시각 feature를 언어 모델에 연결하고 함께 사용할 수 있도록 학습해야 한다.
-
-### 6-1. Kanana-2 vision encoder의 학습
-
-2026년 공개된 Kanana-2 vision encoder의 개발 글은 이미지와 상세한 설명을 함께 주고 **다음 텍스트 token을 예측**하도록 학습하는 과정을 소개한다.[^kanana-encoder-blog]
-예를 들어 메뉴판의 글자와 가격이 설명에 들어 있다면, 정답 token을 예측하려면 이미지의 세부 정보를 활용해야 한다.
-CLIP이 이미지와 문장 표현의 유사도를 높이도록 학습하는 것과는 학습 목표가 다르다.
-이 학습에서는 외부의 사전학습된 vision encoder를 가져오지 않았지만, 통합 Transformer는 이미 학습된 Kanana-2 LLM의 가중치로 초기화했다.
-이미지 patch embedding과 설명의 텍스트 embedding을 하나의 통합 Transformer에 넣고, 이미지와 앞의 설명을 조건으로 다음 설명 token을 예측하게 한다.
-학습된 Transformer는 이후 이미지 feature를 만드는 vision encoder로 활용한다.
-이때 텍스트 token을 생성하기 위한 언어 모델 head가 없어도 이미지 표현을 추출할 수 있다.
-따라서 외부 vision encoder 없이 개발했다는 사실을 모든 가중치를 무작위로 초기화했다는 뜻으로 읽으면 안 된다.
-
-학습은 이미지의 크기와 종횡비를 달리하는 세 단계로 진행하며 각 단계에서 전체 parameter를 갱신한다.
-처음에는 이미지를 224×224로 조정하고, 다음에는 원본 종횡비를 유지하면서 최대 해상도를 640², 마지막에는 1280²으로 늘린다고 개발 글은 설명한다.
-모든 이미지를 640×640이나 1280×1280 정사각형으로 만든다는 뜻은 아니다.
-처음에는 낮은 해상도로 이미지와 텍스트를 연결하고, 이후 더 큰 이미지로 세밀한 정보를 학습하도록 하는 구성이다.
-
-경량 모델은 큰 모델에서 시작해 일부 구조를 덜어 내는 pruning과 teacher의 출력 분포를 따라 학습하는 distillation을 사용한다.
-가장 작은 Tiny에는 학생 모델이 직접 생성한 답변 경로에서 교사의 분포를 참고하는 on-policy distillation도 적용한다.
-개발 글은 상세 캡션과 학습 단계를 설명하지만 전체 데이터 구성과 수량, optimizer와 학습률 등 재현에 필요한 모든 설정을 공개하지는 않는다.
-
-`kanana-2-vision-encoder-medium`의 모델 카드는 이미지 종횡비를 유지하면서 다양한 해상도를 처리하는 native resolution과, 고해상도 처리 비용을 줄이기 위한 sliding window attention과 grouped query attention을 설명한다.
-이는 이미지 크기에 따른 정보 보존과 계산량의 균형을 실제 encoder에서 어떻게 다루는지 살펴볼 사례다.
-제공된 가중치의 이용 조건은 모델 카드의 라이선스를 별도로 확인해야 한다.
-
-### 6-2. Kanana-v-4b-hybrid의 학습
-
-2026년 공개된 개발 글의 Kanana-v-4b-hybrid는 이미지와 텍스트를 받아 응답하는 별도의 VLM이다.[^kanana-v-hybrid]
-Vision encoder와 C-Abstractor projector, 언어 모델을 결합하며, 앞의 Kanana-2 vision encoder가 이 모델의 구성 요소라고 명시된 것은 아니다.
-이 모델은 간단한 질문에는 짧게 답하고 복잡한 시각 문제에는 추론 과정을 거쳐 답하는 두 형식을 한 모델에서 다루도록 설계됐다.
-
-학습은 기초 멀티모달 학습으로 이미지 이해와 지시 이행을 익힌 다음, 긴 추론 과정에 대한 지도학습, offline RL(reinforcement learning), online RL을 순서대로 적용한다.
-Offline RL 단계는 미리 마련된 응답 자료를 이용해 모델의 출력 분포와 추론 습관을 조정한다.
-이어지는 online RL에서는 현재 모델이 문제마다 새로 응답을 생성하고, 그 결과를 평가해 갱신한다.
-새 응답을 반복해서 만드는 online 단계는 현재 모델의 출력에 맞춰 개선할 수 있지만 생성과 평가에 비용이 든다.
-Online RL 단계에서는 모델이 이미지 문제의 답을 생성하고, 정답을 검증할 수 있는 문제에서 얻은 검증 보상으로 응답을 개선한다.
-예를 들어 그래프에서 값을 찾아 계산하는 문제는 정답과 생성 결과를 비교할 수 있지만, 정답을 명확히 정하기 어려운 모든 시각 질문을 같은 방식으로 검증할 수 있는 것은 아니다.
-개발 글은 학습 단계와 데이터의 목적을 설명하지만 사용된 전체 데이터와 모든 설정을 공개한 재현용 학습 명세는 아니다.
-
-### 6-3. HyperCLOVA X의 vision encoder와 VLM
-
-네이버의 HyperCLOVA X CLIP은 이미지와 텍스트를 공유 표현 공간에 맞추도록 무작위 초기화부터 학습한 vision encoder다.[^naver-seed4b]
-그 뒤 작은 LLM과 encoder를 연결해 이미지와 텍스트를 함께 학습하고, 학습에 사용한 LLM을 떼어 낸 뒤 개선된 encoder를 HyperCLOVA X SEED 4B에 사용한다.
-이미지 전체와 문장의 대응을 배우는 CLIP 학습에 더해, 언어 모델이 필요로 하는 세부 정보를 encoder가 표현하도록 추가로 조정하는 것이다.
-이 과정에서 처음에는 낮은 해상도로 학습하고 점차 해상도를 높이며, 이미지의 작은 window 안에서 attention을 계산해 고해상도 처리 비용을 다룬다.
-
-카카오의 Kanana-2 vision encoder와 비교하면 학습 목표가 다르다.
-카카오가 설명한 encoder 학습은 이미지와 상세 설명을 함께 주고 다음 텍스트 token을 예측하는 데서 출발한다.
-네이버가 설명한 HyperCLOVA X CLIP은 이미지와 텍스트를 공유 공간에 정렬하는 CLIP식 학습에서 출발한 뒤 LLM과 연결해 추가로 학습한다.
-두 사례 모두 시각 표현을 언어와 연결하지만, 사용하는 모델과 데이터가 다르므로 목표 하나만으로 성능 차이를 판단할 수는 없다.
-
-| 사례 | 시작할 때의 주요 학습 목표 | 이후 encoder의 활용 |
-| --- | --- | --- |
-| Kanana-2 vision encoder | 이미지와 상세 설명으로 다음 텍스트 token 예측 | 학습된 Transformer를 이미지 feature 추출에 활용 |
-| HyperCLOVA X CLIP | 이미지–텍스트 쌍을 공유 공간에 정렬하는 CLIP식 학습 | 작은 LLM과 추가 학습한 뒤 개선된 encoder를 SEED 4B에 사용 |
-
-두 encoder 모두 단독으로 질문에 답하는 완성된 VLM은 아니다.
-
-별도로 공개된 HyperCLOVAX-SEED-Vision-Instruct-3B는 SigLIP 기반 vision encoder, C-Abstractor connector와 언어 모델을 결합한 LLaVA 계열 VLM이다.[^naver-vision3b]
-이 모델의 언어 모델은 HyperCLOVAX-SEED-Text-Base-3B에서 출발한다.
-모델 카드는 SFT(supervised fine-tuning)와 GRPO(group relative policy optimization) 기반 RLHF(reinforcement learning from human feedback)를 이용한 후속 학습과, 시각 task를 위한 V-RLHF 데이터를 사용했다고 설명한다.
-다만 이 자료만으로 vision encoder와 connector의 학습 단계별 데이터나 고정 여부까지 알 수는 없다.
-
-이 모델은 텍스트·이미지·video를 입력으로 받고 텍스트를 출력한다.
-Video를 이해할 때는 frame별 token 수를 조절해 긴 입력의 비용을 줄인다.
-이는 video를 받는 경로가 있는 VLM의 사례이며, video의 소리까지 함께 듣거나 video를 생성한다는 뜻은 아니다.
-
-이 3B 모델의 SigLIP 기반 encoder를 SEED 4B의 자체 HyperCLOVA X CLIP과 같은 encoder로 혼동하지 않는다.
-
 [^survey]: Caffagni, D., Cocchi, F., Barsellotti, L., et al. (2024). The Revolution of Multimodal Large Language Models: A Survey. *Findings of the Association for Computational Linguistics: ACL 2024*, 13590–13618. [논문](https://aclanthology.org/2024.findings-acl.807/).
 [^vit]: Dosovitskiy, A., Beyer, L., Kolesnikov, A., et al. (2021). An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2010.11929).
 [^clip]: Radford, A., Kim, J. W., Hallacy, C., et al. (2021). Learning Transferable Visual Models From Natural Language Supervision. *International Conference on Machine Learning*. [논문](https://arxiv.org/abs/2103.00020).
 [^llava]: Liu, H., Li, C., Wu, Q., & Lee, Y. J. (2023). Visual Instruction Tuning. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2304.08485).
-[^vicuna]: Chiang, W.-L., et al. (2023). Vicuna: An Open-Source Chatbot Impressing GPT-4 with 90% ChatGPT Quality. *LMSYS Org Blog*. [글](https://lmsys.org/blog/2023-03-30-vicuna/).
+[^vicuna]: Chiang, W.-L., et al. (2023). Vicuna: An Open-Source Chatbot Impressing GPT-4 with 90%\* ChatGPT Quality. *LMSYS Org Blog*. [글](https://lmsys.org/blog/2023-03-30-vicuna/).
 [^blip2]: Li, J., Li, D., Savarese, S., & Hoi, S. (2023). BLIP-2: Bootstrapping Language-Image Pre-training with Frozen Image Encoders and Large Language Models. *International Conference on Machine Learning*. [논문](https://arxiv.org/abs/2301.12597).
 [^qwen2vl]: Wang, P., Bai, S., Tan, S., et al. (2024). Qwen2-VL: Enhancing Vision-Language Model's Perception of the World at Any Resolution. *arXiv*. [논문](https://arxiv.org/abs/2409.12191).
 [^flamingo]: Alayrac, J.-B., Donahue, J., Luc, P., et al. (2022). Flamingo: a Visual Language Model for Few-Shot Learning. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2204.14198).
 [^mmc4]: Zhu, W., Hessel, J., Awadalla, A., et al. (2023). Multimodal C4: An Open, Billion-scale Corpus of Images Interleaved with Text. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2304.06939).
 [^osworld]: Xie, T., Zhang, D., Chen, J., et al. (2024). OSWorld: Benchmarking Multimodal Agents for Open-Ended Tasks in Real Computer Environments. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2404.07972).
-[^kanana-v]: Kakao. (2025). 이미지와 음성을 아우르는 카카오의 멀티모달 언어모델 Kanana-o 알아보기. *kakao tech*. [글](https://tech.kakao.com/posts/702).
+[^kanana-v]: Kakao. (2024). 이미지도 찰떡같이 이해하는 카카오의 멀티모달 언어모델 Kanana-v 알아보기. *kakao tech*. [글](https://tech.kakao.com/posts/667).
 [^kanana-vision-encoder]: Kakao Corp. (2026). kanana-2-vision-encoder-medium. *Hugging Face model card*. [모델 카드](https://huggingface.co/kakaocorp/kanana-2-vision-encoder-medium).
 [^kanana-encoder-blog]: Kakao. (2026). 글로벌 최고 수준의 자체 비전 인코더, Kanana-2-vision-encoder 개발기. *kakao tech*. [글](https://tech.kakao.com/posts/840).
 [^kanana-v-hybrid]: Kakao. (2026). “생각하고 답변하는” 카카오의 하이브리드 멀티모달 언어모델, Kanana-v-4b-hybrid 개발기. *kakao tech*. [글](https://tech.kakao.com/posts/806).
 
 [^llama4]: Meta. (2025). The Llama 4 herd: The beginning of a new era of natively multimodal AI innovation. *Meta AI Blog*. [글](https://ai.meta.com/blog/llama-4-multimodal-intelligence/).
-[^qwen35]: Qwen Team. (2026). Qwen3.5: Towards Native Multimodal Agents. *Qwen Blog*. [글](https://qwen.ai/blog?id=qwen3.5).
+[^qwen35]: Qwen Team. (2026). Qwen3.5: Towards Native Multimodal Agents. *Qwen Blog*. [글](https://qwen.ai/blog?id=qwen3.5), [공식 모델 카드](https://huggingface.co/Qwen/Qwen3.5-2B/blob/15ca0cd00746aeb7169597b091a016e468301bca/README.md).
 [^lfm3vl]: Liquid AI. (2026). LFM3-VL-2B. *Hugging Face model card*. [모델 카드](https://huggingface.co/LiquidAI/LFM3-VL-2B).
 [^qwen3vl]: Bai, S., Cai, Y., Chen, R., et al. (2025). Qwen3-VL Technical Report. *arXiv*. [논문](https://arxiv.org/abs/2511.21631).
 [^claude-cu]: Anthropic. (2024). Developing a computer use model. *Anthropic*. [글](https://www.anthropic.com/news/developing-computer-use).
@@ -821,6 +825,6 @@ Video를 이해할 때는 frame별 token 수를 조절해 긴 입력의 비용�
 [^videollama]: Zhang, H., Li, X., & Bing, L. (2023). Video-LLaMA: An Instruction-tuned Audio-Visual Language Model for Video Understanding. *Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing: System Demonstrations*, 543–553. [논문](https://aclanthology.org/2023.emnlp-demo.49/).
 [^videomme]: Fu, C., Dai, Y., Luo, Y., et al. (2025). Video-MME: The First-Ever Comprehensive Evaluation Benchmark of Multi-modal LLMs in Video Analysis. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2405.21075).
 
-[^glmv]: GLM-V Team. (2025). GLM-4.5V and GLM-4.1V-Thinking: Towards Versatile Multimodal Reasoning with Scalable Reinforcement Learning. *arXiv*. [논문](https://arxiv.org/abs/2507.01006v6).
+[^glmv]: GLM-V Team. (2026). GLM-4.5V and GLM-4.1V-Thinking: Towards Versatile Multimodal Reasoning with Scalable Reinforcement Learning. *arXiv*, v6. [논문](https://arxiv.org/abs/2507.01006v6).
 
 [^temporalbench]: Cai, M., Tan, R., Zhang, J., et al. (2024). TemporalBench: Benchmarking Fine-grained Temporal Understanding for Multimodal Video Models. *arXiv*. [논문](https://arxiv.org/abs/2410.10818).

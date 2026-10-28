@@ -49,7 +49,7 @@ $$
 일반적인 dense self-attention의 token 간 점수 행렬은 $N\times N$이다.
 Token 수를 4배로 늘리면 그 행렬의 원소 수는 16배가 된다.
 전체 모델의 계산량이 반드시 정확히 16배가 되는 것은 아니다.
-선형 투영과 MLP에도 비용이 들기 때문이다.
+선형 투영과 MLP(multi-layer perceptron, 각 token에 적용하는 신경망)에도 비용이 들기 때문이다.
 
 <Figure src="https://biechi.github.io/assets/img/blog/world-action-modeling/dit_paper_fig3.png" alt="왼쪽에는 noisy latent가 patchify, DiT block, 선형 변환을 거쳐 noise와 분산 예측으로 바뀌는 구조가 있다. 오른쪽에는 조건을 주입하는 adaLN-Zero, cross-attention, in-context block의 비교가 있다." caption="DiT의 전체 경로와 조건을 주입하는 세 가지 block. 왼쪽 아래의 timestep과 class label이 조건을 구성하며, 가운데 adaLN-Zero block에서는 조건이 각 residual 경로의 scale과 shift를 만든다." source="Peebles & Xie (2023), Figure 3 · CC BY 4.0" wide />
 
@@ -152,7 +152,7 @@ Sampler가 모델의 예측을 사용해 더 낮은 noise 수준의 latent를 �
 반복이 끝난 latent를 autoencoder의 decoder에 넣으면 이미지가 나온다.
 학습에서는 정답 latent에 noise를 넣고 선택된 시간의 예측을 학습하며, 생성에서는 noise만으로 시작한다.
 
-## 5. 이미지에서 video로
+## 5. 텍스트 조건과 video 확장
 
 ### 5-1. Text와 이미지 token의 결합
 
@@ -173,7 +173,7 @@ Video에는 가로·세로뿐 아니라 시간축이 있다.
 Video latent의 모양과 patch 크기에 따라 token 수와 계산량이 크게 달라진다.
 
 OpenAI는 Sora를 이미지와 video latent의 spacetime patch를 처리하는 diffusion transformer로 설명한다.[^sora]
-보고서에는 모델과 구현 세부가 포함되어 있지 않으므로 원래 DiT의 모든 block, conditioning, sampler가 Sora에서도 동일하다고 결론 내릴 수 없다.
+보고서는 patch와 예측 대상의 개요를 설명하지만 모델과 구현의 모든 세부를 공개하지는 않으므로 원래 DiT의 모든 block, conditioning, sampler가 Sora에서도 동일하다고 결론 내릴 수 없다.
 Video 결과가 현실과 비슷해 보여도 물리적 일관성이나 모든 장면의 정확성을 보장하지 않는다는 한계도 함께 살펴야 한다.
 
 [^survey]: Yang, L., Zhang, Z., Song, Y., et al. (2024). Diffusion Models: A Comprehensive Survey of Methods and Applications. *ACM Computing Surveys*, 56(4), 105:1–105:39. [논문](https://arxiv.org/abs/2209.00796).

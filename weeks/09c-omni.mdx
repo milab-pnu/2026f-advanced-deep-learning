@@ -44,7 +44,9 @@ ImageBind는 이미지를 공통 연결점으로 삼아 이 문제를 다룬다.
 오디오 경로는 짧게 나눈 소리를 ImageBind의 사전학습된 audio encoder로 표현하고, 각 구간에 시간 위치를 더한 뒤 query 기반 연결부에 전달한다.
 두 경로 모두 query 기반 연결부의 출력은 선형 변환을 거쳐 LLM의 입력 차원에 맞춰진다.
 이 연결부는 BLIP-2의 Q-Former처럼 학습 가능한 query 벡터가 입력 feature에 cross-attention을 적용해 정해진 수의 표현을 뽑는다.
-앞서 본 공통 표현 공간이 여기서는 생성형 모델의 입력을 만드는 데 쓰인다.
+Audio 연결부를 학습할 때는 audio–text 자료가 부족해 ImageBind의 이미지 표현과 이미지–텍스트 자료를 대신 사용했다.
+추론할 때는 같은 공통 공간에 놓인 audio 표현을 그 연결부에 넣는다.
+이 전이는 두 modality의 정렬에 기대지만, 정렬이 완벽하거나 모든 소리를 정확히 이해한다는 보장은 없다.
 LLM은 두 입력을 텍스트 지시와 함께 받아 답변을 생성한다.
 
 | 입력 | 표현 경로 | LLM에 전달되는 정보 |
@@ -65,12 +67,14 @@ Video-LLaMA는 영상과 오디오를 encoder의 연속 벡터로 LLM에 넣었�
 LLM의 Transformer 층은 token ID가 아니라 embedding 벡터를 받는다.
 그래서 다른 modality도 encoder의 연속 벡터로 넣거나, codebook(학습된 대표 벡터의 목록)으로 만든 이산 ID를 어휘에 추가해 넣을 수 있다.
 Omni 모델은 이 선택을 modality마다 다르게 할 수 있고, 한 modality에 두 표현을 함께 쓰기도 한다.
-입력은 codebook 근사로 잃는 정보가 없는 연속 표현으로 받는 경우가 많다.
+입력을 연속 표현으로 받으면 codebook 양자화에 따른 오차는 피할 수 있다.
+다만 encoder의 압축과 학습 목표에 따라 원본 정보가 일부 사라질 수 있다.
 
 어려움은 출력에서 생긴다.
-LLM의 출력층은 어휘 위의 softmax이므로 그대로는 ID만 고를 수 있다.
+LLM의 출력층은 어휘별 logit을 만들고 softmax로 token 확률을 계산한다.
+Decoding은 이 분포를 이용해 이산 token ID를 선택하므로, 이 출력층만으로 연속 벡터를 바로 내보내지는 않는다.
 이미지나 음성을 출력하려면 크게 두 길이 있다.
-첫째, 이미지·음성의 codebook ID를 어휘에 추가해 텍스트와 같은 softmax로 고르고, 해당 decoder가 ID를 픽셀이나 파형으로 되돌린다.
+첫째, 이미지·음성의 codebook ID를 어휘에 추가해 텍스트와 같은 방식으로 선택하고, 해당 decoder가 ID를 픽셀이나 파형으로 되돌린다.
 둘째, LLM이 만든 hidden state를 연속 조건으로 별도의 생성기에 넘기고, 생성기가 결과를 만든다.
 음성 출력은 마지막에 codec의 이산 token을 예측하고 decoder가 이를 파형으로 바꾸는 경우가 많다.
 이 token을 LLM의 어휘에 넣어 직접 고르기도 하고(첫째 길), Thinker–Talker 구조처럼 LLM의 hidden state를 받은 별도 음성 모델이 고르기도 한다(두 길의 결합).
@@ -81,10 +85,54 @@ LLM의 출력층은 어휘 위의 softmax이므로 그대로는 ID만 고를 수
 
 ```text
 입력: [텍스트 embedding] [이미지 연속 벡터 × 64] [음성 연속 벡터 × 125]
-출력: [음성 codec ID] [음성 codec ID] … → codec decoder → 파형
+출력: LLM 또는 별도 음성 생성기 → [음성 codec ID] … → codec decoder → 파형
 ```
 
-입력의 세 조각은 모두 같은 차원의 벡터라 한 sequence로 이어지지만, 출력은 softmax로 고른 ID이고 파형으로 바꾸는 decoder가 따로 있다.
+입력의 세 조각은 모두 같은 차원의 벡터라 한 sequence로 이어진다.
+출력에서는 예측 분포에서 ID를 선택하고, 별도 decoder가 그 ID를 파형으로 바꾼다.
+
+카카오의 `Kanana-1.5-o-9.8B-instruct-2602` API(application programming interface) 문서에 명시된 입력은 텍스트·이미지·오디오이고, 출력은 텍스트와 오디오다.[^kanana-o-api]
+모델 이름에 Omni가 들어간다는 이유만으로 이미지나 영상 출력까지 지원한다고 가정하지 않는다.
+또한 2025년 Kanana-o 개발 설명과 이후에 공개된 API 모델은 시점과 버전이 다르므로 세부 구현을 그대로 동일시하지 않는다.
+
+네이버의 HyperCLOVA X SEED 8B Omni는 텍스트·이미지·video·audio를 입력으로 받고 텍스트·이미지·음성을 출력한다.[^naver-omni-card]
+예를 들어 사진과 질문을 받아 텍스트로 답하거나, 텍스트 지시를 받아 이미지를 생성할 수 있다.
+Video 입력을 받는 것과 video 자체를 생성하는 것은 다르다.
+이 모델 카드의 출력 목록에는 video가 없다.
+공개된 가중치의 이용 조건은 모델 라이선스를 확인해야 하며, 공개된 설명이 전체 학습 데이터의 재현을 보장하지는 않는다.
+
+이 모델은 언어 모델에 연속적인 vision·audio encoder 표현과 이산 image·audio token을 함께 연결한다.[^naver-omni-report]
+연속 feature는 입력을 세밀하게 이해하는 데 쓰이고, 이산 token은 입력과 출력 양쪽에 쓰인다.
+생성된 이산 image token은 diffusion 기반 이미지 decoder의 조건이 되어 이미지를 만들고, 이산 audio token은 음성 decoder를 통해 waveform으로 변환된다.
+예를 들어 음성 질문은 audio encoder와 tokenizer의 표현을 통해 처리하고, 답변을 말할 때는 생성한 audio token을 음성 decoder가 파형으로 바꾼다.
+입력과 출력이 하나의 언어 모델을 공유해도 vision encoder나 음성 decoder가 없어지는 것은 아니다.
+
+<figure class="lecture-figure lecture-figure--wide" aria-label="HyperCLOVA X 8B Omni의 음성 경로를 단순화한 그림. 입력 음성은 audio encoder의 연속 feature와 tokenizer의 이산 token으로 표현해 언어 모델에 전달한다. 모델이 생성한 음성 token과 화자 정보는 음성 decoder를 거쳐 waveform이 된다.">
+<svg viewBox="0 0 600 225" role="img" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <rect x="10" y="63" width="83" height="46" rx="6" fill="#dbeafe" stroke="#2563eb" />
+  <text x="51" y="91" text-anchor="middle" font-size="15" fill="#0f172a">입력 음성</text>
+  <path d="M93 84 L116 48 M93 88 L116 128" stroke="#64748b" stroke-width="2" fill="none" />
+  <rect x="116" y="24" width="150" height="48" rx="6" fill="#eff6ff" stroke="#2563eb" />
+  <text x="191" y="43" text-anchor="middle" font-size="14" fill="#0f172a">audio encoder</text>
+  <text x="191" y="61" text-anchor="middle" font-size="13" fill="#475569">연속 feature</text>
+  <rect x="116" y="104" width="150" height="48" rx="6" fill="#f0fdf4" stroke="#15803d" />
+  <text x="191" y="123" text-anchor="middle" font-size="14" fill="#0f172a">audio tokenizer</text>
+  <text x="191" y="141" text-anchor="middle" font-size="13" fill="#475569">이산 token</text>
+  <path d="M266 48 L295 83 M266 128 L295 91" stroke="#64748b" stroke-width="2" fill="none" />
+  <rect x="295" y="63" width="112" height="46" rx="6" fill="#fef3c7" stroke="#b45309" />
+  <text x="351" y="91" text-anchor="middle" font-size="15" fill="#0f172a">언어 모델</text>
+  <text x="413" y="90" font-size="17" fill="#475569">→</text>
+  <rect x="438" y="63" width="148" height="46" rx="6" fill="#f8fafc" stroke="#64748b" />
+  <text x="512" y="83" text-anchor="middle" font-size="14" fill="#0f172a">생성된 음성 token</text>
+  <text x="512" y="101" text-anchor="middle" font-size="13" fill="#475569">+ 화자 정보</text>
+  <path d="M512 109 L512 142" stroke="#64748b" stroke-width="2" fill="none" />
+  <text x="512" y="141" text-anchor="middle" font-size="15" fill="#64748b">↓</text>
+  <rect x="438" y="150" width="148" height="48" rx="6" fill="#fff7ed" stroke="#c2410c" />
+  <text x="512" y="170" text-anchor="middle" font-size="14" fill="#0f172a">음성 decoder</text>
+  <text x="512" y="188" text-anchor="middle" font-size="13" fill="#475569">→ waveform</text>
+</svg>
+<figcaption>8B Omni의 음성 입력과 출력 경로를 단순화했다. 입력에는 연속 feature와 이산 token을 사용하고, 출력에서는 생성된 token과 화자 정보를 decoder에 전달한다. 이미지 경로는 생략했다.</figcaption>
+</figure>
 
 ### 1-4. 여러 형태의 출력
 
@@ -136,6 +184,30 @@ ID 숫자는 설명을 위한 가상 값이다.
 단일 modality 데이터 여러 종류를 섞는 것과, 한 예제에서 여러 modality를 **함께 사용하도록 요구하는 것**은 구별해야 한다.
 이미지 질문만 따로, 오디오 질문만 따로 잘 푼다는 결과만으로 화면의 특정 인물과 동시에 들리는 목소리를 연결할 수 있다고 결론 낼 수는 없다.
 그 관계를 요구하는 평가 자료가 있어야 해당 능력을 확인할 수 있으며, 학습 자료의 구성도 그 능력에 영향을 준다.
+
+여러 입력을 함께 이해하려면 구조뿐 아니라 그 조합을 보여 주는 데이터도 필요하다.
+카카오는 2025년 Kanana-o 개발에서 이미지–텍스트 자료의 질문이나 답변을 음성으로 합성해 이미지·음성·텍스트가 함께 쓰이는 학습 예시를 구성했다고 설명한다.[^kanana-o]
+예를 들어 같은 이미지에 대한 질문을 음성으로 제시하고 텍스트로 답하게 하거나, 텍스트 질문에 음성으로 답하게 할 수 있다.
+합성 음성이 학습 자료를 늘려 주더라도 실제 환경의 잡음이나 다양한 말투를 모두 대표하는지는 별도로 평가해야 한다.
+
+카카오가 공개한 다음 영상은 여러 입력·출력 조합을 가진 Omni 학습 데이터의 예시다.
+하나의 이미지와 질문·답변이 글이나 음성으로 어떻게 제시되는지 살펴보자.
+
+<Video src="https://www.youtube.com/watch?v=3qJooAWnk8M" caption="kakao tech, Omni-modal 학습 데이터셋 예시 (2025)" />
+
+카카오의 2025년 후속 개발 글은 이미지·오디오·텍스트를 다양한 조합으로 사용하는 지시 이행 자료와 여러 차례 질문과 답이 이어지는 대화 자료를 구축한 과정을 설명한다.[^kanana-o-update]
+예를 들어 같은 이미지에 대한 질문이 글이나 음성 중 어느 쪽으로 들어오더라도 지시에 맞게 답하도록 학습하는 것이다.
+이 글에서는 동시에 듣고 말하는 full duplex 상호작용도 연구 방향으로 다루므로, 해당 글만으로 완성된 기능이라고 단정하지 않는다.
+
+HyperCLOVA X SEED 8B Omni의 기술 보고서는 먼저 텍스트 언어 모델을 학습하고, image와 audio의 이산 token을 추가해 확장한 다음 여러 modality 데이터로 언어 모델을 함께 학습하는 단계를 설명한다.[^naver-omni-report]
+이후 연속 vision encoder와 audio encoder를 연결해 입력 표현을 정렬한다.
+예를 들어 vision encoder와 언어 모델을 고정하고 그 사이 adapter를 먼저 학습한 뒤, vision을 중심으로 추가 학습한다.
+Audio encoder는 보고서에서 사전학습된 encoder를 사용하고 고정한다.
+모든 구성 요소가 같은 단계에서 동시에 갱신된다는 뜻은 아니다.
+후속 SFT(supervised fine-tuning)에서는 대화와 다양한 입력·출력 task를 학습하고, video와 긴 문맥 데이터를 추가해 시간에 따른 사건을 다루도록 한다.
+
+2026년 공개된 HyperCLOVA X SEED 4B 개발 글은 별도로 개발한 vision·audio encoder를 연결해 이미지·video·audio를 이해하고 텍스트로 답하는 모델을 소개한다.[^naver-omni4b]
+텍스트 사전학습을 마친 언어 모델에 encoder를 연결한 뒤 multimodal pre-training, SFT, video를 포함한 추가 SFT와 RLVR(reinforcement learning with verifiable rewards)을 진행한다.
 
 ### 2-2. Interleaved sequence
 
@@ -236,6 +308,19 @@ Qwen3-Omni는 정렬을 위한 고정 2초 묶음 대신 실제 시간에 대응
 이 간격은 Qwen3-Omni의 audio encoder인 AuT가 초당 12.5개 feature를 내는 출력 시간 해상도와 맞물린다.
 정확한 단위와 chunk 방식은 모델의 설계 선택이며, 모든 Omni 모델의 공통 규칙은 아니다.
 
+Video에는 화면과 소리가 함께 들어갈 수 있다.
+HyperCLOVA X SEED 8B Omni의 기술 보고서는 video의 긴 audio 입력을 효율적으로 다루기 위한 audio token compressor도 설명한다.[^naver-omni-report]
+8B Omni의 연속 audio encoder는 초당 25개 feature를 만들고, video의 audio에는 MambaMia compressor를 적용해 초당 1개로 줄인다.
+예를 들어 10초라면 약 250개 feature가 약 10개가 된다.
+이는 video 입력 feature의 압축이며 음성 출력 token의 생성 속도가 아니다.
+예를 들어 “문이 닫힌 뒤 어떤 소리가 나는가?”라는 질문에서는 frame의 순서와 audio의 발생 시점을 함께 사용해야 한다.
+이는 video를 frame의 모음으로만 취급하는 경우보다 많은 정보를 활용하지만, 시각과 소리를 시간에 맞게 처리하는 것은 별도의 문제다.
+
+HyperCLOVA X SEED 4B의 video 학습에는 frame 추출, audio 추출과 시간 정렬이 필요하며, 긴 video에서는 audio feature를 압축해 입력 길이를 줄인다.
+SEED 4B가 설명한 audio 압축은 초당 10개 feature를 평균 pooling으로 2개로 줄이는 방식이다.
+8B Omni의 25개에서 1개로 줄이는 경로와 다른 모델의 설정이다.
+SEED 4B의 설명을 8B Omni의 이미지·음성 생성 지원과 동일시하지 않는다.
+
 MiniCPM-o 4.5는 시간 분할 다중화(time-division multiplexing, TDM)를 사용해 동시에 흐르는 입력과 출력을 짧은 시간 구간별 정보 묶음으로 바꾸어 언어 모델에서 함께 처리한다.[^minicpmo45]
 예를 들어 한 구간에 해당하는 영상과 소리, 응답 정보를 시간 순서에 맞게 배치하고 다음 구간을 이어 붙이는 것이다.
 이는 여러 흐름을 하나의 sequence로 다루기 위한 방법이며, 각 modality의 token이 같은 속도로 생성된다는 뜻은 아니다.
@@ -256,11 +341,23 @@ MiniCPM-o 4.5는 시간 분할 다중화(time-division multiplexing, TDM)를 사
 중간에 텍스트로 확정하는 단계 없이 입력부터 출력까지 하나로 이어 학습한 구성을 end-to-end라고 부르며, modality별 encoder나 음성 출력용 decoder 같은 부품이 남아 있어도 이렇게 학습할 수 있다.
 OpenAI는 2024년 GPT-4o를 발표하면서 텍스트·시각·오디오를 하나의 신경망에서 end-to-end로 학습하는 방식을 소개했다.[^gpt4o]
 ChatGPT의 이전 Voice Mode가 쓰던 음성 인식 → 텍스트 모델 → 음성 합성 cascade와 비교하면, 모델이 음성의 억양 같은 정보를 텍스트 변환 전에 이용할 수 있는 방향이다.
-다만 모델이 만들 수 있는 출력과 특정 시점의 제품이나 API(application programming interface)에서 제공하는 기능은 구분해야 한다.
+다만 모델이 만들 수 있는 출력과 특정 시점의 제품이나 API에서 제공하는 기능은 구분해야 한다.
 Qwen2.5-Omni는 Qwen2.5 언어 모델과 사전학습된 시각·audio encoder를 초기값으로 사용한다.[^qwen25]
 먼저 LLM을 고정하고 각 입력 경로를 이미지–텍스트와 오디오–텍스트 자료에 맞춘다.
 이후 parameter를 함께 갱신하며 여러 modality가 섞인 자료로 학습하고, 긴 sequence 자료로 문맥 길이를 확장한다.
 처음부터 입력 경로와 언어 모델이 이미 정렬되어 있다고 가정하지 않고 단계적으로 연결하는 것이다.
+
+카카오의 Kanana-o는 이미지·음성·텍스트를 함께 다루고 텍스트나 음성으로 답하도록 설계된 Omni 모델이다.[^kanana-o]
+예를 들어 사진을 보여 주며 음성으로 “이 물건은 무엇인가?”라고 물으면, 사진과 질문을 함께 조건으로 답변을 만들 수 있다.
+2025년 개발 설명에서는 이미지와 음성을 각각 encoder의 연속 표현으로 언어 모델에 넣고, 음성으로 답할 때는 이산 음성 token을 생성한다.
+
+카카오가 2025년에 설명한 개발 과정에서 Kanana-v와 Kanana-a는 같은 언어 모델을 출발점으로 각각 시각과 음성을 다루도록 학습되었다.
+Kanana-o는 두 모델을 model merging으로 결합하고, 시각과 음성 경로를 갖춘 모델을 추가로 학습하는 방식으로 만들었다.
+Model merging은 별도로 조정된 모델의 parameter를 결합하는 접근이다.
+모든 모델을 아무렇게나 합치면 두 능력이 자동으로 보존되는 것은 아니며, 이 사례에서는 공통 언어 모델을 바탕으로 한 두 모델과 추가 학습이 중요하다.
+
+카카오의 [Kanana-o 개발 발표 영상](https://www.youtube.com/watch?v=S4CMtHfscis)은 시각과 음성을 각각 다루는 모델을 통합하는 과정과 실제 서비스에서 고려한 선택을 소개한다.
+2025년 발표와 이후 공개된 모델은 시점과 버전이 다르다.
 
 ### 4-2. Thinker와 Talker
 
@@ -319,6 +416,38 @@ Talker가 현재 음성 frame의 첫 codebook token을 예측하고, 추가 예�
 Qwen3-Omni-30B-A3B-Instruct는 Thinker와 Talker를 모두 포함해 텍스트와 음성을 출력하지만, Thinking은 추론에 집중한 Thinker만 포함하며 텍스트를 출력한다.
 따라서 모델 계열 이름만으로 음성 출력 지원 여부를 판단할 수 없다.
 
+2026년 후속 개발에서 카카오는 LM-SPT를 Kanana-o의 음성 생성에 적용했다.[^kanana-o-speech]
+LM-SPT는 음성을 의미·음향 token으로 표현하고 그 token에서 소리를 복원하는 speech codec이다.
+언어 모델이 질문과 대화 문맥을 처리한 표현과 화자 정보를 Voice Token LM에 전달하면, 이 모델이 의미·음향 token을 생성한다.
+LM-SPT decoder는 token들을 받아 Mel spectrogram을 거치지 않고 waveform을 복원한다.
+하나의 시간 frame에 여러 codebook이 있으므로 Voice Token LM은 codebook별 출력 head를 사용한다.
+각 codebook의 출력을 한 단계씩 지연시키면, 뒤쪽 codebook이 같은 frame에 해당하는 앞쪽 codebook의 결과를 참고하면서도 여러 시간 위치의 token을 병렬로 생성할 수 있다.
+생성 후 지연된 token을 원래 frame 순서로 다시 맞춰 decoder에 넣는다.
+
+두 frame과 의미 codebook 하나, 음향 codebook 하나만 있는 가상의 예로 순서를 살펴보자.
+`S1`은 첫 frame의 의미 token, `A1`은 같은 frame의 음향 token이다.
+
+| 생성 단계 | 의미 token | 음향 token |
+| --- | --- | --- |
+| 1 | S1 | 대기 |
+| 2 | S2 | A1 |
+| 3 | 종료 후 대기 | A2 |
+
+두 번째 단계에서는 다음 frame의 `S2`와 첫 frame의 `A1`을 함께 예측한다.
+`A1`을 만들 때는 이미 생성한 `S1`을 참고할 수 있다.
+생성이 끝나면 `S1`과 `A1`, `S2`와 `A2`를 각각 같은 frame으로 다시 묶는다.
+실제 모델은 음향 codebook이 여러 개이므로 각 스트림의 지연을 더해 처리하며, 위 표는 시작·종료 token을 생략한 단순한 예다.
+
+음성 token을 생성할 수 있다는 것과 “아주 빠르게 말해 줘”라는 지시를 정확히 따르는 것은 별개다.
+카카오는 같은 문장과 화자 조건에서 발화 속도 등 비교 대상만 바꾼 음성들을 만들고, 지시에 따라 어느 음성이 더 적절한지 선호 쌍을 구성했다.
+예를 들어 같은 두 음성이라도 “빠르게”라는 지시에서는 빠른 음성이, “천천히”라는 지시에서는 느린 음성이 선호될 수 있다.
+이 자료로 Kanana-a를 기반으로 한 보상 모델이 발화 지시와 생성 음성의 적합도를 평가하도록 학습한다.
+
+그다음 Voice Token LM이 학습 중 직접 생성한 음성을 평가해 모델을 갱신하는 online RL(reinforcement learning)을 적용한다.
+발화 지시 점수만 높이면 빠르게 말하는 대신 단어를 빠뜨리는 식의 문제가 생길 수 있으므로, 지시 이행 외에 발화 오류율·화자 유사도·음질도 함께 고려한다.
+공개 글은 이 목표와 선호 데이터 구성 원리를 설명하지만, 전체 데이터의 크기와 배합, 보상 가중치와 모든 학습 설정을 제공하지는 않는다.
+이는 2026년 음성 생성 개선의 설명이며, 2026년 2월 API 모델이 같은 구현을 사용한다고 단정할 근거는 없다.
+
 MiniCPM-o 4.5는 사전학습된 vision encoder, 음성 encoder와 생성기, 언어 모델을 출발점으로 사용하는 또 다른 통합 사례다.[^minicpmo45]
 앞의 TDM으로 입력 흐름과 응답 흐름을 짧은 시간 구간마다 한 sequence에 끼워 넣어, 사용자의 영상과 음성을 받아들이는 동안 음성으로 응답하는 full duplex 상호작용을 지향한다.
 이처럼 여러 부품을 사용하더라도 전체 시스템을 통합해 학습하거나 실시간으로 동작하도록 설계할 수 있다.
@@ -352,157 +481,15 @@ vision encoder와 audio encoder가 입력을 언어 모델에 연결하고, 음�
 논문이 보고한 지연을 다른 환경에서도 그대로 재현할 수 있다고 가정하지 않는다.
 모델의 환각, 시각적으로 보이지 않거나 오디오에 없는 정보의 추론, 민감한 음성 정보의 처리도 별도로 평가해야 한다.
 
-## 6. 국내 Omni 모델의 통합 방식
-
-카카오의 Kanana-o는 이미지·음성·텍스트를 함께 다루고 텍스트나 음성으로 답하도록 설계된 Omni 모델이다.[^kanana-o]
-예를 들어 사진을 보여 주며 음성으로 “이 물건은 무엇인가?”라고 물으면, 사진과 질문을 함께 조건으로 답변을 만들 수 있다.
-2025년 개발 설명에서는 이미지와 음성을 각각 encoder의 연속 표현으로 언어 모델에 넣고, 음성으로 답할 때는 이산 음성 token을 생성한다.
-
-카카오가 2025년에 설명한 개발 과정에서 Kanana-v와 Kanana-a는 같은 언어 모델을 출발점으로 각각 시각과 음성을 다루도록 학습되었다.
-Kanana-o는 두 모델을 model merging으로 결합하고, 시각과 음성 경로를 갖춘 모델을 추가로 학습하는 방식으로 만들었다.
-Model merging은 별도로 조정된 모델의 parameter를 결합하는 접근이다.
-모든 모델을 아무렇게나 합치면 두 능력이 자동으로 보존되는 것은 아니며, 이 사례에서는 공통 언어 모델을 바탕으로 한 두 모델과 추가 학습이 중요하다.
-
-카카오의 [Kanana-o 개발 발표 영상](https://www.youtube.com/watch?v=S4CMtHfscis)은 시각과 음성을 각각 다루는 모델을 통합하는 과정과 실제 서비스에서 고려한 선택을 소개한다.
-2025년 발표 내용과 이후 공개된 모델의 버전은 구분해서 보자.
-
-여러 입력을 함께 이해하려면 구조뿐 아니라 그 조합을 보여 주는 데이터도 필요하다.
-카카오는 이미지–텍스트 자료의 질문이나 답변을 음성으로 합성해 이미지·음성·텍스트가 함께 쓰이는 학습 예시를 구성했다고 설명한다.
-예를 들어 같은 이미지에 대한 질문을 음성으로 제시하고 텍스트로 답하게 하거나, 텍스트 질문에 음성으로 답하게 할 수 있다.
-합성 음성이 학습 자료를 늘려 주더라도 실제 환경의 잡음이나 다양한 말투를 모두 대표하는지는 별도로 평가해야 한다.
-
-카카오가 공개한 다음 영상은 여러 입력·출력 조합을 가진 Omni 학습 데이터의 예시다.
-하나의 이미지와 질문·답변이 글이나 음성으로 어떻게 제시되는지 살펴보자.
-
-<Video src="https://www.youtube.com/watch?v=3qJooAWnk8M" caption="kakao tech, Omni-modal 학습 데이터셋 예시 (2025)" />
-
-카카오의 2025년 후속 개발 글은 이미지·오디오·텍스트를 다양한 조합으로 사용하는 지시 이행 자료와 여러 차례 질문과 답이 이어지는 대화 자료를 구축한 과정을 설명한다.[^kanana-o-update]
-예를 들어 같은 이미지에 대한 질문이 글이나 음성 중 어느 쪽으로 들어오더라도 지시에 맞게 답하도록 학습하는 것이다.
-이 글에서는 발화가 겹칠 때의 full duplex 상호작용도 연구 방향으로 다루므로, 해당 글만으로 완성된 기능이라고 단정하지 않는다.
-
-### 6-1. 음성 생성과 발화 지시 학습
-
-2026년 후속 개발에서 카카오는 LM-SPT를 Kanana-o의 음성 생성에 적용했다.[^kanana-o-speech]
-언어 모델이 질문과 대화 문맥을 처리한 표현과 화자 정보를 Voice Token LM에 전달하면, 이 모델이 의미·음향 token을 생성한다.
-LM-SPT decoder는 token들을 받아 Mel spectrogram을 거치지 않고 waveform을 복원한다.
-하나의 시간 frame에 여러 codebook이 있으므로 Voice Token LM은 codebook별 출력 head를 사용한다.
-각 codebook의 출력을 한 단계씩 지연시키면, 뒤쪽 codebook이 같은 frame에 해당하는 앞쪽 codebook의 결과를 참고하면서도 여러 시간 위치의 token을 병렬로 생성할 수 있다.
-생성 후 지연된 token을 원래 frame 순서로 다시 맞춰 decoder에 넣는다.
-
-두 frame과 의미 codebook 하나, 음향 codebook 하나만 있는 가상의 예로 순서를 살펴보자.
-`S1`은 첫 frame의 의미 token, `A1`은 같은 frame의 음향 token이다.
-
-| 생성 단계 | 의미 token | 음향 token |
-| --- | --- | --- |
-| 1 | S1 | 대기 |
-| 2 | S2 | A1 |
-| 3 | 종료 후 대기 | A2 |
-
-두 번째 단계에서는 다음 frame의 `S2`와 첫 frame의 `A1`을 함께 예측한다.
-`A1`을 만들 때는 이미 생성한 `S1`을 참고할 수 있다.
-생성이 끝나면 `S1`과 `A1`, `S2`와 `A2`를 각각 같은 frame으로 다시 묶는다.
-실제 모델은 음향 codebook이 여러 개이므로 각 스트림의 지연을 더해 처리하며, 위 표는 시작·종료 token을 생략한 단순한 예다.
-
-음성 token을 생성할 수 있다는 것과 “아주 빠르게 말해 줘”라는 지시를 정확히 따르는 것은 별개다.
-카카오는 같은 문장과 화자 조건에서 발화 속도 등 비교 대상만 바꾼 음성들을 만들고, 지시에 따라 어느 음성이 더 적절한지 선호 쌍을 구성했다.
-예를 들어 같은 두 음성이라도 “빠르게”라는 지시에서는 빠른 음성이, “천천히”라는 지시에서는 느린 음성이 선호될 수 있다.
-이 자료로 Kanana-a를 기반으로 한 보상 모델이 발화 지시와 생성 음성의 적합도를 평가하도록 학습한다.
-
-그다음 Voice Token LM이 학습 중 직접 생성한 음성을 평가해 모델을 갱신하는 online RL(reinforcement learning)을 적용한다.
-발화 지시 점수만 높이면 빠르게 말하는 대신 단어를 빠뜨리는 식의 문제가 생길 수 있으므로, 지시 이행 외에 발화 오류율·화자 유사도·음질도 함께 고려한다.
-공개 글은 이 목표와 선호 데이터 구성 원리를 설명하지만, 전체 데이터의 크기와 배합, 보상 가중치와 모든 학습 설정을 제공하지는 않는다.
-이는 2026년 음성 생성 개선의 설명이며, 2026년 2월 API 모델이 같은 구현을 사용한다고 단정할 근거는 없다.
-
-### 6-2. 공개된 입출력과 범위
-
-`Kanana-1.5-o-9.8B-instruct-2602` API 문서에 명시된 입력은 텍스트·이미지·오디오이고, 출력은 텍스트와 오디오다.[^kanana-o-api]
-모델 이름에 Omni가 들어간다는 이유만으로 이미지나 영상 출력까지 지원한다고 가정하지 않는다.
-또한 2025년 개발 설명과 이후에 공개된 API 모델은 시점과 버전이 다르므로 세부 구현을 그대로 동일시하지 않는다.
-
-### 6-3. HyperCLOVA X 8B Omni의 통합과 학습
-
-네이버의 HyperCLOVA X SEED 8B Omni는 텍스트·이미지·video·audio를 입력으로 받고 텍스트·이미지·음성을 출력한다.[^naver-omni-card]
-예를 들어 사진과 질문을 받아 텍스트로 답하거나, 텍스트 지시를 받아 이미지를 생성할 수 있다.
-Video 입력을 받는 것과 video 자체를 생성하는 것은 다르다.
-이 모델 카드의 출력 목록에는 video가 없다.
-
-이 모델은 언어 모델에 연속적인 vision·audio encoder 표현과 이산 image·audio token을 함께 연결한다.[^naver-omni-report]
-연속 feature는 입력을 세밀하게 이해하는 데 쓰이고, 이산 token은 입력과 출력 양쪽에 쓰인다.
-생성된 이산 image token은 diffusion 기반 이미지 decoder의 조건이 되어 이미지를 만들고, 이산 audio token은 음성 decoder를 통해 waveform으로 변환된다.
-예를 들어 음성 질문은 audio encoder와 tokenizer의 표현을 통해 처리하고, 답변을 말할 때는 생성한 audio token을 음성 decoder가 파형으로 바꾼다.
-입력과 출력이 하나의 언어 모델을 공유해도 vision encoder나 음성 decoder가 없어지는 것은 아니다.
-
-<figure class="lecture-figure lecture-figure--wide" aria-label="HyperCLOVA X 8B Omni의 음성 경로를 단순화한 그림. 입력 음성은 audio encoder의 연속 feature와 tokenizer의 이산 token으로 표현해 언어 모델에 전달한다. 모델이 생성한 음성 token과 화자 정보는 음성 decoder를 거쳐 waveform이 된다.">
-<svg viewBox="0 0 600 225" role="img" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
-  <rect x="10" y="63" width="83" height="46" rx="6" fill="#dbeafe" stroke="#2563eb" />
-  <text x="51" y="91" text-anchor="middle" font-size="15" fill="#0f172a">입력 음성</text>
-  <path d="M93 84 L116 48 M93 88 L116 128" stroke="#64748b" stroke-width="2" fill="none" />
-  <rect x="116" y="24" width="150" height="48" rx="6" fill="#eff6ff" stroke="#2563eb" />
-  <text x="191" y="43" text-anchor="middle" font-size="14" fill="#0f172a">audio encoder</text>
-  <text x="191" y="61" text-anchor="middle" font-size="13" fill="#475569">연속 feature</text>
-  <rect x="116" y="104" width="150" height="48" rx="6" fill="#f0fdf4" stroke="#15803d" />
-  <text x="191" y="123" text-anchor="middle" font-size="14" fill="#0f172a">audio tokenizer</text>
-  <text x="191" y="141" text-anchor="middle" font-size="13" fill="#475569">이산 token</text>
-  <path d="M266 48 L295 83 M266 128 L295 91" stroke="#64748b" stroke-width="2" fill="none" />
-  <rect x="295" y="63" width="112" height="46" rx="6" fill="#fef3c7" stroke="#b45309" />
-  <text x="351" y="91" text-anchor="middle" font-size="15" fill="#0f172a">언어 모델</text>
-  <text x="413" y="90" font-size="17" fill="#475569">→</text>
-  <rect x="438" y="63" width="148" height="46" rx="6" fill="#f8fafc" stroke="#64748b" />
-  <text x="512" y="83" text-anchor="middle" font-size="14" fill="#0f172a">생성된 음성 token</text>
-  <text x="512" y="101" text-anchor="middle" font-size="13" fill="#475569">+ 화자 정보</text>
-  <path d="M512 109 L512 142" stroke="#64748b" stroke-width="2" fill="none" />
-  <text x="512" y="141" text-anchor="middle" font-size="15" fill="#64748b">↓</text>
-  <rect x="438" y="150" width="148" height="48" rx="6" fill="#fff7ed" stroke="#c2410c" />
-  <text x="512" y="170" text-anchor="middle" font-size="14" fill="#0f172a">음성 decoder</text>
-  <text x="512" y="188" text-anchor="middle" font-size="13" fill="#475569">→ waveform</text>
-</svg>
-<figcaption>8B Omni의 음성 입력과 출력 경로를 단순화했다. 입력에는 연속 feature와 이산 token을 사용하고, 출력에서는 생성된 token과 화자 정보를 decoder에 전달한다. 이미지 경로는 생략했다.</figcaption>
-</figure>
-
-학습 과정도 한 번에 모든 부품을 처음부터 학습하는 방식으로 단순화하면 안 된다.
-기술 보고서는 먼저 텍스트 언어 모델을 학습하고, image와 audio의 이산 token을 추가해 확장한 다음 여러 modality 데이터로 언어 모델을 함께 학습하는 단계를 설명한다.
-이후 연속 vision encoder와 audio encoder를 연결해 입력 표현을 정렬한다.
-예를 들어 vision encoder와 언어 모델을 고정하고 그 사이 adapter를 먼저 학습한 뒤, vision을 중심으로 추가 학습한다.
-Audio encoder는 보고서에서 사전학습된 encoder를 사용하고 고정한다.
-모든 구성 요소가 같은 단계에서 동시에 갱신된다는 뜻은 아니다.
-후속 SFT(supervised fine-tuning)에서는 대화와 다양한 입력·출력 task를 학습하고, video와 긴 문맥 데이터를 추가해 시간에 따른 사건을 다루도록 한다.
-
-Video에는 화면과 소리가 함께 들어갈 수 있다.
-보고서는 video의 긴 audio 입력을 효율적으로 다루기 위한 audio token compressor도 설명한다.
-8B Omni의 연속 audio encoder는 초당 25개 feature를 만들고, video의 audio에는 MambaMia compressor를 적용해 초당 1개로 줄인다.
-예를 들어 10초라면 약 250개 feature가 약 10개가 된다.
-이는 video 입력 feature의 압축이며 음성 출력 token의 생성 속도가 아니다.
-예를 들어 “문이 닫힌 뒤 어떤 소리가 나는가?”라는 질문에서는 frame의 순서와 audio의 발생 시점을 함께 사용해야 한다.
-이는 video를 frame의 모음으로만 취급하는 경우보다 많은 정보를 활용하지만, 시각과 소리를 시간에 맞게 처리하는 것은 별도의 문제다.
-
-2026년 공개된 HyperCLOVA X SEED 4B 개발 글은 별도로 개발한 vision·audio encoder를 연결해 이미지·video·audio를 이해하고 텍스트로 답하는 모델을 소개한다.[^naver-omni4b]
-텍스트 사전학습을 마친 언어 모델에 encoder를 연결한 뒤 multimodal pre-training, SFT, video를 포함한 추가 SFT와 RLVR(reinforcement learning with verifiable rewards)을 진행한다.
-Video 학습에는 frame 추출, audio 추출과 시간 정렬이 필요하며, 긴 video에서는 audio feature를 압축해 입력 길이를 줄인다.
-SEED 4B가 설명한 audio 압축은 초당 10개 feature를 평균 pooling으로 2개로 줄이는 방식이다.
-8B Omni의 25개에서 1개로 줄이는 경로와 다른 모델의 설정이다.
-SEED 4B의 설명을 8B Omni의 이미지·음성 생성 지원과 동일시하지 않는다.
-
-두 국내 모델의 공개된 개발 설명을 비교하면 Kanana-o는 공통 언어 모델에서 출발한 vision·audio 모델의 병합과 추가 학습을 소개하고, 8B Omni는 하나의 언어 모델에 여러 modality token과 encoder를 단계적으로 추가하는 과정을 설명한다.
-이는 각 보고서가 설명한 모델과 시점의 비교이며, 이후 버전도 모두 같은 구조로 만들어졌다는 뜻은 아니다.
-네이버의 8B Omni는 가중치를 공개했지만 이용 조건은 모델 라이선스를 확인해야 하며, 공개된 설명이 전체 학습 데이터의 재현을 보장하지는 않는다.
-
-| 비교 대상 | 출발점과 결합 방식 | 공개된 입출력의 예 |
-| --- | --- | --- |
-| Kanana-o의 2025년 개발 설명 | 공통 LLM으로부터 vision·audio 모델을 학습하고 병합한 뒤 추가 학습 | 이미지·음성·텍스트 입력과 텍스트·음성 응답 |
-| HyperCLOVA X 8B Omni | 텍스트 기반 모델에 이산 modality token을 추가해 공동 학습하고 연속 encoder도 연결 | 텍스트·이미지·video·audio 입력과 텍스트·이미지·음성 출력 |
-| HyperCLOVA X SEED 4B | 자체 vision·audio encoder와 언어 모델을 연결해 multimodal 학습 | 이미지·video·audio·텍스트 이해와 텍스트 응답 |
-
-표의 입출력은 각 공개 자료에서 확인한 범위다.
-같은 이름의 모든 버전이 같은 기능을 제공한다는 뜻은 아니다.
-
-## 7. 다른 modality로의 확장
+## 6. 다른 modality로의 확장
 
 연속 표현과 이산 token 사이의 선택은 이미지와 음성에만 있는 문제가 아니다.
 시계열·표·분자처럼 텍스트가 아닌 데이터를 다루는 foundation model에서도 같은 두 갈래가 나타난다.
 
 시계열에서 Chronos는 값의 크기를 맞춘 뒤 값의 범위를 일정한 구간(bin)으로 나누어 시점마다의 값을 구간 번호로 바꾼다.
-이렇게 특수 token을 포함한 4,096개 항목의 고정 어휘를 만들고, T5 구조의 언어 모델을 cross-entropy로 학습한다.[^chronos]
-반면 TimesFM은 연속된 시점의 값을 patch로 묶어 벡터로 넣고, 지난 patch들로 다음 patch의 값을 회귀로 예측하는 decoder-only 모델이다.[^timesfm]
+이렇게 특수 token을 포함한 4,096개 항목의 고정 어휘를 만들고, 대표적으로 T5 구조의 언어 모델을 cross-entropy로 학습한다.[^chronos]
+반면 TimesFM은 연속된 시점의 값을 입력 patch로 묶어 벡터로 넣고, 지난 patch들을 바탕으로 이어지는 시간 구간의 값을 회귀로 예측하는 decoder-only 모델이다.[^timesfm]
+예측하는 출력 구간의 길이는 입력 patch의 길이와 같을 필요가 없다.
 표 데이터의 TabPFN은 셀 값을 어휘로 바꾸지 않고 실수 그대로 벡터로 넣는 연속 방식이다.
 사전 분포에서 뽑은 합성 데이터로 미리 학습한 Transformer가 학습용 행과 label을 문맥으로 받아, 가중치 갱신 없이 in-context learning으로 test 행의 label을 예측한다.[^tabpfn]
 분자에서는 MolT5처럼 원자와 결합을 한 줄의 문자로 적는 SMILES 표기를 텍스트와 같은 이산 token으로 다루는 방식과,[^molt5]
