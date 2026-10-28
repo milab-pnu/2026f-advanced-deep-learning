@@ -1,0 +1,446 @@
+---
+title: "Vision Language Models"
+week: 9
+order: 0
+---
+
+사진을 보여 주며 “이 표지판에 적힌 문구가 무엇이고, 어느 쪽으로 가야 하나?”라고 물으면 모델은 글자를 읽고, 이미지 안의 위치와 질문을 연결해 답해야 한다.
+이미지 전체를 한 범주로 분류하는 것만으로는 충분하지 않다.
+많은 멀티모달 대규모 언어 모델(multimodal large language model)은 vision encoder가 만든 표현을 언어 모델에 전달하여 이런 입력과 지시를 함께 다룬다.[^survey]
+이 노트는 이미지가 Transformer의 입력이 되는 과정에서 시작해 이미지와 텍스트의 정렬, 생성 모델과의 연결, 해상도와 여러 이미지, 화면을 보며 행동하는 agent까지 차례로 살펴본다.
+
+먼저 다음 영상에서 이미지와 음성을 함께 다루는 Kanana-o의 개발 사례를 살펴보자.
+처음부터 구조와 학습 과정을 모두 이해할 필요는 없다. 모델이 어떤 입력을 받아 무엇을 할 수 있는지에 주목하고, 그 과정에서 등장하는 시각과 음성의 표현을 차근차근 알아본다.
+이 영상은 2025년 발표로, 이후 공개된 모델의 버전과는 구분해야 한다.
+
+<Video src="https://www.youtube.com/watch?v=S4CMtHfscis" caption="노병석, 눈으로 보고, 귀로 듣고, 입으로 말하는 AI – 통합 멀티모달 언어모델 Kanana-o 개발기 (if(kakao)25)" />
+
+## 1. 이미지와 Transformer
+
+### 1-1. 픽셀에서 patch로
+
+텍스트 Transformer는 token을 순서대로 나열한 sequence를 받는다.
+이미지는 높이, 너비, 색 채널로 이루어진 배열이므로 텍스트처럼 token sequence로 처리하려면 입력 표현을 구성해야 한다.
+Vision Transformer(ViT)는 이미지를 같은 크기의 작은 격자 조각, patch로 나누고 각 조각의 픽셀을 일렬로 펴서 하나의 벡터로 바꾼다.[^vit]
+RGB 이미지에서 patch 한 변의 길이가 $P$이면 한 조각의 원소 수는 $3P^2$이다.
+모든 patch에 같은 학습 가능한 선형 변환을 적용하면 Transformer의 hidden dimension $D$에 맞는 벡터가 만들어진다.
+
+<Callout type="example">
+높이와 너비가 각각 64인 RGB 이미지에 16×16 patch를 적용하면 한 변에 4개씩, 총 16개의 patch가 생긴다.
+Patch 하나는 16×16×3 = 768개의 픽셀 값을 담는다.
+각 768차원 벡터를 $D$차원으로 투영하면 Transformer에 넣을 16개의 벡터가 된다.
+패치의 개수와 벡터 차원은 서로 다른 양이다.
+같은 patch 크기로 224×224 이미지를 나누면 한 변에 14개씩 총 196개의 patch가 생긴다.
+</Callout>
+
+<figure class="lecture-figure" aria-label="64 곱하기 64 이미지를 16 곱하기 16 patch로 나누면 16개가 된다. 각 patch를 embedding으로 바꾸고 위치 정보를 더해 Transformer encoder에 전달하는 예시다.">
+<svg viewBox="0 0 480 165" role="img" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <text x="66" y="22" text-anchor="middle" font-size="15" fill="#0f172a">64×64 이미지</text>
+  <rect x="30" y="36" width="72" height="72" fill="#dbeafe" stroke="#2a78d6" />
+  <path d="M48 36v72 M66 36v72 M84 36v72 M30 54h72 M30 72h72 M30 90h72" stroke="#2a78d6" fill="none" />
+  <text x="66" y="131" text-anchor="middle" font-size="14" fill="#64748b">16×16 patch 16개</text>
+  <text x="123" y="79" font-size="20" fill="#64748b">→</text>
+  <rect x="151" y="42" width="132" height="61" rx="5" fill="#f8fafc" stroke="#94a3b8" />
+  <text x="217" y="67" text-anchor="middle" font-size="14" fill="#0f172a">patch 투영</text>
+  <text x="217" y="88" text-anchor="middle" font-size="14" fill="#0f172a">+ 위치 embedding</text>
+  <text x="297" y="79" font-size="20" fill="#64748b">→</text>
+  <rect x="325" y="42" width="135" height="61" rx="5" fill="#e2e8f0" stroke="#94a3b8" />
+  <text x="392" y="67" text-anchor="middle" font-size="14" fill="#0f172a">Transformer</text>
+  <text x="392" y="88" text-anchor="middle" font-size="14" fill="#0f172a">encoder</text>
+</svg>
+<figcaption>작은 예시에서 이미지의 각 patch를 벡터로 바꾸고 위치 정보를 더해 encoder에 전달한다.</figcaption>
+</figure>
+
+이 벡터만 모으면 각 조각의 원래 위치를 구별하기 어렵다.
+ViT는 patch마다 위치 embedding을 더해 순서 정보를 주고, classification을 위해 맨 앞에 학습 가능한 `[CLS]` token을 붙인다.
+Transformer encoder의 self-attention은 각 patch가 다른 patch의 정보를 받아 갱신하게 한다.
+예를 들어 자동차의 바퀴를 담은 patch가 차체를 담은 patch를 참고하면 국소적인 무늬와 전체 물체를 연결할 수 있다.
+분류 시에는 최종 `[CLS]` 표현을 classifier에 넣는다.
+입력 patch token은 사진의 작은 조각에서 출발하지만, 여러 층을 통과한 출력은 다른 위치의 정보를 포함하는 문맥화된 표현이다.
+
+### 1-2. 이미지 표현과 시각 task
+
+이미지 분류기는 “고양이”, “자동차”처럼 학습 시 정한 범주를 예측한다.
+새 범주를 다루려면 출력과 학습 데이터를 바꾸어야 하는 경우가 많다.
+반면 시각적 질문에는 사물의 이름 외에도 색, 수량, 위치나 장면 간의 관계가 필요하다.
+ViT는 이미지를 벡터로 바꾸는 방법을 제공하지만, **어떤 의미를 그 벡터에 담을지는 학습 데이터와 objective가 결정한다.**
+이미지와 언어를 짝지어 학습하면 고정된 범주 이름에만 묶이지 않는 시각 표현을 얻을 수 있다.
+
+<Callout type="note">
+[Kanana Vision Encoder: 글로벌 최고 수준에 도전하는 자체 비전 인코더 개발기](https://if.kakao.com/2026/session/time-table?sessionId=86)는 자체 vision encoder의 학습과 LLM과의 관계를 소개하는 카카오 기술 세션이다.
+세션 소개에서는 다음 token 예측을 이용한 학습을 다루며, 이는 이어서 살펴볼 CLIP의 contrastive 학습과 비교해 볼 수 있는 접근이다.
+</Callout>
+
+## 2. 이미지와 텍스트의 정렬
+
+### 2-1. 두 encoder와 contrastive learning
+
+CLIP(Contrastive Language–Image Pre-training)은 이미지 encoder와 텍스트 encoder를 각각 학습해 같은 크기의 공유 표현 공간으로 보낸다.[^clip]
+이미지와 그 설명이 가까워지고 다른 이미지와 설명은 멀어지도록 학습한다.
+여기서 “가깝다”는 것은 정규화된 두 벡터의 cosine similarity가 높다는 뜻이다.
+이미지 encoder는 ViT일 수도 있고 convolutional network일 수도 있다.
+텍스트 encoder는 입력 문장을 한 벡터로 요약한다.
+
+<figure class="lecture-figure lecture-figure--wide" aria-label="두 이미지와 두 설명을 각각 encoder로 변환하고 2 곱하기 2 유사도 행렬을 계산한다. 대각선은 짝이 맞는 두 쌍이며 이미지에서 설명을 고르는 행 방향과 설명에서 이미지를 고르는 열 방향을 함께 학습한다.">
+<svg viewBox="0 0 600 225" role="img" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <rect x="12" y="35" width="118" height="48" rx="6" fill="#dbeafe" stroke="#2563eb" />
+  <text x="71" y="64" text-anchor="middle" font-size="15" fill="#0f172a">이미지 2개</text>
+  <rect x="12" y="129" width="118" height="48" rx="6" fill="#dcfce7" stroke="#15803d" />
+  <text x="71" y="158" text-anchor="middle" font-size="15" fill="#0f172a">설명 2개</text>
+  <text x="141" y="65" font-size="20" fill="#475569">→</text>
+  <text x="141" y="159" font-size="20" fill="#475569">→</text>
+  <rect x="174" y="35" width="125" height="48" rx="6" fill="#eff6ff" stroke="#2563eb" />
+  <text x="236" y="64" text-anchor="middle" font-size="15" fill="#0f172a">이미지 encoder</text>
+  <rect x="174" y="129" width="125" height="48" rx="6" fill="#f0fdf4" stroke="#15803d" />
+  <text x="236" y="158" text-anchor="middle" font-size="15" fill="#0f172a">텍스트 encoder</text>
+  <path d="M305 59 L350 104 M305 153 L350 108" stroke="#64748b" stroke-width="2" fill="none" />
+  <text x="455" y="24" text-anchor="middle" font-size="15" fill="#0f172a">유사도 행렬</text>
+  <text x="454" y="47" text-anchor="middle" font-size="13" fill="#475569">설명 1　　 설명 2</text>
+  <text x="360" y="82" font-size="13" fill="#475569">사진 1</text>
+  <text x="360" y="128" font-size="13" fill="#475569">사진 2</text>
+  <rect x="410" y="52" width="64" height="42" fill="#dbeafe" stroke="#64748b" />
+  <rect x="474" y="52" width="64" height="42" fill="#f8fafc" stroke="#64748b" />
+  <rect x="410" y="94" width="64" height="42" fill="#f8fafc" stroke="#64748b" />
+  <rect x="474" y="94" width="64" height="42" fill="#dbeafe" stroke="#64748b" />
+  <text x="442" y="78" text-anchor="middle" font-size="14" fill="#0f172a">짝</text>
+  <text x="506" y="120" text-anchor="middle" font-size="14" fill="#0f172a">짝</text>
+  <text x="474" y="167" text-anchor="middle" font-size="13" fill="#475569">행: 이미지 → 설명</text>
+  <text x="474" y="188" text-anchor="middle" font-size="13" fill="#475569">열: 설명 → 이미지</text>
+</svg>
+<figcaption>두 쌍의 예시에서 각 encoder의 출력으로 모든 조합의 유사도를 구한다. 행과 열의 두 방향에서 맞는 짝을 고르도록 학습한다.</figcaption>
+</figure>
+
+한 배치에 이미지–텍스트 쌍이 $N$개 있으면 모든 이미지와 모든 텍스트의 유사도를 계산해 $N\times N$ 행렬을 만든다.
+같은 쌍의 위치는 정답이고, 배치 안에서 서로 다른 쌍은 대조 대상이다.
+이미지에서 텍스트를 고르는 방향과 텍스트에서 이미지를 고르는 방향을 각각 학습한다.
+배치의 이미지 $i$와 텍스트 $j$의 정규화된 표현을 $v_i$, $t_j$, 학습 가능한 양의 온도를 $\tau$라 하면 이미지에서 텍스트를 고르는 손실은 다음과 같다.
+
+$$
+L_{i\rightarrow t}=-\frac{1}{N}\sum_{i=1}^{N}\log\frac{\exp(v_i^\top t_i/\tau)}{\sum_{j=1}^{N}\exp(v_i^\top t_j/\tau)}.
+$$
+
+분자는 올바른 쌍의 온도 조정 점수에 지수 함수를 적용한 값이고, 분모는 같은 이미지에 대한 모든 후보 텍스트의 지수화된 점수를 더한 값이다.
+텍스트에서 이미지를 고르는 손실은 역할을 바꾸어 계산하며, CLIP의 objective는 두 방향의 평균이다.
+따라서 올바른 점수의 절대값만 커지는지가 아니라 **배치의 다른 후보보다 상대적으로 높은지**가 중요하다.
+다른 쌍이 언제나 의미적으로 틀린 것은 아니다.
+서로 다른 두 사진을 모두 “개가 달린다”라고 설명할 수도 있으므로, 배치에서 negative pair로 취급되는 조합에 실제로 비슷한 의미가 들어갈 수 있다.
+
+<Callout type="example">
+사진 두 장과 설명 두 개가 있고, 정규화 후 온도까지 반영한 점수가 첫 사진에 대해 `[2, 0]`이라고 하자.
+첫 설명이 정답이면 softmax의 정답 확률은 $e^2/(e^2+e^0)\approx 0.88$이다.
+두 사진에 대한 점수 행렬이 `[[2, 0], [1, 3]]`이라면, 첫 열은 첫 설명과 두 사진의 점수 `[2, 1]`이다.
+
+| | 설명 1 | 설명 2 |
+| --- | --- | --- |
+| 사진 1 | 2 (정답) | 0 |
+| 사진 2 | 1 | 3 (정답) |
+
+반대 방향에서는 이 열에 softmax를 적용하므로 첫 설명에 대한 정답 사진의 확률은 $e^2/(e^2+e^1)\approx 0.73$이다.
+행과 열의 후보가 다르기 때문에 두 방향의 확률도 다르다.
+첫 번째 점수가 두 번째보다 높아질수록 정답 확률이 올라가고 해당 손실은 작아진다.
+이는 학습 원리를 보여 주는 가상 예시이며 실제 CLIP의 점수는 아니다.
+</Callout>
+
+### 2-2. Zero-shot 분류와 한계
+
+학습이 끝난 뒤 고양이와 개 사진을 구분하고 싶다고 하자.
+“a photo of a cat”, “a photo of a dog”를 각각 텍스트 encoder에 넣어 두 후보 벡터를 만들고, 이미지 벡터와 유사도가 높은 문장을 고른다.
+별도의 고양이·개 분류기를 학습하지 않아도 자연어로 후보를 지정할 수 있다.
+마찬가지로 검색할 문장을 이미지와 비교해 관련 이미지를 찾거나, 이미지로 관련 텍스트를 찾을 수 있다.
+
+이 방식에서 후보 문장과 prompt의 표현이 결과에 영향을 준다.
+또한 이미지–문장 전체의 유사도 점수 하나는 이미지 속 모든 위치를 정밀하게 알려 주지 않는다.
+더구나 후보 중 가장 비슷한 것을 고르는 작업과 질문에 맞는 문장을 한 token씩 만들어 내는 작업은 다르다.
+“표지판에 적힌 글을 읽고 경로를 설명하라”처럼 답의 형태가 열려 있는 task에는 언어 생성이 필요하다.
+
+## 3. 시각 표현과 언어 생성의 연결
+
+### 3-1. 사전학습된 모델의 결합
+
+텍스트를 생성하는 LLM(large language model)은 보통 token ID를 embedding 벡터로 바꾸고, 앞의 벡터들을 조건으로 다음 텍스트 token을 예측한다.
+이미지 encoder의 출력은 이미 벡터이지만 그 차원과 분포가 LLM의 입력 embedding과 다를 수 있다.
+두 모델을 그냥 이어 붙이는 대신, **connector**를 학습하여 시각 표현을 언어 모델이 활용할 수 있는 입력으로 바꾼다.
+차원을 같게 만드는 것만으로 연결이 완성되는 것은 아니다.
+어떤 입력이 어떤 이미지의 내용에 대응하는지도 학습해야 한다.
+
+CLIP의 검색과 분류에는 이미지 전체를 요약한 전역 embedding을 사용한다.
+반면 같은 vision encoder의 내부에는 위치별 patch feature가 남아 있다.
+예를 들어 전체 이미지 embedding은 “개가 있는 사진”과 “고양이가 있는 사진”을 비교할 수 있다.
+“개 왼쪽에 무엇이 있는가?” 같은 질문에 여러 위치의 정보를 활용하는 한 방법은 patch별 feature를 LLM에 넘기는 것이다.
+전역 embedding에도 공간 정보가 전혀 없다는 뜻은 아니다.
+한편 텍스트 LLM은 질문에 따라 답을 생성할 수 있지만 텍스트만 학습한 상태에서는 이미지 픽셀을 입력으로 해석할 경로가 없다.
+두 모델을 함께 쓰려면 LLM이 이미지 feature에 접근할 수 있게 하고, 이미지가 답변에 영향을 주도록 연결부를 학습해야 한다.
+LLaVA는 이미 학습된 두 모델을 출발점으로 삼는다.
+CLIP의 vision encoder는 이미지에서 feature를 만들고, 언어 모델 Vicuna는 그 feature와 지시를 조건으로 답을 생성한다.
+Vicuna는 LLaMA를 대화 데이터로 instruction tuning한 언어 모델이다.[^vicuna]
+따라서 초기 LLaVA는 LLaMA 계열 언어 모델을 처음부터 이미지로 다시 학습한 것이 아니라, CLIP의 vision encoder와 Vicuna를 connector로 결합한 모델이다.
+LLaVA는 이 patch별 feature를 가져와 선형 projector로 LLM의 입력 차원에 맞춘다.[^llava]
+따라서 CLIP의 전역 유사도 점수 하나를 답변 생성에 넘기는 것은 아니다.
+투영된 visual token과 질문의 텍스트 embedding을 같은 문맥에 넣고, LLM은 이미지를 조건으로 답변 token을 생성한다.
+크기를 이해하기 위한 예로, 이미지 encoder가 3차원 feature 두 개를 내고 LLM의 입력 차원이 4라면 projector는 각각을 4차원으로 바꾼다.
+결과는 4차원 visual token 두 개이고, 여기에 같은 4차원의 질문 token을 이어 붙인다.
+차원이 바뀌어도 token의 개수는 이 선형 변환만으로 줄지 않는다.
+이 숫자는 설명용이며 실제 LLaVA 설정은 아니다.
+여기서 LLaVA의 visual token은 단어 사전의 단어 ID가 아니라 연속 벡터다.
+다른 이미지 모델은 이산 image token을 사용하기도 하므로 token이라는 이름만으로 표현 형식을 정할 수 없다.
+예를 들어 사진과 “무엇이 탁자 위에 있나?”라는 질문이 주어지면 모델은 이미지 feature와 질문을 조건으로 “컵이 있습니다”를 token 하나씩 생성한다.
+
+<Figure src="https://arxiv.org/html/2304.08485v2/x1.png" alt="LLaVA 구조. 이미지가 vision encoder와 학습 가능한 projection을 거쳐 시각 토큰이 되고 질문과 함께 언어 모델에 전달되어 응답을 생성한다." caption="CLIP vision encoder의 출력을 projection으로 변환해 질문과 함께 언어 모델에 전달한다." source="Liu et al. (2023), Figure 1 · 원본 그대로 · CC BY 4.0, https://creativecommons.org/licenses/by/4.0/" wide />
+
+### 3-2. 시각 정렬과 instruction tuning
+
+학습과 추론은 구분해야 한다.
+LLaVA의 첫 단계에서는 이미지–텍스트 쌍으로 projector를 학습하면서 vision encoder와 LLM을 고정한다.
+예를 들어 이미지와 캡션을 함께 주고 캡션의 다음 token을 예측하게 하면, 정답과의 차이가 projector로 전달된다.
+여기서 모델을 고정한다는 것은 해당 모델의 가중치를 갱신하지 않는다는 뜻이다.
+손실을 미분할 때는 고정된 LLM의 연산도 거슬러 통과하므로, LLM의 입력을 만든 projector가 예측에 얼마나 영향을 주었는지 계산할 수 있다.
+계산된 기울기로 projector는 갱신하지만 LLM과 vision encoder의 가중치는 그대로 둔다.
+Projector는 고정된 언어 모델이 이미지에 관한 단어를 예측하는 데 도움이 되는 방향으로 시각 feature를 변환하도록 학습한다.
+두 번째 단계에서는 이미지와 지시·응답의 예시로 projector와 LLM을 조정하고 vision encoder는 고정한다.
+이 단계에서 같은 사진에 “무엇이 보이나?”와 “왼쪽 물체는 무슨 색인가?”라는 서로 다른 질문을 주면 각 질문에 맞는 답을 생성하도록 학습한다.
+실제 목표는 정답 응답 token의 조건부 확률을 높이는 것이다.
+예를 들어 이미지와 질문에 대한 정답이 “빨간 컵”이면 학습 시 이미지·질문과 앞의 정답 token을 조건으로 다음 응답 token을 예측한다.
+손실은 응답 위치에 계산하며 이미지나 질문 자체를 정답으로 예측하는 목표와 구분한다.
+추론에서는 정답을 미리 넣을 수 없으므로 모델이 방금 생성한 token을 이어 붙여 다음 token을 예측한다.
+이렇게 배운 모델은 추론 시 주어진 이미지와 지시를 받아 새로운 응답을 생성한다.
+모든 VLM(vision-language model)이 이 고정·학습 조합을 따르는 것은 아니다.
+
+초기 LLaVA의 instruction 데이터는 GPT-4에 이미지 자체 대신 사람이 작성한 캡션과 bounding box 정보를 제공해 대화를 생성하는 방식으로 만들었다.[^llava]
+따라서 생성된 답이 이미지의 세부와 일치하는지는 별도 문제이며, instruction 데이터가 많다는 사실만으로 시각적 오류가 사라지는 것은 아니다.
+예를 들어 캡션과 상자 정보에 컵의 색이 없다면 GPT-4는 실제 사진에서 빨간색을 직접 확인할 수 없다.
+
+사전학습된 모델을 나중에 연결하는 것만이 유일한 경로는 아니다.
+Meta의 **Llama 4**는 텍스트·이미지·비디오를 함께 사용하는 early fusion 사전학습을 소개한다.[^llama4]
+이는 여러 modality를 모델 학습 초기에 함께 다루는 선택이다.
+다만 시각 입력을 처리하는 encoder가 없어졌다는 뜻은 아니다. Llama 4는 MetaCLIP 기반 vision encoder도 사용한다.
+Qwen의 **Qwen3.5** 역시 초기부터 시각·언어 데이터를 함께 학습하는 모델로 소개된다.[^qwen35]
+LLaVA의 단계별 연결과 비교할 때 핵심 질문은 “encoder가 있는가?” 하나가 아니라 **언제부터 어떤 데이터를 함께 학습하는가**이다.
+공동 사전학습 이후에도 지시를 따르게 만드는 후속 학습은 별도로 필요할 수 있다.
+
+### 3-3. 고정 길이의 query와 정보 병목
+
+이미지가 커지면 patch feature도 많아진다.
+각 patch를 그대로 LLM에 전달하는 방식은 세부 정보를 충분히 남길 수 있지만 입력 sequence가 길어진다.
+반대로 일정한 수의 벡터로 요약하면 길이를 제한할 수 있지만, 요약에서 빠진 정보는 언어 모델이 다시 확인하기 어렵다.
+
+BLIP-2의 Q-Former(Querying Transformer)는 학습 가능한 query 벡터가 이미지 feature에 cross-attention을 적용하여 정해진 개수의 출력 벡터를 만든다.[^blip2]
+BLIP-2와 LLaVA는 사전학습된 이미지 encoder와 언어 모델을 연결하는 문제에 대한 별도 설계다.
+Q-Former가 선형 projector의 역사적 후속 단계라는 뜻은 아니다.
+Query는 사용자의 질문 문장을 뜻하지 않는다.
+이미지에서 정보를 읽어 오도록 학습되는 벡터다.
+예를 들어 196개 patch feature에 32개의 query를 적용하면, 각 query는 여러 patch를 참고해 출력 벡터 하나를 만들고 결과는 32개 벡터가 된다.
+어느 정보가 각 벡터에 담길지는 학습으로 정해지므로 특정 query가 항상 특정 물체에 대응한다고 가정할 수 없다.
+
+가중합이 어떻게 여러 입력을 적은 수의 출력으로 모으는지 단순한 숫자로 살펴보자.
+세 patch의 값이 각각 1, 3, 5이고 두 query의 attention 가중치가 아래와 같다고 하자.
+
+| | patch 1의 값 1 | patch 2의 값 3 | patch 3의 값 5 | 가중합 |
+| --- | --- | --- | --- | --- |
+| query 1 | 0.5 | 0.5 | 0 | 2 |
+| query 2 | 0 | 0.25 | 0.75 | 4.5 |
+
+첫 query의 결과는 $0.5 \times 1 + 0.5 \times 3 = 2$이고, 둘째는 $0.25 \times 3 + 0.75 \times 5 = 4.5$다.
+세 입력을 서로 다른 방식으로 섞어 두 출력을 얻은 것이다.
+실제 attention은 학습한 변환으로 query·key·value를 만들고 value 벡터를 가중합하므로, 이 표는 가중합의 역할만 보여 주는 가상 예시다.
+
+BLIP-2에서는 이미지 encoder와 LLM을 고정하고 Q-Former를 먼저 이미지–텍스트 표현 학습에 사용한 뒤, LLM과 연결하여 이미지 조건부 텍스트 생성을 학습한다.
+이 구조는 단순 선형 projector와 다른 선택이다.
+LLM에 전달할 token 수를 제한하지만, 어떤 정보를 병목에 남길지는 학습에 의존한다.
+Encoder와 LLM을 고정하는 것은 학습할 parameter 수를 줄이는 별도의 선택이다.
+
+C-Abstractor는 시각 feature를 줄이면서 주변 위치의 관계를 활용하는 또 다른 connector다.[^honeybee]
+선형 projector가 각 patch 벡터를 개별적으로 변환하는 것과 달리, convolution으로 인접한 patch의 정보를 섞고 adaptive average pooling으로 출력의 공간 크기를 조절한다.
+예를 들어 16×16 위치의 feature를 8×8 위치로 바꾸면 LLM에 전달하는 시각 표현의 수가 256개에서 64개가 된다.
+주변 정보를 모아 token 수를 줄일 수 있지만, 작은 글자처럼 pooling 과정에서 사라진 세부가 있으면 나중에 복원하기 어렵다.
+위 숫자는 원리를 보여 주는 예이며 특정 모델의 실제 설정은 아니다.
+
+BLIP-2의 두 학습 단계와 모델의 연결은 [원논문](https://arxiv.org/html/2301.12597v3)에서 확인할 수 있다.
+
+이 연결 방식들과 관계없이 VLM에서는 vision encoder가 보고 있는 정보가 답에 충분한지와 언어 모델이 이를 충실하게 쓰는지가 별개다.
+언어 모델이 익숙한 문장 패턴을 생성하더라도 사진에 없는 물체를 그럴듯하게 언급할 수 있다.
+이미지와 무관하게도 답할 수 있는 질문만으로는 시각 정보를 실제로 활용하는지 판단하기 어렵다.
+이를 확인할 때는 이미지의 일부가 바뀔 때 정답도 달라지는 예시와 세부 위치·문자 인식 task가 도움이 된다.
+
+## 4. 해상도와 여러 이미지
+
+### 4-1. 고정 해상도의 손실과 비용
+
+ViT에 고정 크기 이미지를 넣으려면 원본을 resize하거나 crop해야 한다.
+책 페이지를 작은 정사각형으로 줄이면 전체 배치는 남지만 작은 글자가 읽히지 않을 수 있다.
+해상도를 높여 더 많은 patch를 만들면 세부 정보는 남지만 계산량과 LLM의 문맥 길이가 늘어난다.
+Patch 한 변을 그대로 두고 높이와 너비를 각각 두 배로 늘리면 patch 수는 네 배가 된다.
+전체 self-attention에서 token 쌍을 모두 계산한다면 관련 연산은 sequence 길이에 대해 제곱으로 증가한다.
+실제 비용은 attention 구현과 이미지 token을 압축하는 위치에 따라 달라진다.
+
+한 가지 선택은 전체 이미지를 줄인 그림과 고해상도 crop들을 함께 제공하는 것이다.
+전체 배치와 국소 세부를 동시에 볼 수 있지만, crop 사이에 걸친 관계를 연결해야 하고 처리할 이미지가 늘어난다.
+다른 선택은 이미지 크기와 종횡비를 고려해 입력마다 다른 수의 patch를 쓰는 dynamic resolution이다.
+Qwen2-VL은 해상도에 따라 달라지는 시각 token 수를 사용하고, 인접한 2×2 patch feature를 합쳐 LLM으로 전달할 token 수를 줄인다.[^qwen2vl]
+예컨대 224×224 이미지를 14×14 patch로 나누면 16×16개의 patch가 생기고, 2×2씩 합친 뒤에는 이미지 내용에 해당하는 64개 token이 남는다.
+이미지 경계에 쓰는 특수 token은 별도로 더해진다.
+
+Liquid AI의 **LFM3-VL-2B**는 같은 문제를 작은 모델의 배포 관점에서 생각하게 하는 사례다.[^lfm3vl]
+이 모델은 vision encoder와 projector를 거쳐 이미지·비디오 정보를 언어 모델에 전달하며 텍스트를 출력한다.
+16×16 픽셀을 하나의 patch로 만들고 인접한 2×2 patch를 하나의 시각 token으로 합친다.
+예를 들어 224×224 이미지라면 14×14개의 patch가 7×7개, 즉 49개의 시각 token이 된다.
+모델의 전체 크기는 약 19억 parameter다. 입력 해상도와 token 수가 곧 연산 비용에 영향을 주므로, 작은 모델에서도 이미지 크기를 정하는 문제가 남는다.
+
+Native resolution이라는 말은 원본에 가까운 크기나 종횡비를 활용하는 접근을 가리킬 수 있지만, 항상 원본 픽셀을 그대로 제한 없이 처리한다는 보장은 없다.
+실제 시스템에서는 최소·최대 픽셀 수나 token budget에 맞춰 크기를 조정할 수 있다.
+이 용어는 여러 modality를 통합해 학습하거나 처리하는 native multimodal이라는 말과도 구별한다.
+
+### 4-2. Interleaved 이미지와 텍스트
+
+이미지 한 장과 캡션 한 문장만 학습하면 이미지 두 장을 비교하거나 긴 문서의 그림과 주변 문장을 연결하는 형식을 충분히 경험하지 못한다.
+Interleaved 데이터는 한 sequence 안에서 텍스트와 이미지가 번갈아 나타나는 자료다.
+예를 들어 “변경 전 사진: [이미지 A]. 변경 후 사진: [이미지 B]. 어떤 부품이 추가되었나?”라는 입력에서는 이미지의 순서와 바로 앞 문장이 각각의 역할을 정한다.
+이름표가 바뀌거나 두 이미지의 순서가 바뀌면 같은 문장이라도 참조 대상이 달라질 수 있다.
+
+Flamingo는 시각 입력과 텍스트가 섞인 sequence를 다루기 위해 이미지 encoder와 언어 모델 사이에 시각 정보를 읽는 모듈을 두고, 언어 모델 층에 cross-attention을 추가한다.[^flamingo]
+이미지별 표현은 Perceiver Resampler로 정해진 개수의 시각 표현으로 바뀐다.
+Flamingo의 cross-attention에서 각 텍스트 위치는 그 앞에 나온 이미지 가운데 가장 최근 이미지에 직접 접근한다.
+그보다 앞선 이미지의 정보는 해당 이미지를 보았던 이전 텍스트 위치를 self-attention으로 참조해 간접적으로 전달될 수 있다.
+따라서 interleaved는 데이터의 **순서와 구성**을 나타내고, cross-attention이나 projector는 그 데이터를 처리하는 **구조**를 나타낸다.
+입력에 이미지 여러 장을 넣을 수 있다는 사실만으로 각 이미지의 관계를 정확하게 학습했다고 보장할 수는 없다.
+
+Qwen 계열의 **Qwen3-VL**은 이미지·텍스트가 섞인 입력을 다루면서 vision encoder의 여러 층에서 나온 feature를 언어 모델의 서로 다른 층에 전달한다.[^qwen3vl]
+이를 DeepStack이라고 부른다. 마지막 시각 feature만 입력 앞에 한 번 전달하는 대신, 중간 단계의 시각 정보도 언어 모델의 처리 과정에 더하는 설계다.
+비디오에서는 frame들을 시각 정보로 표현하면서 시간 표시를 텍스트 token으로 함께 넣는다. 예를 들어 `<3.0 seconds>`는 뒤따르는 비디오 부분의 시간 정보를 나타낸다.
+이는 이미지 여러 장이 순서대로 있다는 정보에 더해 **언제의 장면인지** 알려 주는 방식이다. 실제로 무엇을 알아내는지는 시간 표시와 함께 학습된 시각 정보에 달려 있다.
+
+웹 문서를 이용한 학습 자료에는 이미지와 주변 문장이 약하게만 연결된 경우가 있다.
+Multimodal C4는 텍스트 문서에 이미지들을 배치할 때 CLIP feature를 이용해 관련 문장과 이미지의 대응을 추정한다.[^mmc4]
+이는 문맥이 긴 이미지–텍스트 자료를 구성하는 방법의 예이며, 자동으로 만든 정렬이 언제나 정확하다는 뜻은 아니다.
+
+## 5. 화면 이해와 컴퓨터 사용
+
+### 5-1. Grounding과 행동
+
+이미지에 관한 답변은 텍스트로 끝나지만, 화면을 조작하려면 모델의 판단을 실제 행동으로 연결해야 한다.
+Visual grounding은 “저장 버튼” 같은 표현을 현재 화면의 특정 영역이나 좌표와 연결하는 일이다.
+화면을 입력받은 모델이 “저장 버튼 중심이 (320, 80)”이라고 예측했다고 하자.
+시스템은 이 값을 클릭 도구의 인자로 전달하고, 도구가 실제 환경에서 클릭을 수행한다.
+이어 새 화면을 관찰해 저장 창이 열렸는지 확인할 수 있다.
+
+Tool calling은 모델이 사용할 함수와 인자를 표현해 실행 환경에 요청하는 인터페이스다.
+CUA(computer-using agent)는 화면이나 accessibility tree 같은 관찰을 받아 클릭·키 입력·스크롤을 반복하는 전체 agent를 뜻한다.
+Accessibility tree는 화면의 버튼·입력창 같은 요소와 그 이름, 역할 등을 프로그램이 읽을 수 있도록 나타낸 구조다.
+예를 들어 화면의 버튼을 좌표로 찾는 대신 이름이 “저장”인 버튼 요소를 선택하는 데 활용할 수 있다.
+CUA가 사용하는 도구에는 좌표 클릭이 있을 수 있지만 accessibility tree에서 얻은 요소를 선택하거나, 다른 프로그램 인터페이스를 사용할 수도 있다.
+어떤 정보를 관찰하고 어떤 행동을 허용하는지는 시스템마다 다르다.
+
+### 5-2. 관찰과 실행의 반복
+
+“스프레드시트에서 매출 합계를 계산하고 파일을 저장하라”는 지시는 한 번의 이미지 설명으로 끝나지 않는다.
+Agent는 현재 앱을 확인하고, 셀을 선택해 수식을 입력하고, 계산 결과를 보고, 저장 대화상자의 경로를 확인해야 한다.
+행동 뒤 환경이 바뀌면 이전 스크린샷의 좌표가 더 이상 유효하지 않을 수 있다.
+따라서 관찰 → 행동 요청 → 실행 → 새 관찰의 반복이 중요하다.
+팝업이 화면을 가리거나 네트워크 요청이 아직 완료되지 않은 상황은 한 장의 정적인 이미지에서 보이지 않는 실행 상태다.
+
+Anthropic은 **Claude 3.5 Sonnet의 computer use**를 이런 화면 기반 상호작용의 사례로 소개했다.[^claude-cu]
+사용자의 지시를 받은 모델이 커서 이동·클릭·키 입력을 요청하고, 이를 지원하는 실행 환경이 실제 입력을 수행한다.
+모델의 행동 요청과 컴퓨터에서의 실제 실행은 다른 단계이며, 실행한 뒤에는 바뀐 화면을 다시 확인해야 한다.
+
+OSWorld는 실제 컴퓨터 환경을 이용해 이런 여러 단계의 task를 평가한다.[^osworld]
+평가에서 유창하게 “저장했다”고 말하는 것만으로는 충분하지 않다.
+파일이 실제로 원하는 위치와 내용으로 저장되었는지 실행 결과를 확인해야 한다.
+시각적 정답과 행동 성공의 차이는 모델 선택뿐 아니라 관찰, 도구 인터페이스, 상태 확인을 포함한 전체 시스템 설계의 문제다.
+
+## 6. 국내 vision encoder와 VLM
+
+카카오의 Kanana-v는 이미지와 텍스트를 입력받아 텍스트로 응답하는 vision-language model 계열이다.[^kanana-v]
+예를 들어 음식 사진과 “이 접시에 무엇이 있나?”라는 질문을 함께 받아 사진에 근거한 답을 생성한다.
+이때 이미지를 표현하는 encoder와 질문에 맞는 답을 만드는 언어 모델은 서로 다른 역할을 한다.
+
+별도로 공개된 `kanana-2-vision-encoder-medium`은 **이미지 feature를 추출하는 encoder**다.[^kanana-vision-encoder]
+텍스트 생성 모듈이 빠져 있으므로 이 encoder만으로 질문에 답하는 완성된 Kanana-v 모델을 뜻하지 않는다.
+질문 응답을 만들려면 시각 feature를 언어 모델에 연결하고 함께 사용할 수 있도록 학습해야 한다.
+
+### 6-1. Kanana-2 vision encoder의 학습
+
+2026년 공개된 Kanana-2 vision encoder의 개발 글은 이미지와 상세한 설명을 함께 주고 **다음 텍스트 token을 예측**하도록 학습하는 과정을 소개한다.[^kanana-encoder-blog]
+예를 들어 메뉴판의 글자와 가격이 설명에 들어 있다면, 정답 token을 예측하려면 이미지의 세부 정보를 활용해야 한다.
+CLIP이 이미지와 문장 표현의 유사도를 높이도록 학습하는 것과는 학습 목표가 다르다.
+이 학습에서는 외부의 사전학습된 vision encoder를 가져오지 않았지만, 통합 Transformer는 이미 학습된 Kanana-2 LLM의 가중치로 초기화했다.
+이미지 patch embedding과 설명의 텍스트 embedding을 하나의 통합 Transformer에 넣고, 이미지와 앞의 설명을 조건으로 다음 설명 token을 예측하게 한다.
+학습된 Transformer는 이후 이미지 feature를 만드는 vision encoder로 활용한다.
+이때 텍스트 token을 생성하기 위한 언어 모델 head가 없어도 이미지 표현을 추출할 수 있다.
+따라서 외부 vision encoder 없이 개발했다는 사실을 모든 가중치를 무작위로 초기화했다는 뜻으로 읽으면 안 된다.
+
+학습은 이미지의 크기와 종횡비를 달리하는 세 단계로 진행하며 각 단계에서 전체 parameter를 갱신한다.
+처음에는 이미지를 224×224로 조정하고, 다음에는 원본 종횡비를 유지하면서 최대 해상도를 640², 마지막에는 1280²으로 늘린다고 개발 글은 설명한다.
+모든 이미지를 640×640이나 1280×1280 정사각형으로 만든다는 뜻은 아니다.
+처음에는 낮은 해상도로 이미지와 텍스트를 연결하고, 이후 더 큰 이미지로 세밀한 정보를 학습하도록 하는 구성이다.
+
+경량 모델은 큰 모델에서 시작해 일부 구조를 덜어 내는 pruning과 teacher의 출력 분포를 따라 학습하는 distillation을 사용한다.
+가장 작은 Tiny에는 학생 모델이 직접 생성한 답변 경로에서 교사의 분포를 참고하는 on-policy distillation도 적용한다.
+개발 글은 상세 캡션과 학습 단계를 설명하지만 전체 데이터 구성과 수량, optimizer와 학습률 등 재현에 필요한 모든 설정을 공개하지는 않는다.
+
+`kanana-2-vision-encoder-medium`의 모델 카드는 이미지 종횡비를 유지하면서 다양한 해상도를 처리하는 native resolution과, 고해상도 처리 비용을 줄이기 위한 sliding window attention과 grouped query attention을 설명한다.
+이는 이미지 크기에 따른 정보 보존과 계산량의 균형을 실제 encoder에서 어떻게 다루는지 살펴볼 사례다.
+제공된 가중치의 이용 조건은 모델 카드의 라이선스를 별도로 확인해야 한다.
+
+### 6-2. Kanana-v-4b-hybrid의 학습
+
+2026년 공개된 개발 글의 Kanana-v-4b-hybrid는 이미지와 텍스트를 받아 응답하는 별도의 VLM이다.[^kanana-v-hybrid]
+Vision encoder와 C-Abstractor projector, 언어 모델을 결합하며, 앞의 Kanana-2 vision encoder가 이 모델의 구성 요소라고 명시된 것은 아니다.
+이 모델은 간단한 질문에는 짧게 답하고 복잡한 시각 문제에는 추론 과정을 거쳐 답하는 두 형식을 한 모델에서 다루도록 설계됐다.
+
+학습은 기초 멀티모달 학습으로 이미지 이해와 지시 이행을 익힌 다음, 긴 추론 과정에 대한 지도학습, offline RL, online RL을 순서대로 적용한다.
+Offline RL 단계는 미리 마련된 응답 자료를 이용해 모델의 출력 분포와 추론 습관을 조정한다.
+이어지는 online RL에서는 현재 모델이 문제마다 새로 응답을 생성하고, 그 결과를 평가해 갱신한다.
+새 응답을 반복해서 만드는 online 단계는 현재 모델의 출력에 맞춰 개선할 수 있지만 생성과 평가에 비용이 든다.
+Online RL 단계에서는 모델이 이미지 문제의 답을 생성하고, 정답을 검증할 수 있는 문제의 결과를 보상으로 삼아 응답을 개선한다.
+예를 들어 그래프에서 값을 찾아 계산하는 문제는 정답과 생성 결과를 비교할 수 있지만, 정답을 명확히 정하기 어려운 모든 시각 질문을 같은 방식으로 검증할 수 있는 것은 아니다.
+개발 글은 학습 단계와 데이터의 목적을 설명하지만 사용된 전체 데이터와 모든 설정을 공개한 재현용 학습 명세는 아니다.
+
+### 6-3. HyperCLOVA X의 vision encoder와 VLM
+
+네이버의 HyperCLOVA X CLIP은 이미지와 텍스트를 공유 표현 공간에 맞추도록 무작위 초기화부터 학습한 vision encoder다.[^naver-seed4b]
+그 뒤 작은 LLM과 encoder를 연결해 이미지와 텍스트를 함께 학습하고, 학습에 사용한 LLM을 떼어 낸 뒤 개선된 encoder를 HyperCLOVA X SEED 4B에 사용한다.
+이미지 전체와 문장의 대응을 배우는 CLIP 학습에 더해, 언어 모델이 필요로 하는 세부 정보를 encoder가 표현하도록 추가로 조정하는 것이다.
+이 과정에서 처음에는 낮은 해상도로 학습하고 점차 해상도를 높이며, 이미지의 작은 window 안에서 attention을 계산해 고해상도 처리 비용을 다룬다.
+
+카카오의 Kanana-2 vision encoder와 비교하면 학습 목표가 다르다.
+카카오가 설명한 encoder 학습은 이미지와 상세 설명을 함께 주고 다음 텍스트 token을 예측하는 데서 출발한다.
+네이버가 설명한 HyperCLOVA X CLIP은 이미지–텍스트 contrastive 학습에서 출발한 뒤 LLM과 연결해 추가로 학습한다.
+두 사례 모두 시각 표현을 언어와 연결하지만, 사용하는 모델과 데이터가 다르므로 목표 하나만으로 성능 차이를 판단할 수는 없다.
+
+| 사례 | 시작할 때의 주요 학습 목표 | 이후 encoder의 활용 |
+| --- | --- | --- |
+| Kanana-2 vision encoder | 이미지와 상세 설명으로 다음 텍스트 token 예측 | 학습된 Transformer를 이미지 feature 추출에 활용 |
+| HyperCLOVA X CLIP | 이미지–텍스트 쌍의 contrastive 학습 | 작은 LLM과 추가 학습한 뒤 개선된 encoder를 SEED 4B에 사용 |
+
+두 encoder 모두 단독으로 질문에 답하는 완성된 VLM은 아니다.
+
+별도로 공개된 HyperCLOVAX-SEED-Vision-Instruct-3B는 SigLIP 기반 vision encoder, C-Abstractor connector와 언어 모델을 결합한 LLaVA 계열 VLM이다.[^naver-vision3b]
+이 모델의 언어 모델은 HyperCLOVAX-SEED-Text-Base-3B에서 출발한다. 모델 카드는 SFT와 GRPO 기반 RLHF를 이용한 후속 학습과, 시각 task를 위한 V-RLHF 데이터를 사용했다고 설명한다. 다만 이 자료만으로 vision encoder와 connector의 학습 단계별 데이터나 고정 여부까지 알 수는 없다.
+
+이 모델은 텍스트·이미지·video를 입력으로 받고 텍스트를 출력한다. Video를 이해할 때는 frame별 token 수를 조절해 긴 입력의 비용을 줄인다.
+이는 video를 받는 경로가 있는 VLM의 사례이며, video의 소리까지 함께 듣거나 video를 생성한다는 뜻은 아니다.
+
+이 3B 모델의 SigLIP 기반 encoder를 SEED 4B의 자체 HyperCLOVA X CLIP과 같은 encoder로 혼동하지 않는다.
+
+[^survey]: Caffagni, D., Cocchi, F., Barsellotti, L., et al. (2024). The Revolution of Multimodal Large Language Models: A Survey. *Findings of the Association for Computational Linguistics: ACL 2024*, 13590–13618. [논문](https://aclanthology.org/2024.findings-acl.807/).
+[^vit]: Dosovitskiy, A., Beyer, L., Kolesnikov, A., et al. (2021). An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2010.11929).
+[^clip]: Radford, A., Kim, J. W., Hallacy, C., et al. (2021). Learning Transferable Visual Models From Natural Language Supervision. *International Conference on Machine Learning*. [논문](https://arxiv.org/abs/2103.00020).
+[^llava]: Liu, H., Li, C., Wu, Q., & Lee, Y. J. (2023). Visual Instruction Tuning. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2304.08485).
+[^vicuna]: Chiang, W.-L., et al. (2023). Vicuna: An Open-Source Chatbot Impressing GPT-4 with 90% ChatGPT Quality. *LMSYS Org Blog*. [글](https://lmsys.org/blog/2023-03-30-vicuna/).
+[^blip2]: Li, J., Li, D., Savarese, S., & Hoi, S. (2023). BLIP-2: Bootstrapping Language-Image Pre-training with Frozen Image Encoders and Large Language Models. *International Conference on Machine Learning*. [논문](https://arxiv.org/abs/2301.12597).
+[^qwen2vl]: Wang, P., Bai, S., Tan, S., et al. (2024). Qwen2-VL: Enhancing Vision-Language Model's Perception of the World at Any Resolution. *arXiv*. [논문](https://arxiv.org/abs/2409.12191).
+[^flamingo]: Alayrac, J.-B., Donahue, J., Luc, P., et al. (2022). Flamingo: a Visual Language Model for Few-Shot Learning. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2204.14198).
+[^mmc4]: Zhu, W., Hessel, J., Awadalla, A., et al. (2023). Multimodal C4: An Open, Billion-scale Corpus of Images Interleaved with Text. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2304.06939).
+[^osworld]: Xie, T., Zhang, D., Chen, J., et al. (2024). OSWorld: Benchmarking Multimodal Agents for Open-Ended Tasks in Real Computer Environments. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2404.07972).
+[^kanana-v]: Kakao. (2025). 이미지와 음성을 아우르는 카카오의 멀티모달 언어모델 Kanana-o 알아보기. *kakao tech*. [글](https://tech.kakao.com/posts/702).
+[^kanana-vision-encoder]: Kakao Corp. (2026). kanana-2-vision-encoder-medium. *Hugging Face model card*. [모델 카드](https://huggingface.co/kakaocorp/kanana-2-vision-encoder-medium).
+[^kanana-encoder-blog]: Kakao. (2026). 글로벌 최고 수준의 자체 비전 인코더, Kanana-2-vision-encoder 개발기. *kakao tech*. [글](https://tech.kakao.com/posts/840).
+[^kanana-v-hybrid]: Kakao. (2026). “생각하고 답변하는” 카카오의 하이브리드 멀티모달 언어모델, Kanana-v-4b-hybrid 개발기. *kakao tech*. [글](https://tech.kakao.com/posts/806).
+
+[^llama4]: Meta. (2025). The Llama 4 herd: The beginning of a new era of natively multimodal AI innovation. *Meta AI Blog*. [글](https://ai.meta.com/blog/llama-4-multimodal-intelligence/).
+[^qwen35]: Qwen Team. (2026). Qwen3.5: Towards Native Multimodal Agents. *Qwen Blog*. [글](https://qwen.ai/blog?id=qwen3.5).
+[^lfm3vl]: Liquid AI. (2026). LFM3-VL-2B. *Hugging Face model card*. [모델 카드](https://huggingface.co/LiquidAI/LFM3-VL-2B).
+[^qwen3vl]: Qwen Team. (2025). Qwen3-VL Technical Report. *arXiv*. [논문](https://arxiv.org/abs/2511.21631).
+[^claude-cu]: Anthropic. (2024). Developing a computer use model. *Anthropic*. [글](https://www.anthropic.com/news/developing-computer-use).
+[^naver-seed4b]: NAVER Cloud. (2026). 우리의 눈과 귀로 현장을 이해하다: 독자 인코더와 HyperCLOVA X SEED 4B 개발기. *CLOVA Tech Blog*. [글](https://clova.ai/en/tech-blog/seeing-and-hearing-the-field-for-ourselves-building-our-own-encoders-and-hyperclova-x-seed-4b).
+[^naver-vision3b]: NAVER Cloud. HyperCLOVAX-SEED-Vision-Instruct-3B. *Hugging Face model card*. [모델 카드](https://huggingface.co/naver-hyperclovax/HyperCLOVAX-SEED-Vision-Instruct-3B).
+[^honeybee]: Cha, J., et al. (2024). Honeybee: Locality-enhanced Projector for Multimodal LLM. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2312.06742).
