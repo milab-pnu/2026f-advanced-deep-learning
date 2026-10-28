@@ -442,14 +442,15 @@ Head를 붙이는 것보다 어려운 부분은 학습 데이터다.
 Clef도 필드 순서, 프롬프트, 스키마를 바꿔 가며 만든 합성 데이터로 학습했다.[^clef]
 
 **자기 추론의 증류.**
-Yu 등은 느린 추론의 결과를 빠른 답으로 옮기는 방법을 여러 추론 기법에 걸쳐 실험했다(Distilling System 2 into System 1).[^s2s1]
+Kahneman은 사람의 사고를 직관적으로 곧바로 답을 내는 빠른 System 1과, 단계를 밟아 의식적으로 따지는 느린 System 2로 나눴다.[^kahneman]
+Yu 등은 이 구분을 빌려, 느린 추론의 결과를 빠른 답으로 옮기는 방법을 여러 추론 기법에 걸쳐 실험했다(Distilling System 2 into System 1).[^s2s1]
 Chain-of-thought 같은 느리지만 정확한 추론(System 2)을 정답이 없는 입력에 돌려 최종 답만 남기고,
 여러 번 샘플링한 답의 다수결이나 선택지 순서를 바꿔도 답이 같은지로 믿을 만한 답만 걸러,
 모델이 중간 추론 없이 그 답을 바로 내도록(System 1) fine-tuning한다.
 여러 추론 기법이 이렇게 옮겨졌지만, GSM8K 수학 문제에서 chain-of-thought를 증류한 모델은 정확도가 7.13%에 그쳐 chain-of-thought로 푼 52.77%에 크게 못 미쳤다.
 Tacit은 이 방식을 판단에 적용했다.[^tacit]
 바탕 모델이 스스로 판단 문제를 만들고, reasoning을 켠 채 풀어 답을 얻은 뒤, 그 답을 forward 한 번에 내도록 학습했으며, 사람이 붙인 정답이나 다른 모델은 쓰지 않았다.
-TypeSafe가 Jev 같은 모델을 "System One Model"이라 부르는 것도 Kahneman의 System 1과 System 2 구분에서 온 이름이다.[^jev-blog]
+TypeSafe가 Jev 같은 모델을 "System One Model"이라 부르는 것도 같은 구분에서 온 이름이다.[^jev-blog]
 
 **학습 목표.**
 Clef는 정답 선택지에 대한 cross-entropy(label smoothing 적용)에 Brier loss를 더해 학습했다.[^clef]
@@ -561,6 +562,8 @@ calibration이 확인된 확률이라면 "0.8 이상이면 받아들인다"처�
 [^strands-results]: Strands Labs. (2026). Results. *strands-decider documentation*. [github.com](https://github.com/strands-labs/strands-decider/blob/main/evaluation/results.md).
 
 [^clef]: Chen, M., Reneau, A., & Flansburg, K. (2026). Introducing Clef: our open-source decision models, and new RL fine-tuning platform. *Cloudflare Blog*. [blog.cloudflare.com](https://blog.cloudflare.com/clef-decision-models).
+
+[^kahneman]: Kahneman, D. (2011). *Thinking, Fast and Slow*. Farrar, Straus and Giroux.
 
 [^s2s1]: Yu, P., Xu, J., Weston, J., & Kulikov, I. (2024). Distilling System 2 into System 1. [arXiv:2407.06023](https://arxiv.org/abs/2407.06023).
 
