@@ -115,8 +115,12 @@ LLaDA의 한 설정에서는 $t$를 0과 1 사이에서 균일하게 뽑고 각 
 원래 sequence를 $x_0$, 손상된 sequence를 $x_t$, mask token을 $\mathrm{M}$이라 하면 손실은 다음과 같다.
 
 $$
-L(\theta)=-\mathbb{E}_{t,x_0,x_t}\left[\frac{1}{t}\sum_{i=1}^{L}
-\mathbf{1}[x_t^i=\mathrm{M}]\log p_\theta(x_0^i\mid x_t)\right].
+L(\theta)=-\mathbb{E}_{t,x_0,x_t}\left[\ell_\theta(x_0,x_t,t)\right],
+$$
+
+$$
+\ell_\theta(x_0,x_t,t)=\frac{1}{t}\sum_{i=1}^{L}
+\mathbf{1}[x_t^i=\mathrm{M}]\log p_\theta(x_0^i\mid x_t).
 $$
 
 지시 함수 $\mathbf{1}[\cdot]$는 해당 위치가 mask이면 1, 아니면 0이므로 가려진 위치에서만 손실을 계산한다.

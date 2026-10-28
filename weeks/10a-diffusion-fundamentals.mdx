@@ -9,6 +9,19 @@ Diffusion model은 이 문제를 이미지에 점차 noise를 더하는 과정�
 처음에는 무작위 noise만 있어도, 모델의 예측을 여러 번 이용하면 데이터에 가까운 표본을 얻을 수 있다.
 여기서는 가장 널리 쓰이는 출발점인 denoising diffusion probabilistic model(DDPM)을 통해 학습과 생성의 차이, 수식의 의미를 살펴본다.[^ddpm]
 
+DDPM은 데이터에 noise를 더하는 forward diffusion과 그 역방향의 denoising을 함께 사용해 설명하는 생성 모델이다.
+이름의 diffusion은 데이터가 점점 noise로 바뀌는 과정을, denoising은 이를 거슬러 생성하는 과정을 떠올리면 된다.
+Probabilistic은 각 단계의 이동을 확률분포로 나타낸다는 뜻이다.
+
+기본 DDPM에서 **학습하는 대상은 noise에서 데이터로 돌아가는 reverse 모델**이다.
+학습할 때는 먼저 미리 정한 forward 과정으로 원본에 noise를 섞어 신경망의 입력과 예측할 정답을 만든다.
+신경망이 noise를 잘 예측하도록 parameter를 바꾸면, 그 예측으로 정의한 reverse 분포도 함께 바뀐다.
+생성할 때는 학습된 신경망을 반복 호출해 noise에서 데이터 방향으로 이동한다.
+
+수식에서 $q$는 우리가 정한 forward 과정에 따른 분포, $p_\theta$는 parameter $\theta$를 학습하는 생성 모델의 분포를 나타낸다.
+$\mathbb{E}$는 주어진 분포에서 표본을 뽑았을 때의 평균이고, $\|v\|^2$는 벡터의 각 원소를 제곱해 더한 값이다.
+확률 **밀도**는 연속값 근처에 표본이 모이는 정도다. 특정 연속값 하나가 나올 확률 자체와는 구분한다.
+
 ## 1. 데이터에서 noise로
 
 DDPM의 상태 $x_t$는 시간 단계 $t$에서의 이미지 픽셀 값 또는 latent처럼 실수 값으로 이루어진다.
@@ -18,16 +31,35 @@ Latent는 이미지를 압축해 얻은 연속 표현이다.
 이 노트의 DDPM은 연속값 상태를 다루지만 시간은 $1,2,\ldots,T$의 이산 단계로 나눈다.
 텍스트 token처럼 가능한 상태가 어휘 목록의 항목인 경우에는 discrete-state diffusion을 정의할 수 있다.
 
-<Figure src="https://upload.wikimedia.org/wikipedia/commons/5/57/Example_of_Forward_Diffusion_Models.png" alt="코뿔소 사진에 점차 noise가 섞여 원래 모습이 흐려지고 마지막에는 형태를 알아보기 어려운 잡음이 되는 과정." caption="Forward 과정의 개념도. 그림의 Z 표기는 본문의 x에 대응하며, 단계가 진행될수록 원본의 형태를 알아보기 어려워진다." source="MrAlanKoh, 원사진 Axel Tschentscher · CC BY-SA 4.0 · 변경 없음" wide />
+<Figure src="https://upload.wikimedia.org/wikipedia/commons/7/76/Image_diffusion_process.png" alt="고양이 이미지에서 오른쪽으로 갈수록 noise가 많아진다. 위 화살표는 forward diffusion을, 아래의 반대 방향 화살표는 학습된 reverse denoising을 나타낸다." caption="위 화살표는 데이터에 noise를 추가하는 forward 과정, 아래 화살표는 noise에서 데이터를 생성하는 reverse 과정을 나타낸다. 그림은 두 방향의 개념도이며 생성 과정이 특정 원본의 경로를 정확히 되짚는다는 뜻은 아니다." source="Dragweb, Image diffusion process · CC BY-SA 4.0 · 변경 없음" wide />
 
-[그림과 원사진의 출처](https://commons.wikimedia.org/wiki/File:Example_of_Forward_Diffusion_Models.png) 및 [CC BY-SA 4.0 이용 조건](https://creativecommons.org/licenses/by-sa/4.0/)을 확인할 수 있다.
-이 그림은 noise가 증가하는 모습을 보여 주는 예시이며, 생성 시 같은 사진이 반드시 복원된다는 의미는 아니다.
+[그림의 출처](https://commons.wikimedia.org/wiki/File:Image_diffusion_process.png) 및 [CC BY-SA 4.0 이용 조건](https://creativecommons.org/licenses/by-sa/4.0/)을 확인할 수 있다.
+
 ### 1-1. Forward process
 
 학습 데이터에서 뽑은 깨끗한 이미지 또는 벡터를 $x_0$이라 하자.
 Forward process는 $x_0$에 noise를 조금씩 더해 $x_1, x_2, \ldots, x_T$를 만드는 **미리 정한 확률 과정**이다.
-이 과정 자체를 신경망이 배우는 것은 아니다.
+이때 $t$는 정해진 noise 수준을 가리키는 단계 번호이며, 실제 이미지 생성에 걸리는 시간이나 신경망 parameter의 갱신 횟수가 아니다.
+여기서 다루는 기본 DDPM에서는 forward의 noise schedule을 고정하고, 이 과정을 신경망으로 학습하지 않는다.
+Forward 과정은 noisy 입력을 만드는 데 쓰이며, noise 예측 신경망의 parameter는 reverse 모델을 위해 학습한다.
 이미지라면 아래 식의 연산을 각 픽셀 값에 적용하고, 벡터라면 각 원소에 적용한다.
+
+이 과정은 **Markov chain**이다. 다음 상태의 분포가 이전 전체 경로가 아니라 현재 상태에만 의존하도록 설계한다.
+$q(x_t\mid x_0,\ldots,x_{t-1})=q(x_t\mid x_{t-1})$라는 뜻이다.
+여기서 $x_{1:T}$는 $x_1$부터 $x_T$까지의 전체 경로를 줄여 쓴 기호다.
+한 이미지에서 출발한 전체 경로의 조건부 분포는 각 단계의 전이를 곱해 표현한다.
+
+$$
+q(x_{1:T}\mid x_0)=\prod_{t=1}^{T}q(x_t\mid x_{t-1}).
+$$
+
+예를 들어 두 단계의 경로는 확률의 곱셈법칙에 따라
+$q(x_1,x_2\mid x_0)=q(x_1\mid x_0)q(x_2\mid x_1,x_0)$다.
+Markov 성질 때문에 마지막 항에서 $x_0$를 제외해 $q(x_2\mid x_1)$로 쓸 수 있다.
+
+각 전이를 작은 Gaussian 변화로 정하면 복잡한 이미지 분포도 점차 다루기 쉬운 noise 분포로 옮길 수 있다.
+동시에 한 단계의 역방향 분포를 근사하는 문제로 생성 과정을 나눌 수 있다.
+Markov 성질만으로 Gaussian이나 역방향 근사의 정확성이 보장되는 것은 아니며, 아래 전이와 충분히 작은 변화는 별도의 설계 선택이다.
 
 각 단계의 조건부 분포는 다음과 같다.
 
@@ -45,9 +77,15 @@ x_t=\sqrt{1-\beta_t}\,x_{t-1}+\sqrt{\beta_t}\,\epsilon_t,\qquad \epsilon_t\sim\m
 $$
 
 기존 신호를 조금 줄이고 독립적인 표준 Gaussian noise를 섞는 것이다.
+입력의 한 좌표가 단위 분산을 갖고 새 noise와 독립이라면, 출력의 분산은 $(1-\beta_t)\times1+\beta_t\times1=1$이다.
+신호의 계수를 줄여 noise를 더하면서도 이 분산이 유지되도록 설계한 것이다.
+실제 이미지 분포가 매 단계 Gaussian이 된다는 뜻은 아니다.
 표준 Gaussian은 평균 0, 분산 1이다.
-$\beta_t$를 곱하기 전에 제곱근을 취하는 이유는 noise의 **표준편차**가 $\sqrt{\beta_t}$이기 때문이다.
+$\beta_t$는 분산이므로, 표준 Gaussian에 곱하는 **표준편차**는 그 제곱근인 $\sqrt{\beta_t}$이다.
 $\beta_t$ 값들의 순서를 noise schedule이라 한다.
+기본 DDPM은 이 schedule을 미리 정하지만, diffusion model의 다른 설계에서는 schedule도 최적화할 수 있다.[^vdm]
+원래 DDPM의 실험에서는 $\beta_t$를 단계에 따라 선형으로 증가시켰지만, 반드시 매 단계 증가해야 하는 것은 아니다.[^ddpm]
+$\beta_t$는 **이번 한 단계에서** 추가하는 noise의 분산이지, 원본에서 출발해 지금까지 누적된 noise의 분산은 아니다.
 
 <Callout type="example">
 1차원 값 $x_{t-1}=2$, $\beta_t=0.04$이고 이번에 뽑은 $\epsilon_t=0.5$라고 하자.
@@ -57,27 +95,53 @@ Noise를 더한다는 말은 모든 값이 매번 0에 가까워진다는 뜻이
 이 예의 $0.5$는 이해를 위한 표본값이며, 매번 새 표준 Gaussian 표본을 뽑는다.
 </Callout>
 
-충분히 많은 단계를 거치면 원래 데이터의 영향이 작아지고 최종 분포는 표준 Gaussian에 가까워진다.
-얼마나 가까워지는지는 schedule과 단계 수에 달려 있으며, 유한한 단계에서 정확히 같다고 가정할 수는 없다.
+원래 데이터의 영향이 충분히 작아지도록 schedule과 단계 수를 정하면 최종 분포는 표준 Gaussian에 가까워진다.
+단계 수를 늘리는 것만으로 항상 이를 보장할 수는 없으며, 유한한 단계에서 정확히 같다고 가정할 수도 없다.
 
 ### 1-2. 임의의 단계로 한 번에 이동
 
 매번 $x_1$부터 순서대로 만들면 학습 비용이 커진다.
-그런데 forward 과정은 Gaussian이므로 원본 $x_0$에서 임의의 $x_t$를 직접 뽑을 수 있다.
+그런데 각 forward 전이는 선형 Gaussian이고 매 단계의 noise는 독립이므로, 원본 $x_0$에서 임의의 $x_t$를 직접 뽑을 수 있다.
 $\alpha_t=1-\beta_t$이고, $\bar\alpha_t=\prod_{s=1}^{t}\alpha_s$라 정의하면 다음과 같다.
 
 $$
-q(x_t\mid x_0)=\mathcal{N}\bigl(x_t;\sqrt{\bar\alpha_t}x_0,(1-\bar\alpha_t)I\bigr),
-\qquad
+q(x_t\mid x_0)=\mathcal{N}\bigl(x_t;\sqrt{\bar\alpha_t}x_0,(1-\bar\alpha_t)I\bigr).
+$$
+
+$$
 x_t=\sqrt{\bar\alpha_t}x_0+\sqrt{1-\bar\alpha_t}\epsilon,
 \quad \epsilon\sim\mathcal{N}(0,I).
 $$
 
 $\bar\alpha_t$는 원본 신호가 어느 정도 남는지 결정한다.
 이 식의 $\epsilon$은 각 단계에서 쓴 noise 하나가 아니라 그 효과를 합쳐 표현한 표준 Gaussian 표본이다.
+실제로 원본 신호에 더해지는 항은 $\epsilon$에 크기를 곱한 $\sqrt{1-\bar\alpha_t}\epsilon$이다.
 시간이 커져 $\bar\alpha_t$가 작아지면 원본의 계수는 작아지고 noise의 계수는 커진다.
 
-<Details summary="두 단계를 합치는 과정">
+$0<\beta_t<1$이면 각 $\alpha_t=1-\beta_t$가 0과 1 사이이므로, 곱인 $\bar\alpha_t$는 단계가 진행될수록 감소한다.
+따라서 $x_0$를 고정했을 때 **누적 noise의 분산** $1-\bar\alpha_t$는 증가한다.
+이는 각 단계의 $\beta_t$가 증가한다는 말과 다르다.
+예를 들어 이해를 위해 $\beta_1=0.1$, $\beta_2=0.05$로 정하면 $\beta$는 감소하지만, $\bar\alpha_1=0.9$, $\bar\alpha_2=0.9\times0.95=0.855$다.
+누적 noise 분산은 각각 $0.1$, $0.145$로 증가한다.
+이는 분포의 분산에 관한 설명이며, 매번 무작위로 뽑은 개별 이미지가 눈으로 볼 때 반드시 더 흐려진다는 보장은 아니다.
+
+이 식을 이용한 기본 DDPM의 **학습 한 번**은 다음 순서로 진행된다.[^ddpm]
+
+1. 데이터셋에서 원본 $x_0$를 뽑고, $1$부터 $T$ 사이의 단계 $t$를 균등하게 뽑는다.
+2. 독립적으로 표준 Gaussian noise $\epsilon$을 뽑고, 위 식에 $x_0$, $t$, $\epsilon$을 넣어 $x_t$를 직접 만든다.
+3. 신경망에 $(x_t,t)$를 입력해 표준 noise의 예측값 $\epsilon_\theta(x_t,t)$를 얻는다.
+4. 뽑아 둔 정답 $\epsilon$과 예측의 제곱 오차를 계산하고, 그 오차가 작아지도록 신경망의 parameter $\theta$를 갱신한다.
+
+따라서 학습할 때 $x_1$부터 $x_t$까지 실제로 모두 만들거나 역방향 단계를 실행할 필요는 없다.
+신경망이 예측하는 대상은 크기가 조절된 전체 noise 항이 아니라 표준화된 $\epsilon$이다.
+같은 $x_t$가 여러 원본과 noise 조합에서 나올 수 있으므로 신경망이 매 표본의 noise를 완벽하게 맞힐 수 있다는 뜻은 아니다.
+
+Gaussian 표본을 평균과 표준편차, 표준 Gaussian 표본의 결정적 조합으로 표현하는 방법을 **reparameterization trick**이라 한다.[^reparam]
+일반적으로 $\epsilon\sim\mathcal{N}(0,I)$일 때 $z=\mu+\sigma\epsilon$은 평균 $\mu$, 공분산 $\sigma^2I$인 Gaussian 표본이다.
+위의 $x_t$ 식은 $\mu=\sqrt{\bar\alpha_t}x_0$, $\sigma=\sqrt{1-\bar\alpha_t}$를 사용한 사례다.
+일반적으로 평균이나 표준편차가 학습 대상이면 무작위성을 별도로 뽑은 $\epsilon$에 두고 결정적 식을 통해 그 parameter의 gradient를 계산할 수 있다.
+여기서 기본 DDPM의 forward schedule은 고정되어 있으므로 이 gradient가 schedule을 학습한다는 뜻은 아니다.
+여기서는 이 표현으로 $x_t$를 한 번에 만들고, 직접 뽑은 $\epsilon$을 신경망의 정답으로 사용할 수 있다는 점이 핵심이다.
 
 $x_1=\sqrt{\alpha_1}x_0+\sqrt{1-\alpha_1}\epsilon_1$을 두 번째 단계 식에 대입한다.
 
@@ -89,7 +153,11 @@ $$
 합친 noise의 분산은 $\alpha_2(1-\alpha_1)+(1-\alpha_2)=1-\alpha_1\alpha_2$이다.
 따라서 같은 분포를 하나의 표준 Gaussian $\epsilon$으로 표현하면 $x_2=\sqrt{\alpha_1\alpha_2}x_0+\sqrt{1-\alpha_1\alpha_2}\epsilon$이 된다.
 이 논리를 반복하면 임의의 $t$에 대한 식을 얻는다.
-</Details>
+
+예를 들어 $\bar\alpha_t=0.64$라면 $x_t=0.8x_0+0.6\epsilon$이다.
+$x_0=2$이고 한 번 뽑은 $\epsilon=0.5$라면 $x_t=1.9$다.
+이는 $t$까지 각 전이를 따로 실행하지 않고도 **같은 조건부 분포**에서 $x_t$를 뽑는 방법이다.
+직접 뽑은 $\epsilon$ 하나로 중간 경로 전체가 정해지는 것은 아니다.
 
 ## 2. Noise에서 데이터로
 
@@ -100,8 +168,11 @@ $$
 이때 생성된 $x_0$는 특정 학습 이미지의 원본을 복구한 결과라는 뜻이 아니다.
 Forward 식을 안다고 해서 주어진 $x_t$에 대응하는 이전 상태가 하나로 정해지지는 않는다.
 다른 이미지와 다른 noise 조합이 같은 $x_t$를 만들 수 있기 때문이다.
+필요한 것은 하나의 원래 경로를 결정하는 역함수가 아니라 데이터 분포에 따른 조건부 분포 $q(x_{t-1}\mid x_t)$다.
+이 분포는 가능한 원본들을 모두 고려해야 하므로 일반적으로 직접 계산하기 어렵다.
 
 DDPM은 역방향 분포를 신경망이 정하는 Gaussian으로 근사한다.
+아래 식은 $t\geq2$의 중간 단계에서 사용하는 형태다.
 
 $$
 p_\theta(x_{t-1}\mid x_t)=\mathcal{N}\bigl(x_{t-1};\mu_\theta(x_t,t),\Sigma_\theta(x_t,t)\bigr).
@@ -112,120 +183,345 @@ $\theta$는 모델의 학습 가능한 parameter다.
 분산을 고정하는 선택도 있고 학습하는 선택도 있다.
 학습된 평균과 선택한 분산으로 이전 단계의 표본을 뽑고 이를 반복하는 것이 DDPM의 생성 과정이다.
 
-### 2-2. Noise 예측을 배우는 이유
+### 2-2. 원본을 아는 경우의 역방향 분포
 
-훈련 시에는 $x_0$와 우리가 뽑은 $\epsilon$을 모두 알고 있으므로 $x_t$를 만든 뒤 모델이 그 noise를 맞히도록 할 수 있다.
-Noise 예측 신경망을 $\epsilon_\theta(x_t,t)$라 하면 기본적인 학습 손실은 다음과 같다.
+학습할 때는 forward 과정에 넣은 원본 $x_0$를 알고 있다.
+이때는 $x_t$와 $x_0$가 함께 주어졌을 때 한 단계 전 상태가 어디에 있을지 나타내는 조건부 분포 $q(x_{t-1}\mid x_t,x_0)$를 계산할 수 있다.
+이를 **posterior**라고 부르자.
+여기서 조건으로 주는 $x_0$는 실제 학습 이미지이고, 생성 모델에 들어가는 입력은 아니다.
 
-$$
-L_{\mathrm{simple}}=\mathbb{E}_{x_0,t,\epsilon}\left[\left\|\epsilon-\epsilon_\theta\left(\sqrt{\bar\alpha_t}x_0+\sqrt{1-\bar\alpha_t}\epsilon,t\right)\right\|^2\right].
-$$
-
-한 번의 학습 단계에서 데이터 $x_0$, 시간 $t$, Gaussian noise $\epsilon$을 뽑고 $x_t$를 만든다.
-모델이 예측한 noise와 실제로 넣은 noise의 평균 제곱 오차를 줄이도록 $\theta$를 갱신한다.
-모든 단계의 역과정을 학습 때 매번 연속 실행할 필요가 없다는 점이 중요하다.
-예측이 완벽하지 않아도 많은 데이터와 noise 수준을 거치며 유용한 역방향 예측을 학습한다.
-
-예측한 noise를 앞의 식에 대입해 원본의 추정값을 구할 수 있다.
+Bayes 규칙은 가능한 이전 상태 $x_{t-1}$에 대해 다음을 말한다.
 
 $$
-\hat{x}_0=\frac{x_t-\sqrt{1-\bar\alpha_t}\,\epsilon_\theta(x_t,t)}{\sqrt{\bar\alpha_t}}.
+q(x_{t-1}\mid x_t,x_0)
+=\frac{q(x_t\mid x_{t-1})q(x_{t-1}\mid x_0)}{q(x_t\mid x_0)}.
 $$
 
-예를 들어 $\bar\alpha_t=0.64$, $x_t=1.9$, 예측 noise가 $0.5$라면 $\hat{x}_0=(1.9-0.6\times0.5)/0.8=2$다.
-실제 생성에서는 원본이 없으므로 $2$가 정답인지 확인할 수 없고, 이 추정에도 모델 오차가 남는다.
-
-### 2-3. 학습 목적과 역방향 평균
-
-원본 $x_0$를 알고 있다면 forward process의 Gaussian 성질로 $q(x_{t-1}\mid x_t,x_0)$를 계산할 수 있다.
-생성 시에는 $x_0$가 없으므로 그 자리에 신경망의 noise 예측에서 구한 $\hat{x}_0$를 이용한다.
-DDPM의 noise parameterization에서 역방향 평균은 다음과 같이 쓸 수 있다.
+분자는 원본에서 그 이전 상태가 나올 가능성과, 그 상태에서 현재 $x_t$가 나올 가능성을 곱한 것이다.
+분모는 모든 후보의 밀도를 합쳐 전체가 1이 되게 하는 정규화 항이며, $x_{t-1}$의 후보를 바꾸어도 값이 같다.
+분자의 두 항은 이미 알고 있는 Gaussian이다.
+이들을 곱해 정리하면 $t\geq2$에서 posterior도 Gaussian이 된다.[^ddpm]
 
 $$
-\mu_\theta(x_t,t)=\frac{1}{\sqrt{\alpha_t}}\left(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\epsilon_\theta(x_t,t)\right).
+q(x_{t-1}\mid x_t,x_0)
+=\mathcal{N}\!\left(x_{t-1};\tilde\mu_t(x_t,x_0),\tilde\beta_t I\right),
 $$
 
-역방향 한 단계는 이 평균을 중심으로 다시 noise를 뽑아 다음 상태를 만든다.
-분산을 $\sigma_t^2 I$로 고정하는 경우, $t>1$에서 표준 Gaussian 표본 $z$를 뽑아 다음과 같이 계산한다.
-
 $$
-x_{t-1}=\mu_\theta(x_t,t)+\sigma_t z,\qquad z\sim\mathcal{N}(0,I).
-$$
-
-마지막 단계에서는 추가 noise를 넣지 않는 처리를 사용한다.
-이 식의 $z$는 현재 상태에서 예측한 $\epsilon_\theta$와 구별되는 새 표본이다.
-예를 들어 $x_t=1.9$, $\alpha_t=0.9$, $\bar\alpha_t=0.64$, 예측 noise가 0.5라면 평균은 약 1.915다.
-$\sigma_t=0.1$이고 이번에 뽑은 $z=0.5$라면 $x_{t-1}\approx1.965$가 된다.
-이는 과정을 보여 주는 가상 수치이며, 같은 평균이라도 뽑은 $z$에 따라 결과가 달라진다.
-
-즉 신경망이 예측한 noise는 단순히 현재 입력에서 한 번 빼고 끝나는 결과가 아니다.
-시간별 계수와 함께 역방향 분포의 평균을 만들고, 그 분포에서 다음 상태를 뽑는 데 쓰인다.
-학습 손실은 원래 확률 모델의 variational lower bound에서 유도한 항들과 연결되지만, 위의 단순 평균 제곱 오차는 그 항들의 가중치를 바꾸어 쓰는 학습 목표다.[^ddpm]
-따라서 두 식이 조건 없이 언제나 정확히 같은 수치라고 여기면 안 된다.
-
-<Details summary="Posterior에서 noise 예측 손실까지">
-
-$t\geq2$에서 Bayes의 규칙과 forward Gaussian을 결합하면 $q(x_{t-1}\mid x_t,x_0)$도 Gaussian이다.
-중간 상태를 $u=x_{t-1}$로 놓으면, 현재 상태를 관측했을 때 $u$의 확률은 다음 두 항의 곱에 비례한다.
-
-$$
-q(u\mid x_t,x_0)\propto q(x_t\mid u)q(u\mid x_0).
+\tilde\mu_t(x_t,x_0)=
+\frac{\sqrt{\bar\alpha_{t-1}}\beta_t}{1-\bar\alpha_t}x_0+
+\frac{\sqrt{\alpha_t}(1-\bar\alpha_{t-1})}{1-\bar\alpha_t}x_t.
 $$
 
-첫 항은 후보 $u$에서 $x_t$가 나올 가능성이고 둘째 항은 원본 $x_0$에서 $u$에 도달할 가능성이다.
-Gaussian의 정규화 상수처럼 $u$에 의존하지 않는 부분을 잠시 제외하면 음의 log 밀도의 $u$ 관련 항은 다음과 같다.
+$$
+\tilde\beta_t=\frac{1-\bar\alpha_{t-1}}{1-\bar\alpha_t}\beta_t.
+$$
+
+$\bar\alpha_0=1$로 정의한다.
+이 평균은 원본과 현재 noisy 상태를 시간에 따라 가중한 값이다.
+원본을 모르는 생성 시점에는 이 평균을 직접 사용할 수 없지만, 학습 시에는 모델이 따라야 할 비교 대상으로 사용할 수 있다.
+원본을 모르는 역방향 분포는 이 posterior를 현재 $x_t$에 도달할 수 있는 원본들에 대해 평균한 것이다.
+
+$$
+q(x_{t-1}\mid x_t)=
+\int q(x_{t-1}\mid x_t,x_0)\,q(x_0\mid x_t)\,dx_0.
+$$
+
+즉 하나의 원본에 대한 posterior와 실제로 필요한 역방향 분포는 다르다.
+학습에서는 다양한 원본에서 만든 posterior를 비교 대상으로 삼아, $x_t$만 입력받는 모델이 그 분포를 근사하도록 한다.
+예를 들어 가능한 원본이 $-2$와 $2$뿐이고 각각 같은 비율로 등장한다고 하자.
+이처럼 원본이 이산적인 예에서는 위 적분을 두 원본에 대한 합으로 바꾼다.
+같은 noise schedule을 거쳐 $x_t=0$이 관측되면 두 원본이 주는 likelihood는 대칭이므로, 이 위치의 원본에 대한 posterior 가중치는 각각 절반이다.
+따라서 $q(x_{t-1}\mid x_t=0)$은 두 원본에 조건을 건 posterior를 반씩 섞은 분포다.
+이러한 혼합 분포가 정확히 하나의 Gaussian인 것은 아니므로, 모델의 Gaussian은 근사라는 점도 알 수 있다.
+$t=1$에서는 조건에 $x_0$가 이미 들어 있어 posterior가 $x_0$에 집중되므로 위의 양의 분산을 가진 Gaussian으로 다루지 않고 마지막 복원 항을 따로 둔다.
+
+<Callout type="example">
+1차원에서 $\alpha_1=\alpha_2=0.8$, $x_0=2$, $x_2=1.9$라고 하자.
+$\bar\alpha_1=0.8$, $\bar\alpha_2=0.64$, $\beta_2=0.2$이므로 posterior 평균은 $\tilde\mu_2\approx0.497x_0+0.497x_2\approx1.938$이고 분산은 $\tilde\beta_2=0.2^2/0.36\approx0.111$이다.
+원본과 현재 상태를 알더라도 실제 $x_1$이 정확히 하나로 결정되는 것이 아니라, 이 평균 주변의 분포로 표현된다.
+</Callout>
+
+<Details summary="Gaussian을 곱해 posterior 구하기">
+
+$u=x_{t-1}$로 놓고, $u$에 의존하지 않는 정규화 상수를 잠시 제외한다.
+Bayes 식의 두 Gaussian에 음의 log를 취하면 다음과 같다.
 
 $$
 \frac{\|x_t-\sqrt{\alpha_t}u\|^2}{2\beta_t}
 +\frac{\|u-\sqrt{\bar\alpha_{t-1}}x_0\|^2}{2(1-\bar\alpha_{t-1})}.
 $$
 
-이 식을 $u$의 이차식으로 전개해 완전제곱으로 묶으면 $\|u-\tilde\mu_t\|^2/(2\tilde\beta_t)$가 된다.
-예를 들어 $u$의 제곱항 계수는 $\frac12[\alpha_t/\beta_t+1/(1-\bar\alpha_{t-1})]$이다.
-이 계수는 $1/(2\tilde\beta_t)$이므로, 대괄호 안의 역수가 posterior의 분산 $\tilde\beta_t$다.
-$\bar\alpha_t=\alpha_t\bar\alpha_{t-1}$를 대입해 분산과 평균을 정리한다.
-$\bar\alpha_0=1$로 두면 평균과 분산은 다음과 같다.
+$u$의 이차항 계수의 두 배를 $A$, 일차항의 계수를 $-b$라 놓으면 식은 $\frac12 A\|u\|^2-b^\mathsf{T}u+\text{상수}$다.
 
 $$
-\tilde\mu_t=\frac{\sqrt{\bar\alpha_{t-1}}\beta_t}{1-\bar\alpha_t}x_0+
-\frac{\sqrt{\alpha_t}(1-\bar\alpha_{t-1})}{1-\bar\alpha_t}x_t,
-\qquad
-\tilde\beta_t=\frac{1-\bar\alpha_{t-1}}{1-\bar\alpha_t}\beta_t.
+A=\frac{\alpha_t}{\beta_t}+\frac{1}{1-\bar\alpha_{t-1}}.
 $$
 
-첫 항은 깨끗한 원본, 둘째 항은 현재의 noisy 상태를 사용한다.
-Forward 식의 $x_0=(x_t-\sqrt{1-\bar\alpha_t}\epsilon)/\sqrt{\bar\alpha_t}$를 평균에 대입하면 다음과 같다.
-
 $$
-\tilde\mu_t=\frac{1}{\sqrt{\alpha_t}}\left(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\epsilon\right).
+b=\frac{\sqrt{\alpha_t}}{\beta_t}x_t+
+\frac{\sqrt{\bar\alpha_{t-1}}}{1-\bar\alpha_{t-1}}x_0.
 $$
 
-이 식에서 실제 noise $\epsilon$을 모델 예측 $\epsilon_\theta$로 바꾸면 본문의 역방향 평균이 된다.
-학습의 출발점은 실제 데이터 $x_0$의 모델 확률을 높이는 것이다.
-Forward 경로를 보조 분포로 사용하고 Jensen 부등식을 적용하면 다음의 negative log likelihood 상한을 얻는다.
-여기서 $q(x_{1:T}\mid x_0)$는 forward 단계들의 결합 분포이고, $p_\theta(x_{0:T})$는 시작 noise의 prior와 reverse 단계들을 곱한 결합 분포다.
-
-$$
--\log p_\theta(x_0)\leq
-\mathbb{E}_{q(x_{1:T}\mid x_0)}\!\left[
-\log\frac{q(x_{1:T}\mid x_0)}{p_\theta(x_{0:T})}\right].
-$$
-
-오른쪽은 negative ELBO이며, 모든 중간 상태를 직접 적분하는 대신 forward 과정에서 표본을 뽑아 추정할 수 있다.
-Forward와 reverse의 곱을 Bayes 규칙으로 정리하면 마지막 prior의 KL, 중간 단계마다의 KL, 첫 단계의 복원 항으로 나뉜다.
-그중 중간 단계 항은 참 posterior와 모델 역방향 분포 사이의 KL divergence다.
-두 Gaussian의 KL에서 평균에 관한 부분은 두 평균 차이의 제곱을 모델 분산으로 나눈 값이다.
-모델 분산이 $\sigma_t^2 I$로 고정되면 평균에 관한 KL 항은 다음의 가중 noise 예측 오차로 쓸 수 있다.
-
-$$
-L_{t-1}=\mathbb{E}\left[\frac{\beta_t^2}{2\sigma_t^2\alpha_t(1-\bar\alpha_t)}
-\left\|\epsilon-\epsilon_\theta(x_t,t)\right\|^2\right]+C.
-$$
-
-$C$는 이 설정에서 평균 예측의 parameter $\theta$에 의존하지 않는 항이다.
-단순 손실은 단계마다 달라지는 이 가중치를 제거한다.
-첫 단계의 데이터 복원 항과 마지막 prior 항은 별도로 취급하므로 이 중간 단계 식에 그대로 합치지 않는다.
+이를 $\frac{A}{2}\|u-b/A\|^2+\text{상수}$로 묶는다.
+따라서 Gaussian의 평균은 $b/A$, 좌표별 분산은 $1/A$다.
+$\bar\alpha_t=\alpha_t\bar\alpha_{t-1}$와 $\beta_t=1-\alpha_t$를 대입하면 위의 $\tilde\mu_t$와 $\tilde\beta_t$를 얻는다.
 </Details>
+
+### 2-3. Posterior 평균에서 noise 예측으로
+
+원본에서 임의 단계로 이동하는 식을 $x_0$에 대해 정리한다.
+
+$$
+x_t=\sqrt{\bar\alpha_t}x_0+\sqrt{1-\bar\alpha_t}\epsilon.
+$$
+
+$$
+x_0=\frac{x_t-\sqrt{1-\bar\alpha_t}\epsilon}{\sqrt{\bar\alpha_t}}.
+$$
+
+여기서 $\epsilon$은 $x_0$에서 $x_t$까지 누적된 noise를 하나의 표준 Gaussian으로 표현한 값이다.
+이 $x_0$를 posterior 평균에 대입하면 아래와 같이 정리된다.
+
+$$
+\tilde\mu_t(x_t,x_0)
+=\frac{1}{\sqrt{\alpha_t}}
+\left(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\epsilon\right).
+$$
+
+<Details summary="Posterior 평균을 noise로 정리하는 계산">
+
+posterior 평균에서 $x_0$와 $x_t$의 계수를 각각 $A_t$, $B_t$로 놓자.
+
+$$
+A_t=\frac{\sqrt{\bar\alpha_{t-1}}\beta_t}{1-\bar\alpha_t},
+\qquad
+B_t=\frac{\sqrt{\alpha_t}(1-\bar\alpha_{t-1})}{1-\bar\alpha_t}.
+$$
+
+$x_0$의 식을 $A_tx_0+B_tx_t$에 대입하고 $x_t$와 $\epsilon$을 각각 묶는다.
+
+$$
+\tilde\mu_t=
+\left(\frac{A_t}{\sqrt{\bar\alpha_t}}+B_t\right)x_t
+-\frac{A_t\sqrt{1-\bar\alpha_t}}{\sqrt{\bar\alpha_t}}\epsilon.
+$$
+
+$\bar\alpha_t=\alpha_t\bar\alpha_{t-1}$과 $\beta_t=1-\alpha_t$를 사용하면 첫 괄호는 $1/\sqrt{\alpha_t}$가 된다.
+noise의 계수는 $\beta_t/[\sqrt{\alpha_t}\sqrt{1-\bar\alpha_t}]$로 정리된다.
+이 두 계수를 다시 대입하면 위의 결과다.
+</Details>
+
+따라서 $x_t$와 $t$를 알고 있을 때 posterior 평균을 정하는 데 필요한 나머지 정보는 이 표현의 $\epsilon$이다.
+방금 계산한 예에서는 $1.9=0.8(2)+0.6\epsilon$이므로 누적 noise는 $\epsilon=0.5$다.
+위 식에 $\alpha_2=0.8$, $\beta_2=0.2$, $\bar\alpha_2=0.64$와 함께 넣으면 같은 평균 약 $1.938$을 얻는다.
+원본으로 표현한 것과 noise로 표현한 것은 같은 posterior 평균을 두 방식으로 쓴 것이다.
+모델이 $x_t$와 $t$에서 noise를 예측하도록 $\epsilon_\theta(x_t,t)$를 정의하고, 실제 $\epsilon$ 대신 이 예측을 넣는다.
+이 신경망은 $x_t$와 같은 크기의 noise 벡터를 출력하며 원본 $x_0$는 입력받지 않는다.
+예를 들어 이미지 입력이 높이 $H$, 너비 $W$, 채널 $C$를 가진 $H\times W\times C$ 배열이면 noise 예측의 크기도 같다.
+이미지 DDPM에서는 예를 들어 이미지의 공간 크기를 줄였다가 다시 키우고, 같은 해상도의 정보를 건너뛰어 전달하는 U-Net을 사용할 수 있다.
+시간 단계 $t$는 embedding으로 바꾸어 신경망의 여러 블록에 전달하므로 같은 신경망이 서로 다른 noise 수준을 구분할 수 있다.[^ddpm]
+
+$$
+\mu_\theta(x_t,t)=\frac{1}{\sqrt{\alpha_t}}
+\left(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\epsilon_\theta(x_t,t)\right).
+$$
+
+이것이 역방향 Gaussian의 평균을 정하는 한 가지 **parameterization**이다.
+따라서 $\epsilon_\theta$의 parameter $\theta$를 학습하는 일은 위 평균을 통해 $p_\theta(x_{t-1}\mid x_t)$를 학습하는 일이다.
+신경망의 직접 출력은 noise 예측이고, reverse 평균은 그 예측을 정해진 식에 넣어 계산한다.
+학습에서는 예측과 뽑아 둔 noise의 오차로 신경망을 갱신하고, 생성에서는 같은 신경망의 예측을 이 평균 식에 반복해서 사용한다.
+평균이나 $x_0$를 직접 예측하는 방식도 가능하다.
+하나의 $x_t$에 여러 원본과 noise가 대응할 수 있으므로, 신경망이 매 표본의 실제 noise를 완벽하게 복원할 수 있다고 가정하지 않는다.
+
+<Callout type="example">
+$\bar\alpha_t=0.64$, $x_t=1.9$이고 신경망이 $\epsilon_\theta=0.5$를 예측했다고 하자.
+원본의 추정값은 $\hat x_0=(1.9-0.6\times0.5)/0.8=2$다.
+생성할 때는 실제 원본이 없으므로 이것이 정답인지 확인할 수 없다.
+또한 이 예측값을 바로 최종 결과로 쓰는 대신, 위의 $\mu_\theta$에 넣어 한 단계 전 상태의 분포를 만든다.
+</Callout>
+
+### 2-4. ELBO와 학습 목적
+
+연속값 데이터를 모델링할 때 학습 데이터의 likelihood인 밀도 $p_\theta(x_0)$를 키우고 싶다.
+그러나 생성 모델의 결합 분포를 $x_1,\ldots,x_T$에 대해 모두 적분해야 하므로 likelihood를 직접 계산하기 어렵다.
+이 결합 분포는 시작 prior와 모델의 역방향 전이를 곱한 것이다.
+
+$$
+p_\theta(x_{0:T})=p(x_T)\prod_{t=1}^{T}p_\theta(x_{t-1}\mid x_t).
+$$
+
+계산할 수 있는 forward 경로 분포 $q(x_{1:T}\mid x_0)$를 이용하면 log likelihood의 하한인 ELBO(evidence lower bound)를 얻는다.
+이 하한을 키우는 것은 **negative ELBO**를 줄이는 것과 같다.
+먼저 고정된 데이터 $x_0$ 하나에 대해 그 관계를 적으면 다음과 같다.
+
+$$
+\begin{aligned}
+-\log p_\theta(x_0)&\leq L_{\mathrm{VLB}}(x_0),\\
+L_{\mathrm{VLB}}(x_0)&=\mathbb{E}_{q(x_{1:T}\mid x_0)}
+\left[\log\frac{q(x_{1:T}\mid x_0)}{p_\theta(x_{0:T})}\right].
+\end{aligned}
+$$
+
+$L_{\mathrm{VLB}}(x_0)=-\operatorname{ELBO}(x_0)$이며, ELBO는 log likelihood의 하한이고 그 음수는 negative log likelihood의 상한이다.
+이 부등식은 Jensen 부등식에서 나온다.
+$-\log p_\theta(x_0)$를 정확히 최소화하는 대신 계산과 표본 추출이 가능한 상한을 최적화하는 것이다.
+모든 $x_0$에 대한 학습 목적은 데이터 분포에서 이 상한을 평균한 값이다.
+
+<Details summary="Jensen 부등식으로 상한 얻기">
+
+$q=q(x_{1:T}\mid x_0)$, $p=p_\theta(x_{0:T})$로 줄여 쓰면, $p_\theta(x_0)$는 중간 상태에 대해 $p$를 적분한 값이다.
+$q$를 곱했다 나누어 그 적분을 기댓값으로 바꾼다.
+
+$$
+\begin{aligned}
+\log p_\theta(x_0)
+&=\log\int q\,\frac{p}{q}\,dx_{1:T}\\
+&=\log\mathbb{E}_{q}\!\left[\frac{p}{q}\right]
+\geq\mathbb{E}_{q}\!\left[\log\frac{p}{q}\right].
+\end{aligned}
+$$
+
+$\log$는 오목 함수이므로 기댓값의 log가 log의 기댓값 이상이다.
+마지막 항이 ELBO다.
+양변에 마이너스를 붙이면 부등호 방향이 바뀌어 본문의 negative ELBO 상한을 얻는다.
+</Details>
+
+두 분포 $q$와 $p$의 차이를 측정하는 KL divergence는 다음과 같다.
+
+$$
+D_{\mathrm{KL}}(q\|p)=\mathbb{E}_{q}\!\left[\log\frac{q}{p}\right]\geq0.
+$$
+
+$q$를 기준으로 log 밀도 비율을 평균하며, 두 분포가 같으면 0이다.
+일반적으로 순서를 바꾸면 값도 달라지므로 $q\|p$의 방향을 구분한다.
+하한과 실제 log likelihood 사이의 차이도 KL divergence로 표현된다.
+
+$$
+\begin{aligned}
+&\log p_\theta(x_0)-\operatorname{ELBO}(x_0)\\
+&\quad=D_{\mathrm{KL}}\!\left(q(x_{1:T}\mid x_0)\,\|\,p_\theta(x_{1:T}\mid x_0)\right).
+\end{aligned}
+$$
+
+오른쪽의 $p_\theta(x_{1:T}\mid x_0)$는 생성 모델이 정의하는 중간 경로의 posterior다.
+이 KL이 0이면 하한이 실제 log likelihood와 같고, 그렇지 않으면 차이가 남는다.
+따라서 하한을 높이는 것은 likelihood를 높이기 위한 대리 목표이며, 한 번의 갱신마다 실제 likelihood도 반드시 높아진다는 보장은 없다.
+
+이 상한을 forward와 reverse의 단계별 분포로 분해하면 다음 세 종류의 항이 나온다.[^ddpm]
+수식을 짧게 쓰기 위해 중간 단계의 posterior와 모델 분포 사이의 KL을 $K_t(x_t,x_0)$라 두자.
+
+$$
+\begin{aligned}
+K_t(x_t,x_0)={}&D_{\mathrm{KL}}\!\left(
+q(x_{t-1}\mid x_t,x_0)\right.\\
+&\left.\,\|\,p_\theta(x_{t-1}\mid x_t)\right).
+\end{aligned}
+$$
+
+$$
+\begin{aligned}
+L_{\mathrm{VLB}}(x_0)={}&D_{\mathrm{KL}}\!\left(q(x_T\mid x_0)\,\|\,p(x_T)\right)\\
+&+\sum_{t=2}^{T}\mathbb{E}_{q(x_t\mid x_0)}[K_t(x_t,x_0)]\\
+&-\mathbb{E}_{q(x_1\mid x_0)}[\log p_\theta(x_0\mid x_1)].
+\end{aligned}
+$$
+
+첫 항은 forward 끝의 분포와 생성 출발 분포의 차이다.
+중간 항은 원본을 알 때 계산할 수 있는 posterior와 원본 없이 작동하는 모델의 역방향 분포를 비교한다.
+마지막 항은 $x_1$에서 실제 $x_0$를 복원할 가능성이다.
+Forward schedule과 prior를 고정하면 첫 항은 모델 parameter $\theta$에 의존하지 않는다.
+
+<Details summary="단계별 KL이 나오는 이유">
+
+Bayes 규칙을 변형하면 $t\geq2$에서 다음이 성립한다.
+
+$$
+q(x_t\mid x_{t-1})
+=\frac{q(x_{t-1}\mid x_t,x_0)\,q(x_t\mid x_0)}
+{q(x_{t-1}\mid x_0)}.
+$$
+
+이를 $q(x_{1:T}\mid x_0)$의 전이 곱에 넣으면 인접한 주변 분포 $q(x_t\mid x_0)$들이 서로 약분된다.
+마지막에 $q(x_T\mid x_0)$와 $q(x_1\mid x_0)$이 남으며, $q(x_1\mid x_0)$은 첫 전이와 상쇄된다.
+남은 posterior와 모델의 역방향 전이를 각각 짝지어 log 비율의 기댓값을 취하면 중간 KL들이 된다.
+끝에 남는 prior의 log 비율이 첫 KL이고, 모델의 $p_\theta(x_0\mid x_1)$이 복원 항이다.
+</Details>
+
+### 2-5. KL에서 noise 오차로
+
+이제 중간 단계 하나를 자세히 보자.
+$t\geq2$에서 posterior의 분산은 $\tilde\beta_t I$이고 모델의 분산을 학습하지 않는 $\sigma_t^2 I$로 고정하자.
+두 Gaussian 사이의 KL을 전개하면, 평균과 관련된 부분은 다음과 같다.
+
+$$
+K_t(x_t,x_0)=\frac{\|\tilde\mu_t-\mu_\theta\|^2}{2\sigma_t^2}+C_t.
+$$
+
+$C_t$는 분산과 차원에 관한 항이며, 이 고정 분산 설정에서는 $\theta$에 의존하지 않는다.
+예를 들어 상태가 $d$차원일 때 $C_t=\frac d2\left[\tilde\beta_t/\sigma_t^2-1+\log(\sigma_t^2/\tilde\beta_t)\right]$다.
+두 분포의 분산도 서로 다를 수 있으므로 $C_t$가 반드시 0인 것은 아니다.
+두 평균을 noise로 표현한 식에 넣으면 $x_t$ 항은 서로 지워진다.
+
+$$
+\tilde\mu_t-\mu_\theta
+=-\frac{\beta_t}{\sqrt{\alpha_t}\sqrt{1-\bar\alpha_t}}
+\bigl(\epsilon-\epsilon_\theta(x_t,t)\bigr).
+$$
+
+따라서 제곱 노름을 취하고 데이터의 $x_0$와 forward noise에 대해 평균한 중간 KL은 다음과 같다.
+
+$$
+\begin{aligned}
+L_{t-1}={}&\mathbb{E}_{x_0,\epsilon}\!\Bigl[
+\frac{\beta_t^2}{2\sigma_t^2\alpha_t(1-\bar\alpha_t)}\\
+&\quad\cdot\left\|\epsilon-\epsilon_\theta(x_t,t)\right\|^2\Bigr]+C_t.
+\end{aligned}
+$$
+
+즉 모델 분포를 posterior에 가깝게 만드는 문제를 **표준화한 누적 noise $\epsilon$과 신경망의 예측을 비교하는 문제**로 쓸 수 있다.
+가중치는 $t$와 분산 선택에 따라 달라진다.
+
+DDPM의 단순화된 목적은 각 단계의 이 가중치를 제거하고, 매 학습에서 $t$를 균일하게 뽑아 noise 오차를 줄인다.[^ddpm]
+
+$$
+L_{\mathrm{simple}}=
+\mathbb{E}_{x_0,\,t,\,\epsilon}\!
+\left[\left\|\epsilon-\epsilon_\theta(x_t,t)\right\|^2\right].
+$$
+
+여기서 $x_t=\sqrt{\bar\alpha_t}x_0+\sqrt{1-\bar\alpha_t}\epsilon$이다.
+이 목적은 원래 ELBO와 같은 수치가 아니며 각 시간 단계의 상대적 중요도를 바꾼다.
+특히 위 중간 KL의 유도는 $t\geq2$에 해당한다.
+원래 ELBO의 첫 단계 복원 항과 마지막 prior 항은 별도이고, 단순 손실에서는 $t=1$도 같은 noise 예측 형태로 다룬다.
+
+<Callout type="example">
+1차원에서 실제 $\epsilon=0.5$이고 모델 예측이 $0.2$라면 제곱 오차는 $(0.5-0.2)^2=0.09$다.
+같은 데이터를 다른 $t$와 다른 noise로 여러 번 뽑아 학습하면 신경망은 다양한 noise 수준에 대응하는 예측을 배운다.
+이 숫자는 설명을 위한 가상 예시다.
+</Callout>
+
+### 2-6. 학습과 역방향 표본 추출
+
+학습 한 번에는 데이터 $x_0$, 단계 $t$, 표준 Gaussian noise $\epsilon$을 뽑아 $x_t$를 만든다.
+신경망에 $(x_t,t)$를 넣고 $\epsilon$과 예측의 오차로 parameter를 갱신한다.
+이때 직접 뽑은 표준 Gaussian $\epsilon$이 학습의 비교 대상이며, 고정된 forward 식은 그 $\epsilon$을 이용해 입력 $x_t$를 만든다.
+손실의 gradient로 갱신하는 것은 $\epsilon_\theta$의 parameter $\theta$이며, 기본 설정의 forward schedule은 바뀌지 않는다.
+학습 한 번에 reverse 분포를 통해 $x_{t-1}$을 직접 생성할 필요도 없고, 모든 역방향 단계를 순서대로 실행할 필요도 없다.
+여러 학습 단계에서 서로 다른 $t$를 뽑으므로 같은 신경망이 다양한 noise 수준을 배우게 된다.
+
+생성할 때는 $x_T\sim\mathcal{N}(0,I)$에서 시작한다.
+각 단계에서 같은 신경망의 예측을 역방향 평균 $\mu_\theta$에 넣고, 고정 분산 $\sigma_t^2I$를 사용한다면 $t>1$에서 다음 표본을 뽑는다.
+
+$$
+x_{t-1}=\mu_\theta(x_t,t)+\sigma_t z,\qquad z\sim\mathcal{N}(0,I).
+$$
+
+$z$는 모델이 예측한 $\epsilon_\theta$와 다른 새로운 표본이다.
+예를 들어 $x_t=1.9$, $\alpha_t=0.9$, $\bar\alpha_t=0.64$, 예측 noise가 0.5라면 $\mu_\theta\approx1.915$다.
+$\sigma_t=0.1$, $z=0.5$라면 $x_{t-1}\approx1.965$다.
+마지막 단계에는 추가 noise를 넣지 않는 선택을 사용할 수 있다.
+이 과정을 반복해 최종 표본을 얻는다.
 
 ## 3. 학습과 생성의 연결
 
@@ -241,5 +537,257 @@ $C$는 이 설정에서 평균 예측의 parameter $\theta$에 의존하지 않�
 또한 지금까지는 조건 없이 데이터를 만드는 과정을 보았다.
 원하는 이미지의 내용을 지정하려면 텍스트 같은 조건을 모델에 전달하고, 생성 방향과 샘플링 단계를 조절하는 방법이 필요하다.
 
+## 4. 연속 시간의 diffusion
+
+### 4-1. 작은 전이에서 forward SDE로
+
+지금까지는 상태 값이 연속인 경우에도 시간은 $0,1,\ldots,T$의 단계로 나누었다.
+이제 시간도 $0\leq t\leq T$의 연속값으로 두고, 각 단계의 길이를 $\Delta t$로 줄여 보자.
+여기서 $T$는 연속 시간의 끝점이며, 앞에서 이산 단계의 개수를 뜻한 $T$와 역할이 다르다.
+이때 이산 단계의 분산을 고정한 채 단계를 무한히 늘리는 것이 아니라 $\beta_{\mathrm{step}}=\beta(t)\Delta t$처럼 시간 간격에 비례해 줄인다.
+$\beta(t)$는 짧은 구간에 새로 더하는 독립 noise의 단위 시간당 분산을 정하는 양수 함수다.
+원본에서 $t$까지 누적된 noise 분산의 시간 미분과는 구분한다.
+
+한 단계 식에 $\sqrt{1-\beta(t)\Delta t}\approx1-\frac12\beta(t)\Delta t$를 대입하고 현재 상태를 빼면, 작은 $\Delta t$에서 다음 근사를 얻는다.
+
+$$
+\begin{aligned}
+x_{t+\Delta t}-x_t\approx{}&-\frac12\beta(t)x_t\Delta t\\
+&+\sqrt{\beta(t)}\sqrt{\Delta t}\,\epsilon,
+\end{aligned}
+$$
+
+여기서 $\epsilon\sim\mathcal{N}(0,I)$다.
+첫 항은 현재 상태를 0 쪽으로 당기는 예측 가능한 변화이고, 둘째 항은 매 시간 구간에 새로 생기는 무작위 변화다.
+독립된 작은 구간의 noise 분산은 구간 길이 $\Delta t$에 비례하므로 표준편차에는 $\sqrt{\Delta t}$가 붙는다.
+예를 들어 간격을 4분의 1로 줄이면 한 구간의 noise 표준편차는 절반이 된다.
+일정한 noise 계수에서 같은 전체 시간에 해당하는 독립 구간은 네 개가 되고, 각 구간의 noise 분산이 4분의 1이므로 네 증가량을 더한 분산은 기존 구간과 같다.
+이는 Brownian 증가량을 비교한 것으로, drift까지 포함한 전체 상태의 분산이 모든 경우에 같다는 뜻은 아니다.
+
+이 극한을 확률 미분방정식(stochastic differential equation, SDE)으로 쓰면 다음과 같다.[^score-sde]
+
+$$
+dx=-\frac12\beta(t)x\,dt+\sqrt{\beta(t)}\,dw.
+$$
+
+$w$는 Brownian motion이며, 길이 $\Delta t$인 구간의 증가량은 평균 0, 공분산 $\Delta t I$인 Gaussian이다.
+$dw$는 일반적인 미분계수에 $dt$를 곱한 양이 아니라 이러한 무작위 증가량을 나타낸다.
+식은 각 표본 경로의 작은 변화에 대해 체계적인 **drift**와 무작위 **diffusion**을 함께 지정한다.
+이 예는 DDPM에 대응하는 variance-preserving(VP) SDE이며, 모든 diffusion model이 이 계수를 사용해야 한다는 뜻은 아니다.
+
+연속 시간에도 원본에서 임의 시점의 상태를 바로 표본 추출할 수 있다.
+먼저 이산 시간의 누적 곱이 어떻게 바뀌는지 살펴보자.
+시간 $t=n\Delta t$까지의 각 단계에서 $\alpha_i=1-\beta(t_i)\Delta t$로 두고 양변에 log를 취한다.
+
+$$
+\begin{aligned}
+\log\bar\alpha_n
+&=\sum_{i=1}^{n}\log\!\left(1-\beta(t_i)\Delta t\right)\\
+&\approx-\sum_{i=1}^{n}\beta(t_i)\Delta t
+\longrightarrow-\int_0^t\beta(s)\,ds.
+\end{aligned}
+$$
+
+$\log(1-u)\approx-u$는 작은 $u$에 대한 근사다.
+마지막 단계는 작은 구간의 합을 적분으로 바꾼 것이다.
+양변에 지수 함수를 취하면 연속 시간의 $\bar\alpha(t)$가 된다.
+이산 시간의 $q(x_t\mid x_0)$에 있던 누적 곱과 분산도 각각 이 극한으로 바뀌므로, VP SDE의 조건부 분포는 다음과 같다.
+
+$$
+\bar\alpha(t)=\exp\!\left(-\int_0^t\beta(s)\,ds\right).
+$$
+
+$$
+q_t(x_t\mid x_0)=\mathcal{N}\!\left(x_t;\sqrt{\bar\alpha(t)}x_0,\,[1-\bar\alpha(t)]I\right).
+$$
+
+따라서 $x_t=\sqrt{\bar\alpha(t)}x_0+\sqrt{1-\bar\alpha(t)}\epsilon$으로 학습 표본을 만들 수 있다.
+충분한 누적 noise를 사용해야 마지막 분포가 선택한 Gaussian prior에 가까워진다.
+예를 들어 $\beta(t)=b$로 일정하면 $\bar\alpha(t)=e^{-bt}$다.
+$bt$가 커질수록 원본의 계수 $\sqrt{\bar\alpha(t)}$는 작아지고 noise의 분산 $1-\bar\alpha(t)$는 1에 가까워진다.
+
+### 4-2. Score와 reverse SDE
+
+일반적으로 forward SDE를 $dx=f(x,t)dt+g(t)dw$라 쓰자.
+$f$는 drift, $g$는 시간에 따른 scalar noise 계수이며 $p_t(x)$는 가능한 원본 전체와 forward noise를 함께 고려한 시점 $t$의 주변 밀도다.
+$\nabla_x$는 $x$의 각 좌표에 대한 편미분을 모은 벡터다.
+이를 거꾸로 진행하는 SDE는 다음과 같다.[^score-sde]
+
+$$
+dx=\bigl[f(x,t)-g(t)^2\nabla_x\log p_t(x)\bigr]dt+g(t)d\bar w.
+$$
+
+여기서 시간은 $T$에서 0으로 감소하므로 $dt$는 음수이고, $\bar w$는 역시간에서 정의되는 Brownian motion이다.
+Forward 경로에서 사용한 noise를 그대로 거꾸로 재생하는 식이 아니다.
+실제로는 마지막 분포에서 새 표본을 뽑아, 역방향 분포의 표본 경로를 수치적으로 생성한다.
+위 식은 noise 계수가 상태 $x$에 의존하지 않는 경우이며, 상태에 의존하면 추가 항이 필요하다.
+
+Forward 과정의 한 위치 $x_t$에는 서로 다른 원본에서 출발한 경로들이 모일 수 있다.
+정확하게 역방향 표본을 뽑으려면 어느 쪽에서 온 경로가 전체적으로 더 많은지 알아야 한다.
+그 정보가 현재 시점의 주변 분포 $p_t$에 들어 있으며, 역시간 전이의 drift를 계산할 때 그 밀도가 위치에 따라 어떻게 달라지는지가 필요하다.
+그 변화율이 score다.
+Reverse SDE 자체는 시간 반전 정리를 사용한 결과이며 여기서 일반적인 증명까지 가정하지 않는다.
+
+<Details summary="작은 역방향 단계에서 score가 나타나는 직관">
+
+1차원에서 현재 값 $x_t=x$를 알고 한 걸음 전 $x_{t-h}=y$를 찾는다고 하자.
+Bayes 규칙에 따라 후보 $y$의 역방향 밀도는 그 후보가 직전에 등장할 밀도와, 후보에서 $x$로 이동할 forward 전이 밀도의 곱에 비례한다.
+아래에서 오른쪽 Gaussian은 짧은 구간의 forward 전이를 Euler 방식으로 근사한 것이다.
+$p(y\mid x)$는 $p(x_{t-h}=y\mid x_t=x)$를, $p(x\mid y)$는 그 반대 방향의 전이 밀도를 줄여 쓴다.
+
+$$
+p(y\mid x)\propto p_{t-h}(y)\,p(x\mid y).
+$$
+
+$$
+\begin{aligned}
+p(x\mid y)\approx{}&\mathcal{N}\!\bigl(x;\,y+f(y,t-h)h,\\
+&g(t-h)^2h\bigr).
+\end{aligned}
+$$
+
+$h$가 아주 작으면 후보 $y$는 보통 $x$ 근처에 있다.
+매끄러운 밀도와 계수를 가정하고 $y$가 $x$에서 얼마나 떨어졌는지만 일차까지 살펴보자.
+Forward 전이의 중심은 대략 $y=x-f(x,t)h$가 되지만, 후보의 밀도 $p_{t-h}(y)$가 큰 쪽에는 더 많은 경로가 있으므로 이 중심이 조정된다.
+$\log p_{t-h}(y)$를 $x$ 근처에서 일차 전개하면 추가되는 log 밀도는 대략 $(y-x)\nabla_x\log p_t(x)$다.
+
+Gaussian의 log 밀도에 이 일차항을 더해 완전제곱으로 묶으면, $h$의 주요 항에서 역방향의 평균 변화는 다음과 같다.
+
+$$
+\begin{aligned}
+\mathbb{E}[y-x\mid x_t=x]
+\approx{}&-f(x,t)h\\
+&+g(t)^2h\nabla_x\log p_t(x).
+\end{aligned}
+$$
+
+첫 항은 forward drift를 거슬러 가는 효과이고, 둘째 항은 이전 상태의 밀도가 높은 쪽으로 가중하는 효과다.
+역방향의 분산은 주요 항에서 $g(t)^2h$다.
+이는 매끄러운 밀도와 상태에 의존하지 않는 양의 $g(t)$를 가정한 작은 단계의 직관이며, 시간 반전 정리의 일반적인 증명은 아니다.
+</Details>
+
+$\nabla_x\log p_t(x)$를 **score function**이라 한다.
+현재 위치 $x$에서 log 밀도가 가장 빠르게 커지는 방향과 그 변화율을 나타내는 벡터다.
+예를 들어 $p_t(x)=\mathcal{N}(x;0,1)$인 1차원에서 score는 $-x$다.
+$\log p_t(x)=-x^2/2-\frac12\log(2\pi)$이므로 $x$에 대해 미분하면 $-x$가 된다.
+$x=2$이면 score가 $-2$이므로 더 높은 밀도가 있는 0 쪽을 가리킨다.
+이는 특정 학습 이미지의 위치를 가리킨다는 뜻은 아니다.
+
+<Figure src="https://instructor.deeplearning.neuromatch.io/_images/d30fa4ac8108fcc50bc7d466a26ff566ca6587ea380a2957aacad51b0e83a316.png" alt="두 봉우리를 가진 2차원 Gaussian 혼합 분포의 등고선과, 각 위치에서 더 높은 밀도 쪽을 향하는 score 벡터 화살표." caption="두 Gaussian을 섞은 2차원 분포의 score. 등고선은 같은 밀도의 위치를 잇고 화살표는 각 위치에서 log 밀도가 가장 빨리 증가하는 방향을 보여 준다. 화살표는 전체 생성 경로가 아니라 각 위치의 국소적인 score다." source="Neuromatch Academy, Diffusion models · CC BY 4.0 · 변경 없음" wide />
+
+[그림이 포함된 원자료](https://instructor.deeplearning.neuromatch.io/tutorials/W2D4_DiffusionGenerativeModels/instructor/W2D4_Tutorial1.html)와 [CC BY 4.0 이용 조건](https://creativecommons.org/licenses/by/4.0/)을 확인할 수 있다.
+이 2차원 분포는 score의 방향을 보여 주기 위한 예시이며 이미지의 두 픽셀을 그린 것은 아니다.
+
+VP SDE의 역방향 drift에 대입하면 다음과 같다.
+
+$$
+\begin{aligned}
+dx={}&\left[-\frac12\beta(t)x-\beta(t)\nabla_x\log p_t(x)\right]dt\\
+&+\sqrt{\beta(t)}\,d\bar w.
+\end{aligned}
+$$
+
+역시간 한 걸음의 길이를 $h>0$으로 놓고 $dt=-h$를 대입하면 score 항의 변화는 $+\beta(t)h\nabla_x\log p_t(x)$다.
+따라서 score는 역방향 갱신을 높은 밀도 쪽으로 이끄는 데 기여한다.
+무작위 항도 남아 있으므로 각 표본이 매번 밀도가 높아지는 방향으로만 움직이는 것은 아니다.
+
+실제 계산에서는 예를 들어 Euler 방식으로 현재 시점 $t$에서 $t-h$까지 한 번 이동할 수 있다.
+$s_\theta(x_t,t)$는 알 수 없는 주변 score를 대신하는 신경망의 예측이다.
+$z\sim\mathcal{N}(0,I)$를 새로 뽑으면 VP SDE의 근사 갱신은 다음과 같다.
+
+$$
+\begin{aligned}
+x_{t-h}\approx{}&x_t+
+\left[\frac12\beta(t)x_t+\beta(t)s_\theta(x_t,t)\right]h\\
+&+\sqrt{\beta(t)h}\,z.
+\end{aligned}
+$$
+
+이 식은 역시간의 $dt=-h$를 대입하고, 길이 $h$인 역시간 구간의 Brownian 증가량을 $\sqrt h\,z$로 표본 추출한 결과다.
+예를 들어 $\beta(t)=1$, $x_t=2$, score 예측이 $-2$, $h=0.1$이라면 무작위 항을 더하기 전 상태는 $2+(1-2)0.1=1.9$다.
+이때 score가 만든 변화는 $-0.2$이고, 나머지 drift가 만든 변화는 $+0.1$이다.
+실제 표본에는 별도의 $\sqrt{0.1}\,z$도 더한다.
+
+### 4-3. Noise 예측과 score 학습
+
+문제는 실제 데이터의 주변 밀도 $p_t(x)$를 모르므로 score도 직접 계산할 수 없다는 점이다.
+대신 학습 데이터 $x_0$를 하나 뽑으면 조건부 Gaussian $q_t(x_t\mid x_0)$의 score는 계산할 수 있다.
+
+$$
+\begin{aligned}
+\nabla_{x_t}\log q_t(x_t\mid x_0)
+&=-\frac{x_t-\sqrt{\bar\alpha(t)}x_0}{1-\bar\alpha(t)}\\
+&=-\frac{\epsilon}{\sqrt{1-\bar\alpha(t)}}.
+\end{aligned}
+$$
+
+시간과 noisy 상태를 입력받는 신경망 $s_\theta(x_t,t)$가 이 조건부 score를 예측하도록 제곱 오차를 줄인다.
+예를 들어 시간별 양의 가중치 $\lambda(t)$를 사용하는 목적은 다음과 같다.
+
+$$
+\begin{aligned}
+L_{\mathrm{score}}={}&\mathbb{E}_{t,x_0,x_t}\!\Bigl[
+\lambda(t)\\
+&\quad\cdot\left\|s_\theta(x_t,t)-\nabla_{x_t}\log q_t(x_t\mid x_0)\right\|^2
+\Bigr].
+\end{aligned}
+$$
+
+여기서 $x_0$는 데이터에서, $x_t$는 그 원본의 조건부 분포에서 뽑는다.
+$t=0$에서는 위 조건부 분포의 분산이 0이므로 score의 Gaussian 식을 그대로 적용하지 않는다.
+각 $x_t$에서 가능한 원본들에 대한 조건부 score의 평균은 주변 score $\nabla_{x_t}\log p_t(x_t)$와 같다.
+이 관계는 분포 자체의 성질이다. 충분한 모델 용량과 최적화를 가정하면 제곱 오차로 학습한 신경망이 이 평균에 근접한다.
+이는 개별 원본을 생성 시 알고 있다는 가정이 아니다.
+이 학습 방법을 denoising score matching이라 한다.[^score-sde]
+
+그 연결은 주변 밀도 $p_t(x_t)=\int q_t(x_t\mid x_0)p_{\mathrm{data}}(x_0)\,dx_0$를 $x_t$로 미분한 결과다.
+즉 관측된 $x_t$에 도달했을 법한 여러 원본에 대해 조건부 score를 평균하면 주변 score가 된다.
+
+이를 식으로 확인하자.
+미분과 적분의 교환이 가능한 조건에서 $\nabla_{x_t}q_t=q_t\nabla_{x_t}\log q_t$를 사용한다.
+
+$$
+\nabla_{x_t}p_t(x_t)=\int p_{\mathrm{data}}(x_0)\,
+\nabla_{x_t}q_t(x_t\mid x_0)\,dx_0.
+$$
+
+양변을 $p_t(x_t)$로 나누고 Bayes 규칙을 쓰면 다음과 같다.
+
+$$
+\begin{aligned}
+\nabla_{x_t}\log p_t(x_t)
+&=\int p(x_0\mid x_t)\,\nabla_{x_t}\log q_t(x_t\mid x_0)\,dx_0\\
+&=\mathbb{E}_{p(x_0\mid x_t)}
+\left[\nabla_{x_t}\log q_t(x_t\mid x_0)\right].
+\end{aligned}
+$$
+
+여기서 $p(x_0\mid x_t)=p_{\mathrm{data}}(x_0)q_t(x_t\mid x_0)/p_t(x_t)$는 같은 $x_t$를 만들 수 있는 원본들에 대한 posterior다.
+따라서 학습 표본마다 계산한 조건부 score는 서로 다를 수 있어도, 제곱 오차를 최소화하는 예측은 주어진 $x_t$에서 그 값들의 조건부 평균을 향한다.
+모델에 $x_0$가 입력되지 않기 때문에 동일한 $x_t$에 대해 여러 원본을 구별해 각각의 정답을 내놓는 것은 아니다.
+
+예를 들어 $x_0=-2$와 $x_0=2$가 같은 비율로 등장하고, 앞의 예시처럼 $\bar\alpha(t)=0.64$일 때 $x_t=0$을 보았다고 하자.
+두 원본의 조건부 score는 각각 $-1.6/0.36$과 $1.6/0.36$이고, 두 원본에 대한 posterior 가중치는 대칭적으로 각각 $1/2$이다.
+따라서 이 위치에서 주변 score는 두 값의 평균인 0이다.
+신경망은 한 원본의 조건부 score를 무조건 복원하는 대신, 여러 가능한 원본을 고려한 이 주변 score를 근사한다.
+왜 평균을 예측할까? 이 예의 두 조건부 score를 $-a$, $a$라고 하고 신경망의 예측을 $s$라 하면 평균 제곱 오차는 $\frac12(s+a)^2+\frac12(s-a)^2=s^2+a^2$다.
+이 값은 $s=0$일 때 가장 작으며, 0은 두 score의 평균이다.
+
+위 관계를 이용하면 noise 예측 모델을 score 모델로 표현할 수 있다.
+
+$$
+s_\theta(x_t,t)=-\frac{\epsilon_\theta(x_t,t)}{\sqrt{1-\bar\alpha(t)}}.
+$$
+
+즉 DDPM의 noise 예측과 연속 시간의 score 예측은 같은 Gaussian perturbation에서 서로 연결된다.
+실제로 이 관계와 조건부 score를 위 손실에 대입하면 오차 항은 $\lambda(t)\|\epsilon-\epsilon_\theta(x_t,t)\|^2/[1-\bar\alpha(t)]$가 된다.
+$\lambda(t)=1-\bar\alpha(t)$를 선택하면 각 표본에 대한 noise 오차의 가중치가 1이 된다.
+손실의 시간별 가중치와 경계 처리는 선택에 따라 달라지므로 두 학습 목적이 조건 없이 똑같다는 뜻은 아니다.
+학습 후에는 $s_\theta$를 reverse SDE에 넣고, 유한한 시간 간격의 수치 계산을 반복해 noise에서 데이터를 생성한다.
+연속 시간으로 모델을 정의해도 실제 계산에는 이산화와 근사 오차가 남는다.
+
 [^survey]: Yang, L., Zhang, Z., Song, Y., et al. (2024). Diffusion Models: A Comprehensive Survey of Methods and Applications. *ACM Computing Surveys*, 56(4), 105:1–105:39. [논문](https://arxiv.org/abs/2209.00796).
 [^ddpm]: Ho, J., Jain, A., & Abbeel, P. (2020). Denoising Diffusion Probabilistic Models. *NeurIPS*. [논문](https://arxiv.org/abs/2006.11239).
+[^vdm]: Kingma, D. P., Salimans, T., Poole, B., & Ho, J. (2021). Variational Diffusion Models. *NeurIPS*. [논문](https://arxiv.org/abs/2107.00630).
+[^reparam]: Kingma, D. P., & Welling, M. (2014). Auto-Encoding Variational Bayes. *ICLR*. [논문](https://arxiv.org/abs/1312.6114).
+[^score-sde]: Song, Y., Sohl-Dickstein, J., Kingma, D. P., et al. (2021). Score-Based Generative Modeling through Stochastic Differential Equations. *ICLR*. [논문](https://arxiv.org/abs/2011.13456).

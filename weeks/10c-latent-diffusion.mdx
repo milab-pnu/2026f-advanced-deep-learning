@@ -38,8 +38,11 @@ Diffusion을 학습할 때는 학습된 encoder로 이미지 $x$를 $z_0$로 바
 Text 조건 $c$가 있는 noise 예측 손실은 다음과 같이 쓴다.
 
 $$
-L=\mathbb{E}_{z_0,c,t,\epsilon}\left[\left\|\epsilon-\epsilon_\theta(z_t,t,c)\right\|^2\right],
-\qquad z_t=\sqrt{\bar\alpha_t}z_0+\sqrt{1-\bar\alpha_t}\epsilon.
+L=\mathbb{E}_{z_0,c,t,\epsilon}\left[\left\|\epsilon-\epsilon_\theta(z_t,t,c)\right\|^2\right].
+$$
+
+$$
+z_t=\sqrt{\bar\alpha_t}z_0+\sqrt{1-\bar\alpha_t}\epsilon.
 $$
 
 여기서 $\epsilon$은 표준 Gaussian noise이고 $\bar\alpha_t$는 단계 $t$에서 원본 신호가 남는 정도를 정하는 계수다.

@@ -127,8 +127,10 @@ Residual 경로를 점차 활용할 수 있도록 시작점을 정하는 것이�
 각 경로의 정규화와 gate에 서로 다른 조건부 벡터를 사용한다.
 
 $$
-h_1=h+g_{\mathrm{attn}}(c)\odot\operatorname{Attn}(\operatorname{adaLN}_{\mathrm{attn}}(h,c)),
-\qquad
+h_1=h+g_{\mathrm{attn}}(c)\odot\operatorname{Attn}(\operatorname{adaLN}_{\mathrm{attn}}(h,c)).
+$$
+
+$$
 h_2=h_1+g_{\mathrm{mlp}}(c)\odot\operatorname{MLP}(\operatorname{adaLN}_{\mathrm{mlp}}(h_1,c)).
 $$
 

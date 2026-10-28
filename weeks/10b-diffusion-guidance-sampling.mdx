@@ -108,8 +108,10 @@ Sampler가 실제로 하는 일을 결정론적 DDIM으로 살펴보자.
 현재 상태 $x_t$와 모델 예측 $\hat\epsilon=\epsilon_\theta(x_t,t)$에서 먼저 원본을 추정한다.
 
 $$
-\hat x_0=\frac{x_t-\sqrt{1-\bar\alpha_t}\hat\epsilon}{\sqrt{\bar\alpha_t}},
-\qquad
+\hat x_0=\frac{x_t-\sqrt{1-\bar\alpha_t}\hat\epsilon}{\sqrt{\bar\alpha_t}}.
+$$
+
+$$
 x_r=\sqrt{\bar\alpha_r}\hat x_0+\sqrt{1-\bar\alpha_r}\hat\epsilon.
 $$
 
