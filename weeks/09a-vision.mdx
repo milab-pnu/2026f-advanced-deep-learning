@@ -6,11 +6,12 @@ order: 0
 
 사진을 보여 주며 “이 표지판에 적힌 문구가 무엇이고, 어느 쪽으로 가야 하나?”라고 물으면 모델은 글자를 읽고, 이미지 안의 위치와 질문을 연결해 답해야 한다.
 이미지 전체를 한 범주로 분류하는 것만으로는 충분하지 않다.
-많은 멀티모달 대규모 언어 모델(multimodal large language model)은 vision encoder가 만든 표현을 언어 모델에 전달하여 이런 입력과 지시를 함께 다룬다.[^survey]
+많은 멀티모달 대규모 언어 모델(multimodal large language model, MLLM)은 vision encoder가 만든 표현을 언어 모델에 전달하여 이런 입력과 지시를 함께 다룬다.[^survey]
 이 노트는 이미지가 Transformer의 입력이 되는 과정에서 시작해 이미지와 텍스트의 정렬, 생성 모델과의 연결, 해상도와 여러 이미지, 화면을 보며 행동하는 agent까지 차례로 살펴본다.
 
 먼저 다음 영상에서 이미지와 음성을 함께 다루는 Kanana-o의 개발 사례를 살펴보자.
-처음부터 구조와 학습 과정을 모두 이해할 필요는 없다. 모델이 어떤 입력을 받아 무엇을 할 수 있는지에 주목하고, 그 과정에서 등장하는 시각과 음성의 표현을 차근차근 알아본다.
+처음부터 구조와 학습 과정을 모두 이해할 필요는 없다.
+모델이 어떤 입력을 받아 무엇을 할 수 있는지에 주목하고, 그 과정에서 등장하는 시각과 음성의 표현을 차근차근 알아본다.
 이 영상은 2025년 발표로, 이후 공개된 모델의 버전과는 구분해야 한다.
 
 <Video src="https://www.youtube.com/watch?v=S4CMtHfscis" caption="노병석, 눈으로 보고, 귀로 듣고, 입으로 말하는 AI – 통합 멀티모달 언어모델 Kanana-o 개발기 (if(kakao)25)" />
@@ -29,7 +30,7 @@ RGB 이미지에서 patch 한 변의 길이가 $P$이면 한 조각의 원소 �
 높이와 너비가 각각 64인 RGB 이미지에 16×16 patch를 적용하면 한 변에 4개씩, 총 16개의 patch가 생긴다.
 Patch 하나는 16×16×3 = 768개의 픽셀 값을 담는다.
 각 768차원 벡터를 $D$차원으로 투영하면 Transformer에 넣을 16개의 벡터가 된다.
-패치의 개수와 벡터 차원은 서로 다른 양이다.
+Patch의 개수와 벡터 차원은 서로 다른 양이다.
 같은 patch 크기로 224×224 이미지를 나누면 한 변에 14개씩 총 196개의 patch가 생긴다.
 </Callout>
 
@@ -67,15 +68,15 @@ ViT는 이미지를 벡터로 바꾸는 방법을 제공하지만, **어떤 의�
 이미지와 언어를 짝지어 학습하면 고정된 범주 이름에만 묶이지 않는 시각 표현을 얻을 수 있다.
 
 <Callout type="note">
-[Kanana Vision Encoder: 글로벌 최고 수준에 도전하는 자체 비전 인코더 개발기](https://if.kakao.com/2026/session/time-table?sessionId=86)는 자체 vision encoder의 학습과 LLM과의 관계를 소개하는 카카오 기술 세션이다.
-세션 소개에서는 다음 token 예측을 이용한 학습을 다루며, 이는 이어서 살펴볼 CLIP의 contrastive 학습과 비교해 볼 수 있는 접근이다.
+[Kanana Vision Encoder: 글로벌 최고 수준에 도전하는 자체 비전 인코더 개발기](https://if.kakao.com/2026/session/time-table?sessionId=86)는 카카오가 자체 vision encoder를 개발한 과정을 소개하는 기술 세션이다.
+같은 encoder의 개발 글은 다음 token 예측으로 encoder를 학습했다고 설명하며, 이는 이어서 살펴볼 CLIP의 contrastive 학습과 비교해 볼 수 있는 접근이다.
 </Callout>
 
 ## 2. 이미지와 텍스트의 정렬
 
 ### 2-1. 두 encoder와 contrastive learning
 
-CLIP(Contrastive Language–Image Pre-training)은 이미지 encoder와 텍스트 encoder를 각각 학습해 같은 크기의 공유 표현 공간으로 보낸다.[^clip]
+CLIP(Contrastive Language-Image Pre-training)은 이미지 encoder와 텍스트 encoder를 각각 학습해 같은 크기의 공유 표현 공간으로 보낸다.[^clip]
 이미지와 그 설명이 가까워지고 다른 이미지와 설명은 멀어지도록 학습한다.
 여기서 “가깝다”는 것은 정규화된 두 벡터의 cosine similarity가 높다는 뜻이다.
 이미지 encoder는 ViT일 수도 있고 convolutional network일 수도 있다.
@@ -95,9 +96,10 @@ CLIP(Contrastive Language–Image Pre-training)은 이미지 encoder와 텍스�
   <text x="236" y="158" text-anchor="middle" font-size="15" fill="#0f172a">텍스트 encoder</text>
   <path d="M305 59 L350 104 M305 153 L350 108" stroke="#64748b" stroke-width="2" fill="none" />
   <text x="455" y="24" text-anchor="middle" font-size="15" fill="#0f172a">유사도 행렬</text>
-  <text x="454" y="47" text-anchor="middle" font-size="13" fill="#475569">설명 1　　 설명 2</text>
-  <text x="360" y="82" font-size="13" fill="#475569">사진 1</text>
-  <text x="360" y="128" font-size="13" fill="#475569">사진 2</text>
+  <text x="442" y="47" text-anchor="middle" font-size="13" fill="#475569">설명 1</text>
+  <text x="506" y="47" text-anchor="middle" font-size="13" fill="#475569">설명 2</text>
+  <text x="360" y="78" font-size="13" fill="#475569">사진 1</text>
+  <text x="360" y="120" font-size="13" fill="#475569">사진 2</text>
   <rect x="410" y="52" width="64" height="42" fill="#dbeafe" stroke="#64748b" />
   <rect x="474" y="52" width="64" height="42" fill="#f8fafc" stroke="#64748b" />
   <rect x="410" y="94" width="64" height="42" fill="#f8fafc" stroke="#64748b" />
@@ -110,10 +112,10 @@ CLIP(Contrastive Language–Image Pre-training)은 이미지 encoder와 텍스�
 <figcaption>두 쌍의 예시에서 각 encoder의 출력으로 모든 조합의 유사도를 구한다. 행과 열의 두 방향에서 맞는 짝을 고르도록 학습한다.</figcaption>
 </figure>
 
-한 배치에 이미지–텍스트 쌍이 $N$개 있으면 모든 이미지와 모든 텍스트의 유사도를 계산해 $N\times N$ 행렬을 만든다.
-같은 쌍의 위치는 정답이고, 배치 안에서 서로 다른 쌍은 대조 대상이다.
+한 batch에 이미지–텍스트 쌍이 $N$개 있으면 모든 이미지와 모든 텍스트의 유사도를 계산해 $N\times N$ 행렬을 만든다.
+같은 쌍의 위치는 정답이고, batch 안에서 서로 다른 쌍은 대조 대상이다.
 이미지에서 텍스트를 고르는 방향과 텍스트에서 이미지를 고르는 방향을 각각 학습한다.
-배치의 이미지 $i$와 텍스트 $j$의 정규화된 표현을 $v_i$, $t_j$, 학습 가능한 양의 온도를 $\tau$라 하면 이미지에서 텍스트를 고르는 손실은 다음과 같다.
+Batch의 이미지 $i$와 텍스트 $j$의 정규화된 표현을 $v_i$, $t_j$, 학습 가능한 양의 온도를 $\tau$라 하면 이미지에서 텍스트를 고르는 손실은 다음과 같다.
 
 $$
 L_{i\rightarrow t}=-\frac{1}{N}\sum_{i=1}^{N}\log\frac{\exp(v_i^\top t_i/\tau)}{\sum_{j=1}^{N}\exp(v_i^\top t_j/\tau)}.
@@ -121,9 +123,9 @@ $$
 
 분자는 올바른 쌍의 온도 조정 점수에 지수 함수를 적용한 값이고, 분모는 같은 이미지에 대한 모든 후보 텍스트의 지수화된 점수를 더한 값이다.
 텍스트에서 이미지를 고르는 손실은 역할을 바꾸어 계산하며, CLIP의 objective는 두 방향의 평균이다.
-따라서 올바른 점수의 절대값만 커지는지가 아니라 **배치의 다른 후보보다 상대적으로 높은지**가 중요하다.
+따라서 올바른 점수의 절대값만 커지는지가 아니라 **batch의 다른 후보보다 상대적으로 높은지**가 중요하다.
 다른 쌍이 언제나 의미적으로 틀린 것은 아니다.
-서로 다른 두 사진을 모두 “개가 달린다”라고 설명할 수도 있으므로, 배치에서 negative pair로 취급되는 조합에 실제로 비슷한 의미가 들어갈 수 있다.
+서로 다른 두 사진을 모두 “개가 달린다”라고 설명할 수도 있으므로, batch에서 negative pair로 취급되는 조합에 실제로 비슷한 의미가 들어갈 수 있다.
 
 <Callout type="example">
 사진 두 장과 설명 두 개가 있고, 정규화 후 온도까지 반영한 점수가 첫 사진에 대해 `[2, 0]`이라고 하자.
@@ -155,10 +157,97 @@ $$
 
 ## 3. 시각 표현과 언어 생성의 연결
 
-### 3-1. 사전학습된 모델의 결합
+### 3-1. 연속 표현과 이산 token
 
-텍스트를 생성하는 LLM(large language model)은 보통 token ID를 embedding 벡터로 바꾸고, 앞의 벡터들을 조건으로 다음 텍스트 token을 예측한다.
-이미지 encoder의 출력은 이미 벡터이지만 그 차원과 분포가 LLM의 입력 embedding과 다를 수 있다.
+이미지를 언어 모델에 넣기 전에, 텍스트 LLM(large language model)이 입력을 어떻게 받는지 다시 보자.
+Tokenizer는 문장을 유한한 어휘의 token ID sequence로 바꾸고, LLM은 embedding table에서 각 ID에 해당하는 행을 꺼내 $D$차원 벡터로 만든다.
+Transformer 층이 실제로 받는 것은 ID가 아니라 이 벡터들의 sequence다.
+출력 쪽에서는 마지막 hidden state를 어휘의 ID마다 하나씩인 점수(logit)로 바꾸고, softmax로 다음 ID를 고른다.
+
+텍스트가 ID를 거치는 이유는 글자가 원래 유한한 기호이고, 단어나 subword처럼 반복해서 쓰이는 의미 단위의 목록을 미리 정할 수 있기 때문이다.
+이미지에는 그런 어휘가 없다.
+디지털 이미지의 픽셀도 0–255의 유한한 값이지만, 값 하나는 단어 같은 의미 단위가 아니고 16×16 patch 하나만 해도 가능한 값의 조합이 사실상 무한하다.
+같은 고양이 사진도 조명과 각도에 따라 픽셀 배열이 모두 달라진다.
+그래서 이미지를 Transformer의 입력으로 만드는 방법은 두 갈래로 나뉜다.
+
+- **연속 표현**: vision encoder의 출력을 작은 변환 모듈인 connector가 LLM의 입력 차원에 맞추고, 그 $D$차원 벡터를 embedding table을 거치지 않고 텍스트 embedding 자리에 바로 넣는다.
+- **이산 token**: 이미지를 재구성하도록 따로 학습한 image tokenizer를 쓴다.
+  Tokenizer의 encoder가 위치별 feature를 만들고, 각 feature를 학습된 codebook(대표 벡터의 목록)에서 가장 가까운 항목의 번호로 바꾼다.
+  이 번호를 어휘에 추가하면 이미지도 텍스트처럼 ID sequence가 되고, embedding table에서 벡터를 꺼내 넣는다.
+  Tokenizer의 decoder는 번호 sequence를 다시 픽셀로 되돌리도록 함께 학습하지만, 텍스트 tokenizer(예: byte-level BPE)가 ID에서 원문을 그대로 되살리는 것과 달리 되돌린 이미지가 원본과 정확히 같지는 않다.
+
+<figure class="lecture-figure lecture-figure--wide" aria-label="텍스트는 token ID를 embedding table에서 벡터로 바꾼다. 이미지는 encoder와 connector의 출력 벡터를 바로 넣는 연속 경로와, codebook에서 가장 가까운 항목의 번호를 어휘에 추가해 embedding table을 거치는 이산 경로가 있다. 세 경로 모두 같은 Transformer의 벡터 sequence로 들어간다.">
+<svg viewBox="0 0 600 222" role="img" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <text x="10" y="24" font-size="13" fill="#64748b">텍스트</text>
+  <rect x="10" y="32" width="110" height="36" rx="5" fill="#f8fafc" stroke="#94a3b8" />
+  <text x="65" y="55" text-anchor="middle" font-size="14" fill="#0f172a">“고양이”</text>
+  <text x="125" y="57" font-size="18" fill="#64748b">→</text>
+  <rect x="150" y="32" width="120" height="36" rx="5" fill="#f8fafc" stroke="#94a3b8" />
+  <text x="210" y="55" text-anchor="middle" font-size="14" fill="#0f172a">token ID 2</text>
+  <text x="275" y="57" font-size="18" fill="#64748b">→</text>
+  <rect x="300" y="32" width="130" height="36" rx="5" fill="#f8fafc" stroke="#94a3b8" />
+  <text x="365" y="55" text-anchor="middle" font-size="14" fill="#0f172a">embedding table</text>
+  <text x="10" y="94" font-size="13" fill="#64748b">이미지: 연속 표현</text>
+  <rect x="10" y="102" width="110" height="36" rx="5" fill="#dbeafe" stroke="#2a78d6" />
+  <text x="65" y="125" text-anchor="middle" font-size="14" fill="#0f172a">이미지 patch</text>
+  <text x="125" y="127" font-size="18" fill="#64748b">→</text>
+  <rect x="150" y="102" width="280" height="36" rx="5" fill="#dbeafe" stroke="#2a78d6" />
+  <text x="290" y="125" text-anchor="middle" font-size="14" fill="#0f172a">vision encoder · connector</text>
+  <text x="10" y="164" font-size="13" fill="#64748b">이미지: 이산 token</text>
+  <rect x="10" y="172" width="110" height="36" rx="5" fill="#dbeafe" stroke="#2a78d6" />
+  <text x="65" y="195" text-anchor="middle" font-size="14" fill="#0f172a">이미지 patch</text>
+  <text x="125" y="197" font-size="18" fill="#64748b">→</text>
+  <rect x="150" y="172" width="120" height="36" rx="5" fill="#dbeafe" stroke="#2a78d6" />
+  <text x="210" y="195" text-anchor="middle" font-size="13" fill="#0f172a">tokenizer → ID 6</text>
+  <text x="275" y="197" font-size="18" fill="#64748b">→</text>
+  <rect x="300" y="172" width="130" height="36" rx="5" fill="#f8fafc" stroke="#94a3b8" />
+  <text x="365" y="195" text-anchor="middle" font-size="14" fill="#0f172a">embedding table</text>
+  <text x="437" y="57" font-size="18" fill="#64748b">→</text>
+  <text x="437" y="127" font-size="18" fill="#64748b">→</text>
+  <text x="437" y="197" font-size="18" fill="#64748b">→</text>
+  <rect x="462" y="32" width="128" height="176" rx="5" fill="#e2e8f0" stroke="#94a3b8" />
+  <text x="526" y="114" text-anchor="middle" font-size="15" fill="#0f172a">Transformer</text>
+  <text x="526" y="136" text-anchor="middle" font-size="13" fill="#475569">D차원 벡터</text>
+  <text x="526" y="153" text-anchor="middle" font-size="13" fill="#475569">sequence</text>
+</svg>
+<figcaption>세 경로 모두 Transformer에는 같은 크기의 벡터로 들어간다. 이미지 경로 가운데 이산 경로만 텍스트처럼 어휘의 ID와 embedding table을 거치며, 두 embedding table은 어휘를 넓힌 같은 table이다.</figcaption>
+</figure>
+
+작은 숫자로 확인해 보자.
+$D=3$이고 텍스트 어휘가 ID 0부터 4까지 다섯 개이며, 이미지 codebook의 항목 세 개를 ID 5, 6, 7로 어휘에 추가했다고 하자.
+
+| 입력 조각 | 처리 | Transformer에 들어가는 벡터 |
+| --- | --- | --- |
+| “고양이” | token ID 2 → embedding table의 2번 행 | [0.10, −0.30, 0.80] |
+| 이미지 patch, 연속 표현 | vision encoder·connector의 출력을 그대로 | [0.42, 0.17, −0.05] |
+| 같은 patch, 이산 token | tokenizer feature [0.52, 0.31, 0.08]에 가장 가까운 codebook 항목 [0.50, 0.30, 0.10]의 번호 → ID 6 → 6번 행 | [−0.21, 0.55, 0.30] |
+
+세 행 모두 결과는 3차원 벡터이므로 한 sequence에 이어 붙여 같은 층에서 처리할 수 있다.
+연속 경로의 vision encoder와 이산 경로의 tokenizer는 서로 다른 모델이고, embedding table의 6번 행도 codebook 항목과 별개로 학습되는 값이다.
+숫자는 설명을 위한 가상 값이다.
+
+두 방식의 차이는 두 군데서 생긴다.
+첫째는 정보다.
+이산 token은 tokenizer feature를 가장 가까운 codebook 항목으로 대신하고 그 번호만 남기므로, 위 예에서 feature [0.52, 0.31, 0.08]와 항목 [0.50, 0.30, 0.10]의 차이만큼 세부가 사라진다.
+Feature가 조금씩 다른 patch들이 같은 번호를 받으면 그 뒤의 LLM은 이들을 구별할 수 없다.
+작은 글자처럼 미세한 정보가 특히 취약하다.
+Chameleon은 이미지를 이산 token으로 다루는 모델인데, 글자가 많은 이미지를 재구성하기 어렵다는 점을 자기 tokenizer의 핵심 약점으로 든다.[^chameleon]
+둘째는 출력이다.
+LLM의 출력층은 어휘 위의 softmax로 ID를 고르도록 되어 있다.
+이미지가 이산 ID라면 어휘에 그 ID를 추가해 텍스트와 같은 softmax로 image token을 고르고, tokenizer의 decoder가 ID를 픽셀로 되돌리면 된다.
+연속 벡터는 softmax로 고를 수 없다.
+실수 벡터를 회귀로 직접 맞추게 할 수도 있지만, 같은 조건에서 그럴듯한 답이 여러 개인 이미지에서는 그 평균에 가까운 흐릿한 결과가 나오기 쉽다.
+따라서 연속 표현을 생성하려면 diffusion 같은 별도의 생성 장치가 필요하다.
+
+이런 차이 때문에 이미지를 이해하고 텍스트로 답하는 VLM(vision-language model)은 대부분 연속 표현을 입력으로 쓰고, 이산 image token은 LLM이 다음 token 예측으로 이미지를 직접 생성하려는 모델에서 주로 쓰인다.
+이미지 생성 전체로 보면 연속 latent를 다루는 diffusion 모델도 널리 쓰인다.
+이처럼 두 형식이 함께 쓰이므로 token이라는 이름만으로는 표현 형식을 알 수 없다.
+연속 벡터 한 위치도 visual token이라 부르고, codebook 번호도 image token이라 부른다.
+이 노트에서 다루는 VLM은 모두 시각 입력을 연속 벡터로 받고 텍스트를 출력한다.
+
+### 3-2. 사전학습된 모델의 결합
+
+연속 표현을 쓰려면 이미지 encoder의 출력을 LLM의 embedding 자리에 넣어야 하는데, 그 차원과 분포가 LLM의 입력 embedding과 다를 수 있다.
 두 모델을 그냥 이어 붙이는 대신, **connector**를 학습하여 시각 표현을 언어 모델이 활용할 수 있는 입력으로 바꾼다.
 차원을 같게 만드는 것만으로 연결이 완성되는 것은 아니다.
 어떤 입력이 어떤 이미지의 내용에 대응하는지도 학습해야 한다.
@@ -167,30 +256,26 @@ CLIP의 검색과 분류에는 이미지 전체를 요약한 전역 embedding을
 반면 같은 vision encoder의 내부에는 위치별 patch feature가 남아 있다.
 예를 들어 전체 이미지 embedding은 “개가 있는 사진”과 “고양이가 있는 사진”을 비교할 수 있다.
 “개 왼쪽에 무엇이 있는가?” 같은 질문에 여러 위치의 정보를 활용하는 한 방법은 patch별 feature를 LLM에 넘기는 것이다.
-전역 embedding에도 공간 정보가 전혀 없다는 뜻은 아니다.
-한편 텍스트 LLM은 질문에 따라 답을 생성할 수 있지만 텍스트만 학습한 상태에서는 이미지 픽셀을 입력으로 해석할 경로가 없다.
-두 모델을 함께 쓰려면 LLM이 이미지 feature에 접근할 수 있게 하고, 이미지가 답변에 영향을 주도록 연결부를 학습해야 한다.
+
 LLaVA는 이미 학습된 두 모델을 출발점으로 삼는다.
 CLIP의 vision encoder는 이미지에서 feature를 만들고, 언어 모델 Vicuna는 그 feature와 지시를 조건으로 답을 생성한다.
 Vicuna는 LLaMA를 대화 데이터로 instruction tuning한 언어 모델이다.[^vicuna]
 따라서 초기 LLaVA는 LLaMA 계열 언어 모델을 처음부터 이미지로 다시 학습한 것이 아니라, CLIP의 vision encoder와 Vicuna를 connector로 결합한 모델이다.
-LLaVA는 이 patch별 feature를 가져와 선형 projector로 LLM의 입력 차원에 맞춘다.[^llava]
-따라서 CLIP의 전역 유사도 점수 하나를 답변 생성에 넘기는 것은 아니다.
+LLaVA는 이 patch별 feature를 가져와 선형층 하나로 된 connector, 즉 projector로 LLM의 입력 차원에 맞춘다.[^llava]
 투영된 visual token과 질문의 텍스트 embedding을 같은 문맥에 넣고, LLM은 이미지를 조건으로 답변 token을 생성한다.
+LLaVA의 visual token은 앞에서 본 연속 표현에 해당한다.
 크기를 이해하기 위한 예로, 이미지 encoder가 3차원 feature 두 개를 내고 LLM의 입력 차원이 4라면 projector는 각각을 4차원으로 바꾼다.
 결과는 4차원 visual token 두 개이고, 여기에 같은 4차원의 질문 token을 이어 붙인다.
 차원이 바뀌어도 token의 개수는 이 선형 변환만으로 줄지 않는다.
 이 숫자는 설명용이며 실제 LLaVA 설정은 아니다.
-여기서 LLaVA의 visual token은 단어 사전의 단어 ID가 아니라 연속 벡터다.
-다른 이미지 모델은 이산 image token을 사용하기도 하므로 token이라는 이름만으로 표현 형식을 정할 수 없다.
 예를 들어 사진과 “무엇이 탁자 위에 있나?”라는 질문이 주어지면 모델은 이미지 feature와 질문을 조건으로 “컵이 있습니다”를 token 하나씩 생성한다.
 
-<Figure src="https://arxiv.org/html/2304.08485v2/x1.png" alt="LLaVA 구조. 이미지가 vision encoder와 학습 가능한 projection을 거쳐 시각 토큰이 되고 질문과 함께 언어 모델에 전달되어 응답을 생성한다." caption="CLIP vision encoder의 출력을 projection으로 변환해 질문과 함께 언어 모델에 전달한다." source="Liu et al. (2023), Figure 1 · 원본 그대로 · CC BY 4.0, https://creativecommons.org/licenses/by/4.0/" wide />
+<Figure src="https://arxiv.org/html/2304.08485v2/x1.png" alt="LLaVA 구조. 이미지가 vision encoder와 학습 가능한 projection을 거쳐 시각 토큰이 되고 질문과 함께 언어 모델에 전달되어 응답을 생성한다." caption="CLIP vision encoder의 출력을 projection으로 변환해 질문과 함께 언어 모델에 전달한다." source="Liu et al. (2023), Figure 1 · CC BY 4.0" wide />
 
-### 3-2. 시각 정렬과 instruction tuning
+### 3-3. 시각 정렬과 instruction tuning
 
-학습과 추론은 구분해야 한다.
-LLaVA의 첫 단계에서는 이미지–텍스트 쌍으로 projector를 학습하면서 vision encoder와 LLM을 고정한다.
+LLaVA는 두 단계로 학습한다.
+첫 단계에서는 이미지–텍스트 쌍으로 projector를 학습하면서 vision encoder와 LLM을 고정한다.
 예를 들어 이미지와 캡션을 함께 주고 캡션의 다음 token을 예측하게 하면, 정답과의 차이가 projector로 전달된다.
 여기서 모델을 고정한다는 것은 해당 모델의 가중치를 갱신하지 않는다는 뜻이다.
 손실을 미분할 때는 고정된 LLM의 연산도 거슬러 통과하므로, LLM의 입력을 만든 projector가 예측에 얼마나 영향을 주었는지 계산할 수 있다.
@@ -203,7 +288,7 @@ Projector는 고정된 언어 모델이 이미지에 관한 단어를 예측하�
 손실은 응답 위치에 계산하며 이미지나 질문 자체를 정답으로 예측하는 목표와 구분한다.
 추론에서는 정답을 미리 넣을 수 없으므로 모델이 방금 생성한 token을 이어 붙여 다음 token을 예측한다.
 이렇게 배운 모델은 추론 시 주어진 이미지와 지시를 받아 새로운 응답을 생성한다.
-모든 VLM(vision-language model)이 이 고정·학습 조합을 따르는 것은 아니다.
+모든 VLM이 이 고정·학습 조합을 따르는 것은 아니다.
 
 초기 LLaVA의 instruction 데이터는 GPT-4에 이미지 자체 대신 사람이 작성한 캡션과 bounding box 정보를 제공해 대화를 생성하는 방식으로 만들었다.[^llava]
 따라서 생성된 답이 이미지의 세부와 일치하는지는 별도 문제이며, instruction 데이터가 많다는 사실만으로 시각적 오류가 사라지는 것은 아니다.
@@ -211,13 +296,16 @@ Projector는 고정된 언어 모델이 이미지에 관한 단어를 예측하�
 
 사전학습된 모델을 나중에 연결하는 것만이 유일한 경로는 아니다.
 Meta의 **Llama 4**는 텍스트·이미지·비디오를 함께 사용하는 early fusion 사전학습을 소개한다.[^llama4]
-이는 여러 modality를 모델 학습 초기에 함께 다루는 선택이다.
-다만 시각 입력을 처리하는 encoder가 없어졌다는 뜻은 아니다. Llama 4는 MetaCLIP 기반 vision encoder도 사용한다.
-Qwen의 **Qwen3.5** 역시 초기부터 시각·언어 데이터를 함께 학습하는 모델로 소개된다.[^qwen35]
+Early fusion은 텍스트 token과 시각 token을 처음부터 하나의 backbone에 함께 넣어, 사전학습 단계부터 텍스트·이미지·비디오를 함께 학습하는 구조다.
+Llama 4도 MetaCLIP 기반 vision encoder의 출력을 투영한 연속 벡터를 시각 token으로 넣는다.
+다만 이 용어의 범위는 문헌마다 다르다.
+Chameleon은 연속 feature를 넘기는 별도 vision encoder 대신 image tokenizer가 만든 이산 token을 텍스트 token과 처음부터 한 Transformer에 넣는 방식을 early fusion이라 부르고, 별도 vision encoder의 연속 feature를 쓰는 LLaVA·Flamingo류를 late fusion으로 분류한다.[^chameleon]
+Llama 4의 용법에서 early fusion은 언제부터 어떤 구조에서 함께 학습하는지에 관한 말이며, 반드시 vision encoder 대신 이산 tokenizer를 쓴다는 뜻은 아니다.
+Qwen의 **Qwen3.5** 역시 multimodal token에 대한 early fusion 학습을 내세운 모델로 소개된다.[^qwen35]
 LLaVA의 단계별 연결과 비교할 때 핵심 질문은 “encoder가 있는가?” 하나가 아니라 **언제부터 어떤 데이터를 함께 학습하는가**이다.
 공동 사전학습 이후에도 지시를 따르게 만드는 후속 학습은 별도로 필요할 수 있다.
 
-### 3-3. 고정 길이의 query와 정보 병목
+### 3-4. 고정 길이의 query와 정보 병목
 
 이미지가 커지면 patch feature도 많아진다.
 각 patch를 그대로 LLM에 전달하는 방식은 세부 정보를 충분히 남길 수 있지만 입력 sequence가 길어진다.
@@ -254,8 +342,6 @@ C-Abstractor는 시각 feature를 줄이면서 주변 위치의 관계를 활용
 주변 정보를 모아 token 수를 줄일 수 있지만, 작은 글자처럼 pooling 과정에서 사라진 세부가 있으면 나중에 복원하기 어렵다.
 위 숫자는 원리를 보여 주는 예이며 특정 모델의 실제 설정은 아니다.
 
-BLIP-2의 두 학습 단계와 모델의 연결은 [원논문](https://arxiv.org/html/2301.12597v3)에서 확인할 수 있다.
-
 이 연결 방식들과 관계없이 VLM에서는 vision encoder가 보고 있는 정보가 답에 충분한지와 언어 모델이 이를 충실하게 쓰는지가 별개다.
 언어 모델이 익숙한 문장 패턴을 생성하더라도 사진에 없는 물체를 그럴듯하게 언급할 수 있다.
 이미지와 무관하게도 답할 수 있는 질문만으로는 시각 정보를 실제로 활용하는지 판단하기 어렵다.
@@ -282,8 +368,10 @@ Qwen2-VL은 해상도에 따라 달라지는 시각 token 수를 사용하고, �
 Liquid AI의 **LFM3-VL-2B**는 같은 문제를 작은 모델의 배포 관점에서 생각하게 하는 사례다.[^lfm3vl]
 이 모델은 vision encoder와 projector를 거쳐 이미지·비디오 정보를 언어 모델에 전달하며 텍스트를 출력한다.
 16×16 픽셀을 하나의 patch로 만들고 인접한 2×2 patch를 하나의 시각 token으로 합친다.
-예를 들어 224×224 이미지라면 14×14개의 patch가 7×7개, 즉 49개의 시각 token이 된다.
-모델의 전체 크기는 약 19억 parameter다. 입력 해상도와 token 수가 곧 연산 비용에 영향을 주므로, 작은 모델에서도 이미지 크기를 정하는 문제가 남는다.
+예를 들어 512×512 이미지라면 32×32개의 patch가 16×16개, 즉 256개의 시각 token이 된다.
+기본 설정에는 최소 픽셀 수가 있어 224×224처럼 작은 이미지는 먼저 확대된다.
+모델의 전체 크기는 약 19억 parameter다.
+입력 해상도와 token 수가 곧 연산 비용에 영향을 주므로, 작은 모델에서도 이미지 크기를 정하는 문제가 남는다.
 
 Native resolution이라는 말은 원본에 가까운 크기나 종횡비를 활용하는 접근을 가리킬 수 있지만, 항상 원본 픽셀을 그대로 제한 없이 처리한다는 보장은 없다.
 실제 시스템에서는 최소·최대 픽셀 수나 token budget에 맞춰 크기를 조정할 수 있다.
@@ -298,15 +386,20 @@ Interleaved 데이터는 한 sequence 안에서 텍스트와 이미지가 번갈
 
 Flamingo는 시각 입력과 텍스트가 섞인 sequence를 다루기 위해 이미지 encoder와 언어 모델 사이에 시각 정보를 읽는 모듈을 두고, 언어 모델 층에 cross-attention을 추가한다.[^flamingo]
 이미지별 표현은 Perceiver Resampler로 정해진 개수의 시각 표현으로 바뀐다.
+Perceiver Resampler도 Q-Former처럼 학습 가능한 query 벡터가 cross-attention으로 이미지 feature를 읽어 고정된 수(Flamingo는 64개)의 벡터를 만든다.
+다만 LLaVA나 BLIP-2가 시각 벡터를 LLM 입력 sequence에 이어 붙이는 것과 달리, Flamingo에서는 텍스트 위치가 언어 모델 층 사이에 끼운 cross-attention으로 이 벡터를 조회한다.
 Flamingo의 cross-attention에서 각 텍스트 위치는 그 앞에 나온 이미지 가운데 가장 최근 이미지에 직접 접근한다.
 그보다 앞선 이미지의 정보는 해당 이미지를 보았던 이전 텍스트 위치를 self-attention으로 참조해 간접적으로 전달될 수 있다.
 따라서 interleaved는 데이터의 **순서와 구성**을 나타내고, cross-attention이나 projector는 그 데이터를 처리하는 **구조**를 나타낸다.
 입력에 이미지 여러 장을 넣을 수 있다는 사실만으로 각 이미지의 관계를 정확하게 학습했다고 보장할 수는 없다.
 
 Qwen 계열의 **Qwen3-VL**은 이미지·텍스트가 섞인 입력을 다루면서 vision encoder의 여러 층에서 나온 feature를 언어 모델의 서로 다른 층에 전달한다.[^qwen3vl]
-이를 DeepStack이라고 부른다. 마지막 시각 feature만 입력 앞에 한 번 전달하는 대신, 중간 단계의 시각 정보도 언어 모델의 처리 과정에 더하는 설계다.
-비디오에서는 frame들을 시각 정보로 표현하면서 시간 표시를 텍스트 token으로 함께 넣는다. 예를 들어 `<3.0 seconds>`는 뒤따르는 비디오 부분의 시간 정보를 나타낸다.
-이는 이미지 여러 장이 순서대로 있다는 정보에 더해 **언제의 장면인지** 알려 주는 방식이다. 실제로 무엇을 알아내는지는 시간 표시와 함께 학습된 시각 정보에 달려 있다.
+이를 DeepStack이라고 부른다.
+마지막 시각 feature만 입력 앞에 한 번 전달하는 대신, 중간 단계의 시각 정보도 언어 모델의 처리 과정에 더하는 설계다.
+비디오에서는 frame들을 시각 정보로 표현하면서 시간 표시를 텍스트 token으로 함께 넣는다.
+예를 들어 `<3.0 seconds>`는 뒤따르는 비디오 부분의 시간 정보를 나타낸다.
+이는 이미지 여러 장이 순서대로 있다는 정보에 더해 **언제의 장면인지** 알려 주는 방식이다.
+실제로 무엇을 알아내는지는 시간 표시와 함께 학습된 시각 정보에 달려 있다.
 
 웹 문서를 이용한 학습 자료에는 이미지와 주변 문장이 약하게만 연결된 경우가 있다.
 Multimodal C4는 텍스트 문서에 이미지들을 배치할 때 CLIP feature를 이용해 관련 문장과 이미지의 대응을 추정한다.[^mmc4]
@@ -390,7 +483,7 @@ Vision encoder와 C-Abstractor projector, 언어 모델을 결합하며, 앞의 
 Offline RL 단계는 미리 마련된 응답 자료를 이용해 모델의 출력 분포와 추론 습관을 조정한다.
 이어지는 online RL에서는 현재 모델이 문제마다 새로 응답을 생성하고, 그 결과를 평가해 갱신한다.
 새 응답을 반복해서 만드는 online 단계는 현재 모델의 출력에 맞춰 개선할 수 있지만 생성과 평가에 비용이 든다.
-Online RL 단계에서는 모델이 이미지 문제의 답을 생성하고, 정답을 검증할 수 있는 문제의 결과를 보상으로 삼아 응답을 개선한다.
+Online RL 단계에서는 모델이 이미지 문제의 답을 생성하고, 정답을 검증할 수 있는 문제에서 얻은 검증 보상으로 응답을 개선한다.
 예를 들어 그래프에서 값을 찾아 계산하는 문제는 정답과 생성 결과를 비교할 수 있지만, 정답을 명확히 정하기 어려운 모든 시각 질문을 같은 방식으로 검증할 수 있는 것은 아니다.
 개발 글은 학습 단계와 데이터의 목적을 설명하지만 사용된 전체 데이터와 모든 설정을 공개한 재현용 학습 명세는 아니다.
 
@@ -403,20 +496,23 @@ Online RL 단계에서는 모델이 이미지 문제의 답을 생성하고, 정
 
 카카오의 Kanana-2 vision encoder와 비교하면 학습 목표가 다르다.
 카카오가 설명한 encoder 학습은 이미지와 상세 설명을 함께 주고 다음 텍스트 token을 예측하는 데서 출발한다.
-네이버가 설명한 HyperCLOVA X CLIP은 이미지–텍스트 contrastive 학습에서 출발한 뒤 LLM과 연결해 추가로 학습한다.
+네이버가 설명한 HyperCLOVA X CLIP은 이미지와 텍스트를 공유 공간에 정렬하는 CLIP식 학습에서 출발한 뒤 LLM과 연결해 추가로 학습한다.
 두 사례 모두 시각 표현을 언어와 연결하지만, 사용하는 모델과 데이터가 다르므로 목표 하나만으로 성능 차이를 판단할 수는 없다.
 
 | 사례 | 시작할 때의 주요 학습 목표 | 이후 encoder의 활용 |
 | --- | --- | --- |
 | Kanana-2 vision encoder | 이미지와 상세 설명으로 다음 텍스트 token 예측 | 학습된 Transformer를 이미지 feature 추출에 활용 |
-| HyperCLOVA X CLIP | 이미지–텍스트 쌍의 contrastive 학습 | 작은 LLM과 추가 학습한 뒤 개선된 encoder를 SEED 4B에 사용 |
+| HyperCLOVA X CLIP | 이미지–텍스트 쌍을 공유 공간에 정렬하는 CLIP식 학습 | 작은 LLM과 추가 학습한 뒤 개선된 encoder를 SEED 4B에 사용 |
 
 두 encoder 모두 단독으로 질문에 답하는 완성된 VLM은 아니다.
 
 별도로 공개된 HyperCLOVAX-SEED-Vision-Instruct-3B는 SigLIP 기반 vision encoder, C-Abstractor connector와 언어 모델을 결합한 LLaVA 계열 VLM이다.[^naver-vision3b]
-이 모델의 언어 모델은 HyperCLOVAX-SEED-Text-Base-3B에서 출발한다. 모델 카드는 SFT와 GRPO 기반 RLHF를 이용한 후속 학습과, 시각 task를 위한 V-RLHF 데이터를 사용했다고 설명한다. 다만 이 자료만으로 vision encoder와 connector의 학습 단계별 데이터나 고정 여부까지 알 수는 없다.
+이 모델의 언어 모델은 HyperCLOVAX-SEED-Text-Base-3B에서 출발한다.
+모델 카드는 SFT(supervised fine-tuning)와 GRPO 기반 RLHF를 이용한 후속 학습과, 시각 task를 위한 V-RLHF 데이터를 사용했다고 설명한다.
+다만 이 자료만으로 vision encoder와 connector의 학습 단계별 데이터나 고정 여부까지 알 수는 없다.
 
-이 모델은 텍스트·이미지·video를 입력으로 받고 텍스트를 출력한다. Video를 이해할 때는 frame별 token 수를 조절해 긴 입력의 비용을 줄인다.
+이 모델은 텍스트·이미지·video를 입력으로 받고 텍스트를 출력한다.
+Video를 이해할 때는 frame별 token 수를 조절해 긴 입력의 비용을 줄인다.
 이는 video를 받는 경로가 있는 VLM의 사례이며, video의 소리까지 함께 듣거나 video를 생성한다는 뜻은 아니다.
 
 이 3B 모델의 SigLIP 기반 encoder를 SEED 4B의 자체 HyperCLOVA X CLIP과 같은 encoder로 혼동하지 않는다.
@@ -439,8 +535,9 @@ Online RL 단계에서는 모델이 이미지 문제의 답을 생성하고, 정
 [^llama4]: Meta. (2025). The Llama 4 herd: The beginning of a new era of natively multimodal AI innovation. *Meta AI Blog*. [글](https://ai.meta.com/blog/llama-4-multimodal-intelligence/).
 [^qwen35]: Qwen Team. (2026). Qwen3.5: Towards Native Multimodal Agents. *Qwen Blog*. [글](https://qwen.ai/blog?id=qwen3.5).
 [^lfm3vl]: Liquid AI. (2026). LFM3-VL-2B. *Hugging Face model card*. [모델 카드](https://huggingface.co/LiquidAI/LFM3-VL-2B).
-[^qwen3vl]: Qwen Team. (2025). Qwen3-VL Technical Report. *arXiv*. [논문](https://arxiv.org/abs/2511.21631).
+[^qwen3vl]: Bai, S., Cai, Y., Chen, R., et al. (2025). Qwen3-VL Technical Report. *arXiv*. [논문](https://arxiv.org/abs/2511.21631).
 [^claude-cu]: Anthropic. (2024). Developing a computer use model. *Anthropic*. [글](https://www.anthropic.com/news/developing-computer-use).
-[^naver-seed4b]: NAVER Cloud. (2026). 우리의 눈과 귀로 현장을 이해하다: 독자 인코더와 HyperCLOVA X SEED 4B 개발기. *CLOVA Tech Blog*. [글](https://clova.ai/en/tech-blog/seeing-and-hearing-the-field-for-ourselves-building-our-own-encoders-and-hyperclova-x-seed-4b).
-[^naver-vision3b]: NAVER Cloud. HyperCLOVAX-SEED-Vision-Instruct-3B. *Hugging Face model card*. [모델 카드](https://huggingface.co/naver-hyperclovax/HyperCLOVAX-SEED-Vision-Instruct-3B).
+[^naver-seed4b]: NAVER Cloud. (2026). Seeing and hearing the field for ourselves: Building our own encoders and HyperCLOVA X SEED 4B. *CLOVA Tech Blog*. [글](https://clova.ai/en/tech-blog/seeing-and-hearing-the-field-for-ourselves-building-our-own-encoders-and-hyperclova-x-seed-4b).
+[^naver-vision3b]: NAVER Cloud. (2025). HyperCLOVAX-SEED-Vision-Instruct-3B. *Hugging Face model card*. [모델 카드](https://huggingface.co/naver-hyperclovax/HyperCLOVAX-SEED-Vision-Instruct-3B).
 [^honeybee]: Cha, J., et al. (2024). Honeybee: Locality-enhanced Projector for Multimodal LLM. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2312.06742).
+[^chameleon]: Chameleon Team. (2024). Chameleon: Mixed-Modal Early-Fusion Foundation Models. *arXiv*. [논문](https://arxiv.org/abs/2405.09818).
