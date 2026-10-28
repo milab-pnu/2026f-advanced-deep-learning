@@ -5,7 +5,7 @@ order: 3
 ---
 
 Batching은 한 번 읽은 weight를 여러 요청의 토큰에 나눠 써서 처리량을 높이고,
-speculative decoding은 한 번의 검증으로 출력 토큰 여러 개를 얻어 요청 하나의 토큰당 지연을 줄이려 한다.
+speculative decoding은 한 번의 검증으로 출력 토큰 여러 개를 얻어 요청 하나의 토큰당 지연을 줄이려 한다.[^survey]
 두 경우 모두 roofline으로 구한 시간은 하한일 뿐이고, 실제 실행은 그보다 오래 걸린다.
 Llama 3 8B를 H100 한 대에서 batch 1로, speculative decoding 없이 돌린다.
 문맥이 약 2,048토큰인 구간의 TPOT(time per output token), 곧 첫 토큰 이후 출력 토큰 하나에 걸린 평균 시간이 8.0 ms라고 하자(설명을 위한 값).
@@ -13,7 +13,18 @@ Llama 3 8B를 H100 한 대에서 batch 1로, speculative decoding 없이 돌린�
 읽어야 할 bytes를 TPOT로 나눈 값이 최대 대역폭의 몇 %인지를 MBU(model bandwidth utilization)라 한다.
 하한 4.9 ms가 그 bytes를 최대 대역폭으로 나눈 값이므로, 여기서는 $4.9/8.0\approx61\%$다.
 MBU가 61%라는 사실만으로는 대역폭을 다 쓰지 못한 원인이 어디에 있는지 나눌 수 없다.
-읽어야 할 데이터의 양은 하한에 이미 들어 있으므로, 먼저 의심할 곳은 **그 계산을 GPU(graphics processing unit)에서 실행하는 방식**이다.
+이 값은 모델의 weight와 KV cache를 한 번 읽는다고 가정한 추정치다.
+실제 HBM에서 오간 모든 bytes를 하드웨어 counter로 잰 대역폭 사용률과는 다르다.
+Into AI 글에서는 실측한 대역폭을 peak 대역폭으로 나눈 값도 MBU로 소개한다.[^intoai]
+같은 이름이라도 분자에 실제 전송량을 쓰는지 모델이 읽어야 할 양을 추정해 쓰는지 먼저 확인해야 한다.
+또 TPOT에 서버 대기나 네트워크 시간이 들어가면 GPU(graphics processing unit) 실행 시간만으로 구한 값과 비교할 수 없다.
+
+연산 쪽에는 MFU(model FLOPs utilization)가 있다.
+모델이 필요로 하는 FLOPs를 실제 경과 시간과 해당 정밀도의 이론상 peak FLOP/s의 곱으로 나눈 값이다.[^palm]
+예를 들어 같은 스텝에 모델 계산 약 17 GFLOPs와 GPU 실행 시간 8.0 ms를 가정하면, H100 BF16 peak 989 TFLOP/s 대비 MFU는 약 0.21%다.
+이 값은 모델의 필요한 계산량을 세므로 재계산이나 padding 등 실제 수행한 모든 연산을 포함하는 하드웨어 연산 사용률과 같지 않다.
+Decode처럼 메모리 이동이 병목인 경우 MFU가 낮다고 해서 그것만으로 kernel이 잘못되었다고 결론 내릴 수 없다.
+읽어야 할 데이터의 양은 하한에 이미 들어 있으므로, 먼저 의심할 곳은 **그 계산을 GPU에서 실행하는 방식**이다.
 Kernel 최적화는 두 가지 일을 한다.
 하나는 kernel fusion처럼 중간값의 HBM(high-bandwidth memory) 왕복을 없애 실제로 옮기는 bytes를 줄이는 것이다.
 같은 계산에 bytes가 줄면 intensity가 올라 roofline 위의 점이 오른쪽으로 옮겨 간다.
@@ -421,6 +432,10 @@ FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kern
 성능이 가장 중요한 몇 개의 kernel은 손으로, 나머지는 컴파일러로 처리하는 분업이다.
 
 [^survey]: Pan, J., & Li, G. (2025). A Survey of LLM Inference Systems. [arXiv:2506.21901](https://arxiv.org/abs/2506.21901).
+
+[^palm]: Chowdhery, A., Narang, S., Devlin, J., et al. (2022). PaLM: Scaling Language Modeling with Pathways. [arXiv:2204.02311](https://arxiv.org/abs/2204.02311).
+
+[^intoai]: Bamania, A. (2026). 10 LLM Inference Metrics Every AI Engineer Must Know. *Into AI*. [intoai.pub](https://www.intoai.pub/p/llm-inference-metrics).
 
 [^hopper]: Andersch, M., Palmer, G., Krashinsky, R., Stam, N., Mehta, V., Brito, G., & Ramaswamy, S. (2022). NVIDIA Hopper Architecture In-Depth. *NVIDIA Technical Blog*. [developer.nvidia.com](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/).
 

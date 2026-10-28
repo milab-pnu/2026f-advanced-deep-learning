@@ -371,7 +371,9 @@ $$
 
 Batch가 작을 때는 읽는 데이터의 대부분이 weight 16 GB라서, 요청을 묶을수록 intensity가 빠르게 오른다.
 Batch가 커지면 읽는 데이터의 대부분이 KV cache가 되고($b=192$에서 67.8 GB 중 51.8 GB), intensity는 요청 하나의 계산량과 KV cache의 비인 $17/0.27\approx63$에 다가간다.
-**Batch를 아무리 키워도 decode의 intensity는 ridge point 295에 닿지 못하고, decode는 memory-bound로 남는다.**
+이 단순화된 계산에서는 batch를 키워도 decode의 intensity가 ridge point 295에 닿지 않는다.
+무한 batch는 극한을 보여 주는 수학적 비교이며 실제 GPU 메모리에 들어간다는 뜻은 아니다.
+다른 모델, 문맥 길이, 정밀도나 kernel에서는 계산량과 메모리 이동량이 달라져 병목도 달라질 수 있다.
 
 [^survey]: Yuan, Z., Shang, Y., Zhou, Y., et al. (2024). LLM Inference Unveiled: Survey and Roofline Model Insights. [arXiv:2402.16363v6](https://arxiv.org/abs/2402.16363v6).
 

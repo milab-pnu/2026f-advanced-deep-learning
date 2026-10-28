@@ -285,6 +285,8 @@ TTFT와 대기 시간이 섞여 있어 1/TPOT와 다르므로, decode 중에 사
 동시 요청이 많아 행렬곱 연산이 병목이 되면 FP8 Tensor Core로 처리량이 높아질 수 있다.
 결과가 예측과 다르면 동시 요청 1의 TPOT로 MBU(model bandwidth utilization)를 계산해 대역폭 지붕에서 얼마나 떨어져 있는지 본다.
 이때 읽어야 할 bytes는 그 서버의 실제 저장 정밀도로 센다(FP8 서버라면 FP8 weight 기준).
+클라이언트에서 잰 TPOT에는 전송과 서버의 다른 작업도 포함되므로, 이 값은 GPU의 실제 HBM 사용률이 아니라 서비스 지연을 포함한 추정치다.
+GPU 실행 구간의 MBU나 하드웨어 counter를 함께 보면 네트워크·스케줄링 비용과 구분하는 데 도움이 된다.
 그래도 원인이 보이지 않으면 엔진의 profiler로 실행 기록(trace)을 떠서 kernel 사이에 GPU가 노는 구간과 attention·행렬곱의 비중을 확인한다.[^vllm-profile]
 예를 들어 vLLM 0.31.0의 진단용 서버 명령에 `--profiler-config '{"profiler":"torch","torch_profiler_dir":"./vllm_profile"}'`를 더하고,
 측정 명령에는 `--backend vllm --profile`을 더해 소수의 요청만 보내면 실행 기록이 해당 디렉터리에 저장된다.
