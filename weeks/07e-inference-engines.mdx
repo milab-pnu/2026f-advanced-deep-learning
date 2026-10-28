@@ -109,6 +109,10 @@ Prometheus에서 counter의 실제 시계열 이름에는 `_total`이 붙는다.
 Speculative decoding에서 vLLM이 보고하는 평균 수락 길이는 `vllm:spec_decode_num_accepted_tokens`를 `vllm:spec_decode_num_drafts`로 나눈 값에 1을 더해 구한다.[^vllm-spec-metrics]
 여기서 1은 수락한 draft 뒤에 target이 내는 토큰을 센 관례로, 종료 토큰이나 출력 길이 제한에 걸리면 실제 사용자에게 전달된 토큰 수와 다를 수 있다.
 vLLM이 수락률이라 부르는 값은 수락 토큰 수를 draft 토큰 수(`vllm:spec_decode_num_draft_tokens`)로 나눈 것으로, 첫 거부 뒤에 버린 추측까지 분모에 세므로 추측 하나가 수락될 확률보다 대개 작다.
+예를 들어 draft를 매번 4개 만들고, 검증에 도달한 추측이 각각 독립적으로 0.7의 확률로 수락된다고 가정하자.
+수락된 draft의 평균 개수는 $0.7+0.7^2+0.7^3+0.7^4\approx1.77$개이므로,
+충분히 많은 반복에서 이 집계 수락률은 약 $1.77/4=0.44$, 평균 수락 길이는 약 $1.77+1=2.77$이 된다.
+0.7은 검증에 도달한 후보 하나의 수락 확률이고, 0.44는 생성한 후보 전체에서 수락된 비율이다.
 이 값들도 누적 counter이므로 같은 구간의 증가분으로 비율을 구한다.
 따라서 이 비율을 독립 수락을 가정한 이론식의 확률에 그대로 넣기보다, 검증 한 번에 얻은 평균 토큰 수와 실제 지연·처리량을 함께 비교한다.
 같은 요청 분포와 부하에서 draft 방식과 추측 길이를 바꾸어 재면, 추측 비용까지 포함해 어느 설정이 이득인지 판단할 수 있다.
@@ -138,7 +142,7 @@ SGLang 팀은 이렇게 정해진 구간을 건너뛰는 decoding을 jump-forwar
 
 <Figure src="https://raw.githubusercontent.com/lm-sys/lm-sys.github.io/105adb035528f55f3d1823329f170a30b48f2b19/public/images/blog/compressed_fsm/compare.png" alt="같은 프롬프트(Please fill in the following information about Harry Potter.)로 JSON을 생성하는 두 방식의 비교. 위의 Jump-Forward Decoding With Compressed FSM에서는 초록 prefill 상자 뒤에 여는 중괄호와 name 키를 담은 주황 상자 하나가 붙고, 파랑 decode 상자 Har, ry, _Pot, ter와 닫는 따옴표·쉼표를 담은 파랑 상자 뒤에 age 키를 담은 주황 상자, 파랑 1, 1, house 키를 담은 주황 상자, 파랑 G, ryffindor와 닫는 중괄호를 담은 주황 상자, 종료 토큰이 이어진다. 아래의 Normal Decoding With FSM에서는 비슷한 출력을 파랑 decode 상자로 한 토큰씩 만들어 상자가 네 줄에 걸친다. 왼쪽의 나이 토큰은 1, 1인데 오른쪽 JSON에는 age가 15로 적혀 있어 원본 그림 안의 값이 맞지 않는다. 범례는 초록 Prefill, 파랑 Decode, 주황 Jump-Forward다." caption="Compressed FSM을 쓴 jump-forward decoding(위)과 FSM으로 한 토큰씩 decode하는 일반 방식(아래). 초록은 프롬프트의 prefill, 파랑은 한 토큰씩 decode한 토큰, 주황은 형식이 정해진 문자열을 forward 한 번에 처리한 jump-forward 구간이다. 왼쪽 나이 토큰은 11인데 오른쪽 JSON은 15로, 원본 그림 안의 값이 일치하지 않으므로 토큰별 출력 예가 아닌 처리 방식의 비교로 읽는다." source="LMSYS Org (2024), Compressed FSM 블로그 · © 2023 LMSYS Org, MIT License" wide />
 
-그림의 [MIT 라이선스 원문](https://github.com/lm-sys/lm-sys.github.io/blob/main/LICENSE)에는 저작권 표시와 이용 조건이 담겨 있다.
+그림의 [MIT 라이선스 원문](https://github.com/lm-sys/lm-sys.github.io/blob/105adb035528f55f3d1823329f170a30b48f2b19/LICENSE)에는 저작권 표시와 이용 조건이 담겨 있다.
 
 엔진을 여러 인스턴스로 띄우면, 요청을 어느 인스턴스로 보내느냐도 prefix 재사용에 영향을 준다.
 SGLang v0.4는 이를 위한 cache-aware routing을 cache-aware load balancer로 구현했다.
@@ -166,7 +170,9 @@ Weight와 KV cache pool에 줄 GPU 메모리 비율은 `--mem-fraction-static`, 
 SGLang의 튜닝 문서는 offline batch inference, 곧 지연 목표 없이 모아 둔 요청을 한꺼번에 처리하는 경우에 처리량을 높이려면 **batch를 크게 만드는 것이 가장 중요하다**고 요약한다.[^sglang-tune]
 작은 batch에서는 weight 읽기가 병목이라는 roofline 분석과 같은 결론이다.
 Batch가 커질수록 요청들의 KV cache가 메모리를 더 차지하므로, KV cache 사용률은 batch를 충분히 키웠는지 보는 단서가 된다.
-다만 사용률은 문맥 길이와 남겨 둔 prefix cache에도 달려 있으므로 대기 요청 수와 함께 본다.
+다만 사용률은 문맥 길이와 실행 중인 요청끼리 공유하는 prefix에도 달려 있으므로 대기 요청 수와 함께 본다.
+SGLang v0.5.21의 일반 KV pool에서는 새 요청을 위해 비울 수 있는 prefix cache를 사용 중인 공간에서 제외한다.[^sglang-pool-stats]
+따라서 요청이 끝나 재사용을 기다리는 prefix가 남아 있어도 그만큼 사용률이 높아지는 것은 아니다.
 문서는 서버 로그의 KV cache 사용률이 0.9를 넘으면 메모리를 잘 쓰고 있다고 보고,
 대기 요청이 쌓였는데도 0.9 아래에 머물면 서버가 새 요청을 너무 보수적으로 받아들이는 것이라고 본다.
 메모리가 모자라면 prefill에서는 조각 크기를, decode에서는 동시 요청 수를 줄이라고 권한다.
@@ -218,7 +224,8 @@ NVIDIA의 안내는 요청률을 고정하면 처리하지 못한 요청이 끝�
 1부터 엔진의 최대 batch를 조금 넘는 값까지 바꿔 가며 재라고 한다.[^nvidia-bench]
 
 두 방식은 답하는 질문이 다르다.
-Concurrency를 고정하면 응답이 느려질 때 새 요청도 늦게 들어가므로 서버가 감당할 수 있는 만큼만 부하가 걸린다.
+Concurrency를 고정하면 응답이 느려질 때 새 요청도 늦게 들어가므로 미완료 요청 수가 정한 상한을 넘지 않는다.
+다만 상한이 서버에서 동시에 실행할 수 있는 요청 수보다 크면, 그 상한 안에서도 대기열이 생길 수 있다.
 그래서 동시 요청 수에 따른 처리량과 지연의 곡선, 곧 시스템의 용량을 보기에 좋다.
 요청률을 고정하면 서버가 느려져도 요청이 계속 들어와 대기열이 쌓이므로,
 실제 사용자가 일정한 속도로 몰려올 때 SLO(service-level objective)를 지키는지 보기에 좋다.
@@ -227,8 +234,13 @@ Goodput을 잴 때도 정의를 구분한다.
 DistServe의 goodput은 요청 중 정해진 비율 이상이 SLO를 지키는 최대 요청률을 GPU 한 대당 값으로 나타낸 것이다.[^distserve]
 반면 `vllm bench serve`의 `--goodput` 옵션에 TTFT와 TPOT의 목표치를 밀리초로 주면,
 주어진 부하 하나에서 목표를 모두 지킨 요청 수를 측정 시간으로 나눈 값을 보고한다.[^vllm-bench-src]
+vLLM v0.31.0의 이 계산은 성공한 요청만 세고, 출력이 한 토큰 이하인 성공 요청의 TPOT는 0으로 취급한다.
+따라서 실패한 요청 수도 함께 보고, 짧은 출력이 많을 때는 이 관례가 결과에 미치는 영향을 살펴야 한다.
 그래서 DistServe의 goodput을 얻으려면 요청률을 바꿔 가며 여러 번 재고,
 목표를 지킨 요청의 비율이 기준 이상인 최대 요청률을 찾고, GPU가 여러 대면 GPU 수로 나누어야 한다.
+이때 두 지표의 p90이 각각 목표 이내여도 같은 요청의 90%가 두 목표를 모두 지킨다는 뜻은 아니다.
+예를 들어 요청 100개 중 TTFT만 넘긴 요청이 10개, TPOT만 넘긴 다른 요청이 10개라면 각 지표는 90개가 목표를 지키지만, 두 목표를 모두 지킨 요청은 80개다.
+따라서 요청별로 두 조건을 함께 확인해야 한다.
 
 <Callout type="example">
 기말 프로젝트에서 Llama 3.1 8B를 H100 한 대로 서빙하며 BF16(bfloat16)과 FP8(8-bit floating point)을 비교한다고 하자.
@@ -268,20 +280,30 @@ vllm serve meta-llama/Llama-3.1-8B-Instruct \
 vllm bench serve --model meta-llama/Llama-3.1-8B-Instruct \
   --dataset-name random --random-input-len 1024 --random-output-len 256 \
   --ignore-eos \
-  --num-prompts 1000 --max-concurrency 64 --num-warmups 10 \
+  --num-prompts 1000 --max-concurrency 64 --num-warmups 64 \
   --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,99 \
-  --goodput ttft:1000 tpot:50
+  --goodput ttft:1000 tpot:50 --save-result --save-detailed
 ```
 
 `--ignore-eos`는 두 서버의 출력 길이를 맞추고,
 `--num-warmups`는 측정 전에 warmup 요청을 보낸다(기본값 0).
+여기서는 동시 요청 상한만큼 64개를 보내지만, 이것만으로 모든 실행 경로가 충분히 준비됐다고 단정할 수는 없다.
+같은 부하에서 반복 측정해 처음 측정과 이후 측정의 차이가 크면 warmup을 더 늘린다.
 `--request-rate`의 기본값 inf는 요청 사이에 도착 간격을 두지 않는다는 뜻이다.
 여기에 `--max-concurrency 64`만 주면 응답을 기다리는 요청이 최대 64개로 제한되고, 남은 요청은 자리가 날 때마다 보내지므로 concurrency 방식의 측정이 된다.[^vllm-bench-src]
 `e2el`은 요청 하나의 전체 지연(end-to-end latency)이다.
+`--save-result --save-detailed`는 실행 결과와 요청별 지연·오류 등을 JSON 파일에 저장한다.[^vllm-bench]
+저장된 `ttfts`, `latencies`, `output_lens`는 같은 순서의 요청별 값이다.
+성공한 요청마다 $(\text{latency}-\text{TTFT})/(\text{output\_len}-1)$로 TPOT를 구해 두 SLO를 함께 지켰는지 확인하고,
+`errors`로 실패한 요청을 확인한다.[^vllm-bench-src]
+저장된 시간은 초 단위이므로 밀리초 기준과 비교할 때 1,000을 곱한다.
+출력이 한 토큰 이하이면 앞에서 설명한 vLLM의 goodput 관례대로 TPOT를 0으로 둔다.
 이 random 입력은 길이를 통제한 비교용이다.
 이 버전에서 `--random-range-ratio` 기본값은 0이므로 요청의 입력과 출력 길이를 각각 지정한 값으로 고른다.
 Prefix 재사용이나 draft 수락처럼 입력 내용에 좌우되는 효과는, 그 기능을 켜고 대표 프롬프트와 실제 입출력 길이 분포로 따로 잰다.
-`--max-concurrency`를 1, 4, 16, 64, 256으로 바꿔 가며 반복하고,
+`--max-concurrency`를 1, 4, 16, 64, 256으로 바꿔 가며 반복한다.
+상한 256에서는 warmup도 적어도 256개로 늘린다.
+그 결과로
 가로축에 사용자당 처리량(tokens/s/user), 곧 output token throughput을 설정한 동시 요청 수 상한으로 나눈 값을,
 세로축에 GPU 한 대의 output token throughput을 두어 두 정밀도의 곡선을 겹쳐 그린다.
 동시 요청 상한 64에서 초당 6,400토큰이 나왔다면 그 점은 (100, 6,400)이다(가상의 수치).
@@ -314,7 +336,8 @@ Profiler는 실행을 느리게 만들 수 있어, 지연과 처리량의 본 �
 vLLM은 이렇게 설정과 부하를 바꿔 가며 재는 일을 자동화하는 `vllm bench sweep`도 제공한다.
 서버 설정의 조합마다 측정을 돌리고, 부하 수준을 바꿔 지연과 처리량의 맞교환을 찾으며,
 위와 같은 정의의 사용자당 처리량과 GPU당 처리량으로 Pareto 곡선을 그린다.[^vllm-sweep]
-Pareto 곡선은 두 축 모두 자신보다 나쁘지 않으면서 적어도 한 축은 더 나은 점이 없는 점들을 이은 경계다.
+Pareto 곡선은 측정한 점들 가운데, 두 축 모두 자신보다 나쁘지 않으면서 적어도 한 축은 더 나은 다른 측정점이 없는 점들을 이은 경계다.
+따라서 이 경계는 이번에 시험한 설정 중의 선택지를 보여 주며, 시험하지 않은 설정까지 포함한 최적을 보장하지는 않는다.
 결과를 보고할 때는 곡선과 함께 측정 조건 전체를 적어,
 다른 사람이 같은 조건에서 다시 잴 수 있게 한다.
 
@@ -341,6 +364,8 @@ Pareto 곡선은 두 축 모두 자신보다 나쁘지 않으면서 적어도 �
 [^sglang-args]: SGLang Team. (2026). Server Arguments. *SGLang documentation v0.5.21*. [github.com](https://github.com/sgl-project/sglang/blob/v0.5.21/docs/docs/advanced_features/server_arguments.mdx).
 
 [^sglang-policy]: SGLang Team. (2026). schedule_policy.py. *SGLang v0.5.21*. [github.com](https://github.com/sgl-project/sglang/blob/v0.5.21/python/sglang/srt/managers/schedule_policy.py).
+
+[^sglang-pool-stats]: SGLang Team. (2026). pool_stats_observer.py. *SGLang v0.5.21*. [github.com](https://github.com/sgl-project/sglang/blob/v0.5.21/python/sglang/srt/managers/scheduler_components/pool_stats_observer.py).
 
 [^sglang-tune]: SGLang Team. (2026). Hyperparameter Tuning. *SGLang documentation v0.5.21*. [github.com](https://github.com/sgl-project/sglang/blob/v0.5.21/docs/docs/advanced_features/hyperparameter_tuning.mdx).
 

@@ -312,6 +312,7 @@ Minitron은 Nemotron-4 15B의 너비(embedding 차원, head, FFN channel)를 줄
 
 후속 보고서는 같은 방법으로 Llama 3.1 8B에서 층을 절반으로 줄인 모델과 너비를 줄인 모델을 만들었다.[^minitron-practice]
 H100 한 대에서 TensorRT-LLM을 FP8(8-bit floating point)로 돌려 여러 입출력 길이로 잰 평균 처리량은 원래 8B보다 깊이를 줄인 모델이 2.7배, 너비를 줄인 모델이 1.8배 높았다.
+보고서의 요약과 실험 본문은 너비 모델을 1.8배로 적지만, 마지막 관찰 부분에는 1.7배로 적혀 있다.
 작은 모델에는 두 배 큰 batch를 주었으므로 이 배율에는 batch를 키운 이득도 섞여 있다.
 이 실험에서는 순서대로 계산할 층 수 자체를 줄인 깊이 쪽이 더 빨랐지만, 회복 학습을 마친 base 모델의 MMLU는 너비를 줄인 쪽이 더 높았다.
 
@@ -329,8 +330,10 @@ Schuster 등의 CALM(Confident Adaptive Language Modeling)은 decoder의 중간 
 Confidence로는 그 층의 hidden state를 LM head에 넣어 얻은 예측 분포에서 가장 큰 확률과 두 번째 확률의 차이 등을 쓴다.
 이때 건너뛴 층에는 지금 입력한 토큰의 hidden state가 없어, 뒤 토큰이 그 층에서 이 토큰에 attention할 수 없다.
 그래서 CALM은 건너뛴 층의 계산은 하지 않되, 멈춘 층의 hidden state를 그 층들에 그대로 넘겨 key·value만 만들어 cache에 채운다.
+이 값은 건너뛴 층을 실제로 계산해 얻은 key·value가 아니라 근사값이다.
+앞쪽 층의 예측도 전체 모델의 예측과 다를 수 있으므로, early exit는 속도를 얻는 대신 출력 품질이 달라질 수 있다.
 Decoder가 8층인 T5의 요약·번역·질의응답 실험에서는 전체 생성 시간이 최대 약 3배 빨라질 것으로 추정했다.
-이는 TPUv3에서 측정한 구성 요소의 실행 시간을 바탕으로 한 추정치다.[^calm]
+이는 TPUv3에서 batch 1로 encoder와 전체 decode의 생성 시간을 재어 구한 추정치로, 최적화된 서빙 엔진의 실측 속도라고 볼 수는 없다.[^calm]
 
 이 이득은 여러 요청을 묶는 서빙에서는 얻기 어렵다.
 Del Corro 등은 SkipDecode를 제안하며 두 가지 문제를 짚었다.[^skipdecode]
@@ -349,7 +352,8 @@ SkipDecode는 CALM과 달리 뒤쪽 층에서 멈추지 않고, 맨 아래 warmu
 
 앞쪽 층만으로 낸 토큰을 바로 쓰지 않고 추측으로 삼을 수도 있다.
 앞쪽 층만으로 다음 토큰 몇 개를 차례로 추측한 뒤, 전체 모델이 forward 한 번으로 각 위치의 예측을 구해 그 추측들을 앞에서부터 검증한다.
-Batch가 작으면 토큰 몇 개를 forward 한 번에 넣어도 weight는 한 번만 읽으므로, 시간은 토큰 하나일 때와 비슷하다.
+작은 batch에서 검증 위치들이 weight와 기존 KV cache를 충분히 재사용하고 추가 비용도 작다면, 여러 위치를 넣은 forward의 시간은 토큰 하나를 처리할 때와 비슷할 수 있다.
+실제 이득은 구현과 문맥 길이에 따라 달라진다.
 Greedy decoding이라면 처음 다른 토큰이 나올 때까지 추측을 받아들이고, 그 자리에는 전체 모델의 예측을 쓴다.
 같은 모델의 일부로 추측하고 전체로 검증하는 이 방식을 self-speculative decoding이라 한다.
 전체 모델이 검증하므로 greedy decoding이면 출력이 원래 모델과 같고, sampling에서도 알맞은 수락 규칙을 쓰면 출력 분포가 같다.
@@ -401,6 +405,15 @@ Yuan 등의 ASVD(activation-aware singular value decomposition) 실험에서 LLa
 Weight의 오차를 최소화하는 SVD가 층 출력의 오차를 최소화하지는 않기 때문이다.
 Activation outlier가 있으면,
 weight에서 작아 보이는 오차도 큰 activation과 곱해져 출력에서 크게 드러난다.
+
+<Callout type="example">
+$W=\operatorname{diag}(2,1)$이고 calibration 입력이 $X=\operatorname{diag}(1,4)$라고 하자.
+여기서 $\operatorname{diag}(a,b)$는 대각에 $a$, $b$를 놓고 나머지는 0으로 둔 행렬이다.
+Rank 1만 남기는 일반 SVD는 더 큰 특이값 2를 보존해 $\hat W=\operatorname{diag}(2,0)$으로 근사한다.
+Weight 오차의 크기는 1이지만, 실제 출력은 $WX=\operatorname{diag}(2,4)$이므로 출력 오차의 크기는 4다.
+반대로 $\hat W=\operatorname{diag}(0,1)$을 고르면 weight 오차는 2로 더 크지만, 출력 오차는 2로 더 작다.
+둘째 입력 channel의 값이 크기 때문에, 이 입력에서의 출력을 지키려면 작은 weight 쪽을 남기는 편이 낫다.
+</Callout>
 
 ### 5-2. Activation을 고려한 분해
 

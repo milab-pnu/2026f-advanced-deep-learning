@@ -6,7 +6,8 @@ order: 1
 
 import lmsysLicense from "./assets/lmsys-blog-LICENSE.txt?url";
 
-Roofline 분석으로 보면 Llama 3.1 8B의 decode를 batch 1에서 192로 키울 때 스텝 시간은 약 4배가 되지만 처리량(throughput)은 약 46배 늘어난다.
+Roofline 분석에서 Llama 3.1 8B의 decode를 batch 1에서 192로 키우면, 이상적인 어림으로는 스텝 시간이 약 4배가 되지만 처리량(throughput)은 약 46배 늘어난다.
+이는 weight와 각 요청의 KV cache를 스텝마다 한 번씩 읽고 최대 대역폭을 쓴다는 가정의 결과다.
 PagedAttention은 그 batch를 담을 KV(key-value) cache 공간의 낭비를 크게 줄여 준다.
 그런데 roofline 분석은 batch 크기와 모든 요청의 문맥 길이(2,048토큰)를 고정해 두고 계산했다.
 실제 요청은 서로 다른 시각에 도착하고 입력 길이도 출력 길이도 제각각이라,
@@ -166,9 +167,11 @@ SLO가 있으면 처리량만으로는 시스템을 비교하기 어렵다.
 그래서 SLO를 지키며 감당할 수 있는 최대 요청률로 시스템을 비교한다.
 Sarathi-Serve는 이 값을 capacity라 부른다.
 DistServe는 TTFT와 TPOT(time per output token, 첫 토큰 이후 출력 토큰 하나를 만드는 평균 시간) 목표를 모두 지키는 요청이 정해진 비율 이상일 때의 최대 요청률을 goodput이라 부른다.
-Sarathi-Serve의 실험에서 SLO는 p99 ITL에 둔 상한이다.
+Sarathi-Serve의 실험에서 SLO는 p99 토큰 간 지연에 둔 상한이다(원논문의 TBT는 여기서 쓰는 ITL에 해당한다).
+또 지속 가능한 부하를 재려고 scheduling 대기 시간의 중앙값이 2초를 넘지 않는다는 조건도 두었다.
 Mistral-7B를 A100 한 대에서, Yi-34B를 A100 두 대에 나누어 돌렸을 때,
 Sarathi-Serve의 capacity는 vLLM보다 Mistral-7B에서 최대 2.6배, Yi-34B에서 최대 3.7배 높았다.[^sarathi-serve]
+이는 그 실험의 요청 분포와 당시 구현에서 얻은 비교값이다.
 
 <Callout type="example">
 앞 예시의 8,192토큰 프롬프트를 스텝마다 토큰 예산 안에서 나누어 넣는다고 하자.
@@ -291,7 +294,8 @@ TP=2라면 GPU마다 weight가 8 GB만 차지해, KV cache에 약 61.6 GB, 합�
 GPU마다 읽는 weight와 KV cache가 절반이라, 통신을 빼면 스텝 하한이 약 2.4 ms로 준다.
 요청 $R$개를 함께 처리할 때, 복제본 구성은 요청을 반씩 나눠 GPU마다 요청 $R/2$개의 KV cache 전체를 읽고, TP=2는 두 GPU가 요청 $R$개 모두의 KV cache를 절반씩 읽는다.
 그래서 GPU마다 읽는 KV cache는 두 구성 모두 요청 $R/2$개분이고, weight만 TP=2 쪽이 절반이다.
-따라서 이 하한에서는 TP=2가 KV cache 공간과 스텝 시간 모두 앞서, 같은 수의 요청을 처리할 때 처리량도 더 높다.
+두 구성 모두 weight와 KV cache 읽기가 스텝 시간을 정하는 범위라면, 이 하한에서 TP=2는 KV cache 공간과 스텝 시간 모두 앞서 같은 수의 요청을 더 빨리 처리한다.
+하지만 $R$이 커져 선형층의 계산이 병목이 되면 읽는 bytes만으로 스텝 시간을 비교할 수 없다.
 복제본의 이점은 이 하한에서 뺀 all-reduce 통신이 층마다 일어나지 않는다는 점이다.
 </Callout>
 

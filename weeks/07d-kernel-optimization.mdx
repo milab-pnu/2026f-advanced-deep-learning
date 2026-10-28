@@ -277,7 +277,7 @@ KV를 여러 조각으로 나누어 여러 SM이 함께 읽으면서 GPU를 충�
 조각을 나누는 데도 대가가 있다.
 부분 결과를 HBM에 썼다가 reduce kernel이 다시 읽어야 하고, kernel이 하나 늘어난다.
 Batch × head만으로 이미 SM이 꽉 찬다면 더 쪼개도 얻는 것이 적다.
-vLLM의 초기 PagedAttention kernel이 이 선택을 그대로 보여 준다.
+vLLM v0.10.1의 PagedAttention kernel이 이 선택을 보여 준다.
 시퀀스를 512토큰 조각으로 나누어 계산하고 reduce kernel로 합치는 v2와 나누지 않는 v1이 있었고,
 최대 길이가 8,192토큰 이하이면서 시퀀스가 짧거나 batch × head만으로 thread block이 이미 충분하면 v1을 골랐다.[^vllm-pa]
 
@@ -295,7 +295,7 @@ PagedAttention의 흩어진 블록,
 여러 요청이 공유하는 prefix, 요청마다 다른 길이가 모두 이 형식 하나로 표현된다.
 Kernel은 흩어진 블록을 타일 단위로 GPU 메모리에서 shared memory의 연속된 공간에 모은 뒤,
 거기서 dense한 연산을 하고 다음 타일로 넘어간다.
-Query tile이 충분히 크면 Tensor Core를 쓰고, tile 크기가 1이면 CUDA Core를 쓴다.<Sidenote>CUDA Core는 원소 하나씩 덧셈과 곱셈을 하는 범용 연산 장치이고, Tensor Core는 작은 행렬 블록의 곱셈과 누산을 한 번에 처리하는 행렬곱 전용 장치다. Query가 하나뿐이면 Tensor Core에 넣을 행렬 블록을 채우지 못한다. 두 장치의 차이를 입문 수준에서 정리한 글로 GPU Mart의 [CUDA Cores vs Tensor Cores](https://www.gpu-mart.com/blog/cuda-cores-vs-tensor-cores)가 있다. 다만 이 글은 Tensor Core의 정밀도별 차이를 다루지 않고, core 수를 세대가 다른 GPU의 성능 지표처럼 설명한다.</Sidenote>
+Query tile이 충분히 크면 Tensor Core를 쓰고, tile 크기가 1이면 CUDA Core를 쓴다.<Sidenote>CUDA Core는 원소 하나씩 덧셈과 곱셈을 하는 범용 연산 장치이고, Tensor Core는 작은 행렬 블록의 곱셈과 누산을 한 번에 처리하는 행렬곱 전용 장치다. Query 하나만 따로 처리하면 Tensor Core가 요구하는 행렬 타일을 채우기 어렵다. 다만 GQA에서 같은 KV를 쓰는 여러 query head를 묶거나 빈 행을 채워 Tensor Core를 쓰는 구현도 있으므로, query 길이 하나만으로 실행 장치를 단정할 수는 없다. 두 장치의 차이를 입문 수준에서 정리한 글로 GPU Mart의 [CUDA Cores vs Tensor Cores](https://www.gpu-mart.com/blog/cuda-cores-vs-tensor-cores)가 있다. 다만 이 글은 Tensor Core의 정밀도별 차이를 다루지 않고, core 수를 세대가 다른 GPU의 성능 지표처럼 설명한다.</Sidenote>
 공유 prefix를 읽는 query들은 이 행렬에서 여러 행을 한 블록으로 묶어 함께 계산해, shared memory에 한 번 복사한 KV를 여러 query가 재사용하게 한다.
 이를 위해 GPU 메모리에 저장된 KV cache를 재배치하지는 않고, 접근 관계를 나타내는 색인만 새로 만든다.
 예를 들어 두 요청의 KV 블록이 $[A,B,C]$와 $[A,B,D]$라면,
@@ -309,7 +309,8 @@ Query 하나에 대한 (부분 출력, log-sum-exp) 쌍을 attention state라 �
 State를 합칠 수 있으니 긴 KV를 여러 작업으로 나눠도 출력을 되살릴 수 있다.
 그래서 요청마다 다른 KV 길이를 SM들에 고르게 나누는 계획을 CPU(central processing unit)에서 미리 세우고(plan),
 GPU kernel은 그 계획대로 실행한다(run).
-계획은 스텝마다 한 번 세워 모든 층에서 재사용한다.
+요청별 query와 KV 길이 등 계획의 조건이 같은 층들은 스텝마다 세운 계획을 함께 재사용할 수 있다.
+Full attention과 sliding window가 섞여 층마다 읽을 KV 범위가 다르면 같은 계획을 그대로 재사용한다고 단정할 수 없으므로, 각 층의 조건과 구현을 확인해야 한다.
 요청마다 query tile이 하나인 decode로 단순화하면,
 계획은 전체 KV 길이를 thread block 수로 나눈 값을 조각의 최대 길이로 삼아 긴 KV를 자르고,
 긴 조각부터 지금까지 맡은 일이 가장 적은 thread block에 하나씩 배정한다.[^flashinfer]
@@ -372,6 +373,8 @@ H100에서는 이 값이 ridge point 295에 닿는 $b\approx74$까지 4-bit 쪽�
 계산량은 그대로라 batch가 더 커지면 4-bit 쪽부터 compute-bound에 가까워지고,
 이득은 약 $295/b$배로 줄다가 intensity가 $b$인 FP16 쪽도 compute-bound가 되는 $b\approx295$에서 사라진다.[^marlin]
 vLLM에 넣은 end-to-end 측정에서는 RTX A6000으로 Llama-2-7B를 서빙할 때 TPOT가 FP16 대비 약 2.8배 짧아졌다.[^marlin]
+이 비교는 요청률을 바꿔 가며 잰 서빙 결과라, 응답 속도에 따라 실제 batch 크기도 달라질 수 있다.
+따라서 고정 batch의 선형층 kernel만 잰 배율과 구분해서 읽는다.
 
 ### 4-3. MoE의 grouped GEMM
 
@@ -386,9 +389,11 @@ Expert마다 대각 블록의 행 수는 그 expert가 받은 토큰 수만큼�
 그래서 expert마다 토큰 수를 맞추거나 넘치는 토큰을 버릴 필요가 없다.[^megablocks]
 이 결과에 활성화를 적용한 뒤, 이 희소한 행렬을 입력으로 받는 둘째 선형층의 행렬곱도 block-sparse 연산으로 계산한다.
 Inference 엔진도 토큰 수가 다른 여러 expert의 행렬곱을 한꺼번에 처리한다.
-vLLM의 fused MoE kernel은 토큰을 expert 순서로 정렬한 뒤,
+vLLM v0.31.0의 fused MoE kernel은 한 경로에서 토큰을 expert 순서로 정렬한 뒤,
 블록마다 어떤 expert의 weight를 쓸지를 표시해 같은 선형층에 속한 모든 expert의 행렬곱을 kernel 하나로 처리한다.[^vllm-fusedmoe]
-다만 첫 선형층, 활성화, 둘째 선형층까지 한 kernel로 합치지는 않고 따로 호출한다.
+토큰과 expert의 배정 수가 전체 expert 수에 비해 매우 적은 일부 설정에서는 정렬을 건너뛰고,
+토큰과 expert의 배정 하나씩 블록에 넣는 경로도 쓴다.
+첫 선형층, 활성화, 둘째 선형층까지 한 kernel로 합치지는 않고 따로 호출한다.
 
 ## 5. Kernel 바깥의 시간
 
@@ -469,7 +474,7 @@ FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kern
 
 [^flashdecoding]: Dao, T., Haziza, D., Massa, F., & Sizov, G. (2023). Flash-Decoding for long-context inference. *Stanford CRFM Blog*. [crfm.stanford.edu](https://crfm.stanford.edu/2023/10/12/flashdecoding.html).
 
-[^vllm-pa]: vLLM Project. (2026). vLLM Paged Attention. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/paged_attention/); [attention kernel 소스(v0.5.0)](https://github.com/vllm-project/vllm/blob/v0.5.0/vllm/attention/ops/paged_attn.py).
+[^vllm-pa]: vLLM Project. (2026). vLLM Paged Attention. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/paged_attention/); [attention kernel 소스(v0.10.1)](https://docs.vllm.ai/en/v0.10.1/api/vllm/attention/ops/paged_attn.html).
 
 [^flashinfer]: Ye, Z., Chen, L., Lai, R., et al. (2025). FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving. *MLSys 2025*. [arXiv:2501.01005](https://arxiv.org/abs/2501.01005).
 
