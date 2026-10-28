@@ -187,10 +187,67 @@ Dequantize한 값은 $(0,\,-0.571,\,0.571,\,0)$이다.
 앞의 예시에서 보았듯 큰 값 하나가 scale을 정하면, 같은 scale을 쓰는 나머지 값의 정밀도가 떨어진다.
 그래서 scale을 몇 개의 값이 함께 쓰느냐, 곧 양자화 단위(granularity)가 오차를 크게 좌우한다.[^survey]
 
-선형층 $Y=XW$에서 activation $X$의 행은 토큰, 열은 입력 차원이다.
-Weight $W$의 행은 입력 차원, 열은 출력 차원이다.
-이런 차원 하나를 channel이라 부른다.
-그래서 $X$의 열 하나와 거기에 곱해지는 $W$의 행 하나가 같은 입력 channel이고, $W$의 열 하나가 출력 channel이다.
+양자화 단위를 정하기 전에 무엇을 양자화하는지 구분하자.
+**Weight**는 학습된 선형층의 파라미터이고, **activation**은 입력이 그 층에 들어올 때 생기는 값이다.
+선형층 $Y=XW$에서 토큰 $T$개, 입력 channel $K$개, 출력 channel $N$개라면 $X$는 $T\times K$, $W$는 $K\times N$, $Y$는 $T\times N$ 행렬이다.
+$X$의 행은 토큰, 열은 입력 channel이고, $W$의 행은 입력 channel, 열은 출력 channel이다.
+따라서 $X$의 열 하나와 곱해지는 $W$의 행 하나가 같은 입력 channel을 가리킨다.
+$Y$의 한 원소는 $X$의 한 행과 $W$의 한 열을 입력 channel 방향으로 곱해 더한 값이다.
+구현에 따라 weight를 $N\times K$로 저장하고 전치해서 곱하기도 하므로, 행과 열의 이름은 저장 형태를 확인해야 한다.
+
+양자화 단위의 이름은 **scale 하나를 공유하는 원소들의 묶음**을 뜻한다.
+다음은 $X$가 2행 4열이고 $W$가 4행 2열인 예다.
+각 행렬을 별도로 양자화하며, 각 묶음의 scale은 서로 다를 수 있다.
+
+| 대상과 단위 | scale 하나를 공유하는 원소 | 이 예의 scale 수 |
+| --- | --- | --- |
+| Activation per-tensor | $X$ 전체 8개 | 1개 |
+| Activation per-token | $X$의 한 행, 즉 한 토큰의 입력 channel 4개 | 2개 |
+| Activation per-channel | $X$의 한 열, 즉 한 입력 channel의 토큰 2개 | 4개 |
+| Weight per-tensor | $W$ 전체 8개 | 1개 |
+| Weight per-channel | $W$의 한 열, 즉 한 출력 channel에 연결된 입력 weight 4개 | 2개 |
+| Weight per-group (크기 2) | $W$의 한 열 안에서 입력 방향으로 연속된 weight 2개 | 4개 |
+
+예를 들어 $W$의 첫 열을 위에서부터 $w_{11}, w_{21}, w_{31}, w_{41}$이라 하면,
+per-channel은 이 네 값을 하나의 scale로 묶고, 크기 2인 per-group은 앞의 두 값과 뒤의 두 값에 각각 scale을 둔다.
+Per-token은 행마다 다른 scale을 두지만 한 행 안에서는 열 방향으로 scale을 공유한다.
+Per-channel이라는 이름도 대상에 따라 다르다. 여기서는 activation의 입력 channel($X$의 열)과 weight의 출력 channel($W$의 열)을 뜻한다.
+다른 축이나 activation의 group을 쓰는 방식도 있으므로 이름만 보고 축을 단정하지 말고 대상과 묶음을 확인해야 한다.
+Weight의 값은 추론 중 고정되지만 activation은 입력마다 바뀌므로 scale을 정하는 시점도 다를 수 있다.
+
+이렇게 나누면 왜 오차가 줄 수 있을까?
+한 출력 channel의 weight가 위에서부터 0.1, 0.3, 4, 6인 가상 예시를 보자.
+대칭 INT4에서 최댓값을 정수 7에 맞추어 열 전체에 scale을 하나 두면 scale은 약 0.857(6/7)이다.
+0.1과 0.3은 둘 다 이 scale로 나눈 뒤 0으로 반올림되어 복원할 때도 0이 된다.
+반면 앞의 두 값과 뒤의 두 값을 별도 group으로 나누면, 작은 값 group의 scale은 약 0.043(0.3/7)이다.
+이때 0.1과 0.3은 각각 정수 2와 7로 저장되어 약 0.086과 0.3으로 복원된다.
+큰 값 6이 작은 값 group의 scale을 결정하지 않기 때문이다.
+대신 이 열에 scale이 하나가 아니라 두 개 필요하다. 더 잘게 나눈다고 모든 값의 오차나 전체 계산 비용이 반드시 줄어드는 것은 아니다.
+
+<Callout type="example">
+같은 행렬을 숫자로 살펴보자. 토큰 2개와 입력 channel 4개, 출력 channel 2개인 가상의 선형층이다.
+
+$$
+X=\begin{bmatrix}1&2&3&4\\2&4&6&8\end{bmatrix},\qquad
+W=\begin{bmatrix}1&2\\2&1\\2&4\\4&2\end{bmatrix}
+$$
+
+Activation을 per-token으로 묶고 첫 행의 scale을 1, 둘째 행의 scale을 2로 두자.
+각 행을 자기 scale로 나누면 저장할 정수 행은 둘 다 $[1,2,3,4]$가 된다.
+이 예는 값이 scale의 정수배라 반올림 오차가 없도록 만들었다.
+Scale은 두 행을 구별하는 데 필요하다. 둘째 행을 복원할 때는 정수 행에 2를 곱해야 한다.
+
+Weight는 출력 channel별로 열을 고른 뒤, 각 열을 입력 방향으로 두 원소씩 묶자.
+첫 열 $[1,2,2,4]^\top$에서 앞의 두 값은 scale 1을, 뒤의 두 값은 scale 2를 쓰면 두 group의 정수는 각각 $[1,2]$다.
+둘째 열 $[2,1,4,2]^\top$도 앞의 두 값은 scale 1, 뒤의 두 값은 scale 2를 쓰면 각각 $[2,1]$로 저장한다.
+즉 weight의 scale은 열마다 두 개씩 총 네 개이고, 같은 열에서도 **입력 channel 방향으로** scale이 바뀐다.
+
+원래 행렬곱의 결과는 두 토큰의 행과 두 출력 channel의 열로 이루어진 $Y=[[27,24],[54,48]]$다.
+첫 토큰과 첫 출력 channel의 원래 결과는 $1\cdot1+2\cdot2+3\cdot2+4\cdot4=27$이다.
+저장된 정수로 계산할 때는 앞 group의 부분합 $1\cdot1+2\cdot2=5$에 scale 1을, 뒤 group의 부분합 $3\cdot1+4\cdot2=11$에 scale 2를 곱해 $5+22=27$을 얻는다.
+둘째 토큰은 저장된 정수는 같지만 activation scale이 2이므로 결과도 $2\times27=54$다.
+부분합을 먼저 $5+11=16$으로 합치면 어느 항에 weight scale 2를 적용할지 구분할 수 없다.
+</Callout>
 
 LLM의 activation에서 outlier는 아무 데나 생기지 않는다.
 Dettmers 등은 크기가 6 이상인 값이 여러 층과 토큰에 걸쳐 같은 channel에 반복해 나타난다는 것을 보고하고, 이를 outlier feature라 불렀다.[^llmint8]
@@ -198,22 +255,8 @@ Dettmers 등은 크기가 6 이상인 값이 여러 층과 토큰에 걸쳐 같�
 Outlier feature는 대부분의 토큰에 걸친 channel이라, 시작 토큰처럼 특정 토큰의 한두 성분에만 생기는 massive activation과는 다른 현상이다.[^massive]
 이 6개 channel을 0으로 만들면 성능이 크게 떨어졌다.
 수는 적어도 모델의 동작에 중요한 값이라, 양자화할 때 이 값들의 손상을 줄여야 한다.
-
-두 행렬 모두 행렬 전체가 scale 하나를 쓰는 **per-tensor**가 가장 단순하다.
-그보다 잘게 나누는 방법은 두 행렬에서 다르다.
-
-**Weight**는 학습이 끝나면 값이 고정되므로, 미리 원하는 만큼 잘게 나누어 scale을 정해 둘 수 있다.
-
-- **per-channel**: 출력 channel($W$의 열)마다 scale을 둔다.
-- **per-group**: 한 출력 channel 안에서 입력 방향으로 연속된 원소 몇 개(예: 128개)마다 scale을 둔다.
-
-**Activation**은 입력마다 값이 달라진다.
-
-- **per-token**: 토큰($X$의 행)마다 scale을 둔다.
-- **per-channel**: 입력 channel($X$의 열)마다 scale을 둔다.
-  Outlier가 몇몇 channel에 몰리므로 정밀도로는 이쪽이 유리하다.
-
-같은 per-channel이라도 weight에서는 출력 channel, activation에서는 입력 channel이다.
+Per-token은 각 행 전체가 scale 하나를 공유하므로 각 행에 같은 outlier channel이 있다면, 모든 행의 scale이 그 큰 값에 영향을 받는다.
+Activation per-channel은 큰 값이 있는 열을 다른 열과 별도로 묶어 그 영향을 나눌 수 있지만, 다음의 계산 비용과 맞바꾸는 선택이다.
 
 Weight와 activation을 모두 정수로 바꿔 정수 행렬곱을 하려면, scale을 어느 축에 두느냐가 정밀도뿐 아니라 계산 방식도 정한다.
 식을 단순하게 하려고 둘 다 대칭으로 두자(비대칭이면 zero-point가 만드는 항이 더 붙는다).
@@ -231,7 +274,8 @@ $$
 예를 들어 weight scale을 1로 두고, 입력 channel 두 개의 정수 곱이 각각 2와 1인데 activation scale이 각각 1과 2라면, 복원한 합은 $1\times2+2\times1=4$다.
 정수 곱을 먼저 $2+1=3$으로 합치면 각 항에 서로 다른 scale을 적용할 수 없다.
 그러면 합을 그 단위마다 끊어 부분합마다 scale을 곱해야 하므로, 정수 행렬곱 한 번으로 끝나지 않고 추가 비용이 든다.[^nagel]
-그래서 정수 행렬곱에서는 activation은 per-token, weight는 per-channel로 두는 조합이 기본이다.
+그래서 일반적인 정수 행렬곱 kernel에서는 activation per-token과 weight 출력 per-channel의 조합을 쓰기 쉽다.
+다른 단위를 지원하는 전용 kernel이나 블록 단위 연산도 있으므로 모든 정수 행렬곱이 이 조합만 써야 한다는 뜻은 아니다.
 Weight만 양자화하고 행렬곱 전에 16-bit로 dequantize한다면 이런 제약이 없어, 4-bit weight에는 per-group을 흔히 쓴다.
 
 <Figure src="https://arxiv.org/html/2211.10438v7/quant_scheme.svg" alt="Activation X(토큰 T × 입력 channel C_i, 초록)와 weight W(입력 channel C_i × 출력 channel C_o, 노랑)의 곱을 두 가지 양자화 단위로 그린 그림. (a) per-tensor 양자화에서는 X와 W가 각각 작은 사각형 하나로 표시된 scale Δ_X, Δ_W 하나씩을 쓴다. (b)에서는 X 왼쪽에 길이 T의 세로 막대 Δ_X가 붙어 토큰(행)마다 scale을 두는 per-token 양자화를, W 위에 길이 C_o의 가로 막대 Δ_W가 붙어 출력 channel(열)마다 scale을 두는 per-channel 양자화를 나타낸다. 빨간 점선이 X의 한 행과 W의 한 열을 묶는다." caption="그림의 Δ는 본문의 scale s다. (b)처럼 토큰 T마다, 출력 channel C_o마다 둔 scale은 합의 바깥 축에 있어 합 밖으로 꺼낼 수 있다. 반면 합을 도는 축인 입력 channel C_i에 scale을 두면 합 밖으로 꺼낼 수 없다." source="Xiao et al. (2023), Figure 3 · CC BY 4.0" />
@@ -629,6 +673,17 @@ FP8 KV cache는 요청 하나의 cache를 약 0.13 GB로 줄여, 이 한계를 �
 FP8은 cache를 절반으로 줄이는 데 그친다.
 2-bit처럼 더 내리면 scale을 어느 축으로 묶을지가 오차를 좌우한다.
 Liu 등의 KIVI는 key와 value의 분포가 다르다는 데서 출발했다.[^kivi]
+
+여기서 대상은 선형층의 weight가 아니라 **KV cache의 key와 value**다.
+Attention head 하나에서 저장된 토큰이 $L$개, head 차원이 $d$라고 하자.
+Key cache $K_c$와 value cache $V_c$를 각각 $L\times d$ 행렬로 놓으면 행은 토큰, 열은 그 head의 channel이다.
+새 토큰의 query $q$는 $1\times d$이고, $qK_c^\top$은 저장된 토큰마다 점수 하나씩을 담는 $1\times L$이다.
+이 점수에 softmax를 적용한 attention weight $a$에 $V_c$를 곱하면 $aV_c$는 $1\times d$ 출력이 된다(점수의 크기 조정은 생략했다).
+
+이 행렬에서 key의 per-channel은 **한 열 안에서 여러 토큰을 묶는 것**이고, value의 per-token은 **한 행 안에서 channel을 묶는 것**이다.
+예를 들어 4토큰, 3 channel이면 key의 둘째 channel은 둘째 열의 값 4개이고, value의 셋째 토큰은 셋째 행의 값 3개다.
+앞에서 본 선형층 weight의 per-channel은 출력 channel을 고정한 $W$의 열이었지만, KV cache에서 channel은 head의 feature 차원이다.
+대상과 행렬 배치를 먼저 지정해야 같은 이름의 축을 올바르게 읽을 수 있다.
 Key에는 값이 유독 큰 channel이 몇 개 고정되어 나타난다.
 Activation의 outlier feature와 같은 모양이므로,
 같은 channel끼리 묶어(per-channel) scale을 두어야 그 큰 값이 다른 channel의 정밀도를 망치지 않는다.
