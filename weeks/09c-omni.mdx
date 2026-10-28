@@ -72,8 +72,8 @@ LLM의 출력층은 어휘 위의 softmax이므로 그대로는 ID만 고를 수
 이미지나 음성을 출력하려면 크게 두 길이 있다.
 첫째, 이미지·음성의 codebook ID를 어휘에 추가해 텍스트와 같은 softmax로 고르고, 해당 decoder가 ID를 픽셀이나 파형으로 되돌린다.
 둘째, LLM이 만든 hidden state를 연속 조건으로 별도의 생성기에 넘기고, 생성기가 결과를 만든다.
-음성 출력에는 첫째 길이 흔하다.
-텍스트와 같은 softmax로 고를 수 있고, decoder가 번호를 소리로 되돌릴 수 있기 때문이다.
+음성 출력은 마지막에 codec의 이산 token을 예측하고 decoder가 이를 파형으로 바꾸는 경우가 많다.
+이 token을 LLM의 어휘에 넣어 직접 고르기도 하고(첫째 길), Thinker–Talker 구조처럼 LLM의 hidden state를 받은 별도 음성 모델이 고르기도 한다(두 길의 결합).
 그래서 Omni 모델에서는 입력은 연속 표현으로 받고 음성 출력은 이산 token으로 내는 비대칭 구성이 자주 보인다.
 
 사진을 보여 주며 음성으로 질문하고 음성으로 답을 듣는 대화를 개념적으로 쓰면 다음과 같다.
@@ -256,7 +256,7 @@ MiniCPM-o 4.5는 시간 분할 다중화(time-division multiplexing, TDM)를 사
 중간에 텍스트로 확정하는 단계 없이 입력부터 출력까지 하나로 이어 학습한 구성을 end-to-end라고 부르며, modality별 encoder나 음성 출력용 decoder 같은 부품이 남아 있어도 이렇게 학습할 수 있다.
 OpenAI는 2024년 GPT-4o를 발표하면서 텍스트·시각·오디오를 하나의 신경망에서 end-to-end로 학습하는 방식을 소개했다.[^gpt4o]
 ChatGPT의 이전 Voice Mode가 쓰던 음성 인식 → 텍스트 모델 → 음성 합성 cascade와 비교하면, 모델이 음성의 억양 같은 정보를 텍스트 변환 전에 이용할 수 있는 방향이다.
-다만 모델이 만들 수 있는 출력과 특정 시점의 제품이나 API에서 제공하는 기능은 구분해야 한다.
+다만 모델이 만들 수 있는 출력과 특정 시점의 제품이나 API(application programming interface)에서 제공하는 기능은 구분해야 한다.
 Qwen2.5-Omni는 Qwen2.5 언어 모델과 사전학습된 시각·audio encoder를 초기값으로 사용한다.[^qwen25]
 먼저 LLM을 고정하고 각 입력 경로를 이미지–텍스트와 오디오–텍스트 자료에 맞춘다.
 이후 parameter를 함께 갱신하며 여러 modality가 섞인 자료로 학습하고, 긴 sequence 자료로 문맥 길이를 확장한다.
