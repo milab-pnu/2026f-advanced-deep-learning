@@ -166,6 +166,24 @@ $\sigma_t=0.1$이고 이번에 뽑은 $z=0.5$라면 $x_{t-1}\approx1.965$가 된
 <Details summary="Posterior에서 noise 예측 손실까지">
 
 $t\geq2$에서 Bayes의 규칙과 forward Gaussian을 결합하면 $q(x_{t-1}\mid x_t,x_0)$도 Gaussian이다.
+중간 상태를 $u=x_{t-1}$로 놓으면, 현재 상태를 관측했을 때 $u$의 확률은 다음 두 항의 곱에 비례한다.
+
+$$
+q(u\mid x_t,x_0)\propto q(x_t\mid u)q(u\mid x_0).
+$$
+
+첫 항은 후보 $u$에서 $x_t$가 나올 가능성이고 둘째 항은 원본 $x_0$에서 $u$에 도달할 가능성이다.
+Gaussian의 정규화 상수처럼 $u$에 의존하지 않는 부분을 잠시 제외하면 음의 log 밀도의 $u$ 관련 항은 다음과 같다.
+
+$$
+\frac{\|x_t-\sqrt{\alpha_t}u\|^2}{2\beta_t}
++\frac{\|u-\sqrt{\bar\alpha_{t-1}}x_0\|^2}{2(1-\bar\alpha_{t-1})}.
+$$
+
+이 식을 $u$의 이차식으로 전개해 완전제곱으로 묶으면 $\|u-\tilde\mu_t\|^2/(2\tilde\beta_t)$가 된다.
+예를 들어 $u$의 제곱항 계수는 $\frac12[\alpha_t/\beta_t+1/(1-\bar\alpha_{t-1})]$이다.
+이 계수는 $1/(2\tilde\beta_t)$이므로, 대괄호 안의 역수가 posterior의 분산 $\tilde\beta_t$다.
+$\bar\alpha_t=\alpha_t\bar\alpha_{t-1}$를 대입해 분산과 평균을 정리한다.
 $\bar\alpha_0=1$로 두면 평균과 분산은 다음과 같다.
 
 $$
@@ -183,7 +201,20 @@ $$
 $$
 
 이 식에서 실제 noise $\epsilon$을 모델 예측 $\epsilon_\theta$로 바꾸면 본문의 역방향 평균이 된다.
-Variational lower bound의 중간 단계 항은 참 posterior와 모델 역방향 분포 사이의 KL divergence다.
+학습의 출발점은 실제 데이터 $x_0$의 모델 확률을 높이는 것이다.
+Forward 경로를 보조 분포로 사용하고 Jensen 부등식을 적용하면 다음의 negative log likelihood 상한을 얻는다.
+여기서 $q(x_{1:T}\mid x_0)$는 forward 단계들의 결합 분포이고, $p_\theta(x_{0:T})$는 시작 noise의 prior와 reverse 단계들을 곱한 결합 분포다.
+
+$$
+-\log p_\theta(x_0)\leq
+\mathbb{E}_{q(x_{1:T}\mid x_0)}\!\left[
+\log\frac{q(x_{1:T}\mid x_0)}{p_\theta(x_{0:T})}\right].
+$$
+
+오른쪽은 negative ELBO이며, 모든 중간 상태를 직접 적분하는 대신 forward 과정에서 표본을 뽑아 추정할 수 있다.
+Forward와 reverse의 곱을 Bayes 규칙으로 정리하면 마지막 prior의 KL, 중간 단계마다의 KL, 첫 단계의 복원 항으로 나뉜다.
+그중 중간 단계 항은 참 posterior와 모델 역방향 분포 사이의 KL divergence다.
+두 Gaussian의 KL에서 평균에 관한 부분은 두 평균 차이의 제곱을 모델 분산으로 나눈 값이다.
 모델 분산이 $\sigma_t^2 I$로 고정되면 평균에 관한 KL 항은 다음의 가중 noise 예측 오차로 쓸 수 있다.
 
 $$
