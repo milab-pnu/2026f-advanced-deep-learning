@@ -108,7 +108,7 @@ $$
 예를 들어 같은 결과를 만들기 위해 연산을 200만 번 수행한다고 하자.
 HBM과 1 MB를 주고받으면 intensity는 2 FLOP/byte다.
 데이터를 재사용해 같은 연산을 수행하면서 0.1 MB만 주고받으면 intensity는 20 FLOP/byte로 높아진다.
-HBM에서 옮길 양이 10분의 1로 줄었으므로, HBM과 데이터를 주고받는 시간이 병목이었다면 실행 시간을 줄이는 데 도움이 된다.
+HBM에서 옮길 양이 10분의 1로 줄었으므로, **HBM과 데이터를 주고받는 시간이 병목이었다면** 실행 시간을 줄이는 데 도움이 된다.
 연산을 더 많이 한 것이 아니라 같은 연산에 필요한 데이터 이동을 줄인 것이다.
 
 단위는 최대 연산 속도를 HBM 대역폭으로 나눈 하드웨어의 비율 295와 같은 FLOP/byte지만, 295는 arithmetic intensity가 아니다.
@@ -126,12 +126,11 @@ H100 SXM의 BF16 Tensor Core 성능과 HBM 대역폭으로 두 작업을 비교�
 NVIDIA의 **Nsight Compute**는 GPU에서 실행한 kernel 하나를 대상으로 하드웨어 counter를 수집하는 분석 도구다.
 이 도구로 연산량과 메모리 이동량을 살펴보고, 얻은 intensity와 연산 속도를 roofline 위에 표시할 수 있다.[^nsight]
 메모리 이동량은 HBM과 주고받은 양인지, L2 cache 등 다른 단계의 양인지 확인해야 한다.
-위의 200과 400은 실제 측정값이 아니라 두 경우를 비교하려고 정한 예시다.
 
 $1\times m$ 행벡터 $x$, $y$와 $m\times m$ 행렬 $A$, $B$가 있고, 원소는 모두 BF16(원소당 2 bytes)이라 하자.
-이것으로 벡터 덧셈과 행렬곱 같은 세 작업의 intensity를 비교해 본다.
+이것으로 **벡터 덧셈과 행렬곱 같은 간단한 세 작업의 intensity를 비교**해 본다.
 GPU에서는 이런 작업을 kernel이 실행하지만, 아래 표는 특정 kernel을 측정한 결과가 아니다.
-연산량은 각 작업에 필요한 곱셈과 덧셈의 횟수로 세고, 데이터 이동량은 각 입력을 HBM에서 한 번 읽고 출력을 한 번 쓴다고 가정해 어림한다.
+연산량은 각 작업에 필요한 곱셈과 덧셈의 횟수로 세고, 데이터 이동량은 **각 입력을 HBM에서 한 번 읽고 출력을 한 번 쓴다고 가정**해 어림한다.
 읽어 온 데이터를 필요한 만큼 재사용하면서 HBM에서 다시 읽지 않아도 된다는 이상적인 가정이다.
 실제로는 칩 안의 저장 공간이 유한해 같은 데이터를 여러 번 읽거나 중간 결과를 HBM에 썼다가 다시 읽을 수 있다.
 또 작업 하나가 여러 kernel로 나뉘거나 다른 작업과 하나의 kernel로 합쳐질 수 있으므로, 실제 kernel에서 측정한 intensity는 이 어림과 다를 수 있다.
@@ -150,6 +149,10 @@ $xA$는 데이터 대부분이 행렬 $A$이고, $A$의 원소 하나(2 bytes)�
 Decode에서 토큰 하나의 행벡터에 weight 행렬을 곱하는 계산이 바로 이 경우다.
 $AB$는 $A$와 $B$의 원소 하나를 출력 계산에 $m$번씩 재사용하므로 intensity가 $m$에 비례한다.
 **같은 데이터를 여러 번 재사용하는 작업일수록 intensity가 높다.**
+
+위의 벡터와 행렬의 곱 $xA$는 **GEMV**(general matrix-vector multiplication), 행렬과 행렬의 곱 $AB$는 **GEMM**(general matrix-matrix multiplication)에 해당한다.[^gemm]
+이 작업을 수행하는 GPU kernel을 개발할 때는 데이터를 어떻게 나누어 읽고 재사용할지 등을 정할 수 있다.
+GPU마다 연산 장치와 메모리 구조가 다르므로, GPU의 특성과 행렬 크기에 맞게 kernel을 최적화하면 같은 작업도 데이터 이동량과 실제 성능이 달라질 수 있다.[^gemm]
 
 ## 2. Roofline model
 
@@ -478,6 +481,8 @@ Batch 192는 약 67.8 GB를 읽으므로 $67.8/3.35\approx20.2$ ms다(GB를 TB/s
 [^roofline]: Williams, S., Waterman, A., & Patterson, D. (2009). Roofline: An Insightful Visual Performance Model for Multicore Architectures. *Communications of the ACM*, 52(4), 65–76. [doi:10.1145/1498765.1498785](https://doi.org/10.1145/1498765.1498785); [저자 공개본](https://escholarship.org/content/qt78h8v7mr/qt78h8v7mr.pdf).
 
 [^nsight]: NVIDIA. (2026). Nsight Compute Profiling Guide. *NVIDIA documentation*. [docs.nvidia.com](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html#roofline-charts).
+
+[^gemm]: NVIDIA. Matrix Multiplication Background. *NVIDIA documentation*. [docs.nvidia.com](https://docs.nvidia.com/deeplearning/performance/dl-performance-matrix-multiplication/); Efficient GEMM in CUDA. *CUTLASS documentation*. [docs.nvidia.com](https://docs.nvidia.com/cutlass/latest/media/docs/cpp/efficient_gemm.html).
 
 [^llama3]: Llama Team, AI @ Meta. (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
 
