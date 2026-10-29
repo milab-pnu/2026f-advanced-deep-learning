@@ -6,7 +6,7 @@ order: 1
 
 H100 SXM에서 Llama 3.1 8B의 decode 한 스텝은 사양상 최대 속도로 어림하면 weight를 읽는 데 약 4.8 ms, 계산하는 데 약 0.016 ms가 든다.
 같은 weight로 토큰을 수백 개 함께 처리해야 두 시간이 비슷해진다.
-이런 어림을 모든 연산에 쓸 수 있게 일반화한 것이 **roofline model**이다.
+이런 어림을 여러 작업에 쓸 수 있게 일반화한 것이 **roofline model**이다.
 GPU(graphics processing unit)의 **연산 속도(computation)와 메모리 대역폭(memory bandwidth) 가운데** 어느 쪽에 막히는지를 그래프로 보여 준다.[^survey]
 
 ## 1. 연산과 데이터 이동
@@ -16,6 +16,55 @@ GPU(graphics processing unit)의 **연산 속도(computation)와 메모리 대�
 GPU의 메모리는 두 층이다.
 GPU 칩 안의 SRAM(static random-access memory)은 작지만 빠르고, 칩 밖에서 같은 패키지에 붙은 HBM(high-bandwidth memory)은 크지만 상대적으로 느리다.
 Weight와 KV(key-value) cache는 HBM에 있고, 계산하려면 칩 안의 연산 장치로 읽어 와야 한다.
+SM(streaming multiprocessor)은 GPU가 작업을 나누어 병렬로 실행하는 기본 단위다.
+
+<figure>
+<svg viewBox="0 0 600 300" role="img" aria-label="H100 SXM에서 데이터가 움직이는 길. 왼쪽 HBM은 GPU 칩 밖에 있고 weight 16 GB, KV cache, 새로 덧붙이는 key·value 칸을 담는다. 오른쪽 GPU 칩 안에는 왼쪽에 모든 SM이 함께 쓰는 L2 cache 50 MB가 있고, 그 오른쪽에 SM 하나가 있다. SM 안에는 register와 shared memory, 그리고 연산 장치인 Tensor Core가 들어 있다. ① weight와 KV cache의 필요한 부분을 조각별로 HBM에서 L2 cache를 거쳐 SM 안의 register와 shared memory로 읽어 온다. 전체 weight가 한꺼번에 cache에 들어가는 것은 아니다. ② Tensor Core가 그 데이터로 연산한다. ③ 새 토큰의 key·value를 L2 cache를 거쳐 HBM의 KV cache 뒤에 쓴다. 노란 칸이 SRAM이고 칩 안에 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <defs>
+    <marker id="memflow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/></marker>
+    <marker id="memflow-store" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8"/></marker>
+  </defs>
+  <text x="300" y="22" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Forward 한 번에서 데이터가 움직이는 길 (H100 SXM)</text>
+  <rect x="20" y="40" width="170" height="210" rx="6" fill="#f1f5f9" stroke="#0f172a"/>
+  <text x="105" y="62" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">HBM</text>
+  <text x="105" y="80" font-size="12" text-anchor="middle" fill="#64748b">칩 밖, 같은 패키지 · 80 GB</text>
+  <rect x="35" y="92" width="140" height="36" rx="4" fill="#e2e8f0" stroke="#0f172a"/>
+  <text x="105" y="115" font-size="13" text-anchor="middle" fill="#0f172a">Weight 16 GB</text>
+  <rect x="35" y="138" width="140" height="36" rx="4" fill="#bbf7d0" stroke="#15803d"/>
+  <text x="105" y="161" font-size="13" text-anchor="middle" fill="#0f172a">KV cache</text>
+  <rect x="35" y="196" width="140" height="36" rx="4" fill="#bbf7d0" stroke="#1d4ed8" stroke-width="3"/>
+  <text x="105" y="219" font-size="13" text-anchor="middle" fill="#0f172a">새 key·value</text>
+  <rect x="240" y="40" width="340" height="210" rx="6" fill="#ffffff" stroke="#0f172a"/>
+  <text x="254" y="62" font-size="15" fill="#0f172a" font-weight="600">GPU 칩</text>
+  <rect x="255" y="74" width="64" height="164" rx="4" fill="#fde68a" stroke="#b45309"/>
+  <text x="287" y="140" font-size="13" text-anchor="middle" fill="#0f172a">L2</text>
+  <text x="287" y="158" font-size="13" text-anchor="middle" fill="#0f172a">cache</text>
+  <text x="287" y="176" font-size="13" text-anchor="middle" fill="#0f172a">50 MB</text>
+  <rect x="335" y="74" width="230" height="164" rx="6" fill="#f8fafc" stroke="#0f172a" stroke-dasharray="5 3"/>
+  <text x="555" y="92" font-size="13" text-anchor="end" fill="#0f172a" font-weight="600">SM (132개 가운데 하나)</text>
+  <rect x="345" y="104" width="85" height="120" rx="4" fill="#fde68a" stroke="#b45309"/>
+  <text x="387" y="152" font-size="13" text-anchor="middle" fill="#0f172a">register,</text>
+  <text x="387" y="170" font-size="13" text-anchor="middle" fill="#0f172a">shared</text>
+  <text x="387" y="188" font-size="13" text-anchor="middle" fill="#0f172a">memory</text>
+  <rect x="480" y="104" width="75" height="120" rx="4" fill="#dbeafe" stroke="#1d4ed8"/>
+  <text x="517" y="152" font-size="13" text-anchor="middle" fill="#1e3a8a">Tensor</text>
+  <text x="517" y="170" font-size="13" text-anchor="middle" fill="#1e3a8a">Core</text>
+  <text x="517" y="190" font-size="12" text-anchor="middle" fill="#1e3a8a">(연산 장치)</text>
+  <line x1="176" y1="110" x2="253" y2="110" stroke="#0f172a" stroke-width="1.5" marker-end="url(#memflow-arrow)"/>
+  <line x1="176" y1="156" x2="253" y2="156" stroke="#0f172a" stroke-width="1.5" marker-end="url(#memflow-arrow)"/>
+  <text x="214" y="102" font-size="12" text-anchor="middle" fill="#0f172a">① 조각 읽기</text>
+  <line x1="320" y1="140" x2="343" y2="140" stroke="#0f172a" stroke-width="1.5" marker-end="url(#memflow-arrow)"/>
+  <line x1="432" y1="164" x2="478" y2="164" stroke="#0f172a" stroke-width="1.5" marker-start="url(#memflow-arrow)" marker-end="url(#memflow-arrow)"/>
+  <text x="455" y="154" font-size="12" text-anchor="middle" fill="#0f172a">② 연산</text>
+  <line x1="344" y1="205" x2="321" y2="205" stroke="#1d4ed8" stroke-width="1.5" marker-end="url(#memflow-store)"/>
+  <line x1="254" y1="214" x2="178" y2="214" stroke="#1d4ed8" stroke-width="1.5" marker-end="url(#memflow-store)"/>
+  <text x="214" y="206" font-size="12" text-anchor="middle" fill="#1d4ed8">③ 쓰기</text>
+  <rect x="60" y="270" width="16" height="16" rx="3" fill="#fde68a" stroke="#b45309"/><text x="82" y="283" font-size="13" fill="#0f172a">SRAM (칩 안, 작고 빠름)</text>
+  <rect x="250" y="270" width="16" height="16" rx="3" fill="#f1f5f9" stroke="#0f172a"/><text x="272" y="283" font-size="13" fill="#0f172a">HBM (칩 밖, 크고 느림)</text>
+  <rect x="430" y="270" width="16" height="16" rx="3" fill="#dbeafe" stroke="#1d4ed8"/><text x="452" y="283" font-size="13" fill="#0f172a">연산 장치</text>
+</svg>
+<figcaption>H100 SXM에서 decode forward 한 번의 데이터 이동. ① weight와 KV cache의 필요한 부분을 조각별로 HBM에서 L2 cache를 거쳐 SM 안으로 읽어 오고, ② Tensor Core가 연산하며, ③ 새 토큰의 key·value를 L2 cache를 거쳐 HBM의 KV cache 뒤에 쓴다.</figcaption>
+</figure>
 
 그래서 GPU가 낼 수 있는 속도에는 두 가지 상한이 있다.
 
@@ -25,75 +74,101 @@ Weight와 KV(key-value) cache는 HBM에 있고, 계산하려면 칩 안의 연�
 - **메모리 대역폭**(memory bandwidth): HBM에서 1초에 읽고 쓸 수 있는 데이터의 최대 bytes다.
   H100 SXM은 3.35 TB/s, 곧 초당 $3.35\times10^{12}$ bytes다.[^h100-bandwidth]
 
-계산과 데이터를 각각 **양**과 **속도**로 나누어 아래 단위로 쓴다.
+연산과 데이터 이동을 각각 **양**과 **속도**로 나누어 아래 단위로 쓴다.
 이름이 비슷한 FLOPs와 FLOP/s를 구분해야 한다.
 
 | | 양 | 속도(1초당 양) |
 |---|---|---|
-| 계산 | FLOPs: 연산 횟수(예: 16 GFLOPs) | FLOP/s(예: 989 TFLOP/s) |
-| 데이터 | bytes(예: 16 GB) | bytes/s(예: 3.35 TB/s) |
+| 연산 | FLOPs: 연산 횟수(예: 16 GFLOPs) | FLOP/s(예: 989 TFLOP/s) |
+| 데이터 이동 | bytes(예: 16 GB) | bytes/s(예: 3.35 TB/s) |
 
-다른 자료에서는 대문자 FLOPS를 초당 연산 횟수로 쓰기도 하니 주의한다.
+다른 자료에서는 대문자 FLOPS를 초당 연산 횟수(속도)로 쓰기도 하니 주의한다.
 
-**Roofline model은 계산과 데이터 이동이 완전히 겹쳐 진행된다고 가정한다.**
-계산과 이동이 각각 사양상 최대 속도로 이루어진다면, 이 이상적인 모형의 시간은 두 시간 가운데 긴 쪽이다.[^roofline]
+**Roofline model은 연산과 데이터 이동이 완전히 겹쳐 진행된다고 가정한다.**
+연산과 이동이 각각 사양상 최대 속도로 이루어진다면, 이 이상적인 모형의 시간은 두 시간 가운데 긴 쪽이다.[^roofline]
 실제 실행에서는 최대 속도에 못 미치거나 두 작업이 완전히 겹치지 않아 시간이 더 걸릴 수 있다.
 두 속도의 비는 $989\times10^{12}/(3.35\times10^{12})\approx295$ FLOP/byte다.
 **HBM에서 1 byte를 읽어 오는 동안 연산 장치는 약 295번 계산할 수 있다는 뜻이다.**
 
 ### 1-2. Arithmetic intensity
 
-두 상한 가운데 어디에 걸리는지는 그 연산이 HBM과 주고받은 데이터 1 byte당 몇 번 계산하는지로 정해진다.
-이 값을 **arithmetic intensity**라 한다.[^roofline]
+벡터 덧셈이나 행렬곱처럼 분석할 대상을 여기서는 **작업**이라 부른다.
+작업을 처리하려면 덧셈·곱셈 같은 연산과 데이터 이동이 필요하다.
+GPU는 계산할 데이터를 HBM에서 가져와야 한다.
+한 번 가져온 데이터를 칩 안에서 여러 번 쓰면, 사용할 때마다 HBM에서 다시 읽는 것보다 데이터 이동을 줄일 수 있다.
+예를 들어 같은 weight로 토큰 여러 개를 처리할 때, weight를 한 번 읽어 여러 토큰의 계산에 재사용할 수 있다.
+
+<strong>Arithmetic intensity(연산 집약도)</strong>는 이렇게 데이터를 옮기는 양에 비해 연산을 얼마나 많이 수행하는지를 나타낸다.[^roofline]
+Arithmetic은 산술 연산, intensity는 집약도라는 뜻으로, HBM과 주고받은 데이터 1 byte당 연산을 몇 번 수행하는지를 센다.
 
 $$
-I=\frac{\text{계산량(FLOPs)}}{\text{HBM과 주고받은 데이터(bytes)}}\quad[\text{FLOP/byte}]
+I=\frac{\text{연산량(FLOPs)}}{\text{HBM과 주고받은 데이터(bytes)}}\quad[\text{FLOP/byte}]
 $$
 
-단위는 앞의 295와 같은 FLOP/byte지만, 295는 arithmetic intensity가 아니다.
-295는 하드웨어가 1 byte를 읽는 동안 **할 수 있는** 계산 횟수이고, intensity는 연산이 1 byte당 **실제로 하는** 계산 횟수다.
-이 이상적 모델에서 연산의 intensity가 295보다 작으면 메모리 대역폭이 상한을 정하고(memory-bound), 크면 연산 속도가 상한을 정한다(compute-bound).
+예를 들어 같은 결과를 만들기 위해 연산을 200만 번 수행한다고 하자.
+HBM과 1 MB를 주고받으면 intensity는 2 FLOP/byte다.
+데이터를 재사용해 같은 연산을 수행하면서 0.1 MB만 주고받으면 intensity는 20 FLOP/byte로 높아진다.
+HBM에서 옮길 양이 10분의 1로 줄었으므로, HBM과 데이터를 주고받는 시간이 병목이었다면 실행 시간을 줄이는 데 도움이 된다.
+연산을 더 많이 한 것이 아니라 같은 연산에 필요한 데이터 이동을 줄인 것이다.
+
+단위는 최대 연산 속도를 HBM 대역폭으로 나눈 하드웨어의 비율 295와 같은 FLOP/byte지만, 295는 arithmetic intensity가 아니다.
+295는 하드웨어가 1 byte를 읽는 동안 **할 수 있는** 연산 횟수이고, intensity는 작업이 1 byte당 **수행하는** 연산 횟수다.
+이 이상적 모델에서 작업의 intensity가 295보다 작으면 메모리 대역폭이 상한을 정하고(memory-bound), 크면 연산 속도가 상한을 정한다(compute-bound).
+
+<Callout type="example">
+H100 SXM의 BF16 Tensor Core 성능과 HBM 대역폭으로 두 작업을 비교해 보자.
+
+- **Intensity 200 FLOP/byte**: 기준 295보다 작다. HBM이 초당 최대 3.35 TB를 옮기면 연산 속도는 $3.35\times200=670$ TFLOP/s까지다. 연산 장치의 최대 989 TFLOP/s보다 낮으므로 **memory-bound**다.
+- **Intensity 400 FLOP/byte**: 기준 295보다 크다. 같은 방식으로 계산하면 $3.35\times400=1{,}340$ TFLOP/s지만, 연산 장치가 낼 수 있는 최대 속도는 989 TFLOP/s다. 따라서 **compute-bound**다.
+</Callout>
+
+그렇다면 실제로 실행한 작업의 연산량과 데이터 이동량은 어디서 알 수 있을까?
+NVIDIA의 **Nsight Compute**는 GPU에서 실행한 kernel 하나를 대상으로 하드웨어 counter를 수집하는 분석 도구다.
+이 도구로 연산량과 메모리 이동량을 살펴보고, 얻은 intensity와 연산 속도를 roofline 위에 표시할 수 있다.[^nsight]
+메모리 이동량은 HBM과 주고받은 양인지, L2 cache 등 다른 단계의 양인지 확인해야 한다.
+위의 200과 400은 실제 측정값이 아니라 두 경우를 비교하려고 정한 예시다.
 
 $1\times m$ 행벡터 $x$, $y$와 $m\times m$ 행렬 $A$, $B$가 있고, 원소는 모두 BF16(원소당 2 bytes)이라 하자.
-이것으로 연산 세 가지의 intensity를 비교해 본다.
-데이터는 입력을 HBM에서 한 번 읽고 출력을 한 번 쓰는 최소량으로 센다.
-이는 재사용이 완벽하게 이루어진다는 낙관적인 가정이다.
-실제로는 칩 안의 저장 공간이 유한하므로 같은 데이터를 HBM에서 여러 번 읽을 수 있고, 중간 결과를 쓰고 다시 읽을 수도 있다.
-따라서 이 가정으로 구한 intensity는 실제 kernel의 측정값과 다를 수 있다.
+이것으로 벡터 덧셈과 행렬곱 같은 세 작업의 intensity를 비교해 본다.
+GPU에서는 이런 작업을 kernel이 실행하지만, 아래 표는 특정 kernel을 측정한 결과가 아니다.
+연산량은 각 작업에 필요한 곱셈과 덧셈의 횟수로 세고, 데이터 이동량은 각 입력을 HBM에서 한 번 읽고 출력을 한 번 쓴다고 가정해 어림한다.
+읽어 온 데이터를 필요한 만큼 재사용하면서 HBM에서 다시 읽지 않아도 된다는 이상적인 가정이다.
+실제로는 칩 안의 저장 공간이 유한해 같은 데이터를 여러 번 읽거나 중간 결과를 HBM에 썼다가 다시 읽을 수 있다.
+또 작업 하나가 여러 kernel로 나뉘거나 다른 작업과 하나의 kernel로 합쳐질 수 있으므로, 실제 kernel에서 측정한 intensity는 이 어림과 다를 수 있다.
 
-| 연산 | 출력 크기 | 계산량(FLOPs) | 데이터(bytes): 입력 + 입력 + 출력 | intensity $I$ | $m=4096$일 때 |
+| 작업 | 출력 크기 | 연산량(FLOPs) | 데이터 이동량(bytes): 입력 + 입력 + 출력 | intensity $I$ | $m=4096$일 때 |
 |---|---|---|---|---|---|
 | 벡터 덧셈 $x+y$ | $1\times m$ | $m$ | $2m+2m+2m=6m$ | $1/6$ | 0.17 |
 | 벡터×행렬 $xA$ | $1\times m$ | $2m^2$ | $2m+2m^2+2m=2m^2+4m$ | $m/(m+2)$ | 약 1.0 |
 | 행렬×행렬 $AB$ | $m\times m$ | $2m^3$ | $2m^2+2m^2+2m^2=6m^2$ | $m/3$ | 1,365 |
 
-계산량은 출력 원소 하나에 드는 FLOPs에 출력 원소 수를 곱해 센다.
+연산량은 출력 원소 하나에 드는 FLOPs에 출력 원소 수를 곱해 센다.
 벡터 덧셈은 출력 원소마다 덧셈 1번이다.
 $xA$와 $AB$는 출력 원소마다 길이 $m$인 내적, 곧 곱셈 $m$번과 덧셈 $m$번을 하므로 $2m$ FLOPs다(덧셈은 정확히 $m-1$번이지만 관례대로 $m$번으로 센다).
 
 $xA$는 데이터 대부분이 행렬 $A$이고, $A$의 원소 하나(2 bytes)를 읽어 곱셈과 덧셈을 한 번씩(2 FLOPs)만 하므로 intensity가 약 1이다.
 Decode에서 토큰 하나의 행벡터에 weight 행렬을 곱하는 계산이 바로 이 경우다.
 $AB$는 $A$와 $B$의 원소 하나를 출력 계산에 $m$번씩 재사용하므로 intensity가 $m$에 비례한다.
-**같은 데이터를 여러 번 재사용하는 연산일수록 intensity가 높다.**
+**같은 데이터를 여러 번 재사용하는 작업일수록 intensity가 높다.**
 
 ## 2. Roofline model
 
-연산 하나의 계산량(FLOPs)은 정해져 있으므로, 그 연산이 얼마나 빨리 끝나는지는 1초에 몇 번 계산하는지(FLOP/s)로 나타낼 수 있다.
+작업에 필요한 연산량(FLOPs)이 정해져 있을 때, 그 작업이 얼마나 빨리 끝나는지는 1초에 수행하는 연산 횟수(FLOP/s)로 나타낼 수 있다.
 이 값을 peak FLOP/s와 비교하면 연산 장치를 얼마나 쓰고 있는지도 보인다.
-Arithmetic intensity가 $I$인 연산이 낼 수 있는 FLOP/s의 상한은 다음과 같다.[^roofline]
+Arithmetic intensity가 $I$인 작업이 낼 수 있는 FLOP/s의 상한은 다음과 같다.[^roofline]
 
 $$
 \text{달성 가능한 FLOP/s의 상한}=\min\bigl(\text{대역폭}\times I,\ \text{peak FLOP/s}\bigr)
 $$
 
 대역폭(bytes/s)에 $I$(FLOP/byte)를 곱하면 FLOP/s가 된다.
-곧 $\text{대역폭}\times I$는 데이터가 도착하는 속도에 맞춰 계산할 때 낼 수 있는 계산 속도다.
+곧 $\text{대역폭}\times I$는 데이터가 도착하는 속도에 맞춰 계산할 때 낼 수 있는 연산 속도다.
 Intensity가 낮으면 이 값이 peak FLOP/s보다 작아서 달성 가능한 FLOP/s의 상한이 $I$에 비례하고,
 intensity가 높으면 peak FLOP/s가 상한이 된다.
 가로축과 세로축을 모두 로그로 그리면 비스듬한 지붕과 평평한 지붕이 만나는 모양이 된다.
 Roofline이라는 이름이 여기서 왔다.
 두 지붕이 만나는 점이 **ridge point**이고, 그 intensity는 peak FLOP/s를 대역폭으로 나눈 값, 곧 앞에서 구한 295 FLOP/byte다.
-**Ridge point보다 왼쪽에 있는 연산은 memory-bound, 오른쪽에 있는 연산은 compute-bound다.**
+**Ridge point보다 왼쪽에 있는 작업은 memory-bound, 오른쪽에 있는 작업은 compute-bound다.**
 이는 두 사양상 상한 중 어느 쪽이 더 낮은지에 따른 분류다.
 실제 kernel은 병렬성이 부족하거나 추가적인 데이터 이동과 실행 비용이 생겨 지붕보다 낮은 성능을 낼 수 있으므로, 실제 병목은 측정으로 확인해야 한다.
 
@@ -139,22 +214,49 @@ Roofline이라는 이름이 여기서 왔다.
 <figcaption>H100 SXM의 precision별 roofline. 대역폭은 같고 peak FLOP/s만 달라서, peak가 높을수록 ridge point가 오른쪽으로 옮겨 간다. FP32는 CUDA core, BF16과 FP8은 Tensor Core의 dense 행렬곱 값이다.[^h100][^h100-bandwidth]</figcaption>
 </figure>
 
-**지붕은 하드웨어가 정하고, intensity는 연산이 정한다.**
+**지붕은 하드웨어가 정하고, intensity는 작업의 연산량과 데이터 이동량이 정한다.**
 GPU가 바뀌면 지붕이 바뀌고, 같은 GPU에서도 precision에 따라 평평한 지붕의 높이가 다르다.
 H100 SXM은 FP32로 약 67, BF16으로 약 989, FP8로 약 1,979 TFLOP/s를 계산하지만, 대역폭은 3.35 TB/s로 같다.[^h100][^h100-bandwidth]
 그래서 비스듬한 지붕은 하나이고 평평한 지붕만 셋이며, ridge point는 FP32에서 20, BF16에서 295, FP8에서 591이다.
-예를 들어 **intensity가 50인 연산은 FP32 지붕 아래에서는 compute-bound지만, BF16이나 FP8 지붕 아래에서는 memory-bound다**.
-반면 intensity는 같은 GPU에서도 batch를 키우거나 데이터를 더 적은 bytes로 저장하는 식으로 연산과 그 구현을 바꾸면 달라진다.
+예를 들어 **intensity가 50인 작업은 FP32 지붕 아래에서는 compute-bound지만, BF16이나 FP8 지붕 아래에서는 memory-bound다**.
+반면 intensity는 같은 GPU에서도 batch를 키우거나 데이터를 더 적은 bytes로 저장하는 식으로 작업의 조건이나 구현을 바꾸면 달라진다.
 
 ## 3. Roofline 위의 Llama 3.1 8B
 
 이제 요청 하나를 처리할 때 Llama 3.1 8B의 prefill과 decode가 BF16 roofline의 어디에 놓이는지 계산해 보자.<Sidenote>이런 계산을 대신해 주는 도구 [LLM-Viewer](https://github.com/hahnyuan/LLM-Viewer)가 있다. 모델, GPU, batch 크기, 프롬프트·생성 길이, 양자화 bit 수를 정하면 층마다 roofline으로 이론적인 시간과 병목을 구하고, 이를 합쳐 전체 inference 시간과 메모리 사용량을 보여 준다.[^survey]</Sidenote>
+
+<Details summary="논문의 작업별 roofline 분석 예시">
+
+Yuan 등의 [논문 Table 1](https://arxiv.org/pdf/2402.16363v6#page=5)은 Llama 2 7B를 RTX A6000에서 FP16으로 실행할 때 작업별 연산량과 메모리 접근량을 roofline 모형으로 분석한다.[^survey]
+Batch는 1이고 시퀀스 길이는 2,048토큰이다.
+아래 값은 원문의 수치이며, 같은 값인 작업들은 한 행으로 묶었다.
+이 노트에서 계산하는 Llama 3.1 8B·H100 SXM·BF16과는 조건이 다르다.
+
+| 단계 | 작업 | 연산 횟수 (OP) | 접근량 (bytes) | Intensity (OP/byte) | 상한 (OP/s) | 병목 |
+|---|---|---|---|---|---|---|
+| Prefill | Q·K·V·출력 투영, 각각 | 69G | 67M | 1,024 | 155T | 연산 |
+| Prefill | Gate·up·down 투영, 각각 | 185G | 152M | 1,215 | 155T | 연산 |
+| Prefill | QK·SV 행렬곱, 각각 | 34G | 302M | 114 | 87T | 메모리 |
+| Prefill | Softmax | 671M | 537M | 1.25 | 960G | 메모리 |
+| Prefill | 정규화 | 59M | 34M | 1.75 | 1T | 메모리 |
+| Prefill | 덧셈 | 8M | 34M | 0.25 | 192G | 메모리 |
+| Decode | Q·K·V·출력 투영, 각각 | 34M | 34M | 1 | 768G | 메모리 |
+| Decode | Gate·up·down 투영, 각각 | 90M | 90M | 1 | 768G | 메모리 |
+| Decode | QK·SV 행렬곱, 각각 | 17M | 17M | 0.99 | 762G | 메모리 |
+| Decode | Softmax | 328K | 262K | 1.25 | 960G | 메모리 |
+| Decode | 정규화 | 29K | 16K | 1.75 | 1T | 메모리 |
+| Decode | 덧셈 | 4K | 16K | 0.25 | 192G | 메모리 |
+
+K·M·G·T는 각각 천·백만·십억·조를 뜻한다.
+성능 상한과 병목은 실측 결과가 아니라 논문의 roofline 모형으로 얻은 값이다.
+</Details>
+
 Llama 3.1 8B는 층 수 $L=32$, hidden 차원 $d=4096$, FFN 중간 차원 14,336, query head $n_h=32$개, KV head $n_{kv}=8$개, head 차원 $d_h=128$이다.[^llama3]
 파라미터는 $N\approx8\times10^9$개이고 precision은 BF16(원소당 2 bytes)이므로 weight는 약 16 GB다.
 데이터는 입력을 한 번 읽고 출력을 한 번 쓰는 최소량으로 센다.
 
 Transformer의 주요 행렬곱은 학습된 weight 행렬을 activation에 곱하는 **선형층**과, query와 key·value를 곱하는 **attention** 두 종류다.
-두 연산의 intensity를 차례로 구한 뒤, 둘을 합친 한 스텝 전체가 어디에 놓이는지 본다.
+두 작업의 intensity를 차례로 구한 뒤, 둘을 합친 한 스텝 전체가 어디에 놓이는지 본다.
 
 ### 3-1. 선형층
 
@@ -165,7 +267,7 @@ Forward 한 번에 토큰 $n$개가 함께 들어오면, $n\times d$ 입력에 $
 
 | | 값 | 세는 법 |
 |---|---|---|
-| 계산량(FLOPs) | $2nd^2$ | 출력 원소 $nd$개마다 길이 $d$인 내적(곱셈 $d$번, 덧셈 $d$번) |
+| 연산량(FLOPs) | $2nd^2$ | 출력 원소 $nd$개마다 길이 $d$인 내적(곱셈 $d$번, 덧셈 $d$번) |
 | 데이터(bytes) | $2d^2+2nd+2nd$ | Weight $d^2$개, 입력 $nd$개, 출력 $nd$개, 원소당 2 bytes |
 
 $$
@@ -185,7 +287,7 @@ Decode는 직전에 만든 토큰 하나만 넣으므로 $n=1$이고, intensity�
 Attention의 행렬곱은 query와 key의 내적과, 그 결과로 얻은 가중치를 value에 곱하는 가중합이다.
 Decode에서는 key와 value를 KV cache에서 가져온다.
 먼저 query head마다 자기 key·value를 갖는 MHA(multi-head attention)로 계산해 보자.
-Head들은 서로 독립이고 크기가 같으므로, head 하나의 계산량과 데이터를 세면 층 전체의 intensity와 같다.
+Head들은 서로 독립이고 크기가 같으므로, head 하나의 연산량과 데이터 이동량을 세면 층 전체의 intensity와 같다.
 
 **Prefill.** 프롬프트의 토큰 $n$개가 query $n$개와 key·value $n$개를 함께 만든다.
 Causal mask 때문에 위치 $i$의 query는 key $i$개만 보므로, 내적하는 (query, key) 쌍은 $1+2+\dots+n\approx n^2/2$개다.
@@ -194,7 +296,7 @@ Causal mask 때문에 위치 $i$의 query는 key $i$개만 보므로, 내적하�
 
 | | 값 | 세는 법 |
 |---|---|---|
-| 계산량(FLOPs) | $2n^2d_h$ | 쌍 $n^2/2$개마다 내적($2d_h$)과 가중합($2d_h$) |
+| 연산량(FLOPs) | $2n^2d_h$ | 쌍 $n^2/2$개마다 내적($2d_h$)과 가중합($2d_h$) |
 | 데이터(bytes) | $4nd_h+4nd_h$ | query·출력 $2nd_h$개, key·value $2nd_h$개, 원소당 2 bytes |
 
 $$
@@ -210,7 +312,7 @@ $n=2048$이면 512다.
 
 | | 값 | 세는 법 |
 |---|---|---|
-| 계산량(FLOPs) | $4Td_h$ | 쌍 $T$개마다 내적($2d_h$)과 가중합($2d_h$) |
+| 연산량(FLOPs) | $4Td_h$ | 쌍 $T$개마다 내적($2d_h$)과 가중합($2d_h$) |
 | 데이터(bytes) | $4d_h+4Td_h$ | query·출력 $2d_h$개, key·value $2Td_h$개, 원소당 2 bytes |
 
 $$
@@ -235,7 +337,7 @@ GQA는 query head를 4개씩 8묶음으로 나누고, 묶음마다 KV head 하�
 
 | | 값 | 세는 법 |
 |---|---|---|
-| 계산량(FLOPs) | $2gn^2d_h$ | 쌍 $n^2/2$개마다 query head $g$개가 내적($2d_h$)과 가중합($2d_h$) |
+| 연산량(FLOPs) | $2gn^2d_h$ | 쌍 $n^2/2$개마다 query head $g$개가 내적($2d_h$)과 가중합($2d_h$) |
 | 데이터(bytes) | $4gnd_h+4nd_h$ | query·출력 $2gnd_h$개, key·value $2nd_h$개, 원소당 2 bytes |
 
 $$
@@ -246,7 +348,7 @@ $$
 
 | | 값 | 세는 법 |
 |---|---|---|
-| 계산량(FLOPs) | $4gTd_h$ | 쌍 $T$개마다 query head $g$개가 내적($2d_h$)과 가중합($2d_h$) |
+| 연산량(FLOPs) | $4gTd_h$ | 쌍 $T$개마다 query head $g$개가 내적($2d_h$)과 가중합($2d_h$) |
 | 데이터(bytes) | $4gd_h+4Td_h$ | query·출력 $2gd_h$개, key·value $2Td_h$개, 원소당 2 bytes |
 
 $$
@@ -259,13 +361,13 @@ $$
 
 선형층과 attention을 합쳐 prefill과 decode의 한 스텝 전체를 계산해 보자.
 
-**Prefill.** 2,048토큰 프롬프트($n=2048$)를 prefill하면, 계산은 선형층 $2Nn=2\times8\times10^9\times2048\approx33$ TFLOPs와 attention 약 1 TFLOPs를 합한 약 34 TFLOPs다.
+**Prefill.** 2,048토큰 프롬프트($n=2048$)를 prefill하면, 연산량은 선형층 $2Nn=2\times8\times10^9\times2048\approx33$ TFLOPs와 attention 약 1 TFLOPs를 합한 약 34 TFLOPs다.
 989 TFLOP/s로 약 34 ms가 걸린다.
 데이터는 weight 16 GB에, 모든 층의 선형층과 attention이 토큰 2,048개의 입력·출력 activation을 각각 HBM에서 한 번 읽고 한 번 쓰는 약 12 GB를 더한 약 28 GB이고, 3.35 TB/s로 약 8.4 ms가 걸린다.
 Activation 이동량은 중간 결과를 HBM에 쓰는지, kernel을 합쳐 재사용하는지에 따라 달라진다.
-계산이 네 배쯤 오래 걸리므로(intensity 약 1,200) **compute-bound**다.
-이 값은 단순화한 계산량과 사양상 최대 속도로 얻은 이상적인 어림이다.
-층과 연산 사이에는 의존성이 있으므로, 전체 계산과 이동량을 합쳐 한 번에 겹친 이 계산은 실제 실행 시간을 그대로 예측하지 않는다.
+연산이 네 배쯤 오래 걸리므로(intensity 약 1,200) **compute-bound**다.
+이 값은 단순화한 연산량과 사양상 최대 속도로 얻은 이상적인 어림이다.
+층과 작업 사이에는 의존성이 있으므로, 전체 연산과 이동량을 합쳐 한 번에 겹친 이 계산은 실제 실행 시간을 그대로 예측하지 않는다.
 예를 들어 $2Nn$은 embedding lookup까지 모든 파라미터가 각 토큰의 행렬곱에 쓰인다고 세므로 정확한 FLOPs는 아니다.
 실제 TTFT(time to first token)를 예측하거나 엄밀한 하한으로 쓰려면 실행하는 연산과 측정 조건을 따로 확인해야 한다.
 
@@ -282,14 +384,14 @@ Attention은 query와 출력이 각각 $4096$개, key와 value가 각각 $1024$�
 
 **Decode.** 지금까지의 토큰 수가 $T=2048$일 때 decode 한 스텝을 보자.
 토큰 하나의 KV cache는 $2\cdot L\cdot n_{kv}\cdot d_h\cdot2\ \text{bytes}=2\cdot32\cdot8\cdot128\cdot2\ \text{bytes}\approx131$ KB이므로, KV cache 전체는 약 0.27 GB다.
-계산은 선형층 $2N\approx16$ GFLOPs와 attention 약 1 GFLOPs로, 최대 연산 속도를 적용한 이상적 시간은 약 0.02 ms다.
+연산량은 선형층 $2N\approx16$ GFLOPs와 attention 약 1 GFLOPs로, 최대 연산 속도를 적용한 이상적 시간은 약 0.02 ms다.
 데이터는 weight 16 GB와 KV cache 0.27 GB이고(토큰 하나의 activation은 작아서 뺀다), 최대 대역폭 3.35 TB/s를 적용한 읽기 시간은 약 4.9 ms다.
-이 어림에서 읽기 시간이 계산 시간보다 200배 넘게 길므로(intensity 약 1) **memory-bound**다.
+이 어림에서 읽기 시간이 연산 시간보다 200배 넘게 길므로(intensity 약 1) **memory-bound**다.
 
 두 단계를 BF16 roofline 위에 올리면 다음과 같다.
 
 <figure>
-<svg viewBox="0 0 660 330" role="img" aria-label="Llama 3.1 8B의 연산을 H100 SXM의 BF16 roofline 위에 올린 그림. 가로축은 arithmetic intensity I(FLOP/byte, 로그), 세로축은 달성 가능한 TFLOP/s(로그)다. 비스듬한 지붕은 대역폭 3.35 TB/s 곱하기 I, 평평한 지붕은 BF16 989 TFLOP/s이고 두 지붕은 ridge point 295에서 만난다. 점선 왼쪽은 memory-bound, 오른쪽은 compute-bound다. 비스듬한 지붕 위 왼쪽 끝에 decode 한 스텝(intensity 약 1)이, 조금 오른쪽에 decode attention(intensity 4)이 있다. 평평한 지붕 위에 prefill 2,048토큰(intensity 약 1,200)이 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 660 330" role="img" aria-label="Llama 3.1 8B의 작업을 H100 SXM의 BF16 roofline 위에 올린 그림. 가로축은 arithmetic intensity I(FLOP/byte, 로그), 세로축은 달성 가능한 TFLOP/s(로그)다. 비스듬한 지붕은 대역폭 3.35 TB/s 곱하기 I, 평평한 지붕은 BF16 989 TFLOP/s이고 두 지붕은 ridge point 295에서 만난다. 점선 왼쪽은 memory-bound, 오른쪽은 compute-bound다. 비스듬한 지붕 위 왼쪽 끝에 decode 한 스텝(intensity 약 1)이, 조금 오른쪽에 decode attention(intensity 4)이 있다. 평평한 지붕 위에 prefill 2,048토큰(intensity 약 1,200)이 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <text x="330" y="22" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">H100 SXM의 BF16 roofline 위의 Llama 3.1 8B</text>
   <line x1="72" y1="36" x2="72" y2="270" stroke="#0f172a"/>
   <line x1="72" y1="270" x2="533.0" y2="270" stroke="#0f172a"/>
@@ -332,13 +434,13 @@ Attention은 query와 출력이 각각 $4096$개, key와 value가 각각 $1024$�
 
 Decode는 토큰 하나만 넣으므로 선형층의 intensity가 약 1이다.
 그래서 서빙 엔진은 여러 사용자의 요청을 묶어 한 번에 decode한다.
-요청 $b$개를 묶으면 두 연산이 다르게 움직인다.
+요청 $b$개를 묶으면 두 작업이 다르게 움직인다.
 
 - **선형층**: 토큰 $b$개가 같은 weight를 함께 쓰므로 intensity가 오른다.
 - **Attention**: KV cache는 요청마다 따로 있어 각 요청이 자기 것만 읽으므로, intensity가 batch와 상관없이 약 4에 머문다.
 
 둘을 합친 스텝 전체의 intensity가 batch에 따라 어떻게 바뀌는지 보자.
-모든 요청의 토큰 수가 $T=2048$이라 하면, weight 16 GB는 한 번만 읽고 요청이 하나 늘 때마다 KV cache 0.27 GB와 계산 17 GFLOPs(선형층 $2N=16$ GFLOPs와 attention 약 1 GFLOPs)가 더해진다.
+모든 요청의 토큰 수가 $T=2048$이라 하면, weight 16 GB는 한 번만 읽고 요청이 하나 늘 때마다 KV cache 0.27 GB와 연산량 17 GFLOPs(선형층 $2N=16$ GFLOPs와 attention 약 1 GFLOPs)가 더해진다.
 
 $$
 I(b)=\frac{17b\ \text{GFLOPs}}{(16+0.27b)\ \text{GB}}
@@ -349,11 +451,11 @@ $$
 | intensity | 1.0 | 13 | 33 | 48 | 60 | 63 |
 
 Batch가 작을 때는 읽는 데이터의 대부분이 weight 16 GB라서, 요청을 묶을수록 intensity가 빠르게 오른다.
-Batch가 커지면 읽는 데이터의 대부분이 KV cache가 되고($b=192$에서 67.8 GB 중 51.8 GB), intensity는 요청 하나의 계산량과 KV cache의 비인 $17/0.27\approx63$에 다가간다.
+Batch가 커지면 읽는 데이터의 대부분이 KV cache가 되고($b=192$에서 67.8 GB 중 51.8 GB), intensity는 요청 하나의 연산량과 KV cache 이동량의 비인 $17/0.27\approx63$에 다가간다.
 이 단순화된 계산에서는 batch를 키워도 decode의 intensity가 ridge point 295에 닿지 않는다.
 Batch 1,024는 이 가정에서 weight와 KV cache만 약 292 GB이므로 H100 SXM 한 대의 80 GB에는 들어가지 않는다.
 이 값과 무한 batch는 경향과 극한을 보여 주는 수학적 비교다.
-다른 모델, 문맥 길이, 정밀도나 kernel에서는 계산량과 메모리 이동량이 달라져 병목도 달라질 수 있다.
+다른 모델, 문맥 길이, 정밀도나 kernel에서는 연산량과 메모리 이동량이 달라져 병목도 달라질 수 있다.
 
 <Callout type="example">
 이 근사에서 batch가 처리량과 지연에 주는 영향을 수치로 보자.
@@ -374,6 +476,8 @@ Batch 192는 약 67.8 GB를 읽으므로 $67.8/3.35\approx20.2$ ms다(GB를 TB/s
 [^h100-bandwidth]: NVIDIA. NVIDIA H100 Tensor Core GPU. *NVIDIA product specifications*. [nvidia.com](https://www.nvidia.com/en-us/data-center/h100/); [H100 SXM·PCIe 데이터시트](https://i.dell.com/sites/csdocuments/App-Merchandizing_Documents/en/us/h100-gpu.pdf).
 
 [^roofline]: Williams, S., Waterman, A., & Patterson, D. (2009). Roofline: An Insightful Visual Performance Model for Multicore Architectures. *Communications of the ACM*, 52(4), 65–76. [doi:10.1145/1498765.1498785](https://doi.org/10.1145/1498765.1498785); [저자 공개본](https://escholarship.org/content/qt78h8v7mr/qt78h8v7mr.pdf).
+
+[^nsight]: NVIDIA. (2026). Nsight Compute Profiling Guide. *NVIDIA documentation*. [docs.nvidia.com](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html#roofline-charts).
 
 [^llama3]: Llama Team, AI @ Meta. (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783).
 

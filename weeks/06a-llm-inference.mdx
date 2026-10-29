@@ -10,7 +10,7 @@ inference 비용을 줄이는 일은 더 중요해졌다.
 
 Inference 비용은 세 가지로 나누어 볼 수 있다.[^survey]
 
-- **Computational cost**: 계산 자체의 양으로, FLOPs(floating-point operations)로 센다.
+- **Computational cost**: 연산 자체의 양으로, FLOPs(floating-point operations)로 센다.
 - **Memory access cost**: weight나 KV(key-value) cache 같은 데이터를 메모리에서 연산 장치로 읽어 오고 결과를 다시 쓰는 데 드는 비용이다.
 - **Memory usage**: weight와 KV cache 등이 GPU(graphics processing unit) 메모리를 차지하는 양이다.
 
@@ -126,7 +126,7 @@ $$
 $$
 
 Forward에 넣은 토큰 수는 약 183배 차이다.
-이는 **처리한 토큰 수의 비교**이지 계산량이나 실제 지연이 같은 배율로 줄어든다는 뜻은 아니다.
+이는 **처리한 토큰 수의 비교**이지 연산량이나 실제 지연이 같은 배율로 줄어든다는 뜻은 아니다.
 </Callout>
 
 KV cache는 이렇게 computational cost를 줄이는 대신, 저장한 key·value가 GPU 메모리를 차지하고(memory usage) 스텝마다 그 전체를 다시 읽어야 하는(memory access cost) 비용을 새로 만든다.
@@ -235,7 +235,7 @@ forward 횟수로는 1 대 199로 decode가 거의 전부다.
 
 ## 2. 단계마다 다른 병목
 
-NVIDIA GPU가 계산과 데이터를 어떻게 나누어 다루는지, LLM 서빙에 널리 쓰이는 데이터센터 GPU인 H100 SXM을 예로 알아보자.
+NVIDIA GPU가 연산과 데이터를 어떻게 나누어 다루는지, LLM 서빙에 널리 쓰이는 데이터센터 GPU인 H100 SXM을 예로 알아보자.
 GPU는 **계산을 하는 연산 장치와 데이터를 담는 메모리**로 이루어진다.
 메모리는 두 층으로, GPU 칩 안의 SRAM(static random-access memory)은 작지만 빠르고 칩 바로 옆의 HBM(high-bandwidth memory)은 크지만 상대적으로 느리다.<Sidenote>여기서 GPU 칩은 연산 회로가 들어 있는 작은 실리콘 조각인 GPU 다이(die)를 뜻한다. 다이는 커다란 실리콘 원판인 웨이퍼에 회로를 만든 뒤 잘라 얻는다. 실리콘은 모래 등에 포함된 이산화규소에서 얻어 고순도로 정제한다. 웨이퍼를 만들고 회로를 형성해 검사·포장하는 주요 제조 과정을 흔히 반도체 8대 공정으로 묶어 소개한다.[^fab] 패키지는 다이를 보호하고 다른 부품과 연결하는 구조다. H100에서는 GPU 다이와 별도의 HBM 메모리가 같은 패키지에 들어간다.[^chip]</Sidenote>
 
@@ -244,7 +244,7 @@ SM은 GPU가 작업을 나누어 병렬로 실행하는 기본 단위다.
 H100 SXM의 칩 안에는 SM 132개와 이들이 함께 쓰는 L2 cache 50 MB가 있고, HBM 80 GB는 칩 밖에서 같은 패키지에 붙어 있다.[^h100]
 
 <figure>
-<svg viewBox="0 0 600 300" role="img" aria-label="H100 SXM에서 데이터가 움직이는 길. 왼쪽 HBM은 GPU 칩 밖에 있고 weight 16 GB, KV cache, 새로 덧붙이는 key·value 칸을 담는다. 오른쪽 GPU 칩 안에는 왼쪽에 모든 SM이 함께 쓰는 L2 cache 50 MB가 있고, 그 오른쪽에 SM 하나가 있다. SM 안에는 register와 shared memory, 그리고 연산 장치인 Tensor Core가 들어 있다. ① weight와 KV cache의 필요한 부분을 조각별로 HBM에서 L2 cache를 거쳐 SM 안의 register와 shared memory로 읽어 온다. 전체 weight가 한꺼번에 cache에 들어가는 것은 아니다. ② Tensor Core가 그 데이터로 계산한다. ③ 새 토큰의 key·value를 L2 cache를 거쳐 HBM의 KV cache 뒤에 쓴다. 노란 칸이 SRAM이고 칩 안에 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 600 300" role="img" aria-label="H100 SXM에서 데이터가 움직이는 길. 왼쪽 HBM은 GPU 칩 밖에 있고 weight 16 GB, KV cache, 새로 덧붙이는 key·value 칸을 담는다. 오른쪽 GPU 칩 안에는 왼쪽에 모든 SM이 함께 쓰는 L2 cache 50 MB가 있고, 그 오른쪽에 SM 하나가 있다. SM 안에는 register와 shared memory, 그리고 연산 장치인 Tensor Core가 들어 있다. ① weight와 KV cache의 필요한 부분을 조각별로 HBM에서 L2 cache를 거쳐 SM 안의 register와 shared memory로 읽어 온다. 전체 weight가 한꺼번에 cache에 들어가는 것은 아니다. ② Tensor Core가 그 데이터로 연산한다. ③ 새 토큰의 key·value를 L2 cache를 거쳐 HBM의 KV cache 뒤에 쓴다. 노란 칸이 SRAM이고 칩 안에 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <defs>
     <marker id="memflow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/></marker>
     <marker id="memflow-store" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8"/></marker>
@@ -280,7 +280,7 @@ H100 SXM의 칩 안에는 SM 132개와 이들이 함께 쓰는 L2 cache 50 MB가
   <text x="214" y="102" font-size="12" text-anchor="middle" fill="#0f172a">① 조각 읽기</text>
   <line x1="320" y1="140" x2="343" y2="140" stroke="#0f172a" stroke-width="1.5" marker-end="url(#memflow-arrow)"/>
   <line x1="432" y1="164" x2="478" y2="164" stroke="#0f172a" stroke-width="1.5" marker-start="url(#memflow-arrow)" marker-end="url(#memflow-arrow)"/>
-  <text x="455" y="154" font-size="12" text-anchor="middle" fill="#0f172a">② 계산</text>
+  <text x="455" y="154" font-size="12" text-anchor="middle" fill="#0f172a">② 연산</text>
   <line x1="344" y1="205" x2="321" y2="205" stroke="#1d4ed8" stroke-width="1.5" marker-end="url(#memflow-store)"/>
   <line x1="254" y1="214" x2="178" y2="214" stroke="#1d4ed8" stroke-width="1.5" marker-end="url(#memflow-store)"/>
   <text x="214" y="206" font-size="12" text-anchor="middle" fill="#1d4ed8">③ 쓰기</text>
@@ -288,7 +288,7 @@ H100 SXM의 칩 안에는 SM 132개와 이들이 함께 쓰는 L2 cache 50 MB가
   <rect x="250" y="270" width="16" height="16" rx="3" fill="#f1f5f9" stroke="#0f172a"/><text x="272" y="283" font-size="13" fill="#0f172a">HBM (칩 밖, 크고 느림)</text>
   <rect x="430" y="270" width="16" height="16" rx="3" fill="#dbeafe" stroke="#1d4ed8"/><text x="452" y="283" font-size="13" fill="#0f172a">연산 장치</text>
 </svg>
-<figcaption>H100 SXM에서 decode forward 한 번의 데이터 이동. ① weight와 KV cache의 필요한 부분을 조각별로 HBM에서 L2 cache를 거쳐 SM 안으로 읽어 오고, ② Tensor Core가 계산하며, ③ 새 토큰의 key·value를 L2 cache를 거쳐 HBM의 KV cache 뒤에 쓴다.</figcaption>
+<figcaption>H100 SXM에서 decode forward 한 번의 데이터 이동. ① weight와 KV cache의 필요한 부분을 조각별로 HBM에서 L2 cache를 거쳐 SM 안으로 읽어 오고, ② Tensor Core가 연산하며, ③ 새 토큰의 key·value를 L2 cache를 거쳐 HBM의 KV cache 뒤에 쓴다.</figcaption>
 </figure>
 
 Weight 16 GB 전체를 L2 cache 50 MB에 한꺼번에 올리는 것은 아니다.
@@ -331,21 +331,21 @@ SRAM은 HBM에서 가져온 조각을 잠시 올려 두는 곳이며, 읽을 wei
 프롬프트가 어느 정도 길면 계산하는 시간이 읽는 시간보다 길어진다.
 이렇게 computational cost가 시간을 정하는 단계를 **compute-bound**라 부른다.
 **Decode**에서 요청 하나만 처리하면 큰 weight 행렬을 읽어 와서 토큰 하나에만 쓴다.
-이때는 계산량에 비해 읽을 weight와 KV cache가 많아 memory access cost가 병목이 되기 쉽다.
+이때는 연산량에 비해 읽을 weight와 KV cache가 많아 memory access cost가 병목이 되기 쉽다.
 이렇게 메모리 대역폭이 상한을 정하는 경우를 **memory-bound**라 한다.
 
 <Callout type="example">
 Llama 3.1 8B의 BF16 weight는 약 16 GB다.
 H100 SXM은 HBM에서 초당 3.35 TB를 읽고(memory bandwidth), BF16 행렬곱을 초당 약 $989\times10^{12}$ FLOPs(computation)까지 계산한다.
 Weight를 한 번 읽는 데는 $16\ \text{GB}/3.35\ \text{TB/s}\approx4.8$ ms가 걸린다.
-토큰 하나의 forward에서 파라미터마다 곱셈과 덧셈을 한 번씩 한다고 단순화하면 계산량은 약 $2N\approx16$ GFLOPs(파라미터 수 $N\approx8.03\times10^9$)이고, 계산 시간은 $16\ \text{GFLOPs}/989\ \text{TFLOP/s}\approx0.016$ ms다.
-실제로 embedding lookup처럼 이 가정에 맞지 않는 연산도 있으므로 정확한 계산량은 아니다.
+토큰 하나의 forward에서 파라미터마다 곱셈과 덧셈을 한 번씩 한다고 단순화하면 연산량은 약 $2N\approx16$ GFLOPs(파라미터 수 $N\approx8.03\times10^9$)이고, 연산 시간은 $16\ \text{GFLOPs}/989\ \text{TFLOP/s}\approx0.016$ ms다.
+실제로 embedding lookup처럼 이 가정에 맞지 않는 작업도 있으므로 정확한 연산량은 아니다.
 이 두 값은 사양상 최대 속도를 적용한 이상적인 시간이다.
-읽기 시간의 어림이 계산 시간보다 훨씬 크므로 **작은 batch의 decode는 메모리 대역폭에 제한되기 쉽다**.
+읽기 시간의 어림이 연산 시간보다 훨씬 크므로 **작은 batch의 decode는 메모리 대역폭에 제한되기 쉽다**.
 </Callout>
 
 <figure>
-<svg viewBox="0 0 600 330" role="img" aria-label="Prefill과 decode의 forward 한 번을 나란히 그린 구조도. 두 단계 모두 HBM에 weight 16 GB와 KV cache가 있고, weight를 연산 장치로 한 번 읽어 온다. 왼쪽 prefill은 연산 장치에서 토큰 1,000개를 함께 계산하고 KV cache에 key와 value를 쓴다. 오른쪽 decode는 토큰 하나만 계산하고 KV cache를 읽는다. 아래 막대는 weight 읽기와 계산의 이상적인 시간을 비교하며, decode의 짧은 계산 막대는 보이도록 과장했다. Prefill은 읽기 4.8 ms, 계산 16 ms로 계산이 길어 compute-bound이고, decode는 읽기 4.8 ms, 계산 0.016 ms로 읽기가 길어 memory-bound다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 600 330" role="img" aria-label="Prefill과 decode의 forward 한 번을 나란히 그린 구조도. 두 단계 모두 HBM에 weight 16 GB와 KV cache가 있고, weight를 연산 장치로 한 번 읽어 온다. 왼쪽 prefill은 연산 장치에서 토큰 1,000개를 함께 계산하고 KV cache에 key와 value를 쓴다. 오른쪽 decode는 토큰 하나만 계산하고 KV cache를 읽는다. 아래 막대는 weight 읽기와 연산의 이상적인 시간을 비교하며, decode의 짧은 연산 막대는 보이도록 과장했다. Prefill은 읽기 4.8 ms, 연산 16 ms로 연산이 길어 compute-bound이고, decode는 읽기 4.8 ms, 연산 0.016 ms로 읽기가 길어 memory-bound다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <defs>
     <marker id="pd-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/>
@@ -387,17 +387,17 @@ Weight를 한 번 읽는 데는 $16\ \text{GB}/3.35\ \text{TB/s}\approx4.8$ ms�
   <text x="30" y="246" font-size="13" fill="#64748b">읽기</text>
   <rect x="70" y="236" width="51" height="12" fill="#94a3b8"/>
   <text x="127" y="246" font-size="13" fill="#0f172a">4.8 ms</text>
-  <text x="30" y="270" font-size="13" fill="#64748b">계산</text>
+  <text x="30" y="270" font-size="13" fill="#64748b">연산</text>
   <rect x="70" y="260" width="170" height="12" fill="#0f172a"/>
   <text x="246" y="270" font-size="13" fill="#0f172a">16 ms</text>
   <text x="330" y="246" font-size="13" fill="#64748b">읽기</text>
   <rect x="370" y="236" width="51" height="12" fill="#94a3b8"/>
   <text x="427" y="246" font-size="13" fill="#0f172a">4.8 ms</text>
-  <text x="330" y="270" font-size="13" fill="#64748b">계산</text>
+  <text x="330" y="270" font-size="13" fill="#64748b">연산</text>
   <rect x="370" y="260" width="2" height="12" fill="#0f172a"/>
   <text x="378" y="270" font-size="13" fill="#0f172a">0.016 ms</text>
   <text x="150" y="300" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">compute-bound</text>
-  <text x="150" y="318" font-size="13" text-anchor="middle" fill="#64748b">계산 시간이 더 길다</text>
+  <text x="150" y="318" font-size="13" text-anchor="middle" fill="#64748b">연산 시간이 더 길다</text>
   <text x="450" y="300" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">memory-bound</text>
   <text x="450" y="318" font-size="13" text-anchor="middle" fill="#64748b">읽기 시간이 더 길다</text>
 </svg>
@@ -408,7 +408,7 @@ Weight를 한 번 읽는 데는 $16\ \text{GB}/3.35\ \text{TB/s}\approx4.8$ ms�
 
 Decode에서 연산 장치가 기다리는 시간을 줄이는 가장 직접적인 방법은 여러 요청의 decode 스텝을 forward 한 번으로 묶는 **batching**이다.
 **weight를 한 번 읽어 여러 요청의 토큰을 함께 계산**하므로, weight를 읽는 비용을 여러 토큰이 나누어 쓴다.
-다만 요청마다 KV cache를 읽어야 하고 계산량도 늘어나므로, batch를 키워도 스텝 시간이 그대로인 것은 아니다.
+다만 요청마다 KV cache를 읽어야 하고 연산량도 늘어나므로, batch를 키워도 스텝 시간이 그대로인 것은 아니다.
 묶은 요청은 저마다 KV cache를 GPU 메모리에 두어야 하므로, 얼마나 많이 묶을 수 있는지는 메모리가 정한다.
 요청을 받아 batch로 묶고 모델을 실행하는 소프트웨어를 **서빙 엔진**이라 하며, 오픈소스 엔진 vLLM을 예로 든다.
 KV cache에 쓸 수 있는 공간은 엔진이 쓰도록 잡아 둔 GPU 메모리에서 weight, activation, workspace(계산 중에 잠시 쓰는 버퍼)를 빼고 남은 만큼이다.

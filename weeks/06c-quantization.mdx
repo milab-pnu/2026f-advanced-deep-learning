@@ -220,7 +220,7 @@ Weight의 값은 추론 중 고정되지만 activation은 입력마다 바뀌므
 이때 0.1과 0.3은 각각 정수 2와 7로 저장되어 약 0.086과 0.3으로 복원된다.
 큰 값 6이 작은 값 group의 scale을 결정하지 않기 때문이다.
 대신 이 열에 scale이 하나가 아니라 두 개 필요하다.
-더 잘게 나눈다고 모든 값의 오차나 전체 계산 비용이 반드시 줄어드는 것은 아니다.
+더 잘게 나눈다고 모든 값의 오차나 전체 연산 비용이 반드시 줄어드는 것은 아니다.
 
 <Callout type="example">
 같은 행렬을 숫자로 살펴보자.
@@ -256,7 +256,7 @@ Dettmers 등은 크기가 6 이상인 값이 여러 층과 토큰에 걸쳐 같�
 수는 적어도 모델의 동작에 중요한 값이라, 양자화할 때 이 값들의 손상을 줄여야 한다.
 Outlier feature는 대부분의 토큰에 걸친 channel이라, 시작 토큰처럼 특정 토큰의 한두 성분에만 생기는 massive activation과는 다른 현상이다.[^massive]
 Per-token은 각 행 전체가 scale 하나를 공유하므로 각 행에 같은 outlier channel이 있다면, 모든 행의 scale이 그 큰 값에 영향을 받는다.
-Activation per-channel은 큰 값이 있는 열을 다른 열과 별도로 묶어 그 영향을 나눌 수 있지만, 다음의 계산 비용과 맞바꾸는 선택이다.
+Activation per-channel은 큰 값이 있는 열을 다른 열과 별도로 묶어 그 영향을 나눌 수 있지만, 다음의 연산 비용과 맞바꾸는 선택이다.
 
 Weight와 activation을 모두 정수로 바꿔 정수 행렬곱을 하려면, scale을 어느 축에 두느냐가 정밀도뿐 아니라 계산 방식도 정한다.
 식을 단순하게 하려고 둘 다 대칭으로 두자(비대칭이면 zero-point가 만드는 항이 더 붙는다).
@@ -545,7 +545,7 @@ Weight-only의 이득은 batch가 커지거나 prefill로 가면 줄어든다.
 Llama 3.1 8B에서 문맥이 2,048토큰인 요청 192개를 묶고 weight와 각 요청의 KV cache를 한 번씩 읽는다고 근사하면 decode 스텝은 약 67.8 GB를 읽는다.
 그중 weight는 약 16 GB이므로,
 weight를 INT4로 줄여도 읽는 데이터는 약 56 GB로 18%쯤 줄어드는 데 그친다.
-둘째, weight-only는 bytes만 줄일 뿐 계산량은 그대로이고, weight를 dequantize하는 계산이 더해진다.
+둘째, weight-only는 bytes만 줄일 뿐 연산량은 그대로이고, weight를 dequantize하는 연산이 더해진다.
 작은 batch의 decode에서는 놀던 연산 장치가 이 계산을 맡지만,
 prefill처럼 선형층이 이미 compute-bound이면 weight를 덜 읽어 아끼는 시간은 거의 없고 dequantize 계산이 비용으로 더해진다.
 Zhou 등의 서베이는 AWQ 4-bit weight로 Llama 2를 실험해,

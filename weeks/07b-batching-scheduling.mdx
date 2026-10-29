@@ -125,8 +125,9 @@ H100 SXM의 BF16 최대 연산 성능은 989 TFLOP/s(TFLOP/s는 초당 $10^{12}$
 따라서 여기의 하한은 이 단순한 모형에서 얻은 추정치이며 실제 지연의 엄밀한 하한은 아니다.
 Decode만 하는 스텝의 하한은 약 9.9 ms다(weight 읽기 약 4.8 ms와 KV cache 읽기 약 5.1 ms).
 여기에 8,192토큰 프롬프트의 prefill이 같은 스텝에 들어오면 스텝 시간은 약 157 ms로 늘어난다.
-이 값은 차례로 실행되는 연산마다 읽는 시간과 계산 시간 가운데 긴 쪽을 더한 것이고, 내역은 다음과 같다.
-선형층은 토큰 8,256개(프롬프트 8,192개와 decode 64개)를 토큰마다 약 16 GFLOPs(giga floating-point operations)씩, 모두 약 133 TFLOPs를 계산하므로 989 TFLOP/s로 나누면 약 134 ms가 걸린다.
+이 값은 차례로 실행되는 작업마다 읽는 시간과 연산 시간 가운데 긴 쪽을 더한 것이고, 내역은 다음과 같다.
+선형층은 토큰 8,256개(프롬프트 8,192개와 decode 64개)를 토큰마다 약 16 GFLOPs(giga floating-point operations)씩 처리하므로 연산량이 모두 약 133 TFLOPs다.
+이를 989 TFLOP/s로 나누면 약 134 ms가 걸린다.
 Prefill의 causal attention은 약 18 TFLOPs로 약 18 ms이고, 둘 다 compute-bound다.
 끝으로 decode 64개가 KV cache를 읽는 약 5.1 ms가 더해진다.
 이미 응답을 받던 64명의 사용자에게는 10 ms 간격으로 나오던 토큰이 한 번 157 ms 동안 멈춘다.
@@ -301,7 +302,7 @@ GPU마다 읽는 weight와 KV cache가 절반이라, 통신을 빼면 스텝 하
 </Callout>
 
 PP도 학습에서처럼 층을 몇 개의 stage로 나누어 GPU마다 stage 하나씩 맡긴다.
-요청 하나는 stage를 차례로 지나므로, 각 stage의 실행 시간이 원래 계산 시간에 비례한다고 단순화하면 지연이 줄지 않는다.
+요청 하나는 stage를 차례로 지나므로, 각 stage의 실행 시간이 원래 연산 시간에 비례한다고 단순화하면 지연이 줄지 않는다.
 실제로는 GPU별 실행 속도와 stage 사이 통신도 지연에 영향을 준다.
 대신 통신이 stage 경계에서만 일어나 느린 연결에서도 쓸 수 있고,
 GPU 두 대가 앞뒤 절반을 맡는다면 첫 batch가 둘째 GPU에서 도는 동안 다음 batch가 첫 GPU에서 돌아 두 GPU가 함께 일한다.
@@ -344,7 +345,7 @@ Gupta 등의 Lynx는 실제 요청에서 batch 크기에 따라 MoE의 decode �
 <Figure src="https://arxiv.org/html/2411.08982v3/qwen3_slo_region.svg" alt="가로축은 최대 batch 크기(1, 2, 4, 8, 16, 32, 64), 세로축은 p99 TPOT(ms)인 꺾은선 그래프. 진한 파란 아래쪽 삼각형 선(Qwen3-32B)은 약 21 ms에서 48 ms로, 초록 원 선(Qwen3-30B-A3B)은 약 6 ms에서 46 ms로, 연한 파란 위쪽 삼각형 선(Qwen3-4B)은 약 5 ms에서 20 ms로 오른다. 25 ms와 50 ms에 회색 가로 점선이 있다. 초록 선과 연한 파란 선 사이에 1.7×, 2.1×, 2.3×, 3.0×, 2.5×, 2.3×가 적혀 있다. 위쪽 상자에는 batch가 크면 MoE 성능이 큰 dense 모델에 수렴한다는 관찰이, 아래쪽 상자에는 MoE's perf promise가 적혀 있고 연한 파란 선을 가리킨다." caption="최대 batch 크기에 따른 p99 TPOT. 초록 원은 Qwen3-30B-A3B(MoE, 활성 3B), 연한 파란 위쪽 삼각형은 Qwen3-4B(dense), 진한 파란 아래쪽 삼각형은 Qwen3-32B(dense)다. 굵은 숫자(1.7×–3.0×)는 같은 batch에서 MoE의 지연이 4B 모델의 몇 배인지를 나타낸다." source="Gupta et al. (2026), Figure 1(b) · CC BY 4.0" wide />
 
 Batch가 커지면 이처럼 토큰당 지연은 늘지만, 처리량은 다르다.
-Roofline으로 보면, 거의 모든 expert를 읽게 된 뒤에는 batch를 더 키워도 읽는 weight는 그대로이고 토큰당 계산은 작다.
+Roofline으로 보면, 거의 모든 expert를 읽게 된 뒤에는 batch를 더 키워도 읽는 weight는 그대로이고 토큰당 연산량은 작다.
 그래서 연산 쪽이 병목이 되기 전까지 처리량은 batch와 함께 늘어난다.
 Batch를 크게 키울 수 있는 서빙에서는, 총 파라미터가 비슷한 dense 모델이 연산 병목에 걸리는 batch에서도 MoE는 계산이 적어 처리량을 더 낼 수 있다.
 반대로 메모리가 작은 환경에서는 쓰지 않는 expert까지 모두 올려 두는 비용이 먼저 드러나, 같은 활성 파라미터의 작은 dense 모델이 더 다루기 쉬울 수 있다.
@@ -360,7 +361,7 @@ DeepSeek-V3의 MoE 층에는 모든 토큰이 항상 거치는 shared expert 1�
 처음 세 층은 FFN 하나를 그대로 쓰고 나머지 층이 MoE 층이며, 토큰마다 routed expert 256개 가운데 8개를 고른다.[^dsv3]
 모든 expert를 가진 DP 복제본 하나가 decode 스텝마다 토큰 64개를 처리하고 토큰이 expert에 고르게 나뉜다면,
 expert 하나에 평균 $64\times8/256=2$개의 토큰이 간다.
-BF16 선형층의 intensity는 함께 처리하는 토큰 수와 거의 같으므로 약 2이고, 이 expert의 계산은 weight를 읽는 시간이 지배한다.
+BF16 선형층의 intensity는 함께 처리하는 토큰 수와 거의 같으므로 약 2이고, 이 expert의 작업은 weight를 읽는 시간이 지배한다.
 복제본 하나가 동시에 담을 수 있는 요청 수는 KV cache 공간과 지연 목표에 묶여 있으므로,
 expert 하나가 받는 토큰 수를 크게 키우려면 여러 복제본의 토큰을 같은 expert로 모아야 한다.
 </Callout>
