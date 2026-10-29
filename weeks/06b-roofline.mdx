@@ -470,7 +470,7 @@ Batch 1,024는 이 가정에서 weight와 KV cache만 약 292 GB이므로 H100 S
 
 <Callout type="example">
 이 근사에서 batch가 처리량과 지연에 주는 영향을 수치로 보자.
-H100 SXM에서 weight와 KV cache를 읽는 시간만으로 decode 스텝을 어림하면, batch 1은 $(16+0.27)/3.35\approx4.9$ ms다.
+H100 SXM에서 **weight와 KV cache를 읽는 시간만으로 decode 스텝을 어림**하면, batch 1은 $(16+0.27)/3.35\approx4.9$ ms다.
 Batch 192는 약 67.8 GB를 읽으므로 $67.8/3.35\approx20.2$ ms다(GB를 TB/s로 나누면 ms가 된다).
 스텝은 약 4.1배 길어지지만, 한 스텝에서 나오는 토큰은 1개에서 192개로 늘어난다.
 따라서 초당 출력 토큰 수의 비는 $192\times4.9/20.2\approx46$배다.
