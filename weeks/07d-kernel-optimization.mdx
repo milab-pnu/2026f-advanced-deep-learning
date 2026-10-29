@@ -78,7 +78,7 @@ Decode에서는 특히 첫째 조건이 어렵다.
 
 ### 2-1. Nsight Systems
 
-Nsight Systems(`nsys`)는 CPU thread, CUDA API 호출, GPU에서 실행된 kernel과 메모리 복사를 한 시간축 위에 그린다.[^nsys]
+Nsight Systems(`nsys`)는 CPU(central processing unit) thread, CUDA API 호출, GPU에서 실행된 kernel과 메모리 복사를 한 시간축 위에 그린다.[^nsys]
 `nsys profile -o report <실행 명령>`으로 실행하면 기록이 `report.nsys-rep` 파일에 저장되고, GUI에서 열면 타임라인이 보인다.
 이 타임라인에서 볼 것은 두 가지다.
 
@@ -96,7 +96,7 @@ CPU의 제출이 늦었을 수도 있지만, 데이터 복사나 다른 작업�
 코드에 NVTX(NVIDIA Tools Extension) 범위 표시를 넣으면 "decode 스텝", "12번째 층" 같은 구간 이름이 타임라인에 함께 나타나, 어느 구간의 kernel인지 찾기 쉽다.
 
 <figure>
-<svg viewBox="0 0 600 232" role="img" aria-label="Nsight Systems 타임라인의 개념도. 가로축은 시간이다. 맨 위 NVTX 줄에 decode step 구간이 표시되고, 그 아래 CPU thread 줄에서는 엔진의 Python 코드가 계속 실행된다. CUDA API 줄에는 kernel을 제출하는 launch가 일정한 간격으로 아홉 번 찍혀 있다. GPU kernel 줄에서는 앞부분에 긴 GEMM과 attention kernel 사이로 짧은 kernel들이 빈틈없이 이어지지만, 뒷부분에서는 짧은 kernel이 다음 launch보다 먼저 끝나 kernel 사이에 빈 구간이 생긴다. 그 아래 괄호가 빈 구간을 가리키며 GPU가 다음 launch를 기다린다고 적혀 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 600 232" role="img" aria-label="Nsight Systems 타임라인의 개념도. 가로축은 시간이다. 맨 위 NVTX 줄에 decode step 구간이 표시되고, 그 아래 CPU thread 줄에서는 엔진의 Python 코드가 계속 실행된다. CUDA API 줄에는 kernel을 제출하는 launch가 일정한 간격으로 아홉 번 찍혀 있다. GPU kernel 줄에서는 앞부분에 긴 행렬곱(GEMM, general matrix multiplication)과 attention kernel 사이로 짧은 kernel들이 빈틈없이 이어지지만, 뒷부분에서는 짧은 kernel이 다음 launch보다 먼저 끝나 kernel 사이에 빈 구간이 생긴다. 그 아래 괄호가 빈 구간을 가리키며 GPU가 다음 launch를 기다린다고 적혀 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <defs><marker id="nsys-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker></defs>
   <text x="300" y="22" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Nsight Systems 타임라인 (decode 한 스텝의 일부, 개념도)</text>
   <text x="14" y="55" font-size="13" fill="#64748b">NVTX</text>
@@ -104,7 +104,7 @@ CPU의 제출이 늦었을 수도 있지만, 데이터 복사나 다른 작업�
   <text x="14" y="135" font-size="13" fill="#64748b">CUDA API</text>
   <text x="14" y="177" font-size="13" fill="#64748b">GPU kernel</text>
   <rect x="110" y="40" width="360" height="22" rx="3" fill="#f1f5f9" stroke="#0f172a"/><text x="290" y="56" font-size="13" text-anchor="middle" fill="#0f172a">decode step</text>
-  <rect x="110" y="80" width="360" height="22" rx="3" fill="#f1f5f9" stroke="#94a3b8"/><text x="290" y="96" font-size="13" text-anchor="middle" fill="#64748b">엔진의 Python 코드</text>
+  <rect x="110" y="80" width="360" height="22" rx="3" fill="#f1f5f9" stroke="#94a3b8"/><text x="290" y="96" font-size="13" text-anchor="middle" fill="#475569">엔진의 Python 코드</text>
   <rect x="130" y="122" width="12" height="20" fill="#2a78d6"/>
   <rect x="160" y="122" width="12" height="20" fill="#2a78d6"/>
   <rect x="190" y="122" width="12" height="20" fill="#2a78d6"/>
@@ -130,11 +130,12 @@ CPU의 제출이 늦었을 수도 있지만, 데이터 복사나 다른 작업�
   <path d="M308,194 L308,200 L386,200 L386,194" fill="none" stroke="#0f172a"/>
   <text x="347" y="220" font-size="13" text-anchor="middle" fill="#0f172a">빈 구간: GPU가 다음 launch를 기다림</text>
 </svg>
-<figcaption>Nsight Systems 타임라인의 개념도. CUDA API 줄의 launch는 CPU가 kernel을 제출한 시점이고, GPU kernel 줄의 상자는 실제 실행 구간이다. 이름 없는 좁은 상자는 정규화나 원소별 연산처럼 짧은 kernel이다. 긴 GEMM과 attention이 실행되는 동안에는 제출이 앞서 쌓이지만, 짧은 kernel이 이어지면 다음 제출보다 먼저 끝나 GPU 줄에 빈 구간이 생긴다. Nsight Systems의 화면 구성을 바탕으로 직접 구성했으며 시간 축척은 임의다.</figcaption>
+<figcaption>Nsight Systems 타임라인의 개념도. CUDA API 줄의 launch는 CPU가 kernel을 제출한 시점이고, GPU kernel 줄의 상자는 실제 실행 구간이다. 이름 없는 좁은 상자는 정규화나 원소별 연산처럼 짧은 kernel이다. 긴 GEMM(general matrix multiplication, 행렬곱)과 attention이 실행되는 동안에는 제출이 앞서 쌓이지만, 짧은 kernel이 이어지면 다음 제출보다 먼저 끝나 GPU 줄에 빈 구간이 생긴다. Nsight Systems의 화면 구성을 바탕으로 직접 구성했으며 시간 축척은 임의다.</figcaption>
 </figure>
 
 vLLM 문서는 Nsight Systems로 vLLM을 잴 때 `--trace-fork-before-exec=true`와 `--cuda-graph-trace=node`를 붙이라고 권한다.[^vllm-profile]
-앞의 옵션은 vLLM이 띄우는 worker 프로세스까지 기록하게 한다.
+앞의 옵션은 프로세스를 복제해 자식을 만드는 `fork`부터, 그 자식이 `exec` 함수로 다른 프로그램을 실행하기 전까지의 작업도 추적한다.
+이 옵션은 Linux에서만 쓸 수 있고, NVIDIA는 이 구간의 추적이 충돌이나 교착을 일으킬 수 있다고 주의한다.[^nsys]
 뒤의 옵션은 여러 kernel을 묶어 한 번에 재생하는 CUDA graph 안의 kernel도 하나하나 기록하게 한다.
 CUDA driver가 11.7 이상이면 Nsight Systems는 기본적으로 CUDA graph를 통째로 한 구간으로 기록하므로, 이 옵션이 없으면 그래프 안의 kernel별 시간을 볼 수 없다.[^nsys]
 대신 kernel 단위로 기록하는 만큼 측정 부담이 커지므로, 지연 자체는 profiler 없이 따로 잰다.
@@ -175,10 +176,12 @@ $e^{x_j-m_{\text{old}}}\,e^{m_{\text{old}}-m_{\text{new}}}=e^{x_j-m_{\text{new}}
 마지막 블록까지 처리한 뒤 $a/\ell$이 출력이고, 이는 점수 전체로 한 번에 계산한 출력과 같다.
 이 방식을 online softmax라 부른다.[^online-softmax]
 
+<Details summary="Online softmax 계산 예">
 예를 들어 첫 위치의 점수가 1이고 value가 10이면 $m=1$, $\ell=1$, $a=10$이다.
 다음 위치의 점수가 2, value가 20이면 새 최댓값은 2가 된다.
 기존 합을 $e^{1-2}\approx0.368$배로 바꾼 뒤 새 위치를 더해 $\ell\approx0.368+1=1.368$, $a\approx3.68+20=23.68$을 얻는다.
 두 위치만 처리한 출력은 $a/\ell\approx17.31$이고, 아직 더 처리할 위치가 있다면 이 값들을 들고 이어 간다.
+</Details>
 
 FlashAttention 1은 key·value 블록 하나를 불러 여러 query 블록에 차례로 적용한 뒤 다음 key·value 블록으로 넘어갔다.
 이 순서는 key·value 블록을 여러 query 블록에 재사용하는 데 맞춘 것이다.
@@ -230,10 +233,10 @@ Dao 등의 Flash-Decoding은 나눌 방향을 하나 더 만들었다.
   <rect x="234" y="104" width="92" height="46" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
   <rect x="346" y="104" width="92" height="46" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
   <rect x="458" y="104" width="92" height="46" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
-  <text x="168" y="123" font-size="11" text-anchor="middle" fill="#64748b">thread block 1</text>
-  <text x="280" y="123" font-size="11" text-anchor="middle" fill="#64748b">thread block 2</text>
-  <text x="392" y="123" font-size="11" text-anchor="middle" fill="#64748b">thread block 3</text>
-  <text x="504" y="123" font-size="11" text-anchor="middle" fill="#64748b">thread block 4</text>
+  <text x="168" y="123" font-size="11" text-anchor="middle" fill="#475569">thread block 1</text>
+  <text x="280" y="123" font-size="11" text-anchor="middle" fill="#475569">thread block 2</text>
+  <text x="392" y="123" font-size="11" text-anchor="middle" fill="#475569">thread block 3</text>
+  <text x="504" y="123" font-size="11" text-anchor="middle" fill="#475569">thread block 4</text>
   <text x="168" y="141" font-size="12" text-anchor="middle" fill="#0f172a">o₁, LSE₁</text>
   <text x="280" y="141" font-size="12" text-anchor="middle" fill="#0f172a">o₂, LSE₂</text>
   <text x="392" y="141" font-size="12" text-anchor="middle" fill="#0f172a">o₃, LSE₃</text>
@@ -295,7 +298,7 @@ PagedAttention의 흩어진 블록,
 여러 요청이 공유하는 prefix, 요청마다 다른 길이가 모두 이 형식 하나로 표현된다.
 Kernel은 흩어진 블록을 타일 단위로 GPU 메모리에서 shared memory의 연속된 공간에 모은 뒤,
 거기서 dense한 연산을 하고 다음 타일로 넘어간다.
-Query tile이 충분히 크면 Tensor Core를 쓰고, tile 크기가 1이면 CUDA Core를 쓴다.<Sidenote>CUDA Core는 원소 하나씩 덧셈과 곱셈을 하는 범용 연산 장치이고, Tensor Core는 작은 행렬 블록의 곱셈과 누산을 한 번에 처리하는 행렬곱 전용 장치다. Query 하나만 따로 처리하면 Tensor Core가 요구하는 행렬 타일을 채우기 어렵다. 다만 GQA에서 같은 KV를 쓰는 여러 query head를 묶거나 빈 행을 채워 Tensor Core를 쓰는 구현도 있으므로, query 길이 하나만으로 실행 장치를 단정할 수는 없다. 두 장치의 차이를 입문 수준에서 정리한 글로 GPU Mart의 [CUDA Cores vs Tensor Cores](https://www.gpu-mart.com/blog/cuda-cores-vs-tensor-cores)가 있다. 다만 이 글은 Tensor Core의 정밀도별 차이를 다루지 않고, core 수를 세대가 다른 GPU의 성능 지표처럼 설명한다.</Sidenote>
+Query tile이 충분히 크면 Tensor Core를 쓰고, tile 크기가 1이면 CUDA Core를 쓴다.<Sidenote>CUDA Core는 원소 하나씩 덧셈과 곱셈을 하는 범용 연산 장치이고, Tensor Core는 작은 행렬 블록의 곱셈과 누산을 한 번에 처리하는 행렬곱 전용 장치다. Query 하나만 따로 처리하면 Tensor Core가 요구하는 행렬 타일을 채우기 어렵다. 다만 GQA에서 같은 KV를 쓰는 여러 query head를 묶거나 빈 행을 채워 Tensor Core를 쓰는 구현도 있으므로, query 길이 하나만으로 실행 장치를 단정할 수는 없다.</Sidenote>
 공유 prefix를 읽는 query들은 이 행렬에서 여러 행을 한 블록으로 묶어 함께 계산해, shared memory에 한 번 복사한 KV를 여러 query가 재사용하게 한다.
 이를 위해 GPU 메모리에 저장된 KV cache를 재배치하지는 않고, 접근 관계를 나타내는 색인만 새로 만든다.
 예를 들어 두 요청의 KV 블록이 $[A,B,C]$와 $[A,B,D]$라면,
@@ -307,13 +310,14 @@ Query 하나에 대한 (부분 출력, log-sum-exp) 쌍을 attention state라 �
 두 state는 Flash-Decoding의 reduce처럼 지수 합을 비중으로 삼아 하나로 합칠 수 있다.
 이 합치기는 덧셈처럼 결합법칙과 교환법칙을 만족하므로, KV를 어떻게 나누어 계산하고 어떤 순서로 합쳐도 수학적으로 결과가 같다.[^flashinfer]
 State를 합칠 수 있으니 긴 KV를 여러 작업으로 나눠도 출력을 되살릴 수 있다.
-그래서 요청마다 다른 KV 길이를 SM들에 고르게 나누는 계획을 CPU(central processing unit)에서 미리 세우고(plan),
+그래서 요청마다 다른 KV 길이를 SM들에 고르게 나누는 계획을 CPU에서 미리 세우고(plan),
 GPU kernel은 그 계획대로 실행한다(run).
 요청별 query와 KV 길이 등 계획의 조건이 같은 층들은 스텝마다 세운 계획을 함께 재사용할 수 있다.
 Full attention과 sliding window가 섞여 층마다 읽을 KV 범위가 다르면 같은 계획을 그대로 재사용한다고 단정할 수 없으므로, 각 층의 조건과 구현을 확인해야 한다.
 요청마다 query tile이 하나인 decode로 단순화하면,
 계획은 전체 KV 길이를 thread block 수로 나눈 값을 조각의 최대 길이로 삼아 긴 KV를 자르고,
-긴 조각부터 지금까지 맡은 일이 가장 적은 thread block에 하나씩 배정한다.[^flashinfer]
+긴 조각부터 지금까지 맡은 예상 비용이 가장 적은 thread block에 하나씩 배정한다.[^flashinfer]
+원논문의 비용 모형은 KV 길이뿐 아니라 query tile의 길이도 반영한다.
 
 <Callout type="example">
 Decode 요청 네 개의 KV 길이가 8K, 2K, 1K, 1K이고, 설명을 위해 thread block 네 개가 SM 네 개에서 동시에 돈다고 하자.
@@ -343,7 +347,7 @@ Weight가 16-bit라면 이런 연산의 intensity는 토큰 수와 거의 같다
 큰 행렬곱에 맞춰 조율한 kernel을 그대로 쓰면,
 한쪽 차원이 아주 작은 이 납작한 행렬곱에서는 대역폭을 다 쓰지 못한다.
 Hong 등의 FlashDecoding++는 Flash-Decoding과 이름만 비슷한 별개의 연구로,
-이 납작한 행렬곱(flat GEMM, GEMM은 general matrix multiplication)을 따로 다뤘다.[^fdpp]
+이 납작한 행렬곱(flat GEMM)을 따로 다뤘다.[^fdpp]
 원논문이 비교한 NVIDIA 행렬곱 라이브러리 cuBLAS·CUTLASS처럼 batch 쪽 차원을 64행 타일로 처리하면, batch가 8일 때 타일의 87.5%를 0으로 채운 채 계산한다.
 FlashDecoding++는 batch 쪽 타일을 Tensor Core가 한 번에 처리하는 8행으로 줄여, batch가 8보다 작으면 8행이 될 때까지만 0으로 채운다.
 일은 출력 차원 방향으로 thread block들에 나누고,
@@ -352,7 +356,7 @@ FlashDecoding++는 batch 쪽 타일을 Tensor Core가 한 번에 처리하는 8�
 ### 4-2. 양자화 weight의 kernel
 
 Weight-only 양자화(quantization)에서 낮은 정밀도로 저장한 weight를 더 높은 정밀도의 activation과 곱하려면,
-이 kernel처럼 곱셈에 맞는 정밀도로 weight를 변환할 수 있다(dequantize).
+kernel 안에서 weight를 곱셈에 맞는 정밀도로 되돌릴 수 있다(dequantize).
 Frantar 등의 Marlin은 4-bit weight와 FP16 activation의 행렬곱을 위한 kernel이다.[^marlin]
 다음 4-bit weight를 HBM에서 읽어 shared memory를 거쳐 레지스터로 가져오는 동안 이미 가져온 weight로 계산하고,
 레지스터 안에서 FP16으로 되돌려 Tensor Core에 넣는다.
@@ -418,8 +422,9 @@ NVIDIA의 같은 측정에서 동기화 없이 이어 제출하면 kernel당 3.8
 대신 재생은 같은 kernel을 같은 메모리 주소로 실행한다.
 입력값은 기록할 때 쓴 고정 버퍼에 새로 복사해 넣으면 바꿀 수 있지만, 버퍼의 모양은 바꿀 수 없다.[^cudagraph-pt]
 그런데 서빙에서는 batch 크기가 스텝마다 바뀐다.
-그래서 vLLM은 처리할 토큰 수 1, 2, 4, 8, 16, 24, …에 맞춘 그래프를 미리 기록해 두고,
+그래서 vLLM은 예를 들어 처리할 토큰 수 1, 2, 4, 8, 16, 24, …에 맞춘 그래프를 미리 기록해 두고,
 실제 토큰 수를 그 수 이상인 가장 작은 기록 크기로 채워(padding) 재생한다.
+기록할 크기는 설정에 따라 달라지며, 기록 범위를 넘거나 맞는 그래프가 없으면 그래프를 재생하지 않고 실행한다.
 요청마다 query가 하나인 보통의 decode에서는 이 토큰 수가 곧 batch 크기다.
 Attention은 요청마다 KV 길이가 달라 실행할 일이 스텝마다 바뀌므로 고정된 그래프에 담기 어렵다.
 이를 지원하는 attention backend는 바뀌는 길이와 작업 계획을 고정 주소의 버퍼에 넣어, 같은 그래프를 재생하면서도 다른 입력을 처리한다.
@@ -452,15 +457,15 @@ FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kern
 
 [^hopper]: Andersch, M., Palmer, G., Krashinsky, R., Stam, N., Mehta, V., Brito, G., & Ramaswamy, S. (2022). NVIDIA Hopper Architecture In-Depth. *NVIDIA Technical Blog*. [developer.nvidia.com](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/).
 
-[^nsys]: NVIDIA. (2026). Nsight Systems User Guide (v2026.5). *NVIDIA documentation*. [docs.nvidia.com](https://docs.nvidia.com/nsight-systems/UserGuide/index.html).
+[^nsys]: NVIDIA. (2026). Nsight Systems User Guide. *NVIDIA documentation*, 최신 문서. [docs.nvidia.com](https://docs.nvidia.com/nsight-systems/UserGuide/index.html).
 
-[^nsys-analysis]: NVIDIA. Post-Collection Analysis Guide. *Nsight Systems documentation*. [docs.nvidia.com](https://docs.nvidia.com/nsight-systems/AnalysisGuide/index.html).
+[^nsys-analysis]: NVIDIA. (2026). Post-Collection Analysis Guide. *Nsight Systems documentation v2026.4*. [archive.docs.nvidia.com](https://archive.docs.nvidia.com/nsight-systems/2026.4/AnalysisGuide/index.html).
 
 [^vllm-profile]: vLLM Project. (2026). Profiling vLLM. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/contributing/profiling/).
 
-[^ncu]: NVIDIA. (2026). Nsight Compute Kernel Profiling Guide (v2026.3.1). *NVIDIA documentation*. [docs.nvidia.com](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html).
+[^ncu]: NVIDIA. (2026). Nsight Compute Kernel Profiling Guide. *NVIDIA documentation*, 최신 문서. [docs.nvidia.com](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html).
 
-[^ncu-cli]: NVIDIA. (2026). Nsight Compute CLI (v2026.3.1). *NVIDIA documentation*. [docs.nvidia.com](https://docs.nvidia.com/nsight-compute/NsightComputeCli/index.html).
+[^ncu-cli]: NVIDIA. (2026). Nsight Compute CLI. *NVIDIA documentation*, 최신 문서. [docs.nvidia.com](https://docs.nvidia.com/nsight-compute/NsightComputeCli/index.html).
 
 [^fa1]: Dao, T., Fu, D. Y., Ermon, S., Rudra, A., & Ré, C. (2022). FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. *NeurIPS 2022*. [arXiv:2205.14135](https://arxiv.org/abs/2205.14135).
 
@@ -478,7 +483,7 @@ FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kern
 
 [^flashinfer]: Ye, Z., Chen, L., Lai, R., et al. (2025). FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving. *MLSys 2025*. [arXiv:2501.01005](https://arxiv.org/abs/2501.01005).
 
-[^fdpp]: Hong, K., Dai, G., Xu, J., et al. (2024). FlashDecoding++: Faster Large Language Model Inference with Asynchronization, Flat GEMM Optimization, and Heuristics. *MLSys 2024*. [arXiv:2311.01282](https://arxiv.org/abs/2311.01282).
+[^fdpp]: Hong, K., Dai, G., Xu, J., et al. (2024). FlashDecoding++: Faster Large Language Model Inference with Asynchronization, Flat GEMM Optimization, and Heuristics. [*MLSys 2024*](https://proceedings.mlsys.org/paper_files/paper/2024/hash/5321b1dabcd2be188d796c21b733e8c7-Abstract-Conference.html). [arXiv:2311.01282](https://arxiv.org/abs/2311.01282).
 
 [^marlin]: Frantar, E., Castro, R. L., Chen, J., Hoefler, T., & Alistarh, D. (2025). MARLIN: Mixed-Precision Auto-Regressive Parallel Inference on Large Language Models. *PPoPP 2025*, 239–251. [arXiv:2408.11743](https://arxiv.org/abs/2408.11743).
 

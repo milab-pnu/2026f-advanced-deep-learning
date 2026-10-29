@@ -7,8 +7,8 @@ order: 1
 import lmsysLicense from "./assets/lmsys-blog-LICENSE.txt?url";
 
 Roofline 분석에서 Llama 3.1 8B의 decode를 batch 1에서 192로 키우면, 이상적인 어림으로는 스텝 시간이 약 4배가 되지만 처리량(throughput)은 약 46배 늘어난다.
-이는 weight와 각 요청의 KV cache를 스텝마다 한 번씩 읽고 최대 대역폭을 쓴다는 가정의 결과다.
-PagedAttention은 그 batch를 담을 KV(key-value) cache 공간의 낭비를 크게 줄여 준다.
+이는 weight와 각 요청의 KV(key-value) cache를 스텝마다 한 번씩 읽고 최대 대역폭을 쓴다는 가정의 결과다.
+PagedAttention은 그 batch를 담을 KV cache 공간의 낭비를 크게 줄여 준다.
 그런데 roofline 분석은 batch 크기와 모든 요청의 문맥 길이(2,048토큰)를 고정해 두고 계산했다.
 실제 요청은 서로 다른 시각에 도착하고 입력 길이도 출력 길이도 제각각이라,
 batch의 구성과 문맥 길이가 스텝마다 바뀐다.
@@ -94,7 +94,7 @@ SGLang 논문도 cache-aware scheduling이 기아를 낳을 수 있다고 밝히
 
 ### 2-2. 선점
 
-KV cache 블록이 바닥나면 실행 중인 요청 일부를 멈추고 블록을 회수하는데, 이를 선점(preemption)이라 한다.
+KV cache 블록이 바닥나면 실행 중인 요청을 선점(preemption)해 공간을 확보한다.
 vLLM은 현재 구조(V1)에서 멈춘 요청의 KV cache를 버렸다가, 다시 실행할 때 프롬프트와 이미 생성한 토큰을 prefill해 새로 만드는 recomputation을 기본으로 쓴다.
 vLLM 문서는 이 구조에서는 recomputation이 CPU(central processing unit) 메모리로 옮겨 두는 swapping보다 overhead가 작다고 설명한다.[^vllm-opt]
 Prefix caching이 켜져 있으면 선점으로 돌려준 꽉 찬 블록도 끝난 요청의 블록처럼 다른 내용으로 덮어쓰기 전까지 cache에 남는다.
@@ -112,9 +112,10 @@ vLLM은 FCFS에서는 실행 목록에 가장 늦게 들어온 요청을 멈추�
 ### 3-1. 섞인 batch의 지연
 
 Iteration-level scheduling은 새 문제를 드러냈다.
-새 요청의 prefill이 decode 중인 요청들과 같은 스텝에 들어가면, 그 스텝은 prefill 계산 때문에 길어진다.
-긴 프롬프트의 prefill은 compute-bound이고 decode만 하는 스텝보다 훨씬 오래 걸리므로,
-그 스텝 동안 decode 중인 모든 요청의 다음 토큰이 늦어진다.
+새 요청의 prefill이 decode 중인 요청들과 같은 스텝에 들어가면, 그 스텝은 prefill 계산 때문에 길어질 수 있다.
+긴 프롬프트의 prefill은 연산량이 커져 decode만 하는 스텝보다 오래 걸릴 수 있으므로,
+그 스텝 동안 decode 중인 요청들의 다음 토큰도 늦어진다.
+차이의 크기는 하드웨어와 프롬프트 길이, batch 구성에 따라 달라진다.
 
 <Callout type="example">
 Roofline의 하한 모형으로 계산해 보자.
@@ -197,7 +198,7 @@ Roofline 분석으로 보면 토큰 수가 모델 차원보다 훨씬 적으면 
 </Callout>
 
 vLLM도 가능한 구성에서는 chunked prefill을 기본으로 쓰고, 스텝당 토큰 예산을 `max_num_batched_tokens`로 둔다.
-이 값을 작게 잡으면 ITL이, 크게 잡으면 TTFT가 좋아진다.[^vllm-opt]
+이 값을 작게 잡으면 ITL을, 크게 잡으면 TTFT를 개선할 수 있다.[^vllm-opt]
 실제 서비스에서는 위 표의 숫자를 그대로 선택하지 말고, 모델·GPU·요청의 입출력 길이와 도착률을 고정한 뒤 여러 예산을 측정한다.
 예를 들어 256, 512, 1,024, 2,048토큰을 후보로 두고 각각 충분한 요청에서 p99 ITL과 p99 TTFT, 처리량과 선점 횟수를 잰다.
 두 지연 목표를 모두 지키는 후보 중 처리량이 높은 것을 고르고, 목표를 모두 지키는 후보가 없다면 예산만 바꾸어 해결됐다고 말할 수 없다.
@@ -337,7 +338,8 @@ batch의 토큰이 수십 개만 되어도 거의 모든 expert를 읽는다.
 
 Gupta 등의 Lynx는 실제 요청에서 batch 크기에 따라 MoE의 decode 지연이 어떻게 달라지는지 측정했다.[^lynx]
 저자들은 H200에서 ShareGPT 요청으로 Qwen3-30B-A3B의 p99 decode 지연을 쟀다.
-이 지연은 batch 1에서는 Qwen3-4B dense 모델과 비슷했지만, batch가 커지면서 Qwen3-32B dense 모델에 가까워졌다.
+원논문은 batch 1의 지연을 Qwen3-4B dense 모델과 비슷하다고 설명한다.
+그림에 표시된 batch 2 이상의 구간에서는 Qwen3-4B보다 1.7–3배 느리고, batch가 커지면서 Qwen3-32B dense 모델에 가까워진다.
 
 <Figure src="https://arxiv.org/html/2411.08982v3/qwen3_slo_region.svg" alt="가로축은 최대 batch 크기(1, 2, 4, 8, 16, 32, 64), 세로축은 p99 TPOT(ms)인 꺾은선 그래프. 진한 파란 아래쪽 삼각형 선(Qwen3-32B)은 약 21 ms에서 48 ms로, 초록 원 선(Qwen3-30B-A3B)은 약 6 ms에서 46 ms로, 연한 파란 위쪽 삼각형 선(Qwen3-4B)은 약 5 ms에서 20 ms로 오른다. 25 ms와 50 ms에 회색 가로 점선이 있다. 초록 선과 연한 파란 선 사이에 1.7×, 2.1×, 2.3×, 3.0×, 2.5×, 2.3×가 적혀 있다. 위쪽 상자에는 batch가 크면 MoE 성능이 큰 dense 모델에 수렴한다는 관찰이, 아래쪽 상자에는 MoE's perf promise가 적혀 있고 연한 파란 선을 가리킨다." caption="최대 batch 크기에 따른 p99 TPOT. 초록 원은 Qwen3-30B-A3B(MoE, 활성 3B), 연한 파란 위쪽 삼각형은 Qwen3-4B(dense), 진한 파란 아래쪽 삼각형은 Qwen3-32B(dense)다. 굵은 숫자(1.7×–3.0×)는 같은 batch에서 MoE의 지연이 4B 모델의 몇 배인지를 나타낸다." source="Gupta et al. (2026), Figure 1(b) · CC BY 4.0" wide />
 
@@ -428,9 +430,9 @@ vLLM의 EPLB(expert parallel load balancer)는 forward마다 expert 부하를 �
 
 [^sglang-args]: SGLang Team. (2026). Server Arguments. *SGLang documentation v0.5.21*. [github.com](https://github.com/sgl-project/sglang/blob/v0.5.21/docs/docs/advanced_features/server_arguments.mdx).
 
-[^sglang-v04]: SGLang Team. (2024). SGLang v0.4: Zero-Overhead Batch Scheduler, Cache-Aware Load Balancer, Faster Structured Outputs. *LMSYS Blog*. [lmsys.org](https://lmsys.org/blog/2024-12-04-sglang-v0-4/).
+[^sglang-v04]: The SGLang Team. (2024). SGLang v0.4: Zero-Overhead Batch Scheduler, Cache-Aware Load Balancer, Faster Structured Outputs. *LMSYS Blog*. [lmsys.org](https://lmsys.org/blog/2024-12-04-sglang-v0-4/).
 
-[^sglang-ep]: SGLang Team. (2025). Deploying DeepSeek with PD Disaggregation and Large-scale Expert Parallelism on 96 H100 GPUs. *LMSYS Blog*. [lmsys.org](https://lmsys.org/blog/2025-05-05-large-scale-ep/).
+[^sglang-ep]: The SGLang Team. (2025). Deploying DeepSeek with PD Disaggregation and Large-scale Expert Parallelism on 96 H100 GPUs. *LMSYS Blog*. [lmsys.org](https://lmsys.org/blog/2025-05-05-large-scale-ep/).
 
 [^vllm-parallel]: vLLM Project. (2026). Parallelism and Scaling. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/serving/parallelism_scaling/).
 

@@ -66,7 +66,8 @@ V1의 주요 설계는 다음과 같다.[^vllm-v1][^vllm-arch]
 
 - **프로세스 분리.** Scheduling과 GPU worker의 모델 실행 조율만 맡는 Engine Core를 별도 프로세스의 반복문으로 두고,
   토큰화·detokenize·스트리밍은 API 서버 프로세스가 맡아 겹쳐 실행한다.
-  모델은 GPU worker가 실행하는데, GPU가 한 대이면 worker가 Engine Core 프로세스 안에서 돌고 여러 대이면 GPU마다 worker 프로세스가 하나씩 뜬다.
+  모델은 GPU worker가 실행한다.
+  v0.31.0의 기본 실행기에서는 GPU가 한 대이면 worker가 Engine Core 프로세스 안에서 돌고, 여러 대이면 GPU마다 worker 프로세스가 하나씩 뜬다.[^vllm-executor]
 - **단계 구분이 없는 scheduler.** Scheduler의 결정은 "요청마다 이번에 처리할 토큰 수"라는 하나의 표에 담기고,
   그 합이 스텝당 토큰 예산을 넘지 않게 정해진다.
   예를 들어 새 요청 A에 4, 생성 중인 요청 B에 1을 적으면 A의 prefill 네 토큰과 B의 decode 한 토큰을 같은 스텝에 처리한다.
@@ -90,7 +91,7 @@ vLLM의 주요 설정 인자는 batching, KV cache, 병렬화, 양자화 같은 
 |---|---|---|
 | `--gpu-memory-utilization` | 0.92 | 엔진의 GPU 메모리 예산 비율. Weight, activation과 실행용 메모리 등을 뺀 나머지로 KV cache 크기를 정함 |
 | `--max-num-seqs` | GPU에 따라 다름 | 동시에 실행할 요청 수의 상한 |
-| `--max-num-batched-tokens` | GPU와 사용 방식에 따라 다름 | 스텝당 토큰 예산. 작으면 ITL(inter-token latency), 크면 TTFT(time to first token)와 처리량에 유리 |
+| `--max-num-batched-tokens` | GPU와 사용 방식에 따라 다름 | 스텝당 토큰 예산. 작게 잡으면 ITL(inter-token latency)을, 크게 잡으면 TTFT(time to first token)와 처리량을 개선할 수 있음 |
 | `--enable-prefix-caching` | 지원하는 모델에서 켜짐 | Prefix 재사용 |
 | `--tensor-parallel-size` | 1 | TP(tensor parallelism)로 나눌 GPU 수 |
 | `--kv-cache-dtype` | auto | KV cache의 정밀도(`fp8` 등) |
@@ -299,7 +300,8 @@ vllm bench serve --model meta-llama/Llama-3.1-8B-Instruct \
 저장된 시간은 초 단위이므로 밀리초 기준과 비교할 때 1,000을 곱한다.
 출력이 한 토큰 이하이면 앞에서 설명한 vLLM의 goodput 관례대로 TPOT를 0으로 둔다.
 이 random 입력은 길이를 통제한 비교용이다.
-이 버전에서 `--random-range-ratio` 기본값은 0이므로 요청의 입력과 출력 길이를 각각 지정한 값으로 고른다.
+이 버전에서 `--random-range-ratio` 기본값은 0이므로 요청의 입력과 출력 목표 길이를 각각 지정한 값으로 고른다.
+입력은 토큰을 텍스트로 바꾸고 다시 토큰화하는 과정에서 목표 길이와 달라질 수 있으므로, 경고와 저장된 `input_lens`를 확인한다.[^vllm-random-dataset]
 Prefix 재사용이나 draft 수락처럼 입력 내용에 좌우되는 효과는, 그 기능을 켜고 대표 프롬프트와 실제 입출력 길이 분포로 따로 잰다.
 `--max-concurrency`를 1, 4, 16, 64, 256으로 바꿔 가며 반복한다.
 상한 256에서는 warmup도 적어도 256개로 늘린다.
@@ -351,6 +353,8 @@ Pareto 곡선은 측정한 점들 가운데, 두 축 모두 자신보다 나쁘�
 
 [^vllm-arch]: vLLM Project. (2026). Architecture Overview. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/arch_overview/).
 
+[^vllm-executor]: vLLM Project. (2026). vllm/config/parallel.py; vllm/v1/executor/uniproc_executor.py. *vLLM v0.31.0*. [설정 코드](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/config/parallel.py); [단일 GPU 실행기](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/v1/executor/uniproc_executor.py).
+
 [^vllm-args]: vLLM Project. (2026). Engine Arguments. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/configuration/engine_args/).
 
 [^vllm-opt]: vLLM Project. (2026). Optimization and Tuning. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/configuration/optimization/).
@@ -388,6 +392,8 @@ Pareto 곡선은 측정한 점들 가운데, 두 축 모두 자신보다 나쁘�
 [^vllm-bench]: vLLM Project. (2026). vllm bench serve. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/cli/bench/serve/).
 
 [^vllm-bench-src]: vLLM Project. (2026). vllm.benchmarks.serve. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/api/vllm/benchmarks/serve/).
+
+[^vllm-random-dataset]: vLLM Project. (2026). vllm.benchmarks.datasets. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/api/vllm/benchmarks/datasets/).
 
 [^vllm-metrics]: vLLM Project. (2026). Metrics. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/metrics/).
 

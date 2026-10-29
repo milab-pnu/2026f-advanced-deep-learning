@@ -9,13 +9,11 @@ import lmsysLicense from "./assets/lmsys-blog-LICENSE.txt?url";
 
 Inference 비용은 모델을 작게 만들어서도 줄일 수 있지만,
 모델은 그대로 두고 서빙 시스템 쪽에서 줄일 수도 있다.
-출발점은 H100 SXM GPU(graphics processing unit) 한 대에 Llama 3.1 8B를 BF16(bfloat16) weight 그대로 올려 본 메모리 계산과 roofline 분석이다.
-두 계산은 같은 결론에 닿았다.
-Batch를 키워 처리량(throughput)을 올리려 하면, 요청의 문맥이 길 때는 선형층이 ridge point에 닿기 전에 KV(key-value) cache 공간이 먼저 모자란다.
-GPU 메모리에서 weight와 workspace를 빼면 KV cache에 약 53.5 GB가 남고,
-토큰당 약 131 KB라서 요청마다 8,192토큰(약 1.07 GB)까지 자란다면 요청 49개까지 들어간다고 어림했다.
-그런데 이 계산은 공간을 한 칸도 낭비하지 않는다고 가정했고,
-여러 요청이 같은 앞부분(prefix)을 가져도 요청마다 따로 저장한다고 셈했다.
+메모리가 80 GB인 H100 SXM GPU(graphics processing unit) 한 대에 Llama 3.1 8B를 BF16(bfloat16) weight로 올린 상황을 생각해 보자.
+Batch를 키워 처리량(throughput)을 올리려 하면, 요청의 문맥이 길 때는 선형층이 ridge point에 닿기 전에 KV(key-value) cache 공간이 먼저 모자랄 수 있다.
+GPU 메모리 중 사용 예산을 73.6 GB로 잡고 weight 16.1 GB와 실행 공간 약 4 GB를 빼면 KV cache에 약 53.5 GB가 남는다.
+토큰당 약 131 KB라서 요청마다 8,192토큰(약 1.07 GB)까지 자란다면 요청 49개까지 들어간다고 어림할 수 있다.
+이 계산은 공간을 한 칸도 낭비하지 않고, 여러 요청이 같은 앞부분(prefix)을 가져도 요청마다 따로 저장한다고 가정한다.
 
 이 노트는 실제 서빙에서 이 공간을 관리하는 방법을 다룬다.
 GQA(grouped-query attention)·MLA(multi-head latent attention)나 sliding window처럼 모델 구조를 바꿔 KV cache를 줄이는 방법 자체는 다루지 않고,
@@ -102,11 +100,11 @@ Table에서 page 2에 대응하는 frame 7을 찾으면 물리 주소는 $7\time
 </Callout>
 
 Kwon 등은 이 아이디어를 KV cache 관리에 적용해 vLLM을 만들었다.
-운영체제는 byte 주소를 page table로 변환하지만, vLLM은 요청의 토큰 순서에 따른 logical 블록을 GPU 메모리의 physical 블록에 연결하는 **block table**을 관리한다.
-PagedAttention kernel은 block table을 보고 필요한 블록을 직접 찾아 attention을 계산한다.
-따라서 vLLM 블록은 운영체제의 가상 메모리 page와 역할이 비슷한 소프트웨어 단위이지, CPU의 MMU가 KV cache의 토큰 주소를 변환한다는 뜻은 아니다.
 vLLM은 같은 생각으로 KV cache를 고정 크기 **블록**으로 나누어 GPU 메모리 곳곳에 둔다.
 이렇게 흩어진 블록 위에서 attention을 계산하는 방식이 PagedAttention이다.
+운영체제는 byte 주소를 page table로 변환하지만, vLLM은 요청의 토큰 순서에 따른 logical 블록을 GPU 메모리의 physical 블록에 연결하는 **block table**을 관리한다.
+PagedAttention kernel은 block table을 보고 필요한 블록을 직접 찾아 attention을 계산한다.
+따라서 vLLM 블록은 운영체제의 가상 메모리 page와 역할이 비슷한 소프트웨어 단위이지, CPU(central processing unit)의 MMU가 KV cache의 토큰 주소를 변환한다는 뜻은 아니다.
 원논문의 비유대로 블록은 page, 토큰은 byte, 요청은 프로세스에 해당한다.[^vllm]
 
 <Figure src="https://arxiv.org/html/2309.06180v1/logical-and-physical-block-table.svg" alt="요청 A의 프롬프트는 'Four score and seven years ago our', 출력은 'fathers', 'brought' 순이다. 왼쪽의 logical KV block은 블록마다 토큰 4칸이며 block 0에 Four score and seven, block 1에 years ago our fathers, block 2에 brought가 들어 있다. 가운데 block table은 logical block 0을 physical block 7에, block 1을 physical block 1에, block 2를 physical block 3에 대응시키고, 블록마다 채워진 칸 수(4, 3에서 4로, 1)를 기록한다. 오른쪽의 physical KV block은 GPU 메모리에서 7, 1, 3번 블록에 흩어져 있다. 동그라미 숫자 1, 2, 3은 prefill, 첫 decode, 둘째 decode 단계를 뜻한다." caption="Logical 블록과 physical 블록을 잇는 block table(블록 하나는 4토큰). 요청은 연속된 logical 블록을 보지만 실제 블록은 GPU 메모리 어디에나 놓일 수 있다. 동그라미 숫자는 각 칸과 block table 항목이 쓰인 단계로, 1은 prefill, 2는 첫 decode, 3은 둘째 decode다." source="Kwon et al. (2023), Figure 6 · CC BY 4.0" wide />
@@ -174,7 +172,7 @@ OPT-13B로 Alpaca를 처리한 실험에서 parallel sampling은 6.1–9.8%,
 공간을 쓰는 만큼만 주면 생성 도중 빈 블록이 바닥날 수 있다.
 그때는 실행 중인 요청 일부를 멈추고 그 요청의 블록을 회수하는데, 이를 선점(preemption)이라 한다.
 Kwon 등은 멈춘 요청의 블록을 다루는 두 방법을 비교했다.
-Swapping은 멈춘 요청의 블록을 CPU(central processing unit) 메모리로 옮겨 두었다가, 요청을 다시 실행할 때 GPU로 가져온다.
+Swapping은 멈춘 요청의 블록을 CPU 메모리로 옮겨 두었다가, 요청을 다시 실행할 때 GPU로 가져온다.
 Recomputation은 블록을 버렸다가, 다시 실행할 때 프롬프트와 이미 생성한 토큰을 prefill해 KV cache를 새로 만든다.
 이 prefill은 이미 생성한 토큰까지 한 번에 처리하므로, 그 토큰들을 처음 decode할 때보다 훨씬 빠를 수 있다.[^vllm]
 Decode는 스텝마다 weight를 다시 읽지만, prefill은 한 번 읽은 weight를 여러 토큰에 쓴다.
@@ -198,7 +196,7 @@ Causal attention에서 어떤 위치의 key·value는 그 위치까지의 토큰
 
 <Callout type="example">
 2,048토큰짜리 시스템 프롬프트를 모든 요청 앞에 붙이는 서비스를 생각하자.
-Llama 3.1 8B에서 이 프롬프트의 prefill 연산량을 파라미터 수로 어림하면 약 34 TFLOPs(tera floating-point operations)다.
+Llama 3.1 8B에서 이 프롬프트의 prefill 연산량은 선형층과 attention을 합쳐 약 34 TFLOPs(tera floating-point operations)다.
 이를 H100 SXM의 BF16 최대 연산 성능으로 나누면 약 34 ms, 최대 성능의 절반으로 나누면 약 69 ms다.
 이 연산량은 근사치이므로 두 시간도 실측이나 엄밀한 하한이 아닌 규모를 짐작하는 값이다.
 이 프롬프트의 KV cache는 $2{,}048\times131{,}072\ \text{bytes}\approx268\ \text{MB}$다.
@@ -339,8 +337,8 @@ SnapKV가 기대는 관찰은 이렇다.
 생성하는 동안 각 head가 주목할 위치를 어느 정도 미리 알 수 있다.
 Head마다 observation window의 attention 점수를 앞부분의 위치별로 더하고,
 이웃 위치의 점수를 함께 반영하는 1차원 pooling을 거친 점수로 상위 위치를 고른다.
-Pooling은 점수가 높은 위치의 주변도 같이 뽑히게 해서,
-전화번호에서 국가 번호만 남는 식으로 정보가 끊기는 것을 줄인다.
+Pooling은 점수가 높은 위치의 주변도 같이 뽑힐 가능성을 높여,
+서로 이어진 정보의 일부만 남는 문제를 줄이려 한다.
 고른 위치의 key·value에 observation window 자체의 key·value를 이어 붙인 것이 압축된 KV cache다.
 
 <Callout type="example">
@@ -375,6 +373,7 @@ head마다 남은 key·value를 차례로 새 블록에 채워 넣을 수 있다
 그러면 같은 칸에 head마다 다른 토큰이 놓인다.
 남겨 둔 쌍을 모두 보는 decode attention에서 RoPE(rotary position embedding)를 적용한 key를 저장하고 별도의 위치별 점수 편향이 없다면, 같은 key·value 쌍을 어떤 순서로 놓아도 attention 결과는 같다.
 위치 정보는 저장된 key에 이미 들어 있고, 각 key의 점수와 짝을 이룬 value를 가중해 더하기 때문이다.
+반면 상대 위치에 따른 점수 편향이나 sliding window처럼 위치를 기준으로 일부 쌍을 가리는 mask가 있다면, 원래 위치를 함께 보존하고 그 기준을 적용해야 한다.
 이는 남겨 둔 쌍의 저장 순서를 바꿔도 같다는 뜻이지, 토큰을 지우기 전의 full cache와 결과가 같다는 뜻은 아니다.
 
 어떤 토큰을 고르든, eviction은 지운 토큰의 정보를 그대로 버린다.
@@ -394,7 +393,7 @@ $$
 예를 들어 $A_i=0.1$, $A_j=0.2$라면 $V_j$에 $0.5\,V_i$를 더한다.
 지울 토큰 $i$의 key는 합치지 않고 버리며, 남는 토큰 $j$의 key는 그대로 둔다.
 
-다만 이 보정은 남은 weight가 그대로라는 가정 위의 직관이고, 다음 스텝부터는 더 어렵다.
+다만 이 보정은 남은 토큰의 attention weight가 그대로라는 가정 위의 직관이고, 다음 스텝부터는 더 어렵다.
 Query가 바뀌면 $A_i$와 $A_j$의 비도 바뀌는데, 앞으로의 attention weight는 미리 알 수 없다.
 그래서 CaM은 비율을 맞추는 대신 $V_i$를 최근 토큰 $m$개에 $V_i/m$씩 고르게 나누어 더한다.
 그러면 출력에 최근 토큰들의 평균 attention weight와 $V_i$의 곱이 더해져, 지운 항 $A_iV_i$를 근사로 보충한다.
@@ -448,7 +447,8 @@ H100의 PCIe(peripheral component interconnect express) Gen5 x16 이론 대역�
 </Callout>
 
 Prefix는 한 번 가져오면 되지만,
-실행 중인 긴 요청의 KV cache를 GPU 밖에 두고 attention을 GPU에서 계산한다면 decode 스텝마다 그 전체를 다시 읽어 와야 한다.
+실행 중인 긴 요청의 KV cache 전체를 GPU 밖에 두고 attention을 GPU에서 계산한다면 decode 스텝마다 그 전체를 다시 읽어 와야 한다.
+일부만 GPU 밖에 둔다면 그 부분을 가져오는 비용이 든다.
 32,768토큰 요청의 KV cache 약 4.3 GB를 PCIe 한 방향 64 GB/s로 읽으면 스텝마다 약 67 ms가 들지만,
 H100 SXM의 HBM(3.35 TB/s)에서 읽으면 약 1.3 ms다.
 그래서 지연이 중요한 서빙에서 offloading은 주로 지금 attention에 쓰지 않는 cache,
@@ -524,9 +524,9 @@ Attention 층은 블록이 512토큰이라서, recurrent 층은 상태가 512토
 
 [^survey]: Jiang, J., Yang, P., Zhang, R., & Liu, F. (2026). Towards Efficient Large Language Model Serving: A Survey on System-Aware KV Cache Optimization. *Findings of ACL 2026*, 38450–38476. [arXiv:2607.08057](https://arxiv.org/abs/2607.08057).
 
-[^os-paging]: Arpaci-Dusseau, R. H., & Arpaci-Dusseau, A. C. Paging: Introduction. *Operating Systems: Three Easy Pieces*. [저자 공개 PDF](https://pages.cs.wisc.edu/~remzi/OSTEP/vm-paging.pdf).
+[^os-paging]: Arpaci-Dusseau, R. H., & Arpaci-Dusseau, A. C. (2023). Paging: Introduction. *Operating Systems: Three Easy Pieces*, v1.10. [저자 공개 PDF](https://pages.cs.wisc.edu/~remzi/OSTEP/vm-paging.pdf).
 
-[^linux-pagetables]: Linux kernel documentation. Page Tables. [docs.kernel.org](https://docs.kernel.org/mm/page_tables.html).
+[^linux-pagetables]: Linux kernel documentation. Page Tables. *Linux kernel documentation v6.16*. [docs.kernel.org](https://docs.kernel.org/6.16/mm/page_tables.html).
 
 [^vllm]: Kwon, W., Li, Z., Zhuang, S., et al. (2023). Efficient Memory Management for Large Language Model Serving with PagedAttention. *SOSP 2023*. [arXiv:2309.06180](https://arxiv.org/abs/2309.06180).
 
@@ -556,7 +556,7 @@ Attention 층은 블록이 512토큰이라서, recurrent 층은 상태가 512토
 
 [^minicache]: Liu, A., Liu, J., Pan, Z., He, Y., Haffari, G., & Zhuang, B. (2024). MiniCache: KV Cache Compression in Depth Dimension for Large Language Models. *NeurIPS 2024*. [arXiv:2405.14366](https://arxiv.org/abs/2405.14366).
 
-[^lmcache]: Liu, Y., Cheng, Y., Yao, J., et al. (2025). LMCache: An Efficient KV Cache Layer for Enterprise-Scale LLM Inference. [arXiv:2510.09665](https://arxiv.org/abs/2510.09665).
+[^lmcache]: Liu, Y., Yao, J., Cheng, Y., et al. (2025). LMCache: An Efficient KV Cache Layer for Enterprise-Scale LLM Inference. [arXiv:2510.09665v2](https://arxiv.org/abs/2510.09665v2).
 
 [^mooncake]: Qin, R., Li, Z., He, W., et al. (2025). Mooncake: Trading More Storage for Less Computation — A KVCache-centric Architecture for Serving LLM Chatbot. *FAST 2025*, 155–170. [usenix.org](https://www.usenix.org/conference/fast25/presentation/qin).
 

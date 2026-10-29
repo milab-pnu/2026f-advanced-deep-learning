@@ -290,8 +290,10 @@ GPU는 **계산을 하는 연산 장치와 데이터를 담는 메모리**로 �
 </figure>
 
 연산 장치와 SRAM의 일부(register, shared memory)는 SM(streaming multiprocessor)이라는 블록으로 묶여 있다.[^hopper]
-H100 SXM의 칩 안에는 SM 132개와 이들이 함께 쓰는 L2 cache 50 MB가 있고, HBM 80 GB는 칩 밖에서 같은 패키지에 붙어 있다.
-이 GPU에서 흔히 **"GPU 메모리"나 VRAM(video RAM)이라 부르는 것이 HBM이다.** 다른 GPU는 GDDR 같은 메모리를 쓰기도 한다.[^h100]
+H100 SXM의 칩 안에는 SM 132개와 이들이 함께 쓰는 L2 cache 50 MB가 있고, HBM 80 GB는 칩 밖에서 같은 패키지에 붙어 있다.[^h100]
+이 GPU에서 흔히 **"GPU 메모리"나 VRAM(video random-access memory)이라 부르는 것이 HBM이다.**
+다른 GPU는 다른 메모리를 쓰기도 한다.
+예를 들어 GeForce RTX 4090은 GDDR(graphics double data rate) 계열인 GDDR6X를 쓴다.[^rtx4090]
 HBM은 초당 최대 3.35 TB를 읽을 수 있지만 SM 안의 SRAM보다는 상대적으로 느리다.[^h100-bandwidth]
 
 SM의 연산 장치는 원소 하나씩 더하고 곱하는 CUDA(compute unified device architecture) core와, 작은 행렬 블록끼리의 곱을 한 번에 계산하는 Tensor Core로 나뉜다.
@@ -436,7 +438,8 @@ $$
 =\underbrace{2}_{K,\,V}\cdot\underbrace{L}_{\text{층 수}}\cdot\underbrace{n_{kv}}_{\text{KV head 수}}\cdot\underbrace{d_h}_{\text{head 차원}}\cdot\underbrace{T}_{\text{토큰 수(sequence 길이)}}\cdot\underbrace{p}_{\text{precision}}
 $$
 
-토큰 수 $T$는 그 요청에서 모델에 입력해 KV를 계산하고 저장한 토큰 수다. 보통 입력 토큰과 이미 처리한 출력 토큰을 합한 길이이며, 방금 생성했지만 아직 다음 forward에 넣지 않은 토큰은 포함하지 않는다.
+토큰 수 $T$는 그 요청에서 모델에 입력해 KV를 계산하고 저장한 토큰 수다.
+보통 입력 토큰과 이미 처리한 출력 토큰을 합한 길이이며, 방금 생성했지만 아직 다음 forward에 넣지 않은 토큰은 포함하지 않는다.
 Precision $p$는 원소 하나를 저장하는 데 드는 bytes로, BF16이면 2 bytes, FP8이면 1 byte다.
 Llama 3.1 8B를 BF16으로 두면 토큰 하나에 드는 KV cache는
 
@@ -588,7 +591,8 @@ DistServe는 SLO를 만족하는 요청의 비율을 정한 뒤 그 조건을 �
 목표를 만족한 요청의 출력 토큰 수를 기준으로 goodput을 정의할 수도 있다.
 예를 들어 목표를 만족한 요청 240개가 각각 200토큰을 출력했다면, 같은 60초 동안의 출력 token 기준 goodput은 초당 800토큰이다.
 앞의 초당 4요청과 단위와 의미가 다르므로 두 값을 같은 숫자로 비교해서는 안 된다.
-서비스 전체의 p95 TTFT처럼 요청 집합에 적용하는 목표를 쓰는 경우에는, 개별 요청을 먼저 합격·불합격으로 나누는 방식과도 측정 절차가 다르다.
+서비스 전체의 p95 TTFT가 일정 시간 이하인지 목표를 잡을 수도 있다.
+이때는 개별 요청을 합격·불합격으로 나누기보다 요청 전체의 TTFT 분포를 평가한다.
 
 ### 4-3. 서버 내부 지표
 
@@ -614,18 +618,18 @@ KV cache 사용률이 높다는 사실만으로 좋은 설정이라 결론 내�
 |---|---|---|
 | Latency | TTFT, TPOT, ITL, E2E latency | 첫 응답까지, 출력 사이, 전체 응답까지 얼마나 기다리는가 |
 | Throughput | Output token throughput, goodput | 단위 시간에 얼마나 출력하고, 그중 서비스 목표를 만족한 일은 얼마나 되는가 |
-| GPU utilization | MBU(model bandwidth utilization), MFU(model FLOPs utilization) | 메모리 대역폭과 연산 능력을 각각 최대치에 비해 얼마나 활용하는가 |
+| GPU utilization | MBU(model bandwidth utilization), MFU(model FLOPs utilization) | 모델에 필요한 데이터 이동량과 연산량을 기준으로 대역폭과 연산 능력을 얼마나 활용하는가 |
 | Cache utilization | KV cache 사용률, prefix cache 적중률 | 할당한 cache 공간을 얼마나 쓰고, 입력 prefix를 얼마나 재사용하는가 |
 
-MBU는 데이터 전송량과 대역폭을, MFU는 모델의 연산량과 연산 속도를 비교한다.
-둘 다 이론상 최대치를 기준으로 하지만 실제 측정 범위와 계산 방식에 따라 값이 달라진다.
-같은 지표라도 측정 지점, 분모와 단위가 다르면 숫자만으로 비교할 수 없다.
+MBU와 MFU는 모델에 필요한 데이터 이동량과 연산량을 실제 걸린 시간으로 나눈 속도를 이론상 최대치와 비교한 추정치이므로, 실제 하드웨어가 수행한 작업을 직접 센 사용률과는 다를 수 있다.
 
 [^survey]: Zhou, Z., Ning, X., Hong, K., et al. (2024). A Survey on Efficient Inference for Large Language Models. [arXiv:2404.14294v3](https://arxiv.org/abs/2404.14294v3).
 
 [^llama3]: Llama Team, AI @ Meta. (2024). The Llama 3 Herd of Models. [arXiv:2407.21783](https://arxiv.org/abs/2407.21783); Meta. (2024). Llama 3.1 8B Instruct. *Model card*. [huggingface.co](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct).
 
 [^h100]: NVIDIA. (2023). NVIDIA H100 Tensor Core GPU Architecture (V1.04). *NVIDIA Whitepaper*. [resources.nvidia.com](https://resources.nvidia.com/en-us-hopper-architecture/nvidia-h100-tensor-c).
+
+[^rtx4090]: NVIDIA. GeForce RTX 4090 Graphics Cards. *NVIDIA product specifications*. [nvidia.com](https://www.nvidia.com/en-us/geforce/graphics-cards/40-series/rtx-4090/).
 
 [^h100-bandwidth]: NVIDIA. NVIDIA H100 Tensor Core GPU. *NVIDIA product specifications*. [nvidia.com](https://www.nvidia.com/en-us/data-center/h100/); [H100 SXM·PCIe 데이터시트](https://i.dell.com/sites/csdocuments/App-Merchandizing_Documents/en/us/h100-gpu.pdf).
 
@@ -639,7 +643,7 @@ MBU는 데이터 전송량과 대역폭을, MFU는 모델의 연산량과 연산
 
 [^nim-metrics]: NVIDIA. (2026). Metrics. *NIM Benchmarking Documentation v2.0.0*. [docs.nvidia.com](https://docs.nvidia.com/nim/benchmarking/llm/metrics).
 
-[^goodput]: NVIDIA. Benchmark Goodput with GenAI-Perf. *Triton Inference Server documentation*. [docs.nvidia.com](https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/perf_analyzer/genai-perf/docs/goodput.html).
+[^goodput]: NVIDIA. Benchmark Goodput with GenAI-Perf. *Triton Inference Server documentation 25.10*. [docs.nvidia.com](https://docs.nvidia.com/deeplearning/triton-inference-server/archives/triton-inference-server-2510/user-guide/docs/perf_analyzer/genai-perf/docs/goodput.html).
 
 [^distserve]: Zhong, Y., Liu, S., Chen, J., Hu, J., Zhu, Y., Liu, X., Jin, X., & Zhang, H. (2024). DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving. *OSDI 2024*. [arXiv:2401.09670](https://arxiv.org/abs/2401.09670).
 

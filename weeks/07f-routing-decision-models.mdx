@@ -36,7 +36,7 @@ Inference 최적화 기법은 대개 요청 하나를 받은 뒤 그 요청을 �
   모델을 두 번 부르는 일이 없지만, 답을 보기 전에 판단해야 한다.
 
 <figure>
-<svg viewBox="0 0 600 270" role="img" aria-label="Cascade와 router의 흐름 비교. 왼쪽 cascade에서는 요청이 먼저 작은 모델로 가고, 채점기가 작은 모델의 답에 점수 g를 매긴다. g가 문턱값 τ 이상이면 작은 모델의 답을 돌려주고, 아니면 큰 모델을 불러 그 답을 돌려준다. 비용은 작은 모델과 채점기에, 넘긴 경우 큰 모델이 더해진다. 오른쪽 router에서는 요청이 먼저 router로 가고, router가 큰 모델의 답이 더 나을 확률 P를 예측한다. P가 문턱값 α 이상이면 큰 모델로, 아니면 작은 모델로 보낸다. 비용은 router와 고른 모델 하나다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 600 270" role="img" aria-label="Cascade와 router의 흐름 비교. 왼쪽 cascade에서는 요청이 먼저 작은 모델로 가고, 채점기가 작은 모델의 답에 점수 g를 매긴다. g가 문턱값 τ를 넘으면 작은 모델의 답을 돌려주고, 아니면 큰 모델을 불러 그 답을 돌려준다. 비용은 작은 모델과 채점기에, 넘긴 경우 큰 모델이 더해진다. 오른쪽 router에서는 요청이 먼저 router로 가고, router가 큰 모델의 답이 더 나을 확률 P를 예측한다. P가 문턱값 α 이상이면 큰 모델로, 아니면 작은 모델로 보낸다. 비용은 router와 고른 모델 하나다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
   <defs><marker id="route-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/></marker></defs>
   <text x="150" y="24" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Cascade</text>
   <text x="450" y="24" font-size="15" text-anchor="middle" fill="#0f172a" font-weight="600">Router</text>
@@ -45,7 +45,7 @@ Inference 최적화 기법은 대개 요청 하나를 받은 뒤 그 요청을 �
   <line x1="150" y1="66" x2="150" y2="84" stroke="#0f172a" marker-end="url(#route-arrow)"/>
   <rect x="100" y="86" width="100" height="28" rx="4" fill="#dbeafe" stroke="#2a78d6"/><text x="150" y="105" font-size="14" text-anchor="middle" fill="#0f172a">작은 모델</text>
   <line x1="150" y1="114" x2="150" y2="132" stroke="#0f172a" marker-end="url(#route-arrow)"/>
-  <rect x="80" y="134" width="140" height="28" rx="4" fill="#ffffff" stroke="#0f172a"/><text x="150" y="153" font-size="14" text-anchor="middle" fill="#0f172a">채점기: g ≥ τ ?</text>
+  <rect x="80" y="134" width="140" height="28" rx="4" fill="#ffffff" stroke="#0f172a"/><text x="150" y="153" font-size="14" text-anchor="middle" fill="#0f172a">채점기: g &gt; τ ?</text>
   <line x1="120" y1="162" x2="80" y2="190" stroke="#0f172a" marker-end="url(#route-arrow)"/>
   <text x="84" y="180" font-size="13" text-anchor="end" fill="#64748b">예</text>
   <line x1="180" y1="162" x2="220" y2="190" stroke="#0f172a" marker-end="url(#route-arrow)"/>
@@ -81,16 +81,18 @@ Cascade에서 큰 모델로 넘어간 요청은 작은 모델이 답을 다 생�
 ### 1-2. Cascade의 채점기
 
 **FrugalGPT**는 여러 상용 LLM API(application programming interface)를 정해진 순서대로 부르는 cascade다.[^frugalgpt]
-요청 $q$에 대한 답 $a$마다 채점기 $g(q,a)\in[0,1]$이 그 답이 맞을 가능성을 매기고,
-점수가 그 단계의 문턱값 $\tau_i$ 이상이면 답을 돌려주고 아니면 다음 API를 부른다.
-채점기는 질문과 답을 입력받아 정답 여부를 맞히도록 학습한 DistilBERT 모델로, 어느 LLM보다도 훨씬 작다.
+요청 $q$에 대한 답 $a$마다 채점기 $g(q,a)\in[0,1]$이 품질 점수를 매기고,
+점수가 그 단계의 문턱값 $\tau_i$를 넘으면 답을 돌려주고 아니면 다음 API를 부른다.
+채점기는 질문과 답을 입력받아 정답 여부를 맞히도록 학습한 DistilBERT 모델로, 이 cascade에서 호출하는 LLM들보다 훨씬 작다.
 부를 API의 순서와 단계별 문턱값은 학습 데이터에서 고른다.
 평균 비용이 예산을 넘지 않는 조합 가운데 정확도가 가장 높은 것을 택한다.
 
 금 시세 방향을 뉴스 제목으로 맞히는 HEADLINES 데이터에서, 예산을 6.5달러로 정한 사례의 FrugalGPT는 GPT-J, J1-L, GPT-4 순서의 cascade를 골랐다.
 GPT-J의 답은 점수가 0.96을 넘을 때만 받아들이고, 아니면 J1-L을 부른다.
 J1-L의 답은 점수가 0.37을 넘으면 받아들이고, 아니면 GPT-4를 부른다.
-GPT-J의 답에는 높은 점수 기준을 적용하고, J1-L 다음에는 비싼 GPT-4만 남으므로 더 낮은 기준으로 받아들이는 셈이다.
+논문은 채점기의 점수를 두 클래스 확률의 최댓값으로 설명하지만, 원논문 예시에 나온 점수 0.13과 0.44는 그 설명과 맞지 않아 점수 계산 방식은 확정하기 어렵다.
+또 원논문의 같은 사례에서 그림의 문턱값 표기는 본문의 0.96, 0.37과 다르므로 여기서는 본문에 적힌 값을 따랐다.
+GPT-J의 답에는 높은 점수 기준을 적용하고, J1-L 다음에는 비싼 GPT-4만 남으므로 J1-L의 답은 더 낮은 기준으로 받아들이는 셈이다.
 같은 데이터에서 예산을 바꿔 가며 얻은 별도의 비교에서는, GPT-4 단독과 같은 정확도를 내는 데 든 비용이 33.1달러에서 0.6달러로 98.3% 줄었다.
 이 0.6달러는 방금 설명한 6.5달러 예산 사례의 비용이 아니다.
 다른 네 데이터의 절감률은 52.3%에서 75.4%로, 데이터마다 크게 달랐다.
@@ -121,7 +123,7 @@ FLAN-T5 800M과 Llama 2 13B처럼 차이가 크면 같은 호출 비율에서 �
 
 ### 1-4. 문턱값과 검증 데이터
 
-Cascade의 $\tau$와 router의 $\alpha$는 정답이나 답 사이의 선호를 평가할 수 있는 데이터에서 문턱값을 바꿔 가며 비용과 품질을 재고, 목표에 맞는 값을 고를 수 있다.
+Cascade의 $\tau$와 router의 $\alpha$를 고를 때는 정답이나 답 사이의 선호를 평가할 수 있는 데이터에서 문턱값을 바꿔 가며 비용과 품질을 재고, 목표에 맞는 값을 택한다.
 FrugalGPT는 학습 데이터에서 순서와 문턱값을 함께 골랐고, Hybrid LLM은 검증 데이터에서 목표 품질에 맞는 문턱값을 골랐다.
 새 데이터에서의 성능을 가늠하려면 문턱값을 고르는 데 쓰지 않은 평가 데이터가 따로 필요하다.
 
@@ -139,7 +141,7 @@ FrugalGPT는 학습 데이터에서 순서와 문턱값을 함께 골랐고, Hyb
 </Callout>
 
 이 절차는 점수의 순서만 쓴다.
-점수가 높은 답일수록 맞을 가능성이 높기만 하면, 점수의 값 자체가 실제 정답률과 맞지 않아도 문턱값은 검증 데이터가 알아서 맞춰 준다.
+점수가 높은 답일수록 맞을 가능성이 높기만 하면, 점수의 값 자체가 실제 정답률과 맞지 않아도 검증 데이터에서 적절한 문턱값을 고를 수 있다.
 점수의 값까지 믿을 수 있어야 하는 경우는 따로 있다.
 정답이 있는 검증 데이터 없이 "0.8 이상이면 받아들인다"처럼 확률의 뜻으로 문턱값을 정하거나,
 점수를 기대 비용이나 위험을 계산하는 데 확률로 넣을 때다.
@@ -196,7 +198,7 @@ Constrained decoding은 생성 중 허용하는 토큰을 제한해 형식 오�
 이때 고른 레이블만 반환하는 API도 있지만, 후보 토큰들의 확률을 함께 제공하는 엔진이나 API라면 그 확률을 점수로 쓸 수 있다.
 
 다만 이유를 생성하는 데는 쓸모도 있다.
-앞의 형식 제한 실험에서는 출력 형식을 엄격하게 제한할수록 수학이나 여러 단계 추론이 필요한 task의 성능은 떨어졌지만, 분류 task에서는 비슷하거나 오히려 나았다.[^speak-freely]
+앞의 형식 제한 실험에서는 일부 형식 제한이 수학이나 여러 단계 추론이 필요한 task의 성능을 떨어뜨렸지만, 분류 task에서는 비슷하거나 오히려 나은 경우가 있었다.[^speak-freely]
 따라서 생성 없이 판단하는 방법은 입력을 읽고 바로 고를 수 있는 분류형 판단에 맞고,
 계산이나 여러 단계 추론이 필요한 판단에서는 이유를 먼저 생성하는 방식과 성능을 비교해 보는 것이 좋다.
 
@@ -223,6 +225,7 @@ $$
 Nogueira 등의 T5 reranker(monoT5)는 질의와 문서를 넣고 "true"와 "false" 두 토큰의 logit에만 softmax를 취해 문서의 순위를 매겼고, 두 단어를 고른 이유 가운데 하나가 둘 다 한 토큰이라는 점이었다.[^monot5]
 대화의 안전성을 판정하는 Llama Guard도 첫 출력 토큰 "safe"나 "unsafe"의 확률을 분류 점수로 쓴다.[^llamaguard]
 G-Eval은 LLM judge가 1~5점 가운데 하나만 쓰면 동점이 많아지므로, 각 점수 토큰의 확률로 가중 평균해 연속적인 점수를 얻었다.[^geval]
+논문의 GPT-4 실험에서는 당시 토큰 확률을 직접 받을 수 없어 20번 샘플링한 결과로 확률을 추정했다.
 
 Inference engine에서는 출력 토큰을 하나로 제한하고 그 위치에서 레이블 토큰들의 log 확률을 돌려받는 식으로 구현한다.
 이때 몇 가지를 확인해야 한다.
@@ -312,14 +315,16 @@ llama-30B는 A를 34.6%, D를 15.8% 골랐고, gpt-3.5-turbo는 C를 32.3% 골�
 **AnyJev**는 TypeSafe AI의 상용 decision model API인 **Jev**와 같은 형태의 답, 곧 선택지별 확률을 공개 LLM에서 얻게 하는 오픈소스 라이브러리다.[^anyjev][^anyjev-repo]
 라이브러리에는 따로 학습한 모델도 들어 있지만, 기본 방식은 추가 학습 없이 기존 모델의 확률을 읽으며,
 cyclic permutation을 log 확률 평균으로 바꾼 것과 batch calibration을 합친다.
-한 판단은 다음 세 단계를 거친다.
+순서가 없는 선택지 $K$개로 판단할 때는 다음 세 단계를 거친다.
 
 1. 선택지 순서를 한 칸씩 돌려 가며, A, B 같은 레이블을 붙인 프롬프트를 $K$번 prefill하고, 순서마다 레이블 토큰의 확률을 읽어 다시 정규화한다.
    $K$번의 prefill은 질문과 입력 부분이 같으므로 prefix cache를 함께 쓸 수 있다.
 2. 순서마다 그 확률을, 누적된 입력들이 그 순서에서 받은 평균 분포로 나누고 다시 정규화한다(batch calibration).
 3. $K$개의 결과를 선택지마다 log 확률로 평균하고 다시 정규화한다.
 
-여기서 쓰는 평균 분포는 확률의 산술평균이다. 앞에서 본 Zhou 등의 log 점수 평균을 빼는 방식과는 평균을 구하는 대상이 다르다.
+여기서 쓰는 평균 분포는 확률의 산술평균이다.
+앞에서 본 Zhou 등의 log 점수 평균을 빼는 방식과는 평균을 구하는 대상이 다르다.
+순서가 있는 척도는 회전하지 않고 원래 순서의 확률을 한 번 읽으며, 같은 질문의 입력이 충분히 쌓이면 그 순서의 평균 분포로 보정한다.[^anyjev-repo]
 
 셋째 단계에서 확률이 아니라 log 확률을 평균하는 데는 이유가 있다.[^anyjev]
 선택지 $i$가 자리 $j$에 놓였을 때의 logit이 선택지 고유의 값 $c_i$와 자리 고유의 편향 $b_j$의 합이라고 가정하자.
@@ -351,7 +356,9 @@ Log 확률을 평균하는 것은 확률의 기하평균을 구하는 것과 같
 
 **3단계: 두 순서를 log 확률로 평균하기.**
 긍정은 $\sqrt{0.650\times0.647}\approx0.648$, 부정은 $\sqrt{0.350\times0.353}\approx0.352$에 비례하므로, 다시 정규화한 최종 확률은 긍정 0.648이다.
+</Callout>
 
+<Details summary="같은 계산을 log odds로 보기">
 같은 결과를 log odds(긍정 대 부정)로 보면 각 단계가 무엇을 지우는지 보인다.
 앞에서 가정한 것처럼 내용과 자리의 효과가 더해진다고 보고 계산한다.
 리뷰의 log odds는 두 순서에서 $\ln(0.775/0.225)\approx1.24$와 $\ln(0.60/0.40)\approx0.41$이다.
@@ -359,7 +366,7 @@ Log 확률을 평균하는 것은 확률의 기하평균을 구하는 것과 같
 평균 분포의 log odds는 $\ln(0.65/0.35)\approx0.62$와 $\ln(0.45/0.55)\approx-0.20$이고, 평균 0.21이 긍정 쪽으로 기운 몫, 차의 절반 0.41이 A 자리의 몫이다.
 두 순서를 평균하면 A 자리의 몫이 지워지고, 평균 분포로 나누면 긍정 쪽으로 기운 몫 0.21까지 빠져 $0.82-0.21=0.61$이 남는다.
 이를 확률로 바꾸면 $1/(1+e^{-0.61})\approx0.648$이고, 둘째 단계 없이 평균만 하면 0.82에 해당하는 0.69다.
-</Callout>
+</Details>
 
 예시는 평균 분포로 그대로 나눴지만, AnyJev의 기본 설정은 같은 질문으로 입력이 8개 이상 쌓인 뒤부터 둘째 단계를 적용하고 평균 분포를 0.75제곱한 값으로 나누어 보정을 약하게 한다.
 여러 입력을 한 번에 처리하면 그 batch의 입력들도 평균에 포함된다.
@@ -383,7 +390,8 @@ ECE 0.184는 여전히 작지 않은 값이다.
 
 레이블 확률을 읽는 방법은 글을 생성하도록 학습한 모델에서 판단을 빌려 오는 셈이라, 편향을 보정해도 문제가 남는다.
 AnyJev처럼 순서를 돌려 위치 편향을 덜어 내려면 prefill을 선택지 수만큼 해야 하고, 보정한 뒤에도 calibration이 충분하지 않으며, 선택지 수는 한 토큰짜리 레이블 수에 묶인다.
-Temperature scaling은 정답이 있는 데이터로 task마다 $T$를 따로 맞춰야 하므로, 사용자가 요청마다 질문과 선택지를 새로 정하는 판단에는 쓰기 어렵다.
+Temperature scaling은 정답이 있는 데이터로 $T$를 맞춘다.
+같은 $T$를 여러 task에 쓸 수는 있지만, 질문이나 선택지가 달라져도 보정이 유지되는지 검증해야 하므로 요청마다 새로운 판단에 적용하기는 어렵다.
 그래서 판단을 학습 목표로 삼아 따로 학습한 모델이 decision model이다.
 
 Decision model은 판단의 근거가 될 입력(state)과 질문, 선택지를 받아, 글 대신 다음 세 가지 형태의 답을 돌려준다.
@@ -395,6 +403,7 @@ OpenAI도 2026년 10월에 같은 세 형태로 답하는 Decisions API를 내�
 - **Score**: 0부터 번호를 매긴 2~10단계 척도의 단계별 확률과, 단계 번호에 확률을 곱해 더한 점수.[^jev-score]
   G-Eval의 확률 가중 점수와 같은 방식이다.
 - **Noul**: 답이 "예"일 확률 하나.
+  OpenAI는 같은 형태를 predicate라 부른다.[^openai-decisions]
 
 Score는 척도의 단계를, Noul은 예와 아니오를 선택지로 둔 Choice로 볼 수 있다.
 
@@ -404,11 +413,6 @@ Noul에는 별도 confidence가 없고 예의 확률만 반환한다.
 이 0.2를 "맞을 확률 20%"로 읽으면 안 되므로, 확률의 뜻으로 문턱값을 정하거나 ECE를 잴 때는 선택지 확률을 쓴다.
 선택지 수가 다르면 같은 confidence에서도 가장 큰 선택지 확률은 달라진다.
 따라서 confidence가 같다는 이유만으로 서로 다른 판단의 정답률도 같다고 가정하지 말고, 실제 task별로 검증해야 한다.
-
-입력은 텍스트에서 이미지로 넓어지고 있다.
-Jev는 2026년 10월 1.14 버전과 함께 입력과 지시문 안에 이미지를 넣는 기능과,
-이미지에서 대상 하나를 찾아 경계 상자의 네 변을 이미지 크기에 대한 0~1 비율로 돌려주는 **Box** 형태를 추가했다.[^jev-114]
-둘 다 별도의 요청 헤더로 켜는 실험 기능이고, TypeSafe는 텍스트보다 이미지 입력에서 성능이 낮다고 경고하며 이미지 task의 성능 수치는 공개하지 않았다.[^jev-box]
 
 ### 3-2. 판단 head
 
@@ -495,10 +499,10 @@ Clef도 필드 순서, 프롬프트, 스키마를 바꿔 가며 만든 합성 �
 **자기 추론의 증류.**
 Kahneman은 사람의 사고를 직관적으로 곧바로 답을 내는 빠른 System 1과, 단계를 밟아 의식적으로 따지는 느린 System 2로 나눴다.[^kahneman]
 Yu 등은 이 구분을 빌려, 느린 추론의 결과를 빠른 답으로 옮기는 방법을 여러 추론 기법에 걸쳐 실험했다(Distilling System 2 into System 1).[^s2s1]
-Chain-of-thought 같은 느리지만 정확한 추론(System 2)을 정답이 없는 입력에 돌려 최종 답만 남기고,
+Chain-of-thought처럼 중간 추론을 생성해 계산을 더 쓰는 방법(System 2)을 정답이 없는 입력에 적용해 최종 답만 남기고,
 여러 번 샘플링한 답의 다수결이나 선택지 순서를 바꿔도 답이 같은지로 믿을 만한 답만 걸러,
 모델이 중간 추론 없이 그 답을 바로 내도록(System 1) fine-tuning한다.
-여러 추론 기법이 이렇게 옮겨졌지만, GSM8K 수학 문제에서 chain-of-thought를 증류한 모델은 정확도가 7.13%에 그쳐 chain-of-thought로 푼 52.77%에 크게 못 미쳤다.
+여러 추론 기법이 이렇게 옮겨졌지만, Llama-2-70B-chat을 사용한 GSM8K 수학 문제 실험에서는 한 답을 생성해 평가했을 때 zero-shot chain-of-thought를 증류한 모델의 정확도가 7.13%에 그쳐 원래 zero-shot chain-of-thought로 푼 52.77%에 크게 못 미쳤다.
 Tacit은 이 방식을 판단에 적용했다.[^tacit]
 바탕 모델이 스스로 판단 문제를 만들고, reasoning을 켠 채 풀어 답을 얻은 뒤, 그 답을 forward 한 번에 내도록 학습했으며, 사람이 붙인 정답이나 다른 모델은 쓰지 않았다.
 TypeSafe가 Jev 같은 모델을 "System One Model"이라 부르는 것도 같은 구분에서 온 이름이다.[^jev-blog]
@@ -517,7 +521,7 @@ cross-entropy에 Brier loss 같은 항을 더해 calibration을 함께 맞춘다
 Jev가 이렇게 만들어졌는지는 알 수 없다.
 TypeSafe는 Jev가 출력을 토큰 단위로 차례로 생성하지 않고 모든 확률을 병렬로 내며,
 새 모델 구조와 RLCD(reinforcement learning for calibrated decisions)라는 학습 방법을 썼다고 밝히지만,
-구조, 학습 데이터, RLCD의 보상은 공개하지 않았고, 블로그와 문서에는 calibration을 잰 수치가 없다.[^jev-blog]
+구조, 학습 데이터, RLCD의 보상은 공개하지 않았고, 인용한 TypeSafe 블로그에는 calibration을 잰 수치가 없다.[^jev-blog]
 선택지를 255개까지 받으므로 알파벳 한 글자 레이블을 읽는 방식은 아니라는 정도만 짐작할 수 있다.
 
 ### 3-4. 독립 평가와 한계
@@ -538,14 +542,15 @@ LLM은 같은 질문을 여러 번 물어 답의 비율로 확률을 얻을 수�
 
 확률이 잘 맞더라도 입력을 고친 공격에는 약할 수 있다.
 JevAdvBench는 정답이 바뀌지 않는 범위에서 입력이나 선택지를 고치는 12가지 black-box 공격을 시험했다.
-Jev 1.13이 원래 맞힌 판단에 대해 공격 방법별로 유효한 변형을 모아 계산한 결과, 46.3%에서 답이 바뀌었다.[^jevadv]
+Jev 1.13이 원래 맞힌 판단에 대해 정답을 유지하는 유효한 질문과 공격 방법의 쌍을 모았다.
+각 변형을 세 번 호출했을 때 적어도 두 번 오답이 나온 쌍의 비율은 46.3%였다.[^jevadv]
 여러 후보를 탐색해 만든 변형을 대상으로 한 수치이므로, 임의의 입력 변경이나 서로 다른 질문 전체에 대한 실패율로 읽어서는 안 된다.
 공격 없이 같은 입력을 다시 물은 2,388회 중 정답과 다른 답이 나온 비율은 0.17%였다.
 이 재실행의 오류율과 비교하면, 공격에서 관찰된 답의 변화는 모델의 무작위성만으로 설명하기 어렵다.
 저자들은 decision model의 입력을 신뢰할 수 없는 것으로 다루고, confidence만 보고 자동으로 실행하지 말라고 권한다.
 TypeSafe 문서도 Jev 1.13의 약점으로 첫 번째 선택지에 기우는 위치 편향, 계산과 날짜 비교, 무관한 내용이 긴 입력 등을 든다.[^jev-jagged]
 Jev의 구조는 알 수 없지만, causal attention으로 선택지를 읽는 모델이라면 판단 전용으로 학습해도 위치 편향이 남는 것이 이상하지 않다.
-계산에 약하다는 점도, 추론을 한 번의 forward로 옮긴 모델이라면 증류 실험에서 본 한계와 맞아떨어진다.
+계산에 약하다는 관찰은 증류 실험의 한계와 닮았지만, Jev의 구조와 학습 방법이 공개되지 않아 원인을 판단할 수는 없다.
 
 ## 4. 방법의 선택
 
@@ -612,7 +617,7 @@ Router가 한 요청을 두 모델 중 하나에 보내기 전에, 작은 모델
 
 [^jev-blog]: Almeida, D. (2026). Introducing System One Models & Jev. *TypeSafe AI Blog*. [typesafe.ai](https://typesafe.ai/blog/introducing-system-one-models-and-jev).
 
-[^openai-decisions]: OpenAI. (2026). Decisions. *OpenAI API documentation*. [developers.openai.com](https://developers.openai.com/api/docs/guides/decisions).
+[^openai-decisions]: OpenAI. (2026). Decisions. *OpenAI API documentation*. [developers.openai.com](https://developers.openai.com/api/docs/guides/decisions); [API 변경 이력](https://developers.openai.com/api/docs/changelog).
 
 [^jev-choice]: TypeSafe AI. (2026). Choice. *TypeSafe documentation*. [docs.typesafe.ai](https://docs.typesafe.ai/primitives/choice).
 
@@ -620,9 +625,9 @@ Router가 한 요청을 두 모델 중 하나에 보내기 전에, 작은 모델
 
 [^jev-confidence]: TypeSafe AI. (2026). Confidence. *TypeSafe documentation*. [docs.typesafe.ai](https://docs.typesafe.ai/confidence).
 
-[^tacit]: Zhang, J., Yang, T., Shi, Y., et al. (2026). Tacit-9B (preview). *Hugging Face*. [huggingface.co](https://huggingface.co/morriszjm/Tacit-9B).
+[^tacit]: Zhang, J. (2026). Tacit-9B (preview). *Hugging Face*. [huggingface.co](https://huggingface.co/morriszjm/Tacit-9B).
 
-[^strands-arch]: Strands Labs. (2026). The architecture. *strands-decider documentation*. [github.com](https://github.com/strands-labs/strands-decider/blob/main/docs/architecture.md).
+[^strands-arch]: Strands Labs. (2026). Architecture. *strands-decider documentation*. [github.com](https://github.com/strands-labs/strands-decider/blob/main/docs/architecture.md).
 
 [^strands-results]: Strands Labs. (2026). Results. *strands-decider documentation*. [github.com](https://github.com/strands-labs/strands-decider/blob/main/evaluation/results.md).
 
@@ -636,8 +641,4 @@ Router가 한 요청을 두 모델 중 하나에 보내기 전에, 작은 모델
 
 [^jevadv]: Hu, J., Zhang, H., Liu, Y., et al. (2026). JevAdvBench: A Benchmark and Black-Box Attacks for Reinforcement Learning for Calibrated Decisions Models. [arXiv:2609.31142](https://arxiv.org/abs/2609.31142).
 
-[^jev-114]: TypeSafe AI. (2026). Jev: For the builders AND dreamers. *TypeSafe AI Blog*. [typesafe.ai](https://typesafe.ai/blog/jev-1-14).
-
-[^jev-box]: TypeSafe AI. (2026). Box. *TypeSafe documentation*. [docs.typesafe.ai](https://docs.typesafe.ai/primitives/box).
-
-[^jev-jagged]: TypeSafe AI. (2026). Model jaggedness: jev-1.13. *TypeSafe documentation*. [docs.typesafe.ai](https://docs.typesafe.ai/model-jaggedness/jev-1.13).
+[^jev-jagged]: TypeSafe AI. (2026). Jev 1.13 jaggedness. *TypeSafe documentation*. [docs.typesafe.ai](https://docs.typesafe.ai/model-jaggedness/jev-1.13).

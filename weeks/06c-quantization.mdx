@@ -4,14 +4,10 @@ week: 6
 order: 2
 ---
 
-<strong>양자화(quantization)</strong>는 weight, activation, KV cache 등을 더 적은 bits로 표현하는 방법이다.
+<strong>양자화(quantization)</strong>는 weight, activation, KV(key-value) cache 등을 더 적은 bits로 표현하는 방법이다.
 Llama 3.1 8B의 weight를 BF16(bfloat16)에서 INT4(4-bit integer)로 바꾸면 16 GB가 약 4 GB가 된다.
 대신 정밀도를 낮춘 만큼 오차가 생긴다.
-특히 LLM(large language model)의 activation에는 몇몇 channel(hidden 차원)에 유독 큰 값인 outlier가 반복해 나타나는데, 그 값에 범위를 맞추면 나머지 작은 값이 뭉개진다.[^survey]
-
-Song Han 교수(MIT)는 모델 경량화 연구를 이끌어 왔고,
-이 노트의 SmoothQuant, AWQ(activation-aware weight quantization), QServe가 모두 그의 연구실(MIT HAN Lab)에서 나왔다.
-그의 강의 [EfficientML.ai](https://efficientml.ai)는 영상과 슬라이드가 모두 공개되어 있다.
+특히 LLM(large language model)의 activation에는 몇몇 channel(hidden 차원)에 유독 큰 값인 outlier가 반복해 나타나는데, 그 값에 범위를 맞추면 나머지 작은 값이 뭉개진다.[^survey]<Sidenote>모델 경량화를 다루는 Song Han 교수(MIT)의 강의 [EfficientML.ai](https://efficientml.ai)는 영상과 슬라이드가 모두 공개되어 있다.</Sidenote>
 
 ## 1. 양자화의 기본
 
@@ -211,7 +207,8 @@ $Y$의 한 원소는 $X$의 한 행과 $W$의 한 열을 입력 channel 방향�
 예를 들어 $W$의 첫 열을 위에서부터 $w_{11}, w_{21}, w_{31}, w_{41}$이라 하면,
 per-channel은 이 네 값을 하나의 scale로 묶고, 크기 2인 per-group은 앞의 두 값과 뒤의 두 값에 각각 scale을 둔다.
 Per-token은 행마다 다른 scale을 두지만 한 행 안에서는 열 방향으로 scale을 공유한다.
-Per-channel이라는 이름도 대상에 따라 다르다. 여기서는 activation의 입력 channel($X$의 열)과 weight의 출력 channel($W$의 열)을 뜻한다.
+Per-channel이라는 이름도 대상에 따라 다르다.
+여기서는 activation의 입력 channel($X$의 열)과 weight의 출력 channel($W$의 열)을 뜻한다.
 다른 축이나 activation의 group을 쓰는 방식도 있으므로 이름만 보고 축을 단정하지 말고 대상과 묶음을 확인해야 한다.
 Weight의 값은 추론 중 고정되지만 activation은 입력마다 바뀌므로 scale을 정하는 시점도 다를 수 있다.
 
@@ -222,10 +219,12 @@ Weight의 값은 추론 중 고정되지만 activation은 입력마다 바뀌므
 반면 앞의 두 값과 뒤의 두 값을 별도 group으로 나누면, 작은 값 group의 scale은 약 0.043(0.3/7)이다.
 이때 0.1과 0.3은 각각 정수 2와 7로 저장되어 약 0.086과 0.3으로 복원된다.
 큰 값 6이 작은 값 group의 scale을 결정하지 않기 때문이다.
-대신 이 열에 scale이 하나가 아니라 두 개 필요하다. 더 잘게 나눈다고 모든 값의 오차나 전체 계산 비용이 반드시 줄어드는 것은 아니다.
+대신 이 열에 scale이 하나가 아니라 두 개 필요하다.
+더 잘게 나눈다고 모든 값의 오차나 전체 계산 비용이 반드시 줄어드는 것은 아니다.
 
 <Callout type="example">
-같은 행렬을 숫자로 살펴보자. 토큰 2개와 입력 channel 4개, 출력 channel 2개인 가상의 선형층이다.
+같은 행렬을 숫자로 살펴보자.
+토큰 2개와 입력 channel 4개, 출력 channel 2개인 가상의 선형층이다.
 
 $$
 X=\begin{bmatrix}1&2&3&4\\2&4&6&8\end{bmatrix},\qquad
@@ -235,7 +234,8 @@ $$
 Activation을 per-token으로 묶고 첫 행의 scale을 1, 둘째 행의 scale을 2로 두자.
 각 행을 자기 scale로 나누면 저장할 정수 행은 둘 다 $[1,2,3,4]$가 된다.
 이 예는 값이 scale의 정수배라 반올림 오차가 없도록 만들었다.
-Scale은 두 행을 구별하는 데 필요하다. 둘째 행을 복원할 때는 정수 행에 2를 곱해야 한다.
+Scale은 두 행을 구별하는 데 필요하다.
+둘째 행을 복원할 때는 정수 행에 2를 곱해야 한다.
 
 Weight는 출력 channel별로 열을 고른 뒤, 각 열을 입력 방향으로 두 원소씩 묶자.
 첫 열 $[1,2,2,4]^\top$에서 앞의 두 값은 scale 1을, 뒤의 두 값은 scale 2를 쓰면 두 group의 정수는 각각 $[1,2]$다.
@@ -252,9 +252,9 @@ Weight는 출력 channel별로 열을 고른 뒤, 각 열을 입력 방향으로
 LLM의 activation에서 outlier는 아무 데나 생기지 않는다.
 Dettmers 등은 크기가 6 이상인 값이 여러 층과 토큰에 걸쳐 같은 channel에 반복해 나타난다는 것을 보고하고, 이를 outlier feature라 불렀다.[^llmint8]
 6.7B 모델에서는 모든 층과 약 75%의 토큰에 나타났고, 단 6개의 channel에 몰려 있었다.
-Outlier feature는 대부분의 토큰에 걸친 channel이라, 시작 토큰처럼 특정 토큰의 한두 성분에만 생기는 massive activation과는 다른 현상이다.[^massive]
 이 6개 channel을 0으로 만들면 성능이 크게 떨어졌다.
 수는 적어도 모델의 동작에 중요한 값이라, 양자화할 때 이 값들의 손상을 줄여야 한다.
+Outlier feature는 대부분의 토큰에 걸친 channel이라, 시작 토큰처럼 특정 토큰의 한두 성분에만 생기는 massive activation과는 다른 현상이다.[^massive]
 Per-token은 각 행 전체가 scale 하나를 공유하므로 각 행에 같은 outlier channel이 있다면, 모든 행의 scale이 그 큰 값에 영향을 받는다.
 Activation per-channel은 큰 값이 있는 열을 다른 열과 별도로 묶어 그 영향을 나눌 수 있지만, 다음의 계산 비용과 맞바꾸는 선택이다.
 
@@ -292,7 +292,7 @@ Llama 3.1 8B의 weight를 모두 group 128의 INT4로 저장하고 group마다 1
 파라미터 8.03B개에 곱하면 약 4.1 GB로, BF16의 16.1 GB에서 약 4분의 1이 된다.
 실제 배포에서는 embedding과 출력층(합쳐 약 1.05B개)을 16-bit로 남기는 경우가 많고, 그러면 전체 weight는 약 5.7 GB다.
 H100(80 GB) 한 대에서 엔진의 전체 메모리 예산과 다른 메모리 사용량이 같다면,
-절약한 약 10–12 GB를 KV(key-value) cache에 추가로 쓸 수 있다.
+절약한 약 10–12 GB를 KV cache에 추가로 쓸 수 있다.
 실제로는 kernel과 설정이 바뀌면 작업 공간도 달라질 수 있다.
 </Callout>
 
@@ -333,7 +333,7 @@ Scale은 지수만 있는 E8M0 형식이라 2의 거듭제곱만 표현한다.
 원소 하나가 표현하는 값은 0, 0.5, 1, 1.5, 2, 3, 4, 6과 그 음수다.
 원소당 저장량은 $4+8/32=4.25$ bits다.
 
-블록은 행렬곱의 합을 도는 입력 방향으로 묶인다.
+행렬곱에서는 보통 합을 도는 입력 방향으로 블록을 묶는다.
 정수 행렬곱이라면 합 안에 남은 scale이 추가 비용이 되지만,
 이 형식을 지원하는 연산 장치는 블록마다 부분합에 activation 블록과 weight 블록의 두 scale을 곱해 누적하는 일을 행렬곱 명령 안에서 처리한다.[^mx]
 
@@ -360,7 +360,7 @@ MoE는 FFN(feed-forward network)을 expert 여러 개로 늘리고 토큰마다 
 gpt-oss는 post-training 단계에서 이 MoE weight를 MXFP4로 양자화해 원소당 4.25 bits로 저장했고,
 MoE weight가 전체 파라미터의 90% 이상을 차지하므로 116.8B 파라미터의 120b 모델이 80 GB GPU 한 대에 올라간다.[^gptoss]
 
-## 2. PTQ와 QAT
+## 2. 양자화 방식과 실행 조건
 
 ### 2-1. 두 방식
 
@@ -373,7 +373,7 @@ PTQ로는 품질을 지키기 어려운 낮은 bits에서 QAT를 쓴다.
 Weight만 반올림하는 가장 단순한 PTQ는 weight 값만 보고 scale을 정할 수 있다.
 하지만 activation을 양자화하거나 weight를 더 잘 보정하려면 activation이 실제로 어떤 값을 갖는지 알아야 한다.
 그래서 학습된 모델에 대표 입력을 미리 넣어 activation의 범위와 통계를 재는데, 이 입력을 **calibration 데이터**라 한다.
-GPTQ, AWQ, SmoothQuant 같은 대표적인 PTQ 방법이 모두 이렇게 한다.
+GPTQ, AWQ(activation-aware weight quantization), SmoothQuant 같은 대표적인 PTQ 방법이 모두 이렇게 한다.
 따라서 calibration 데이터를 쓰는 PTQ의 결과는 그 데이터의 분포에 영향을 받는다.
 예를 들어 문서 질의응답에 쓸 모델이라면 실제 서비스에서 나올 언어와 문서·질문의 길이를 반영한 입력을 calibration에 쓴다.
 그와 겹치지 않는 별도 문서와 질문으로 원래 모델과 양자화 모델의 답변 품질을 같은 조건에서 비교한다.
@@ -400,7 +400,7 @@ Static 방식은 calibration 데이터로 미리 잰 범위로 scale을 고정�
 Weight-only는 읽는 weight bytes를 줄이므로, 읽는 데이터의 대부분이 weight인 작은 batch의 decode에서 효과가 크다.
 Weight-activation 양자화는 행렬곱을 BF16보다 빠른 저정밀 연산 장치로 하므로,
 긴 prefill처럼 행렬곱이 compute-bound인 경우에도 빨라질 수 있다.
-H100에서 BF16 선형층의 이상적인 roofline으로 보면 decode 요청을 약 350개 넘게 묶을 때 연산 지붕에 닿는다.
+H100에서 BF16의 4096×4096 query 투영을 이상적인 roofline으로 계산하면 decode 요청을 약 350개 넘게 묶을 때 연산 지붕에 닿는다.
 Attention은 요청마다 자기 KV cache를 읽으므로, 같은 조건에서도 메모리 대역폭이 병목일 수 있다.
 예를 들어 Llama 3.1 8B를 BF16으로 올린 H100 한 대에서 KV cache에 약 53.5 GB를 쓸 수 있다고 가정하자.
 토큰당 KV cache가 약 131 KB이므로, 요청 350개를 담으려면 평균 문맥이 약 1,170토큰 이하여야 한다.
@@ -415,7 +415,7 @@ Weight-only가 읽는 bytes를 줄이려면, 낮은 bits의 weight를 메모리�
 
 Weight-activation 양자화는 GPU의 연산 장치가 그 형식의 행렬곱을 직접 지원해야 한다.
 지원한다면 이득은 크다.
-H100 SXM의 FP8 Tensor Core는 dense 기준 약 1,979 TFLOP/s(TFLOP/s는 초당 $10^{12}$번의 부동소수점 연산)로, BF16 dense 989 TFLOP/s의 두 배다.[^h100]
+H100 SXM의 FP8 Tensor Core는 dense 기준 약 1,979 TFLOP/s(TFLOP/s는 초당 $10^{12}$번의 부동소수점 연산)로, BF16 dense 989 TFLOP/s의 두 배다.[^h100-bandwidth]
 Weight와 activation을 모두 FP8로 두면 roofline의 평평한 지붕이 두 배로 높아지고, ridge point도 BF16의 295 FLOP/byte에서 591로 옮겨 간다.
 입력과 weight를 읽는 bytes도 절반이 되어 intensity가 높아진다.
 토큰이 충분히 많은 긴 prefill이라면 intensity가 FP8의 ridge point도 넘어 여전히 compute-bound이고, 그때 이론상 최대 속도는 두 배가 된다.
@@ -470,15 +470,19 @@ $\sum$은 calibration 데이터의 모든 토큰에 걸친 합이다.
 $w_1$의 오차가 출력에 남기는 $-e\,x_1$을 $\delta_2x_2$로 상쇄할 때, 모든 토큰에서 남는 차이의 제곱합 $\sum(\delta_2x_2-e\,x_1)^2$을 $\delta_2$로 미분해 0으로 두면 이 값이 나온다.
 앞의 예처럼 두 입력이 늘 같으면 비율이 1이라 오차를 그대로 더한다.
 분자 $\sum x_1x_2$가 정확히 0이고 분모가 양수라면 보정값도 0이므로 이 입력으로는 오차를 메울 수 없다.
-분자만 작다는 사실로는 부족하다. 예를 들어 calibration 토큰 하나에서 $x_1=1$, $x_2=0.001$이면 분자와 분모가 모두 작지만, 이 식에서는 $w_2$를 $1{,}000e$만큼 고쳐 오차를 메울 수 있다.
+분자만 작다는 사실로는 부족하다.
+예를 들어 calibration 토큰 하나에서 $x_1=1$, $x_2=0.001$이면 분자와 분모가 모두 작지만, 이 식에서는 $w_2$를 $1{,}000e$만큼 고쳐 오차를 메울 수 있다.
 이는 아직 $w_2$를 반올림하기 전의 보정이다.
 분자와 분모는 $X^\top X$(입력 차원×입력 차원)의 원소다.
 입력 차원이 많으면 아직 양자화하지 않은 weight 모두가 오차를 나누어 메운다.
+
+<Details summary="입력 차원이 여러 개일 때의 보정">
 남은 weight에 대응하는 입력들을 모은 행렬을 $X_R$, 방금 양자화한 weight에 대응하는 입력을 모은 열을 $x_1$이라 하면,
 남은 weight의 보정 벡터 $\delta$는 $X_R^\top X_R\,\delta=eX_R^\top x_1$을 푸는 값이다.
 $X_R^\top X_R$이 역행렬을 가지면 $\delta=e(X_R^\top X_R)^{-1}X_R^\top x_1$이고, 남은 입력이 하나라면 위의 $\delta_2$ 식이 된다.
 다만 앞 예시처럼 입력들이 완전히 같으면 전체 $X^\top X$는 특이해 역행렬이 없다.
 실제 GPTQ는 수치 문제를 줄이려고 통계 행렬의 대각 원소에 대각 평균의 1%를 더해 계산한다.[^gptq]
+</Details>
 
 $W$의 행, 곧 입력 차원을 위에서부터 차례로 양자화하고,
 행 하나를 양자화할 때마다 아직 양자화하지 않은 아래 행들을 고쳐 방금 생긴 오차를 메운다.
@@ -540,7 +544,7 @@ Weight-only의 이득은 batch가 커지거나 prefill로 가면 줄어든다.
 첫째, batch가 크고 문맥이 길면 읽는 데이터의 대부분이 KV cache다.
 Llama 3.1 8B에서 문맥이 2,048토큰인 요청 192개를 묶고 weight와 각 요청의 KV cache를 한 번씩 읽는다고 근사하면 decode 스텝은 약 67.8 GB를 읽는다.
 그중 weight는 약 16 GB이므로,
-weight를 INT4로 줄여도 읽는 데이터는 약 56 GB로 18%쯤 주는 데 그친다.
+weight를 INT4로 줄여도 읽는 데이터는 약 56 GB로 18%쯤 줄어드는 데 그친다.
 둘째, weight-only는 bytes만 줄일 뿐 계산량은 그대로이고, weight를 dequantize하는 계산이 더해진다.
 작은 batch의 decode에서는 놀던 연산 장치가 이 계산을 맡지만,
 prefill처럼 선형층이 이미 compute-bound이면 weight를 덜 읽어 아끼는 시간은 거의 없고 dequantize 계산이 비용으로 더해진다.
@@ -572,7 +576,7 @@ LLM.int8()의 해법은 **나누어 계산하기**다.
 
 ### 4-2. SmoothQuant
 
-LLM.int8()은 정확도를 지켰지만 행렬을 둘로 나눈 탓에 빨라지지 않았다.
+LLM.int8()은 정확도를 지켰지만 행렬을 둘로 나누어 계산하는 부담이 있다.
 Xiao 등의 SmoothQuant는 행렬을 나누지 않고 모든 값을 INT8 행렬곱 하나로 계산하는 길을 찾았다.[^smoothquant]
 실마리는 outlier가 activation의 **같은 channel에 고정되어** 나타나고,
 그 channel에 곱해지는 weight $W$의 행은 평범한 크기라는 점이다.
@@ -626,9 +630,6 @@ $$
 
 $Q$로 Hadamard 행렬처럼 모든 원소의 크기가 같은 직교 행렬을 쓰면,
 한 channel에 몰려 있던 큰 값이 회전 뒤에 여러 channel로 나뉠 수 있다.
-다만 모든 입력에서 최대값이 줄어드는 것은 아니다.
-예를 들어 아래의 같은 행렬을 $(1,\,1,\,1,\,1)$에 적용하면 $(2,\,0,\,0,\,0)$이 되어 오히려 한 좌표에 모인다.
-어떤 회전을 쓰는지와 실제 activation 분포에 따라 효과가 달라진다.
 
 <Callout type="example">
 네 channel의 activation이 $x=(8,\,0.5,\,-0.5,\,0.5)$라고 하자.
@@ -644,6 +645,10 @@ $$
 저장한 정수에 $s$를 곱해 복원하고 $Q^\top$을 곱해 원래 좌표로 되돌리면 $(7.89,\,0.61,\,-0.61,\,0.61)$로,
 회전 없이는 0이 되었던 작은 값들이 0.11 오차 안에서 살아난다.
 </Callout>
+
+다만 모든 입력에서 최댓값이 줄어드는 것은 아니다.
+예를 들어 이 행렬 $Q$를 $(1,\,1,\,1,\,1)$에 적용하면 $(2,\,0,\,0,\,0)$이 되어 오히려 한 좌표에 모인다.
+어떤 회전을 쓰는지와 실제 activation 분포에 따라 효과가 달라진다.
 
 QuaRot은 층 사이를 흐르는 residual stream을 통째로 회전된 좌표로 표현한다.
 Residual stream은 각 층이 입력에 자기 출력을 더해 다음 층으로 넘기는 hidden 벡터의 흐름이다.
@@ -693,10 +698,10 @@ FP8은 cache를 절반으로 줄이는 데 그친다.
 Liu 등의 KIVI는 key와 value의 분포가 다르다는 데서 출발했다.[^kivi]
 
 여기서 대상은 선형층의 weight가 아니라 **KV cache의 key와 value**다.
-Attention head 하나에서 저장된 토큰이 $L$개, head 차원이 $d$라고 하자.
-Key cache $K_c$와 value cache $V_c$를 각각 $L\times d$ 행렬로 놓으면 행은 토큰, 열은 그 head의 channel이다.
-새 토큰의 query $q$는 $1\times d$이고, $qK_c^\top$은 저장된 토큰마다 점수 하나씩을 담는 $1\times L$이다.
-이 점수에 softmax를 적용한 attention weight $a$에 $V_c$를 곱하면 $aV_c$는 $1\times d$ 출력이 된다(점수의 크기 조정은 생략했다).
+Attention head 하나에서 저장된 토큰이 $T$개, head 차원이 $d_h$라고 하자.
+Key cache $K_c$와 value cache $V_c$를 각각 $T\times d_h$ 행렬로 놓으면 행은 토큰, 열은 그 head의 channel이다.
+새 토큰의 query $q$는 $1\times d_h$이고, $qK_c^\top$은 저장된 토큰마다 점수 하나씩을 담는 $1\times T$이다.
+이 점수에 softmax를 적용한 attention weight $a$에 $V_c$를 곱하면 $aV_c$는 $1\times d_h$ 출력이 된다(점수의 크기 조정은 생략했다).
 
 이 행렬에서 key의 per-channel은 **한 열 안에서 여러 토큰을 묶는 것**이고, value의 per-token은 **한 행 안에서 channel을 묶는 것**이다.
 예를 들어 4토큰, 3 channel이면 key의 둘째 channel은 둘째 열의 값 4개이고, value의 셋째 토큰은 셋째 행의 값 3개다.
@@ -705,7 +710,7 @@ Key cache $K_c$와 value cache $V_c$를 각각 $L\times d$ 행렬로 놓으면 �
 Key에는 값이 유독 큰 channel이 몇 개 고정되어 나타난다.
 Activation의 outlier feature와 같은 모양이므로,
 같은 channel끼리 묶어(per-channel) scale을 두어야 그 큰 값이 다른 channel의 정밀도를 망치지 않는다.
-Value에는 그런 channel outlier가 없다.
+저자들이 살펴본 value cache에서는 이처럼 고정된 channel의 outlier 패턴이 뚜렷하지 않았다.
 대신 attention 출력은 토큰별 value의 가중합이고, softmax를 거친 attention weight가 소수의 토큰에 몰리면 그 토큰들의 value가 출력에 크게 기여한다.
 Value를 토큰마다 따로 묶으면(per-token) 양자화 오차가 각 토큰 안에 갇혀, 출력에 크게 기여하는 몇 토큰의 value가 다른 토큰 때문에 손상되지 않는다.
 Llama 2 13B에서 value를 per-channel로 묶으면 attention 출력의 상대 오차가 per-token보다 약 14배 컸다.[^kivi]
@@ -773,7 +778,8 @@ Google은 Gemma 3를 약 5,000스텝 동안 원래 정밀도 모델의 확률을
 ### 6-3. 처음부터 낮은 bits로 학습
 
 앞의 QAT는 이미 학습된 모델을 짧게 더 학습해 낮은 bits에 맞춘다.
-Weight를 1–2 bits까지 내리면 이것으로도 부족해서, 사전학습 처음부터 양자화된 weight로 학습하는 방법이 나왔다.
+앞에서 본 것처럼 낮은 bits에서는 사후 양자화나 짧은 QAT만으로 품질을 지키기 어려울 수 있다.
+이 오차를 줄이려는 또 다른 접근으로, 사전학습 처음부터 양자화된 weight로 학습하는 방법이 나왔다.
 Wang 등의 BitNet은 선형층을 BitLinear라는 층으로 바꾸어, weight는 1-bit($\pm1$), activation은 8-bit로 양자화한 채 사전학습했다.[^bitnet]
 같은 설정으로 학습한 6.7B 16-bit 모델을 PTQ로 1-bit weight까지 내리면 perplexity가 $10^{21}$을 넘어 모델이 무너졌지만,
 처음부터 BitNet으로 학습한 모델은 17.07로 16-bit 모델의 15.19에 가까웠다.
@@ -781,7 +787,7 @@ Wang 등의 BitNet은 선형층을 BitLinear라는 층으로 바꾸어, weight�
 Ma 등의 BitNet b1.58은 weight가 가질 수 있는 값을 $-1$, $0$, $1$ 셋으로 넓혔다.[^bitnet158]
 가능한 값이 세 개이므로, 이를 구분하는 데 이론상 weight 하나당 $\log_2 3\approx1.58$ bits가 필요하다.
 $n\times m$ weight 행렬마다 절댓값의 평균 $\mu$로 나눈 뒤 반올림하고, $-1$과 $1$ 사이로 자른다(아래 식의 RoundClip).
-최댓값으로 나누면 대부분의 weight가 0으로 반올림되므로, 평균으로 나누어 세 값이 고루 쓰이게 한다.
+최댓값으로 나누면 대부분의 weight가 0으로 반올림될 수 있으므로, 평균으로 나누어 값이 0에 몰리는 것을 줄이려 한다.
 $\mu$는 행렬 전체에 하나뿐인 per-tensor scale이다.
 
 $$
@@ -792,7 +798,8 @@ $$
 
 $\epsilon$은 0으로 나누지 않게 하는 작은 수다.
 학습 중에는 STE처럼 실수 weight(latent weight)를 따로 두고 갱신하며, forward에서만 이 세 값으로 바꾼다.
-Inference에는 세 값과 $\mu$만 남는다.
+Inference에서는 이 선형층의 weight를 세 값과 scale $\mu$로 표현한다.
+Embedding이나 정규화처럼 양자화 대상이 아닌 부분은 별도의 형식으로 남을 수 있다.
 
 Weight가 $-1$, $0$, $1$뿐이면 입력에 weight를 곱하는 대신 더하거나 빼면 된다.
 출력 하나는 weight가 1인 입력을 더하고 $-1$인 입력을 빼서 얻고, 공통 scale $\mu$만 마지막에 한 번 곱한다.
@@ -834,7 +841,7 @@ PTQ로 품질이 모자라면 Gemma 3처럼 QAT를 더하고,
 자동 벤치마크의 평균 점수가 거의 같아도 특정 task나 언어에서는 차이가 클 수 있다.
 Marchisio 등의 다국어 LLM 실험에서는 평균적으로 라틴 문자가 아닌 언어의 성능이 더 많이 떨어졌고, 수학 reasoning 같은 어려운 task의 성능이 빠르게 나빠졌다.
 자동 benchmark에서 나타난 저하는 사람이 실제 사용에 가까운 프롬프트를 평가했을 때보다 훨씬 작았다.[^marchisio]
-두 평가는 과제 구성이 다르므로 같은 응답을 두 방법으로 채점한 비교는 아니다.
+두 평가는 task 구성이 다르므로 같은 응답을 두 방법으로 채점한 비교는 아니다.
 양자화 모델을 평가할 때는 그 모델이 실제로 쓰일 task로, 원래 정밀도 모델과 같은 조건에서 비교한다.
 
 [^survey]: Gong, R., Ding, Y., Wang, Z., et al. (2025). A Survey of Low-bit Large Language Models: Basics, Systems, and Algorithms. *Neural Networks*, 192, 107856. [arXiv:2409.16694v3](https://arxiv.org/abs/2409.16694v3).
@@ -847,7 +854,7 @@ Marchisio 등의 다국어 LLM 실험에서는 평균적으로 라틴 문자가 
 
 [^gptq]: Frantar, E., Ashkboos, S., Hoefler, T., & Alistarh, D. (2023). GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers. *ICLR 2023*. [arXiv:2210.17323](https://arxiv.org/abs/2210.17323).
 
-[^awq]: Lin, J., Tang, J., Tang, H., et al. (2024). AWQ: Activation-aware Weight Quantization for On-Device LLM Compression and Acceleration. *MLSys 2024*. [arXiv:2306.00978](https://arxiv.org/abs/2306.00978).
+[^awq]: Lin, J., Tang, J., Tang, H., et al. (2024). AWQ: Activation-aware Weight Quantization for On-Device LLM Compression and Acceleration. [*MLSys 2024*](https://proceedings.mlsys.org/paper_files/paper/2024/hash/42a452cbafa9dd64e9ba4aa95cc1ef21-Abstract-Conference.html). [arXiv:2306.00978](https://arxiv.org/abs/2306.00978).
 
 [^zhou]: Zhou, Z., Ning, X., Hong, K., et al. (2024). A Survey on Efficient Inference for Large Language Models. [arXiv:2404.14294v3](https://arxiv.org/abs/2404.14294v3).
 
@@ -863,15 +870,15 @@ Marchisio 등의 다국어 LLM 실험에서는 평균적으로 라틴 문자가 
 
 [^llama32q]: Meta. (2024). Introducing quantized Llama models with increased speed and a reduced memory footprint. *Meta AI Blog*. [ai.meta.com](https://ai.meta.com/blog/meta-llama-quantized-lightweight-models/).
 
-[^fp8]: Micikevicius, P., Stosic, D., Burgess, N., et al. (2022). FP8 Formats for Deep Learning. [arXiv:2209.05433](https://arxiv.org/abs/2209.05433).
+[^fp8]: Micikevicius, P., Stosic, D., Burgess, N., et al. (2022). FP8 Formats for Deep Learning. [arXiv:2209.05433v2](https://arxiv.org/abs/2209.05433v2).
 
-[^h100]: NVIDIA. NVIDIA H100 Tensor Core GPU. *NVIDIA 제품 사양*. [nvidia.com](https://www.nvidia.com/en-us/data-center/h100/).
+[^h100-bandwidth]: NVIDIA. NVIDIA H100 Tensor Core GPU. *NVIDIA product specifications*. [nvidia.com](https://www.nvidia.com/en-us/data-center/h100/).
 
 [^mx]: Rouhani, B. D., Zhao, R., More, A., et al. (2023). Microscaling Data Formats for Deep Learning. [arXiv:2310.10537](https://arxiv.org/abs/2310.10537).
 
 [^nvfp4]: Alvarez, E., Almog, O., Chung, E., Layton, S., Stosic, D., Krashinsky, R., & Aubrey, K. (2025). Introducing NVFP4 for Efficient and Accurate Low-Precision Inference. *NVIDIA Technical Blog*. [developer.nvidia.com](https://developer.nvidia.com/blog/introducing-nvfp4-for-efficient-and-accurate-low-precision-inference/).
 
-[^b200]: NVIDIA. NVIDIA DGX B200. *NVIDIA 제품 사양*. [nvidia.com](https://www.nvidia.com/en-us/data-center/dgx-b200/).
+[^b200]: NVIDIA. NVIDIA DGX B200. *NVIDIA product specifications*. [nvidia.com](https://www.nvidia.com/en-us/data-center/dgx-b200/).
 
 [^gptoss]: OpenAI. (2025). gpt-oss-120b & gpt-oss-20b Model Card. [arXiv:2508.10925](https://arxiv.org/abs/2508.10925).
 
