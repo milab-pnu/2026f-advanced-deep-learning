@@ -4,16 +4,22 @@ week: 6
 order: 2
 ---
 
-<strong>양자화(quantization)</strong>는 weight, activation, KV(key-value) cache 등을 더 적은 bits로 표현하는 방법이다.
-Llama 3.1 8B의 weight를 BF16(bfloat16)에서 INT4(4-bit integer)로 바꾸면 16 GB가 약 4 GB가 된다.
-대신 정밀도를 낮춘 만큼 오차가 생긴다.
-특히 LLM(large language model)의 activation에는 몇몇 channel(hidden 차원)에 유독 큰 값인 outlier가 반복해 나타나는데, 그 값에 범위를 맞추면 나머지 작은 값이 뭉개진다.[^survey]<Sidenote>모델 경량화를 다루는 Song Han 교수(MIT)의 강의 [EfficientML.ai](https://efficientml.ai)는 영상과 슬라이드가 모두 공개되어 있다.</Sidenote>
+<strong>양자화(quantization)</strong>는 weight, activation, KV(key-value) cache 등을 더 적은 bits로 표현하는 방법이다.[^survey]
+예를 들어 Llama 3.1 8B의 weight 값을 BF16(bfloat16)에서 INT4(4-bit integer)로 바꾸면 약 16 GB에서 약 4 GB로 줄어든다.
+이 값은 weight 자체만 센 어림이며, 양자화에 필요한 scale 같은 부가 정보는 포함하지 않는다.
+작게 저장하면 같은 메모리에 더 많은 데이터를 담을 수 있고, 메모리에서 읽는 데이터도 줄어든다.
+Weight와 activation을 함께 낮은 정밀도로 바꾸면 지원하는 연산 장치에서 행렬곱을 더 빠르게 할 수도 있다.
+대신 원래 값을 정확히 표현하지 못해 오차가 생기며, 실제 속도는 하드웨어와 kernel의 지원에도 달려 있다.<Sidenote>모델 경량화를 다루는 Song Han 교수(MIT)의 강의 [EfficientML.ai](https://efficientml.ai)는 영상과 슬라이드가 모두 공개되어 있다.</Sidenote>
+
+양자화 대상에 따라 줄이는 비용도 다르다.
+Weight를 줄이면 매 스텝 읽는 weight의 양이 줄고, KV cache를 줄이면 긴 문맥이나 많은 요청에 필요한 메모리와 읽는 양이 줄어든다.
+Activation까지 함께 양자화하면 낮은 정밀도의 행렬곱을 활용할 수 있지만, 입력에 따라 값이 달라지는 activation의 오차도 관리해야 한다.
 
 ## 1. 양자화의 기본
 
 ### 1-1. 균일 양자화
 
-LLM은 보통 FP32(32-bit floating point)나 BF16 같은 부동소수점으로 학습하고 저장한다.
+LLM(large language model)은 보통 FP32(32-bit floating point)나 BF16 같은 부동소수점으로 학습하고 저장한다.
 양자화는 실숫값을 적은 bits로 나타낼 수 있는 값 가운데 하나(여기서는 가장 가까운 값)로 바꾸어 저장하고, 필요할 때 다시 실숫값으로 되돌린다.
 가장 기본적인 방식은 실숫값을 간격이 일정한 정수 격자에 대응시키는 균일(uniform) 양자화다.
 값의 최솟값과 최댓값을 정수 범위의 양 끝에 (거의) 맞추는 비대칭(asymmetric) 양자화로 그 과정을 차례로 따라가 보자.[^nagel]
@@ -222,8 +228,55 @@ Weight의 값은 추론 중 고정되지만 activation은 입력마다 바뀌므
 대신 이 열에 scale이 하나가 아니라 두 개 필요하다.
 더 잘게 나눈다고 모든 값의 오차나 전체 연산 비용이 반드시 줄어드는 것은 아니다.
 
+범위를 작게 나눌수록 큰 값의 영향이 그 묶음 안에 갇히지만, scale을 저장할 공간이 늘어난다.
+LLM의 4-bit weight 양자화에서는 원소 128개마다 scale을 두는 group 크기 128이 흔한 기본값이다.
+4-bit weight 양자화 방법인 GPTQ의 논문은 이때 group마다 두는 scale과 zero-point 같은 부가 정보에 원소당 약 0.15 bits가 더 든다고 보고했다.[^gptq]
+
 <Callout type="example">
-같은 행렬을 숫자로 살펴보자.
+Llama 3.1 8B의 weight를 모두 group 128의 INT4로 저장하고 group마다 16-bit scale 하나만 둔다면 원소당 $4+16/128=4.125$ bits다.
+부가 정보는 원소당 0.125 bits로, zero-point를 두지 않은 만큼 위의 약 0.15 bits보다 조금 작다.
+파라미터 8.03B개에 곱하면 약 4.1 GB로, BF16의 16.1 GB에서 약 4분의 1이 된다.
+실제 배포에서는 embedding과 출력층(합쳐 약 1.05B개)을 16-bit로 남기는 경우가 많고, 그러면 전체 weight는 약 5.7 GB다.
+H100(80 GB) 한 대에서 엔진의 전체 메모리 예산과 다른 메모리 사용량이 같다면,
+절약한 약 10–12 GB를 KV cache에 추가로 쓸 수 있다.
+실제로는 kernel과 설정이 바뀌면 작업 공간도 달라질 수 있다.
+</Callout>
+
+LLM의 activation에서 다른 값보다 유독 큰 값인 outlier는 아무 데나 생기지 않는다.
+Dettmers 등은 크기가 6 이상인 값이 여러 층과 토큰에 걸쳐 같은 channel에 반복해 나타난다는 것을 보고하고, 이를 outlier feature라 불렀다.[^llmint8]
+6.7B 모델에서는 모든 층과 약 75%의 토큰에 나타났고, 단 6개의 channel에 몰려 있었다.
+이 6개 channel을 0으로 만들면 성능이 크게 떨어졌다.
+수는 적어도 모델의 동작에 중요한 값이라, 양자화할 때 이 값들의 손상을 줄여야 한다.
+Outlier feature는 대부분의 토큰에 걸친 channel이라, 시작 토큰처럼 특정 토큰의 한두 성분에만 생기는 massive activation과는 다른 현상이다.[^massive]
+Per-token은 각 행 전체가 scale 하나를 공유하므로 각 행에 같은 outlier channel이 있다면, 모든 행의 scale이 그 큰 값에 영향을 받는다.
+Activation per-channel은 큰 값이 있는 열을 다른 열과 별도로 묶어 그 영향을 나눌 수 있지만, 정수 행렬곱에서 scale을 처리하는 비용이 늘 수 있다.
+
+### 1-3. 양자화 단위와 행렬곱
+
+Weight와 activation을 모두 정수로 바꿔 정수 행렬곱을 하려면, scale을 어느 축에 두느냐가 정밀도뿐 아니라 계산 방식도 정한다.
+식을 단순하게 하려고 둘 다 대칭으로 두자(비대칭이면 zero-point가 만드는 항이 더 붙는다).
+토큰을 $i$, 출력 channel을 $j$, 입력 channel을 $k$로 쓰고, 양자화해 저장한 정수에는 위첨자 $q$를 붙이자.
+Activation은 토큰 $i$마다 scale $s_{X,i}$를, weight는 출력 channel $j$마다 scale $s_{W,j}$를 두면,
+
+$$
+Y_{ij}=\sum_k X_{ik}W_{kj}\approx\sum_k \bigl(s_{X,i}X^{q}_{ik}\bigr)\bigl(s_{W,j}W^{q}_{kj}\bigr)=s_{X,i}\,s_{W,j}\sum_k X^{q}_{ik}W^{q}_{kj}
+$$
+
+이다.
+두 scale은 합의 첨자 $k$와 무관하므로 합 밖으로 나온다.
+그래서 합은 정수끼리의 곱셈과 덧셈으로 하고, 마지막에 결과 원소마다 scale 두 개를 곱하면 된다.
+반대로 activation을 입력 channel $k$마다 나누거나 weight를 입력 방향의 group으로 나누면, 그 scale이 합 안에 남는다.
+예를 들어 weight scale을 1로 두고, 입력 channel 두 개의 정수 곱이 각각 2와 1인데 activation scale이 각각 1과 2라면, 복원한 합은 $1\times2+2\times1=4$다.
+정수 곱을 먼저 $2+1=3$으로 합치면 각 항에 서로 다른 scale을 적용할 수 없다.
+그러면 합을 그 단위마다 끊어 부분합마다 scale을 곱해야 하므로, 정수 행렬곱 한 번으로 끝나지 않고 추가 비용이 든다.[^nagel]
+그래서 일반적인 정수 행렬곱 kernel에서는 activation per-token과 weight 출력 per-channel의 조합을 쓰기 쉽다.
+다른 단위를 지원하는 전용 kernel이나 블록 단위 연산도 있으므로 모든 정수 행렬곱이 이 조합만 써야 한다는 뜻은 아니다.
+Weight만 양자화하고 행렬곱 전에 16-bit로 dequantize한다면 이런 제약이 없어, 4-bit weight에는 per-group을 흔히 쓴다.
+
+<Details summary="Group별 scale을 적용하는 행렬곱 예시">
+
+<Callout type="example">
+앞에서 살펴본 크기의 행렬을 숫자로 살펴보자.
 토큰 2개와 입력 channel 4개, 출력 channel 2개인 가상의 선형층이다.
 
 $$
@@ -249,116 +302,11 @@ Weight는 출력 channel별로 열을 고른 뒤, 각 열을 입력 방향으로
 부분합을 먼저 $5+11=16$으로 합치면 어느 항에 weight scale 2를 적용할지 구분할 수 없다.
 </Callout>
 
-LLM의 activation에서 outlier는 아무 데나 생기지 않는다.
-Dettmers 등은 크기가 6 이상인 값이 여러 층과 토큰에 걸쳐 같은 channel에 반복해 나타난다는 것을 보고하고, 이를 outlier feature라 불렀다.[^llmint8]
-6.7B 모델에서는 모든 층과 약 75%의 토큰에 나타났고, 단 6개의 channel에 몰려 있었다.
-이 6개 channel을 0으로 만들면 성능이 크게 떨어졌다.
-수는 적어도 모델의 동작에 중요한 값이라, 양자화할 때 이 값들의 손상을 줄여야 한다.
-Outlier feature는 대부분의 토큰에 걸친 channel이라, 시작 토큰처럼 특정 토큰의 한두 성분에만 생기는 massive activation과는 다른 현상이다.[^massive]
-Per-token은 각 행 전체가 scale 하나를 공유하므로 각 행에 같은 outlier channel이 있다면, 모든 행의 scale이 그 큰 값에 영향을 받는다.
-Activation per-channel은 큰 값이 있는 열을 다른 열과 별도로 묶어 그 영향을 나눌 수 있지만, 다음의 연산 비용과 맞바꾸는 선택이다.
-
-Weight와 activation을 모두 정수로 바꿔 정수 행렬곱을 하려면, scale을 어느 축에 두느냐가 정밀도뿐 아니라 계산 방식도 정한다.
-식을 단순하게 하려고 둘 다 대칭으로 두자(비대칭이면 zero-point가 만드는 항이 더 붙는다).
-토큰을 $i$, 출력 channel을 $j$, 입력 channel을 $k$로 쓰고, 양자화해 저장한 정수에는 위첨자 $q$를 붙이자.
-Activation은 토큰 $i$마다 scale $s_{X,i}$를, weight는 출력 channel $j$마다 scale $s_{W,j}$를 두면,
-
-$$
-Y_{ij}=\sum_k X_{ik}W_{kj}\approx\sum_k \bigl(s_{X,i}X^{q}_{ik}\bigr)\bigl(s_{W,j}W^{q}_{kj}\bigr)=s_{X,i}\,s_{W,j}\sum_k X^{q}_{ik}W^{q}_{kj}
-$$
-
-이다.
-두 scale은 합의 첨자 $k$와 무관하므로 합 밖으로 나온다.
-그래서 합은 정수끼리의 곱셈과 덧셈으로 하고, 마지막에 결과 원소마다 scale 두 개를 곱하면 된다.
-반대로 activation을 입력 channel $k$마다 나누거나 weight를 입력 방향의 group으로 나누면, 그 scale이 합 안에 남는다.
-예를 들어 weight scale을 1로 두고, 입력 channel 두 개의 정수 곱이 각각 2와 1인데 activation scale이 각각 1과 2라면, 복원한 합은 $1\times2+2\times1=4$다.
-정수 곱을 먼저 $2+1=3$으로 합치면 각 항에 서로 다른 scale을 적용할 수 없다.
-그러면 합을 그 단위마다 끊어 부분합마다 scale을 곱해야 하므로, 정수 행렬곱 한 번으로 끝나지 않고 추가 비용이 든다.[^nagel]
-그래서 일반적인 정수 행렬곱 kernel에서는 activation per-token과 weight 출력 per-channel의 조합을 쓰기 쉽다.
-다른 단위를 지원하는 전용 kernel이나 블록 단위 연산도 있으므로 모든 정수 행렬곱이 이 조합만 써야 한다는 뜻은 아니다.
-Weight만 양자화하고 행렬곱 전에 16-bit로 dequantize한다면 이런 제약이 없어, 4-bit weight에는 per-group을 흔히 쓴다.
+</Details>
 
 이 노트에서 CC BY 4.0으로 표시한 논문 그림에는 [CC BY 4.0 라이선스](https://creativecommons.org/licenses/by/4.0/)가 적용된다.
 
 <Figure src="https://arxiv.org/html/2211.10438v7/quant_scheme.svg" alt="Activation X(토큰 T × 입력 channel C_i, 초록)와 weight W(입력 channel C_i × 출력 channel C_o, 노랑)의 곱을 두 가지 양자화 단위로 그린 그림. (a) per-tensor 양자화에서는 X와 W가 각각 작은 사각형 하나로 표시된 scale Δ_X, Δ_W 하나씩을 쓴다. (b)에서는 X 왼쪽에 길이 T의 세로 막대 Δ_X가 붙어 토큰(행)마다 scale을 두는 per-token 양자화를, W 위에 길이 C_o의 가로 막대 Δ_W가 붙어 출력 channel(열)마다 scale을 두는 per-channel 양자화를 나타낸다. 빨간 점선이 X의 한 행과 W의 한 열을 묶는다." caption="그림의 Δ는 본문의 scale s다. (b)처럼 토큰 T마다, 출력 channel C_o마다 둔 scale은 합의 바깥 축에 있어 합 밖으로 꺼낼 수 있다. 반면 합을 도는 축인 입력 channel C_i에 scale을 두면 합 밖으로 꺼낼 수 없다." source="Xiao et al. (2023), Figure 3 · CC BY 4.0" />
-
-범위를 작게 나눌수록 큰 값의 영향이 그 묶음 안에 갇히지만, scale을 저장할 공간이 늘어난다.
-LLM의 4-bit weight 양자화에서는 원소 128개마다 scale을 두는 group 크기 128이 흔한 기본값이다.
-4-bit weight 양자화 방법인 GPTQ의 논문은 이때 group마다 두는 scale과 zero-point 같은 부가 정보에 원소당 약 0.15 bits가 더 든다고 보고했다.[^gptq]
-
-<Callout type="example">
-Llama 3.1 8B의 weight를 모두 group 128의 INT4로 저장하고 group마다 16-bit scale 하나만 둔다면 원소당 $4+16/128=4.125$ bits다.
-부가 정보는 원소당 0.125 bits로, zero-point를 두지 않은 만큼 위의 약 0.15 bits보다 조금 작다.
-파라미터 8.03B개에 곱하면 약 4.1 GB로, BF16의 16.1 GB에서 약 4분의 1이 된다.
-실제 배포에서는 embedding과 출력층(합쳐 약 1.05B개)을 16-bit로 남기는 경우가 많고, 그러면 전체 weight는 약 5.7 GB다.
-H100(80 GB) 한 대에서 엔진의 전체 메모리 예산과 다른 메모리 사용량이 같다면,
-절약한 약 10–12 GB를 KV cache에 추가로 쓸 수 있다.
-실제로는 kernel과 설정이 바뀌면 작업 공간도 달라질 수 있다.
-</Callout>
-
-### 1-3. FP8
-
-균일 격자는 간격이 하나뿐이라, 앞의 예시처럼 큰 값에 범위를 맞추면 0 근처의 작은 값이 뭉개진다.
-부동소수점은 값이 클수록 격자 간격이 넓어지므로, 같은 bits로 작은 값은 촘촘하게, 큰 값은 성기게 표현한다.
-Micikevicius 등이 제안한 FP8(8-bit floating point)은 두 가지다.
-부호 1 bit에 지수 4 bits와 가수 3 bits를 쓰는 E4M3는 최댓값이 448이고,
-부호 1 bit에 지수 5 bits와 가수 2 bits를 쓰는 E5M2는 최댓값이 57,344다.
-부호 bit를 $s$, 지수 bits가 나타내는 정수를 $e$라 하자.
-지수 bits가 모두 0인 경우와 NaN(not a number) 같은 특수값을 빼면 값은 다음과 같다.
-
-$$
-x=(-1)^s\times1.m_2\times2^{\,e-\text{bias}}
-$$
-
-$1.m_2$는 가수 bits $m$ 앞에 $1.$을 붙인 이진수이고, 지수 bias는 E4M3가 7, E5M2가 15다.
-가장 큰 bit 조합 일부는 이런 특수값에 쓴다.
-E4M3는 지수와 가수 bits가 모두 1인 조합 하나만 특수값에 쓰므로 최댓값이 $1.110_2\times2^{15-7}=1.75\times256=448$이고,
-E5M2는 지수 bits가 모두 1인 조합 전체를 특수값에 쓰므로 최댓값이 $1.11_2\times2^{30-15}=1.75\times32{,}768=57{,}344$다.
-E4M3에서 1과 2 사이의 격자 간격은 0.125이지만, 256과 448 사이의 간격은 32다.
-제안자들은 weight와 activation에는 정밀도가 높은 E4M3를,
-범위가 넓어야 하는 gradient에는 E5M2를 권했다.[^fp8]
-FP8도 정수처럼 값을 scale로 나누어 표현 범위 안에 넣어 저장하고, 복원할 때 scale을 곱한다.
-
-격자가 0 근처에 촘촘하므로, outlier가 섞인 분포에서는 정수 격자보다 손상이 적을 수 있다.
-Micikevicius 등은 16-bit로 학습을 마친 GPT-3 6.7B를 weight는 channel별, activation은 텐서별 scale을 두고 양자화했다.
-WikiText-103에서 잰 perplexity(모델이 실제 다음 토큰에 준 확률로 계산하는 지표로, 낮을수록 좋다)는 16-bit 8.51, INT8(8-bit integer) 10.29, E4M3 8.41이었다.[^fp8]
-
-### 1-4. Microscaling 형식
-
-4-bit 부동소수점까지 내려가면 bit 조합이 16개뿐이라, 텐서 하나에 scale 하나로는 범위를 맞추기 어렵다.
-그래서 앞의 per-group처럼 원소 몇 개마다 scale을 두되, 블록 크기와 scale의 형식까지 규격으로 정한 것이 MX(microscaling) 형식이다.
-여러 회사가 OCP(Open Compute Project) 규격으로 함께 정한 이 형식은 원소 32개를 한 블록으로 묶고 블록마다 8-bit scale 하나를 둔다.[^mx]
-Scale은 지수만 있는 E8M0 형식이라 2의 거듭제곱만 표현한다.
-원소가 부호 1 bit에 지수 2 bits와 가수 1 bit의 E2M1이면 MXFP4로,
-원소 하나가 표현하는 값은 0, 0.5, 1, 1.5, 2, 3, 4, 6과 그 음수다.
-원소당 저장량은 $4+8/32=4.25$ bits다.
-
-행렬곱에서는 보통 합을 도는 입력 방향으로 블록을 묶는다.
-정수 행렬곱이라면 합 안에 남은 scale이 추가 비용이 되지만,
-이 형식을 지원하는 연산 장치는 블록마다 부분합에 activation 블록과 weight 블록의 두 scale을 곱해 누적하는 일을 행렬곱 명령 안에서 처리한다.[^mx]
-
-NVIDIA가 Blackwell GPU(graphics processing unit)와 함께 내놓은 NVFP4는 블록 크기를 원소 16개로 줄이고, 블록 scale을 2의 거듭제곱 대신 FP8(E4M3)로 둔다.
-E4M3는 표현 범위가 좁으므로(최대 448), 블록마다 필요한 scale이 E4M3로 표현되도록 텐서 전체가 공유하는 FP32 scale을 하나 더 둔다.
-블록이 가득 찼다고 하면 원소당 저장량은 $4+8/16=4.5$ bits에 텐서 전체 scale의 몫이 조금 더해진다.[^nvfp4]
-
-<Callout type="example">
-네 값 $(0.9,\,-2.7,\,0.2,\,5.1)$을 E2M1 원소와 블록 scale 하나로 저장한다고 하자(설명을 위해 정한 값).
-최댓값 5.1을 E2M1의 최댓값 6 안에 넣으려면 scale이 $5.1/6=0.85$ 이상이어야 한다.
-2의 거듭제곱 scale이라면 1을 쓴다.
-값을 그대로 가장 가까운 격자점에 맞추면 $(1,\,-3,\,0,\,6)$이 되어,
-절대오차가 $(0.1,\,0.3,\,0.2,\,0.9)$다.
-FP8(E4M3) scale은 0.85를 정확히 표현하지 못하지만 그보다 큰 가장 가까운 값 0.875는 표현한다.
-값을 0.875로 나눈 $(1.03,\,-3.09,\,0.23,\,5.83)$을 격자에 맞추면 $(1,\,-3,\,0,\,6)$이고,
-dequantize한 값은 $(0.875,\,-2.625,\,0,\,5.25)$로 절대오차가 $(0.025,\,0.075,\,0.2,\,0.15)$이다.
-Scale을 더 촘촘하게 고를 수 있으면 블록의 최댓값을 격자의 끝에 더 가깝게 맞출 수 있다.
-NVFP4가 텐서 전체에 두는 FP32 scale은 이 예에서 1로 두었다.
-</Callout>
-
-이런 형식은 모델 배포에도 쓰이기 시작했다.
-OpenAI의 gpt-oss는 MoE(mixture of experts) 구조다.
-MoE는 FFN(feed-forward network)을 expert 여러 개로 늘리고 토큰마다 몇 개만 고르는 구조라 파라미터 대부분이 expert FFN에 있다.
-gpt-oss는 post-training 단계에서 이 MoE weight를 MXFP4로 양자화해 원소당 4.25 bits로 저장했고,
-MoE weight가 전체 파라미터의 90% 이상을 차지하므로 116.8B 파라미터의 120b 모델이 80 GB GPU 한 대에 올라간다.[^gptoss]
 
 ## 2. 양자화 방식과 실행 조건
 
@@ -384,9 +332,9 @@ Calibration에 쓴 입력에서만 평가하면 그 입력에 맞춘 결과를 �
 무엇을 양자화하느냐로도 나눌 수 있다.
 선형층의 행렬곱에는 두 방식이 있다.
 하나는 **weight만** 낮은 bits로 저장하고,
-계산할 때 GPU kernel 안에서 FP16(16-bit floating point)이나 BF16으로 dequantize해 16-bit 행렬곱을 하는 weight-only 양자화다.
+계산할 때 GPU(graphics processing unit) kernel 안에서 FP16(16-bit floating point)이나 BF16으로 dequantize해 16-bit 행렬곱을 하는 weight-only 양자화다.
 Weight 4-bit, activation 16-bit라는 뜻에서 W4A16처럼 부른다.
-다른 하나는 weight와 **activation을 모두** 낮은 bits로 바꿔 INT8이나 FP8 행렬곱을 직접 하는 weight-activation 양자화로,
+다른 하나는 weight와 **activation을 모두** 낮은 bits로 바꿔 INT8이나 FP8(8-bit floating point) 행렬곱을 직접 하는 weight-activation 양자화로,
 W8A8처럼 부른다.
 Activation은 입력마다 값이 달라, weight와 달리 scale을 언제 정할지도 골라야 한다.
 Dynamic 방식은 실행 중에 들어온 값의 범위(대칭이라면 최대 절댓값)를 재서 scale을 정한다.
@@ -400,7 +348,7 @@ Static 방식은 calibration 데이터로 미리 잰 범위로 scale을 고정�
 Weight-only는 읽는 weight bytes를 줄이므로, 읽는 데이터의 대부분이 weight인 작은 batch의 decode에서 효과가 크다.
 Weight-activation 양자화는 행렬곱을 BF16보다 빠른 저정밀 연산 장치로 하므로,
 긴 prefill처럼 행렬곱이 compute-bound인 경우에도 빨라질 수 있다.
-H100에서 BF16의 4096×4096 query 투영을 이상적인 roofline으로 계산하면 decode 요청을 약 350개 넘게 묶을 때 연산 지붕에 닿는다.
+H100에서 BF16의 4096×4096 query 투영 **한 선형층**을 이상적인 roofline으로 계산하면 decode 요청을 약 350개 넘게 묶을 때 연산 지붕에 닿는다.
 Attention은 요청마다 자기 KV cache를 읽으므로, 같은 조건에서도 메모리 대역폭이 병목일 수 있다.
 예를 들어 Llama 3.1 8B를 BF16으로 올린 H100 한 대에서 KV cache에 약 53.5 GB를 쓸 수 있다고 가정하자.
 토큰당 KV cache가 약 131 KB이므로, 요청 350개를 담으려면 평균 문맥이 약 1,170토큰 이하여야 한다.
@@ -414,10 +362,11 @@ Weight-only가 읽는 bytes를 줄이려면, 낮은 bits의 weight를 메모리�
 16-bit로 dequantize한 weight를 메모리에 한 번 써 두었다가 다시 읽는다면, 읽고 쓰는 bytes는 양자화하지 않았을 때보다 오히려 많다.
 
 Weight-activation 양자화는 GPU의 연산 장치가 그 형식의 행렬곱을 직접 지원해야 한다.
-지원한다면 이득은 크다.
+지원하는 형식에 따라 이론상 연산 속도가 달라진다.
 H100 SXM의 FP8 Tensor Core는 dense 기준 약 1,979 TFLOP/s(TFLOP/s는 초당 $10^{12}$번의 부동소수점 연산)로, BF16 dense 989 TFLOP/s의 두 배다.[^h100-bandwidth]
 Weight와 activation을 모두 FP8로 두면 roofline의 평평한 지붕이 두 배로 높아지고, ridge point도 BF16의 295 FLOP/byte에서 591로 옮겨 간다.
-입력과 weight를 읽는 bytes도 절반이 되어 intensity가 높아진다.
+입력과 weight를 읽는 bytes는 각각 절반이 되어 intensity가 높아진다.
+출력과 다른 데이터의 이동량까지 절반이 되는 것은 아니므로, 전체 intensity의 변화는 작업 단위와 데이터 이동에 따라 달라진다.
 토큰이 충분히 많은 긴 prefill이라면 intensity가 FP8의 ridge point도 넘어 여전히 compute-bound이고, 그때 이론상 최대 속도는 두 배가 된다.
 Blackwell 세대의 DGX B200에서는 FP4(4-bit floating point)의 이론 최대 처리량(throughput)이 다시 FP8의 두 배다.[^b200]
 
@@ -426,6 +375,74 @@ FP8 행렬곱은 RTX 4090의 Ada Lovelace와 H100의 Hopper 세대부터 지원�
 vLLM은 A100 같은 Ampere 세대나 그 이전의 Turing 세대 GPU에서는 FP8 모델을 weight만 FP8로 읽는 weight-only(W8A16)로 돌린다.[^vllm-fp8-hw]
 그래서 방법을 고르기 전에 쓰려는 GPU와 서빙 엔진이 그 형식의 kernel을 갖추었는지부터 확인한다.
 vLLM 문서는 양자화 방법마다 지원하는 GPU 세대를 표로 정리해 두었다.[^vllm-quant]
+
+### 2-4. FP8
+
+정수의 균일 격자는 간격이 하나뿐이라, 큰 값에 범위를 맞추면 0 근처의 작은 값이 뭉개질 수 있다.
+부동소수점은 값이 클수록 격자 간격이 넓어지므로, 같은 bits로 작은 값은 촘촘하게, 큰 값은 성기게 표현한다.
+Micikevicius 등이 제안한 FP8 형식은 두 가지다.
+부호 1 bit에 지수 4 bits와 가수 3 bits를 쓰는 E4M3는 최댓값이 448이고,
+부호 1 bit에 지수 5 bits와 가수 2 bits를 쓰는 E5M2는 최댓값이 57,344다.
+E4M3에서 1과 2 사이의 격자 간격은 0.125이지만, 256과 448 사이의 간격은 32다.
+제안자들은 weight와 activation에는 정밀도가 높은 E4M3를,
+범위가 넓어야 하는 gradient에는 E5M2를 권했다.[^fp8]
+FP8도 정수처럼 값을 scale로 나누어 표현 범위 안에 넣어 저장하고, 복원할 때 scale을 곱한다.
+
+<Details summary="FP8의 bit 구성과 표현 범위">
+
+부호 bit를 $s$, 지수 bits가 나타내는 정수를 $e$라 하자.
+지수 bits가 모두 0인 경우와 NaN(not a number) 같은 특수값을 빼면 값은 다음과 같다.
+
+$$
+x=(-1)^s\times1.m_2\times2^{\,e-\text{bias}}
+$$
+
+$1.m_2$는 가수 bits $m$ 앞에 $1.$을 붙인 이진수이고, 지수 bias는 E4M3가 7, E5M2가 15다.
+가장 큰 bit 조합 일부는 이런 특수값에 쓴다.
+E4M3는 지수와 가수 bits가 모두 1인 조합 하나만 특수값에 쓰므로 최댓값이 $1.110_2\times2^{15-7}=1.75\times256=448$이고,
+E5M2는 지수 bits가 모두 1인 조합 전체를 특수값에 쓰므로 최댓값이 $1.11_2\times2^{30-15}=1.75\times32{,}768=57{,}344$다.
+</Details>
+
+격자가 0 근처에 촘촘하므로, outlier가 섞인 분포에서는 정수 격자보다 손상이 적을 수 있다.
+Micikevicius 등은 16-bit로 학습을 마친 GPT-3 6.7B를 weight는 channel별, activation은 텐서별 scale을 두고 양자화했다.
+WikiText-103에서 잰 perplexity(모델이 실제 다음 토큰에 준 확률로 계산하는 지표로, 낮을수록 좋다)는 16-bit 8.51, INT8(8-bit integer) 10.29, E4M3 8.41이었다.[^fp8]
+
+### 2-5. Microscaling 형식
+
+4-bit 부동소수점까지 내려가면 bit 조합이 16개뿐이라, 텐서 하나에 scale 하나로는 범위를 맞추기 어렵다.
+그래서 앞의 per-group처럼 원소 몇 개마다 scale을 두되, 블록 크기와 scale의 형식까지 규격으로 정한 것이 MX(microscaling) 형식이다.
+여러 회사가 OCP(Open Compute Project) 규격으로 함께 정한 이 형식은 원소 32개를 한 블록으로 묶고 블록마다 8-bit scale 하나를 둔다.[^mx]
+Scale은 지수만 있는 E8M0 형식이라 2의 거듭제곱만 표현한다.
+원소가 부호 1 bit에 지수 2 bits와 가수 1 bit의 E2M1이면 MXFP4로,
+원소 하나가 표현하는 값은 0, 0.5, 1, 1.5, 2, 3, 4, 6과 그 음수다.
+원소당 저장량은 $4+8/32=4.25$ bits다.
+
+행렬곱에서는 보통 합을 도는 입력 방향으로 블록을 묶는다.
+정수 행렬곱이라면 합 안에 남은 scale이 추가 비용이 되지만,
+이 형식을 지원하는 연산 장치는 블록마다 부분합에 activation 블록과 weight 블록의 두 scale을 곱해 누적하는 일을 행렬곱 명령 안에서 처리한다.[^mx]
+
+NVIDIA가 Blackwell GPU와 함께 내놓은 NVFP4는 블록 크기를 원소 16개로 줄이고, 블록 scale을 2의 거듭제곱 대신 FP8(E4M3)로 둔다.
+E4M3는 표현 범위가 좁으므로(최대 448), 블록마다 필요한 scale이 E4M3로 표현되도록 텐서 전체가 공유하는 FP32 scale을 하나 더 둔다.
+블록이 가득 찼다고 하면 원소당 저장량은 $4+8/16=4.5$ bits에 텐서 전체 scale의 몫이 조금 더해진다.[^nvfp4]
+
+<Callout type="example">
+네 값 $(0.9,\,-2.7,\,0.2,\,5.1)$을 E2M1 원소와 블록 scale 하나로 저장한다고 하자(설명을 위해 정한 값).
+최댓값 5.1을 E2M1의 최댓값 6 안에 넣으려면 scale이 $5.1/6=0.85$ 이상이어야 한다.
+2의 거듭제곱 scale이라면 1을 쓴다.
+값을 그대로 가장 가까운 격자점에 맞추면 $(1,\,-3,\,0,\,6)$이 되어,
+절대오차가 $(0.1,\,0.3,\,0.2,\,0.9)$다.
+FP8(E4M3) scale은 0.85를 정확히 표현하지 못하지만 그보다 큰 가장 가까운 값 0.875는 표현한다.
+값을 0.875로 나눈 $(1.03,\,-3.09,\,0.23,\,5.83)$을 격자에 맞추면 $(1,\,-3,\,0,\,6)$이고,
+dequantize한 값은 $(0.875,\,-2.625,\,0,\,5.25)$로 절대오차가 $(0.025,\,0.075,\,0.2,\,0.15)$이다.
+Scale을 더 촘촘하게 고를 수 있으면 블록의 최댓값을 격자의 끝에 더 가깝게 맞출 수 있다.
+NVFP4가 텐서 전체에 두는 FP32 scale은 이 예에서 1로 두었다.
+</Callout>
+
+이런 형식은 모델 배포에도 쓰이기 시작했다.
+OpenAI의 gpt-oss는 MoE(mixture of experts) 구조다.
+MoE는 FFN(feed-forward network)을 expert 여러 개로 늘리고 토큰마다 몇 개만 고르는 구조라 파라미터 대부분이 expert FFN에 있다.
+gpt-oss는 post-training 단계에서 이 MoE weight를 MXFP4로 양자화해 원소당 4.25 bits로 저장했고,
+MoE weight가 전체 파라미터의 90% 이상을 차지하므로 116.8B 파라미터의 120b 모델이 80 GB GPU 한 대에 올라간다.[^gptoss]
 
 ## 3. Weight-only 양자화
 
@@ -491,7 +508,7 @@ $W$의 행, 곧 입력 차원을 위에서부터 차례로 양자화하고,
 그 결과 OPT-175B를 A100 한 대에서 약 4시간에 양자화했고,
 4-bit perplexity가 8.37, 3-bit이 8.68로 FP16(8.34)에 가까웠다.
 3-bit OPT-175B는 A100 다섯 대 대신 한 대에 올라가 토큰당 지연이 3.24배 짧아졌다(batch 1, 128토큰 생성).
-이 속도 향상은 계산이 줄어서가 아니라 읽는 bytes가 줄어서 생긴다는 점도 원논문이 직접 밝힌다.
+이 속도 향상은 행렬곱의 연산량이 줄어서가 아니라 읽는 bytes가 줄어서 생긴다는 점도 원논문이 직접 밝힌다.
 
 ### 3-3. AWQ
 
@@ -545,7 +562,7 @@ Weight-only의 이득은 batch가 커지거나 prefill로 가면 줄어든다.
 Llama 3.1 8B에서 문맥이 2,048토큰인 요청 192개를 묶고 weight와 각 요청의 KV cache를 한 번씩 읽는다고 근사하면 decode 스텝은 약 67.8 GB를 읽는다.
 그중 weight는 약 16 GB이므로,
 weight를 INT4로 줄여도 읽는 데이터는 약 56 GB로 18%쯤 줄어드는 데 그친다.
-둘째, weight-only는 bytes만 줄일 뿐 연산량은 그대로이고, weight를 dequantize하는 연산이 더해진다.
+둘째, weight-only는 읽는 bytes를 줄이지만 행렬곱의 연산량은 그대로이고, weight를 dequantize하는 연산이 더해진다.
 작은 batch의 decode에서는 놀던 연산 장치가 이 계산을 맡지만,
 prefill처럼 선형층이 이미 compute-bound이면 weight를 덜 읽어 아끼는 시간은 거의 없고 dequantize 계산이 비용으로 더해진다.
 Zhou 등의 서베이는 AWQ 4-bit weight로 Llama 2를 실험해,
@@ -650,15 +667,17 @@ $$
 예를 들어 이 행렬 $Q$를 $(1,\,1,\,1,\,1)$에 적용하면 $(2,\,0,\,0,\,0)$이 되어 오히려 한 좌표에 모인다.
 어떤 회전을 쓰는지와 실제 activation 분포에 따라 효과가 달라진다.
 
+QuaRot은 회전을 가능한 곳에서는 미리 weight에 합쳐 실행 중 비용을 줄이고, 나머지 필요한 곳에서는 실행 중에 회전한다.
+
+<Details summary="QuaRot의 회전 적용">
+
 QuaRot은 층 사이를 흐르는 residual stream을 통째로 회전된 좌표로 표현한다.
 Residual stream은 각 층이 입력에 자기 출력을 더해 다음 층으로 넘기는 hidden 벡터의 흐름이다.
 이 벡터 $h$를 처음부터 회전된 좌표 $hQ$로 들고 다닌다고 하자.
 처음 흐름을 만드는 embedding 행렬에 $Q$를 곱해 두면 된다.
 그러면 흐름에서 값을 읽는 선형층(attention의 query·key·value 투영, FFN의 입력 투영, 마지막 출력층)은 weight $W$를 $Q^\top W$로 바꿔 두어야 $(hQ)(Q^\top W)=hW$로 원래 결과가 나온다.
 흐름에 값을 더하는 선형층(attention의 출력 투영, FFN의 출력 투영)은 weight $W'$를 $W'Q$로 바꿔 두어, 출력도 같은 회전된 좌표로 더해지게 한다.
-이렇게 회전은 대부분 앞뒤 weight에 미리 곱해 둘 수 있어 실행 중 비용이 거의 없다.
-
-<Details summary="RMSNorm과 실행 중 회전">
+이렇게 회전은 대부분 앞뒤 weight에 미리 곱해 둘 수 있다.
 
 Residual stream과 선형층 사이의 RMSNorm은 벡터를 크기로만 나누고 회전은 벡터의 크기를 바꾸지 않으므로, 회전과 순서를 바꾸어도 결과가 같다.
 다만 RMSNorm이 channel마다 곱하는 학습 배율 $\gamma$는 회전과 순서를 바꿀 수 없어, 먼저 다음 선형층의 weight에 합쳐 둔다.
@@ -687,10 +706,8 @@ Weight를 BF16으로 두고 H100 한 대에서 vLLM으로 돌린다고 하자.
 여기에 BF16이면 약 408,000토큰, FP8이면 약 816,000토큰이 들어간다(scale 같은 부가 정보 제외).
 요청 길이가 같다면 KV cache 공간만 따질 때 같은 메모리에 약 두 배의 요청이 들어간다.
 실제 동시 요청 수는 엔진의 설정과 다른 자원의 제한도 받는다.
-KV cache가 BF16이고 문맥이 2,048토큰이면, 요청 하나는 약 17 GFLOPs(giga floating-point operations)를 계산하는 동안 자기 KV cache 0.27 GB를 읽는다.
-Weight를 batch 전체에서 한 번, 각 요청의 KV cache를 한 번 읽는다고 단순화하자.
-Batch를 키우면 weight 16 GB는 여러 요청이 나눠 쓰지만 KV cache는 요청마다 따로 읽으므로, 이 근사에서 decode의 intensity는 약 $17/0.27\approx63$ FLOP/byte에 다가간다.
-FP8 KV cache는 요청 하나의 cache를 약 0.13 GB로 줄여, 이 근사값을 약 두 배로 올린다.
+KV cache가 BF16이고 문맥이 2,048토큰이면 요청마다 약 0.27 GB를 읽는다.
+FP8로 줄이면 요청마다 읽는 KV cache도 약 0.13 GB가 되어, 같은 연산을 할 때 데이터 이동이 줄어든다.
 실제 전송량은 kernel의 KV 재사용과 다른 데이터의 이동에도 좌우된다.
 
 FP8은 cache를 절반으로 줄이는 데 그친다.
@@ -732,17 +749,6 @@ KIVI는 이렇게 KV cache를 2-bit로 줄여 모델 weight를 포함한 최대 
 비슷한 최대 메모리 사용량에서 batch를 최대 4배 키우자 처리량은 2.35–3.47배 높아졌다.
 이 처리량 비교는 같은 batch 크기에서 양자화만 바꾼 효과가 아니다.
 다만 KV cache는 생성 중에 계속 새로 쓰이므로, weight와 달리 실행 중에 양자화하고 dequantize하는 비용이 든다.
-
-세 대상의 양자화는 한 시스템 안에서 합쳐지기도 한다.
-Lin 등의 QServe는 기존 INT4 방법(W4A16, W4A4)의 행렬곱 kernel에서 weight나 부분합을 dequantize하는 데 kernel 실행 시간의 20–90%가 들 수 있다고 지적했다.
-이 부담 때문에 큰 batch의 서빙에서는 4-bit로 줄인 이점이 상쇄될 수 있다.[^qserve]
-그래서 QServe는 weight를 두 단계로 양자화한다.
-먼저 출력 channel별 scale로 INT8을 만들고, 그 정수를 다시 group별 정수 scale로 INT4에 담는다.
-행렬곱 안에서는 INT4 weight에 group별 정수 zero-point와 scale을 적용해 INT8로 되살린다.
-예를 들어 zero-point가 8, scale이 3인 group에서 저장된 13은 $(13-8)\times3=15$가 된다.
-이 복원은 정수의 뺄셈과 곱셈만으로 끝난다.
-그다음 8-bit activation과 INT8 행렬곱을 하고, channel별 부동소수점 scale은 합 밖에 있으므로 행렬곱이 끝난 뒤에 한 번 곱한다.
-KV cache는 4-bit로 둔다(W4A8KV4).
 
 ## 6. 양자화를 고려한 학습
 
@@ -823,10 +829,10 @@ BitNet b1.58 2B4T는 평균 55.01로 BF16 Qwen에 가까우면서, embedding을 
 
 ## 7. 방법의 선택
 
-어떤 양자화를 쓸지는 주로 그 배포의 병목이 어디에 있느냐로 정해진다.
-Roofline으로 정리하면 다음과 같다.
+어떤 양자화를 쓸지는 배포 환경의 병목과 함께, 양자화 후 품질을 지킬 수 있는지와 하드웨어·서빙 엔진이 해당 형식의 kernel을 지원하는지를 보고 정한다.
+병목을 기준으로 선택지를 roofline에 연결하면 다음과 같다.
 
-| 상황 | 병목 | 알맞은 선택 |
+| 상황 | 병목 | 선택지 |
 |---|---|---|
 | 작은 batch의 decode, 메모리가 작은 GPU | Weight 읽기 | Weight-only 4-bit(GPTQ, AWQ) |
 | 긴 prefill, batch가 아주 큰 decode의 선형층 | 행렬곱 연산 | W8A8(SmoothQuant, FP8), 더 낮추면 회전을 쓴 W4A4(QuaRot, SpinQuant) |
@@ -836,6 +842,17 @@ Roofline으로 정리하면 다음과 같다.
 FP4를 지원하는 GPU에서도 MXFP4나 NVFP4 가운데 어떤 형식을 엔진과 kernel이 지원하는지 확인한다.
 PTQ로 품질이 모자라면 Gemma 3처럼 QAT를 더하고,
 사전학습부터 새로 할 수 있다면 BitNet b1.58처럼 처음부터 1.58-bit weight로 학습하는 길도 있다.
+
+Weight, activation, KV cache의 양자화는 한 시스템 안에서 합쳐지기도 한다.
+Lin 등의 QServe는 기존 INT4 방법(W4A16, W4A4)의 행렬곱 kernel에서 weight나 부분합을 dequantize하는 데 kernel 실행 시간의 20–90%가 들 수 있다고 지적했다.
+이 부담 때문에 큰 batch의 서빙에서는 4-bit로 줄인 이점이 상쇄될 수 있다.[^qserve]
+그래서 QServe는 weight를 두 단계로 양자화한다.
+먼저 출력 channel별 scale로 INT8을 만들고, 그 정수를 다시 group별 정수 scale로 INT4에 담는다.
+행렬곱 안에서는 INT4 weight에 group별 정수 zero-point와 scale을 적용해 INT8로 되살린다.
+예를 들어 zero-point가 8, scale이 3인 group에서 저장된 13은 $(13-8)\times3=15$가 된다.
+이 복원은 정수의 뺄셈과 곱셈만으로 끝난다.
+그다음 8-bit activation과 INT8 행렬곱을 하고, channel별 부동소수점 scale은 합 밖에 있으므로 행렬곱이 끝난 뒤에 한 번 곱한다.
+KV cache는 4-bit로 둔다(W4A8KV4).
 
 품질은 실제로 쓸 곳에 맞춰 확인해야 한다.
 자동 벤치마크의 평균 점수가 거의 같아도 특정 task나 언어에서는 차이가 클 수 있다.
