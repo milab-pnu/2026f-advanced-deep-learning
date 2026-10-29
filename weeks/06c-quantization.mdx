@@ -180,7 +180,7 @@ Weight 네 개 $w=(0.12,\,-0.50,\,0.33,\,0.04)$를 대칭 INT4로 양자화하�
 $s=0.50/7\approx0.0714$이므로 $w/s\approx(1.68,\,-7,\,4.62,\,0.56)$을 반올림해 $(2,\,-7,\,5,\,1)$을 저장한다.
 Dequantize하면 $(0.143,\,-0.500,\,0.357,\,0.071)$로, 오차는 모두 $s/2\approx0.036$ 이하다.
 
-여기에 **값 하나가 $4.0$인 아웃라이어 원소**가 끼어 있다면 사정이 달라진다.
+여기에 **값이 $4.0$인 아웃라이어 하나**가 끼어 있다면 사정이 달라진다.
 $s=4.0/7\approx0.571$로 커져,
 원래의 네 값을 $s$로 나누면 $(0.21,\,-0.88,\,0.58,\,0.07)$이고, 반올림하면 $(0,\,-1,\,1,\,0)$이 된다.
 Dequantize한 값은 $(0,\,-0.571,\,0.571,\,0)$이다.
@@ -191,12 +191,12 @@ Dequantize한 값은 $(0,\,-0.571,\,0.571,\,0)$이다.
 ### 1-2. 양자화 단위
 
 앞의 예시에서 보았듯 큰 값 하나가 scale을 정하면, 같은 scale을 쓰는 나머지 값의 정밀도가 떨어진다.
-그래서 scale을 몇 개의 값이 함께 쓰느냐, 곧 양자화 단위(granularity)가 오차를 크게 좌우한다.[^survey]
+그래서 몇 개의 값이 scale 하나를 함께 쓰느냐, 곧 양자화 단위(granularity)가 오차를 크게 좌우한다.[^survey]
 
 양자화 단위를 정하기 전에 무엇을 양자화하는지 구분하자.
 **Weight**는 학습된 선형층의 파라미터이고, **activation**은 입력을 처리하는 과정에서 만들어져 그 층에 전달되는 값이다.
 **선형층 $Y=XW$에서 토큰 $T$개, 입력 channel $K$개, 출력 channel $N$개라면 $X$는 $T\times K$, $W$는 $K\times N$, $Y$는 $T\times N$ 행렬이다.**
-activation $X$의 행은 토큰, 열은 입력 channel이고, weight $W$의 행은 입력 channel, 열은 출력 channel이다.
+Activation $X$의 행은 토큰, 열은 입력 channel이고, weight $W$의 행은 입력 channel, 열은 출력 channel이다.
 따라서 $X$의 열 하나와 곱해지는 $W$의 행 하나가 같은 입력 channel을 가리킨다.
 $Y$의 한 원소는 $X$의 한 행과 $W$의 한 열을 입력 channel 방향으로 곱해 더한 값이다.
 구현에 따라 weight를 $N\times K$로 저장하고 전치해서 곱하기도 하므로, 행과 열의 이름은 저장 형태를 확인해야 한다.
@@ -254,12 +254,12 @@ Per-channel은 큰 값이 있는 입력 channel을 따로 묶어 다른 channel�
 이 경우 per-token에서는 각 행의 scale이 큰 값에 영향을 받지만, per-channel에서는 큰 값의 영향을 해당 열 안에 묶어 둘 수 있다.
 
 Weight도 $W$의 한 행, 즉 같은 입력 channel에 연결된 weight끼리 묶을 수 있다.
-다만 weight와 activation을 모두 정수로 양자화해 행렬곱을 할 때는 출력 channel별 scale이 합이 끝난 뒤 적용할 수 있어 쓰기 쉽다.
+다만 weight와 activation을 모두 정수로 양자화해 행렬곱을 할 때는 출력 channel별 scale을 합이 끝난 뒤 적용할 수 있어 쓰기 쉽다.
 입력 channel별 scale을 쓰면 합하는 도중 scale이 바뀌므로 처리 비용이 늘 수 있다.
 Activation의 열별 양자화와 weight의 행별 양자화는 둘 다 이 문제를 겪는다.
 다만 두 대상의 값 분포와 묶이는 원소가 다르므로 양자화 오차에 미치는 영향은 각각 살펴봐야 한다.
 
-그리고 그룹화를 하면 왜 오차가 줄 수 있을까?
+그렇다면 group으로 나누면 오차가 왜 줄어들까?
 한 출력 channel의 weight가 위에서부터 0.1, 0.3, 4, 6인 가상 예시를 보자.
 대칭 INT4에서 열 전체를 하나로 묶으면 최댓값 6이 scale을 정해 $6/7\approx0.857$이 된다.
 0.1과 0.3은 둘 다 0으로 반올림되어 복원할 때도 0이 된다.
@@ -273,7 +273,7 @@ LLM의 4-bit weight 양자화에서는 원소 128개마다 scale을 두는 group
 <Callout type="example">
 Llama 3.1 8B의 weight를 모두 group 128의 INT4로 저장하고 group마다 16-bit scale 하나만 둔다면 원소당 $4+16/128=4.125$ bits다.
 파라미터 8.03B개에 곱하면 약 4.1 GB로, BF16의 16.1 GB에서 약 4분의 1이 된다.
-추가적으로, Embedding과 출력층을 16-bit로 남기는 등 실제 설정에 따라 전체 크기는 달라진다.
+Embedding과 출력층을 16-bit로 남기는 등 실제 설정에 따라 전체 크기는 달라진다.
 </Callout>
 
 ### 1-3. 양자화 단위와 행렬곱
@@ -323,7 +323,7 @@ Weight는 출력 channel별로 열을 고른 뒤, 각 열을 입력 방향으로
 원래 행렬곱의 결과는 두 토큰의 행과 두 출력 channel의 열로 이루어진 $Y=[[27,24],[54,48]]$다.
 첫 토큰과 첫 출력 channel의 원래 결과는 $1\cdot1+2\cdot2+3\cdot2+4\cdot4=27$이다.
 저장된 정수로 계산할 때는 앞 group의 부분합 $1\cdot1+2\cdot2=5$에 scale 1을, 뒤 group의 부분합 $3\cdot1+4\cdot2=11$에 scale 2를 곱해 $5+22=27$을 얻는다.
-둘째 토큰은 저장된 정수는 같지만 activation scale이 2이므로 결과도 $2\times27=54$다.
+둘째 토큰은 저장된 정수가 같지만 activation scale이 2이므로 결과도 $2\times27=54$다.
 부분합을 먼저 $5+11=16$으로 합치면 어느 항에 weight scale 2를 적용할지 구분할 수 없다.
 </Callout>
 
@@ -336,8 +336,8 @@ Weight는 출력 channel별로 열을 고른 뒤, 각 열을 입력 방향으로
 ### 2-1. 두 방식
 
 양자화는 언제 하느냐에 따라 두 방식으로 나뉜다.
-학습을 마친 모델을 사후에 양자화하는 <strong>PTQ(post-training quantization)</strong>,
-학습 과정에 양자화를 넣어 모델이 양자화 오차에 맞춰 적응하게 하는 <strong>QAT(quantization-aware training)</strong>다.
+하나는 학습을 마친 모델을 사후에 양자화하는 <strong>PTQ(post-training quantization)</strong>이고,
+다른 하나는 학습 과정에 양자화를 넣어 모델이 양자화 오차에 맞춰 적응하게 하는 <strong>QAT(quantization-aware training)</strong>다.
 LLM은 다시 학습하는 비용이 커서 대개 PTQ부터 쓰고,
 PTQ로는 품질을 지키기 어려운 낮은 bits에서 QAT를 쓴다.
 
@@ -362,7 +362,7 @@ Weight 4-bit, activation 16-bit라는 뜻에서 W4A16처럼 부른다.
 W8A8처럼 부른다.
 Activation은 입력마다 값이 달라, weight와 달리 scale을 언제 정할지도 골라야 한다.
 Dynamic 방식은 실행 중에 들어온 값의 범위(대칭이라면 최대 절댓값)를 재서 scale을 정한다.
-값에 맞출 수 있지만 범위를 재는 비용이 든다.
+입력값에 맞는 scale을 쓸 수 있지만 범위를 재는 비용이 든다.
 Static 방식은 calibration 데이터로 미리 잰 범위로 scale을 고정한다.
 실행 중에 범위를 재는 비용은 없지만, 고정된 양자화 범위를 벗어난 값은 끝 값으로 잘린다.[^survey]
 선형층 밖에서는 **attention이 읽는 KV cache**도 낮은 bits로 저장할 수 있다.
