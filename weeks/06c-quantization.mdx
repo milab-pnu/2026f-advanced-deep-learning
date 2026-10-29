@@ -489,6 +489,8 @@ AWQ 논문은 이런 중요한 weight 일부를 높은 정밀도로 남겨 두�
 AWQ는 대신 **중요한 weight를 양자화하기 전에 키우고**, 그에 곱해지는 activation은 같은 배율로 나눈다.
 예를 들어 weight에 2를 곱하고 activation을 2로 나누면, 둘의 곱은 양자화하기 전과 같다.
 이 선형층의 성질을 이용해 행렬곱 결과를 유지하면서 weight가 양자화되는 방식을 바꾼다.
+중요한 weight를 키워도 같은 group의 양자화 간격이 거의 그대로라면, activation을 나눈 만큼 그 weight의 양자화 오차가 출력에 미치는 영향도 줄어든다.
+다만 배율이 너무 크면 group의 양자화 간격이 넓어져 다른 weight의 오차가 커질 수 있다.
 AWQ는 **calibration 데이터에서 출력 오차가 작아지도록 channel별 배율**을 고른다.
 
 <Figure src="https://arxiv.org/html/2306.00978v6/method.svg" alt="세 가지 weight 양자화 방법 비교. 왼쪽은 모든 weight를 단순 양자화하고, 가운데는 중요한 일부 weight를 높은 정밀도로 유지한다. 오른쪽은 activation을 참고해 channel별로 크기를 조정한 뒤 weight를 양자화하는 AWQ다." caption="단순 양자화, 일부 weight를 높은 정밀도로 유지하는 방식, AWQ." source="Lin et al. (2024), Figure 2" wide />
@@ -595,8 +597,7 @@ Cache를 읽어 attention을 계산할 때는 양자화된 값을 복원해야 �
 
 지금까지 양자화 대상과 오차를 줄이는 방법을 살펴보았다.
 실제로 속도를 높이려면 그 값을 GPU에서 어떻게 읽고 연산할지도 함께 설계해야 한다.
-QServe는 weight, activation, KV cache를 각각 4-bit, 8-bit, 4-bit로 다루는 양자화 방법과 서빙 시스템을 함께 제안했다.[^qserve]
-이를 W4A8KV4라고 부른다.
+QServe는 weight, activation, KV cache를 각각 4-bit, 8-bit, 4-bit로 다루는 **양자화 방법과 서빙 시스템을 함께 제안**했다.[^qserve]
 
 Weight를 4-bit로 저장하면 메모리에서 읽는 양이 줄어든다.
 QServe는 읽은 weight를 INT8로 복원해 8-bit activation과 행렬곱한다.
@@ -608,7 +609,7 @@ QServe는 읽은 weight를 INT8로 복원해 8-bit activation과 행렬곱한다
 KV cache도 4-bit로 저장하며, key의 큰 값을 다루기 위해 query와 key의 크기를 조정한다.
 이처럼 양자화 방법과 kernel, 서빙 시스템의 설계가 함께 최종 속도를 결정한다.
 
-논문의 [thread별 weight 배치](https://arxiv.org/html/2405.04532v3#S5.F12)와 [정수 복원 연산](https://arxiv.org/html/2405.04532v3#S5.F14) 그림을 보면, 실제 GPU에서 이득을 얻기 위해 데이터를 배치하고 명령어를 고르는 수준까지 설계한다는 것을 볼 수 있다.
+논문에 따르면 공동 제1저자인 Yujun Lin은 양자화 알고리즘을, Haotian Tang과 Shang Yang은 GPU kernel과 서빙 시스템을 이끌었다.
 
 ## 7. 양자화를 고려한 학습
 
@@ -618,55 +619,74 @@ QAT는 학습 중에도 양자화된 값으로 계산해, 모델이 양자화 �
 
 ### 7-1. STE
 
-QAT에서는 갱신할 실수 weight를 따로 유지하면서, forward에서는 그 weight를 양자화하고 복원한 값으로 계산한다.
-이렇게 하면 inference 때 생길 양자화 오차를 학습 중에도 경험한다.
+QAT는 학습 중에 반올림을 사용하므로, **일반적인 역전파로는 gradient를 전달하기 어렵다.**
+아래의 그래프를 살펴보면, 반올림 결과가 바뀌는 경계에서는 출력이 갑자기 뛰므로 미분이 정의되지 않고,
+나머지 구간에서 미분은 0이다.
+미분이 0인 구간에서 반올림을 그대로 미분해 역전파하면 chain rule에 따라 그 연산을 지나는 gradient가 0이 된다.
+따라서 이 경로로는 앞쪽 weight가 gradient를 받지 못해 갱신되지 않는다.
 
-문제는 반올림의 미분이 대부분의 구간에서 0이라는 점이다.
-예를 들어 반올림 전 weight가 조금 바뀌어도 같은 격자점으로 반올림된다면 forward의 값은 변하지 않는다.
-그대로 미분하면 backward에서 gradient가 전달되지 않아 weight를 학습하기 어렵다.
+<strong>STE(straight-through estimator)</strong>는 이런 연산을 포함한 모델을 학습하기 위해 backward에서 쓸 gradient를 근사하는 방법이다.[^nagel]
+대표적인 방법은 forward에서는 실제로 반올림하되, backward에서는 반올림의 미분을 1로 취급해 gradient를 그대로 전달한다.
+Forward에서 쓴 값은 양자화된 값이지만, 전달된 gradient는 따로 유지하는 실수 weight를 갱신한다.
 
-STE(straight-through estimator)는 backward에서 반올림을 통과하는 gradient를 근사해 이 문제를 다룬다.[^nagel]
-대표적으로 반올림의 미분을 1로 취급해, 양자화된 값에 도착한 gradient를 실수 weight로 전달한다.
-이는 실제 반올림의 미분이 아니라 학습을 위한 근사다.
+왜 이 방법이 도움이 될까?
+양자화된 weight는 격자점에서 다른 격자점으로만 움직이지만, 실수 weight에는 작은 갱신을 계속 쌓을 수 있다.
+갱신이 쌓여 경계를 넘으면 다음 forward에서 다른 격자점이 선택된다.
+다음 그림은 forward의 계단형 양자화와 backward의 STE를 비교한다.[^ste-survey]
 
-<Callout type="example">
-실수 weight가 0.30이고 격자 간격이 0.25라면 forward에는 0.25가 쓰인다.
-STE로 전달한 gradient에 따라 실수 weight가 0.34로 바뀌어도 forward의 값은 아직 0.25다.
-하지만 작은 갱신이 계속 쌓여 실수 weight가 0.375를 넘으면 반올림 결과가 0.50으로 바뀐다.
-실수 weight를 따로 두기 때문에 격자 간격보다 작은 변화도 학습 중에 쌓을 수 있다.
-</Callout>
+<Figure src="https://arxiv.org/html/2103.13630v3/qat.png" alt="QAT의 순전파와 역전파. 위쪽은 실수 weight가 계단형 quantizer를 거쳐 양자화된 값으로 forward에 전달된다. 아래쪽은 backward에서 양자화된 weight에 대한 gradient를 STE를 통해 실수 weight로 전달한다." caption="위쪽은 양자화된 weight로 계산하는 forward, 아래쪽은 STE로 gradient를 실수 weight에 전달하는 backward다." source="Gholami et al. (2021), Figure 5" wide />
 
-### 7-2. Distillation을 쓰는 QAT
+STE는 QAT뿐 아니라 <strong>VQ(vector quantization)</strong>에도 쓰인다.
+예를 들어 VQ-VAE에서는 encoder가 만든 벡터에 가장 가까운 codebook 벡터를 골라 decoder에 전달한다.
+어느 벡터를 고르는지는 이산적인 선택이므로, STE를 사용해 decoder에서 나온 gradient를 encoder로 전달한다.[^vqvae]
+Codebook은 별도의 손실이나 갱신 방법으로 학습한다.
+이렇게 선택한 codebook 항목의 번호는 이미지나 음성을 나타내는 **이산 token**으로도 사용할 수 있다.
+예를 들어 VQGAN은 이미지를 이산 token으로 표현하고,[^vqgan] EnCodec 같은 neural audio codec은 음성을 codebook 번호로 압축한 뒤 decoder로 파형을 복원한다.[^encodec]
+생성 모델은 이런 token을 예측해 이미지나 음성을 만들 수 있다.
+다만 모든 VLM이나 음성 모델이 이산 token을 쓰는 것은 아니며, 연속적인 encoder 표현을 사용하기도 한다.
 
-이미 학습된 모델이 있다면 사전학습을 처음부터 다시 하기보다, 양자화에 맞게 추가 학습할 수 있다.
-이때 원래 모델을 **teacher**, 양자화할 모델을 **student**로 두고 student가 teacher의 다음 토큰 확률 분포를 따르도록 학습하기도 한다.
-이 방법을 distillation이라고 하며, 양자화 모델이 원래 모델의 동작을 유지하도록 돕는다.
+STE가 전달하는 값은 실제 반올림이나 선택 연산의 미분이 아니다.
+**근사한 gradient**가 실제로 손실을 줄이는 방향과 다를 수 있으므로, 학습이 불안정하거나 품질이 기대보다 낮아질 수 있다.
+특정 조건에서 적절한 STE가 손실을 줄이는 방향을 제공한다는 분석은 있지만, 모든 모델에서 작동한다고 보장하지는 않는다.[^ste-analysis]
 
-LLM-QAT는 원래 모델이 생성한 텍스트와 teacher의 출력을 이용해 양자화 모델을 추가 학습했다.[^llmqat]
-Google도 Gemma 3에 distillation을 이용한 QAT를 적용해, 4-bit로 양자화할 때 PTQ보다 perplexity 손실을 줄였다고 보고했다.[^gemma3qat]
-추가 학습은 품질을 회복할 기회를 주지만, PTQ보다 학습 데이터와 연산 비용이 더 든다.
-
-### 7-3. 처음부터 낮은 bits로 학습
+### 7-2. 처음부터 낮은 bits로 학습
 
 아주 낮은 bits를 목표로 한다면 사전학습부터 양자화를 포함할 수도 있다.
 BitNet은 선형층의 weight를 -1 또는 1로 양자화해 계산하는 방식으로 모델을 처음부터 학습했다.[^bitnet]
-BitNet b1.58은 여기에 0을 추가해 weight를 -1, 0, 1의 세 값으로 표현한다.[^bitnet158]
-세 값을 구분하는 데 필요한 정보량이 이론상 weight 하나당 약 1.58 bits이므로 이런 이름이 붙었다.
-실제 저장에는 값을 묶는 방식과 scale 등 부가 정보가 영향을 준다.
+그림의 BitLinear는 forward의 연산 흐름을 보여 준다.
+입력의 양자화는 Absmax Quantization으로 표시되어 있지만, 실수 weight에서 1-bit weight를 만드는 과정과 backward는 생략되어 있다.
 
-이 선형층에서 weight가 1이면 입력을 더하고, -1이면 빼고, 0이면 그 입력을 건너뛸 수 있다.
-예를 들어 입력이 3, -2, 5이고 대응하는 weight가 1, 0, -1이면 이 세 항은 3에서 5를 뺀 -2가 된다.
-공유하는 scale이 있다면 이 결과에 scale을 곱한다.
-학습할 때는 QAT처럼 갱신을 위한 실수 weight를 따로 둔다.
+<Figure src="https://arxiv.org/html/2310.11453v1/bitnet-arch.png" alt="원래 1-bit BitNet의 구조. 왼쪽은 BitLinear에서 입력 정규화와 activation 양자화를 거쳐 1-bit weight와 연산한 뒤 결과를 복원하는 흐름이다. 오른쪽은 Transformer의 feed-forward network와 attention 투영에 BitLinear를 사용하는 모습이다." caption="원래 BitNet의 BitLinear 연산 흐름과 모델 구조. 그림의 weight는 -1과 1인 1-bit weight다." source="Wang et al. (2023), Figure 2" wide />
+
+학습할 때는 갱신을 위한 실수 weight를 따로 둔다.
+Forward마다 이 weight를 낮은 bits로 양자화해 연산하고, backward에서는 STE를 이용해 gradient를 실수 weight에 전달한다.
+Optimizer가 실수 weight를 갱신하면 다음 forward에서 다시 양자화한다.
 
 이 접근은 매우 낮은 정밀도에 맞춰 모델을 학습할 수 있지만, 사전학습부터 새로 해야 한다.
-실제 속도와 메모리 이득도 해당 형식을 효율적으로 처리하는 kernel의 지원에 달려 있다.[^bitnet-hf]
+실제 속도와 메모리 이득도 해당 형식을 효율적으로 처리하는 kernel의 지원에 달려 있다.
+
+### 7-3. Distillation을 쓰는 QAT
+
+이미 학습된 모델은 처음부터 다시 학습하지 않고 양자화에 맞게 추가 학습할 수 있다.
+LLM-QAT는 원래 모델이 생성한 텍스트를 학습 데이터로 사용하고, 양자화할 모델이 원래 모델의 다음 토큰 확률 분포를 따르도록 학습했다.[^llmqat]
+이처럼 원래 모델을 **teacher**, 학습할 모델을 **student**로 두고 동작을 따라 배우게 한다.
+양자화 오차에 적응하면서 원래 모델의 출력을 유지하도록 돕는 것이다.
 
 [^survey]: Gong, R., Ding, Y., Wang, Z., et al. (2025). A Survey of Low-bit Large Language Models: Basics, Systems, and Algorithms. *Neural Networks*, 192, 107856. [arXiv:2409.16694v3](https://arxiv.org/abs/2409.16694v3).
 
 [^jacob]: Jacob, B., Kligys, S., Chen, B., et al. (2018). Quantization and Training of Neural Networks for Efficient Integer-Arithmetic-Only Inference. [*CVPR 2018*](https://openaccess.thecvf.com/content_cvpr_2018/html/Jacob_Quantization_and_Training_CVPR_2018_paper.html).
 
 [^nagel]: Nagel, M., Fournarakis, M., Amjad, R. A., Bondarenko, Y., van Baalen, M., & Blankevoort, T. (2021). A White Paper on Neural Network Quantization. [arXiv:2106.08295](https://arxiv.org/abs/2106.08295).
+
+[^vqvae]: van den Oord, A., Vinyals, O., & Kavukcuoglu, K. (2017). Neural Discrete Representation Learning. *NeurIPS 2017*. [arXiv:1711.00937](https://arxiv.org/abs/1711.00937).
+
+[^vqgan]: Esser, P., Rombach, R., & Ommer, B. (2021). Taming Transformers for High-Resolution Image Synthesis. *CVPR 2021*. [arXiv:2012.09841](https://arxiv.org/abs/2012.09841).
+
+[^encodec]: Défossez, A., Copet, J., Synnaeve, G., & Adi, Y. (2022). High Fidelity Neural Audio Compression. [arXiv:2210.13438](https://arxiv.org/abs/2210.13438).
+
+[^ste-analysis]: Yin, P., Lyu, J., Zhang, S., Osher, S., Qi, Y., & Xin, J. (2019). Understanding Straight-Through Estimator in Training Activation Quantized Neural Nets. *ICLR 2019*. [arXiv:1903.05662](https://arxiv.org/abs/1903.05662).
+
+[^ste-survey]: Gholami, A., Kim, S., Dong, Z., Yao, Z., Mahoney, M. W., & Keutzer, K. (2021). A Survey of Quantization Methods for Efficient Neural Network Inference. [arXiv:2103.13630](https://arxiv.org/abs/2103.13630).
 
 [^vllm-fp8-hw]: vLLM Project. (2026). FP8 W8A8. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/features/quantization/llm_compressor/fp8/).
 
@@ -688,8 +708,6 @@ BitNet b1.58은 여기에 0을 추가해 weight를 -1, 0, 1의 세 값으로 표
 
 [^duquant]: Lin, H., Xu, H., Wu, Y., et al. (2024). DuQuant: Distributing Outliers via Dual Transformation Makes Stronger Quantized LLMs. *NeurIPS 2024*. [arXiv:2406.01721](https://arxiv.org/abs/2406.01721).
 
-[^llama32q]: Meta. (2024). Introducing quantized Llama models with increased speed and a reduced memory footprint. *Meta AI Blog*. [ai.meta.com](https://ai.meta.com/blog/meta-llama-quantized-lightweight-models/).
-
 [^fp8]: Micikevicius, P., Stosic, D., Burgess, N., et al. (2022). FP8 Formats for Deep Learning. [arXiv:2209.05433v2](https://arxiv.org/abs/2209.05433v2).
 
 [^h100-bandwidth]: NVIDIA. NVIDIA H100 Tensor Core GPU. *NVIDIA product specifications*. [nvidia.com](https://www.nvidia.com/en-us/data-center/h100/).
@@ -704,12 +722,6 @@ BitNet b1.58은 여기에 0을 추가해 weight를 -1, 0, 1의 세 값으로 표
 
 [^llmqat]: Liu, Z., Oguz, B., Zhao, C., et al. (2024). LLM-QAT: Data-Free Quantization Aware Training for Large Language Models. *Findings of ACL 2024*. [arXiv:2305.17888](https://arxiv.org/abs/2305.17888).
 
-[^gemma3qat]: Yvinec, E., & Culliton, P. (2025). Gemma 3 QAT Models: Bringing state-of-the-Art AI to consumer GPUs. *Google Developers Blog*. [developers.googleblog.com](https://developers.googleblog.com/en/gemma-3-quantized-aware-trained-state-of-the-art-ai-to-consumer-gpus/).
-
 [^bitnet]: Wang, H., Ma, S., Dong, L., et al. (2023). BitNet: Scaling 1-bit Transformers for Large Language Models. [arXiv:2310.11453](https://arxiv.org/abs/2310.11453).
-
-[^bitnet158]: Ma, S., Wang, H., Ma, L., et al. (2024). The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits. [arXiv:2402.17764](https://arxiv.org/abs/2402.17764).
-
-[^bitnet-hf]: Microsoft. (2025). bitnet-b1.58-2B-4T. *Hugging Face model card*. [huggingface.co](https://huggingface.co/microsoft/bitnet-b1.58-2B-4T).
 
 [^qserve]: Lin, Y., Tang, H., Yang, S., et al. (2025). QServe: W4A8KV4 Quantization and System Co-design for Efficient LLM Serving. *MLSys 2025*. [arXiv:2405.04532](https://arxiv.org/abs/2405.04532).
