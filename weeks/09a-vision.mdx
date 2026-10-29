@@ -83,7 +83,8 @@ Decoder는 가려진 patch의 픽셀 값을 복원하고, 손실은 가려진 pa
 BERT의 MLM은 token의 15%를 예측 대상으로 고르지만 MAE는 patch의 75%를 가린다.
 MAE에서 가리는 비율을 높이는 이유는 이미지의 중복에 있다.
 문장에서 단어 하나를 지우면 주변 단어만으로 맞히기 쉽지 않지만, 이미지에서는 이웃한 patch끼리 비슷해서 몇 개를 지워도 주변을 이어 붙이듯 채울 수 있다.
-가리는 비율을 높여야 주변을 복사하는 것만으로는 풀 수 없고, 물체와 장면의 구조를 알아야 하는 task가 된다.
+가리는 비율을 높이면 가까운 주변을 복사하는 것만으로 빈 곳을 채우기 어려워져, 더 넓은 범위의 물체와 장면 구조를 활용하도록 유도한다.
+다만 하늘처럼 단순한 영역은 많이 가려도 비슷한 픽셀을 채워 복원할 수 있으므로, 모든 이미지에서 장면을 이해해야만 복원할 수 있다는 보장은 아니다.
 Encoder가 보이는 patch만 처리하므로 사전학습 계산도 줄어든다.
 
 <Callout type="example">
@@ -115,7 +116,13 @@ Teacher가 student 자신의 과거 가중치를 평균한 모델이므로 self-
 예를 들어 고양이 귀만 담은 local crop을 본 student가 고양이 전체를 담은 global crop에 대한 teacher의 출력을 맞히려면, 일부만 보고도 전체 물체를 알아보는 표현이 필요하다.
 
 다만 두 네트워크가 모든 이미지에 같은 출력을 내도 손실이 작아질 수 있다.
-이런 붕괴(collapse)를 막으려고 teacher 출력에서 평균을 빼는 centering과, 낮은 온도로 분포를 뾰족하게 만드는 sharpening을 함께 쓴다.
+이런 붕괴(collapse)를 막으려고 teacher의 softmax 이전 출력인 logit에 centering과 sharpening을 함께 적용한다.
+Centering은 한 이미지의 출력값끼리 평균을 내는 것이 아니라, 각 출력 차원에서 batch의 teacher logit을 이미지들에 걸쳐 평균하고 그 평균의 지수 이동 평균을 유지한다.
+Teacher logit에서 이 차원별 이동 평균을 빼면 여러 이미지에 걸쳐 특정 차원이 계속 큰 값을 내는 경향을 누른다.
+예를 들어 두 차원의 이동 평균이 $[3, 1]$이고 한 이미지의 teacher logit이 $[4, 2]$라면, centering한 logit은 $[1, 1]$이다.
+반대로 한 이미지의 모든 차원에서 같은 스칼라 평균을 빼는 것은 softmax 확률을 바꾸지 못하므로, DINO의 차원별 centering과 다르다.
+Centering만 쓰면 출력 분포가 모든 차원에서 비슷한 균등 분포로 붕괴할 수 있다.
+Sharpening은 centering한 logit을 낮은 온도로 나눈 뒤 softmax를 적용해 분포를 뾰족하게 만들고, 두 처리를 함께 써서 특정 차원으로의 쏠림과 균등 분포로의 붕괴를 각각 억제한다.
 KD에서 teacher의 온도를 높여 분포를 부드럽게 하는 것과는 반대 방향이다.
 이렇게 학습한 feature는 linear probing만으로도 범주를 잘 구분한다.
 라벨 없이 학습했는데도 마지막 층의 `[CLS]` token이 patch에 주는 attention이 물체의 영역을 따라가는 성질도 나타난다.
@@ -751,7 +758,9 @@ SAM 3는 “노란 스쿨버스” 같은 짧은 명사구나, 이미지 안의 
   위치도 텍스트 token으로 쓰므로 별도 모듈이 필요 없지만, 복잡한 모양의 mask를 숫자 몇 개로 나타내기는 어렵다.
 - **Hidden state를 mask decoder에 전달**: LISA(large language instructed segmentation assistant)는 어휘에 `<SEG>` token을 추가한다.[^lisa]
   LLM이 이 token을 생성하면 그 위치의 마지막 층 hidden state를 MLP로 투영해, SAM의 image encoder가 만든 이미지 feature와 함께 SAM 구조의 mask decoder에 넘긴다.
-  LLM은 어휘별 확률에서 ID를 선택하므로 픽셀 단위의 mask를 직접 낼 수 없고, 연속 벡터인 hidden state를 넘겨 별도의 decoder가 mask를 만든다.
+  LISA의 LLM 출력은 어휘 token이므로 `<SEG>` token 하나가 픽셀별 mask 자체를 담지는 않는다.
+  LISA는 대신 연속 벡터인 hidden state를 전달하고 별도의 decoder가 픽셀별 mask를 만들도록 설계했다.
+  다른 설계에서는 mask를 이산 token들의 열로 표현해 LLM이 생성할 수도 있다.[^text4seg]
   LLM이 질의를 해석한 결과가 `<SEG>`의 hidden state에 담기므로, “비타민 C가 가장 많은 음식”처럼 추론이 필요한 질의에도 decoder가 그 물체의 mask를 그릴 수 있다.
 
 ### 5-2. 화면 grounding과 행동
@@ -821,6 +830,7 @@ OSWorld는 실제 컴퓨터 환경을 이용해 이런 여러 단계의 task를 
 [^sam3]: Carion, N., Gustafson, L., Hu, Y.-T., et al. (2026). SAM 3: Segment Anything with Concepts. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2511.16719).
 [^qwen25vl]: Bai, S., Chen, K., Liu, X., et al. (2025). Qwen2.5-VL Technical Report. *arXiv*. [논문](https://arxiv.org/abs/2502.13923).
 [^lisa]: Lai, X., Tian, Z., Chen, Y., et al. (2024). LISA: Reasoning Segmentation via Large Language Model. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2308.00692).
+[^text4seg]: Lan, M., Chen, C., Xu, J., et al. (2025). Text4Seg++: Advancing Image Segmentation via Generative Language Modeling. *arXiv*. [논문](https://arxiv.org/abs/2509.06321).
 
 [^videollama]: Zhang, H., Li, X., & Bing, L. (2023). Video-LLaMA: An Instruction-tuned Audio-Visual Language Model for Video Understanding. *Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing: System Demonstrations*, 543–553. [논문](https://aclanthology.org/2023.emnlp-demo.49/).
 [^videomme]: Fu, C., Dai, Y., Luo, Y., et al. (2025). Video-MME: The First-Ever Comprehensive Evaluation Benchmark of Multi-modal LLMs in Video Analysis. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2405.21075).

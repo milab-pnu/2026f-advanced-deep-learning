@@ -18,7 +18,7 @@ $512\times512$ RGB 이미지는 색 채널을 포함해 786,432개의 값을 가
 Latent diffusion은 encoder $E$로 이미지를 더 작은 latent $z_0=E(x)$로 바꾸고 decoder $D$가 latent에서 이미지를 복원하도록 학습한다.
 이 autoencoder는 이미지의 중요한 구조를 남기면서 공간 해상도를 줄인다.
 여기서 $E(x)$는 필요한 표본 추출과 크기 조정을 포함하고, $D$는 decoding 전 역변환을 포함하는 간략한 표기다.
-예를 들어 Stable Diffusion v1-4는 encoder에서 얻은 latent에 설정된 scaling factor 0.18215를 곱해 diffusion에 사용하고, decoder에 넣기 전에는 그 계수로 나눈다.[^sd]
+예를 들어 Stable Diffusion v1-4는 encoder에서 얻은 latent에 설정된 scaling factor 0.18215를 곱해 diffusion에 사용하고, decoder에 넣기 전에는 그 계수로 나눈다.[^sd][^sd-decoding]
 이 계수는 모델의 설정에 따라 다르며 모든 latent diffusion에 같은 값을 쓰지는 않는다.
 
 <Callout type="example">
@@ -96,6 +96,8 @@ $$
 $d_k$는 query와 key 벡터의 차원이며, 제곱근으로 나누어 내적의 크기를 조절한다.
 이미지 쪽 각 위치의 query가 텍스트 token들과의 관련성을 계산해 텍스트 정보를 받아온다.
 이로써 서로 다른 이미지 위치가 prompt의 서로 다른 부분을 참고할 수 있다.
+예를 들어 한 이미지 위치의 query가 두 텍스트 token에 각각 0.75와 0.25의 attention 가중치를 주고, 두 value의 한 좌표가 각각 2와 6이라면 출력의 해당 좌표는 $0.75\times2+0.25\times6=3$이다.
+가중치는 query와 key의 점수에 softmax를 적용한 결과이며, 숫자는 계산 과정을 보여 주는 가상 예시다.
 초기 Stable Diffusion에서는 CLIP 계열 text encoder를 사용한다.
 CLIP은 이미지와 그에 맞는 텍스트 표현을 가깝게 만드는 contrastive 학습으로 이미지와 언어의 관계를 익힌다.[^clip]
 그중 text encoder의 출력을 이미지 생성의 조건으로 사용하며, CLIP의 정렬 학습과 diffusion 모델의 noise 예측 학습은 서로 다르다.[^sd]
@@ -226,6 +228,7 @@ ControlNet처럼 edge나 pose를 공간 조건으로 제공하는 방법은 제�
 [^unet]: Ronneberger, O., Fischer, P., & Brox, T. (2015). U-Net: Convolutional Networks for Biomedical Image Segmentation. *MICCAI*. [논문](https://arxiv.org/abs/1505.04597).
 [^clip]: Radford, A., Kim, J. W., Hallacy, C., et al. (2021). Learning Transferable Visual Models From Natural Language Supervision. *ICML*. [논문](https://arxiv.org/abs/2103.00020).
 [^sd]: Rombach, R., & Esser, P. (2022). Stable Diffusion v1 Model Card. *Hugging Face*. [모델 카드](https://huggingface.co/CompVis/stable-diffusion-v1-4), [VAE 설정](https://huggingface.co/CompVis/stable-diffusion-v1-4/blob/main/vae/config.json).
+[^sd-decoding]: Hugging Face. (v0.35.1). Stable Diffusion pipeline. *Diffusers*. [구현](https://github.com/huggingface/diffusers/blob/v0.35.1/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py).
 [^sdedit]: Meng, C., He, Y., Song, Y., et al. (2022). SDEdit: Guided Image Synthesis and Editing with Stochastic Differential Equations. *ICLR*. [논문](https://arxiv.org/abs/2108.01073).
 [^instructpix]: Brooks, T., Holynski, A., & Efros, A. A. (2023). InstructPix2Pix: Learning to Follow Image Editing Instructions. *CVPR*. [논문](https://arxiv.org/abs/2211.09800).
 [^instructpix-implementation]: Hugging Face. (v0.35.1). InstructPix2Pix. *Diffusers documentation*. [문서](https://huggingface.co/docs/diffusers/v0.35.1/training/instructpix2pix).
