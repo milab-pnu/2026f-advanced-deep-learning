@@ -6,14 +6,18 @@ order: 2
 
 <strong>양자화(quantization)</strong>는 weight, activation, KV(key-value) cache 등을 더 적은 bits로 표현하는 방법이다.[^survey]
 예를 들어 Llama 3.1 8B의 weight 값을 BF16(bfloat16)에서 INT4(4-bit integer)로 바꾸면 약 16 GB에서 약 4 GB로 줄어든다.
-이 값은 weight 자체만 센 어림이며, 양자화에 필요한 scale 같은 부가 정보는 포함하지 않는다.
+이 값은 weight 자체만 센 어림이며, 양자화에 필요한 부가 정보는 포함하지 않는다.
 작게 저장하면 같은 메모리에 더 많은 데이터를 담을 수 있고, 메모리에서 읽는 데이터도 줄어든다.
-Weight와 activation을 함께 낮은 정밀도로 바꾸면 지원하는 연산 장치에서 행렬곱을 더 빠르게 할 수도 있다.
-대신 원래 값을 정확히 표현하지 못해 오차가 생기며, 실제 속도는 하드웨어와 kernel의 지원에도 달려 있다.<Sidenote>모델 경량화를 다루는 Song Han 교수(MIT)의 강의 [EfficientML.ai](https://efficientml.ai)는 영상과 슬라이드가 모두 공개되어 있다.</Sidenote>
+Weight와 activation을 함께 낮은 정밀도로 바꾸면 **지원하는 연산 장치**에서 행렬곱을 더 빠르게 할 수도 있다.
+대신 원래 값을 정확히 표현하지 못해 오차가 생기며, 실제 속도는 하드웨어와 kernel의 지원에도 달려 있다.
 
 양자화 대상에 따라 줄이는 비용도 다르다.
 Weight를 줄이면 매 스텝 읽는 weight의 양이 줄고, KV cache를 줄이면 긴 문맥이나 많은 요청에 필요한 메모리와 읽는 양이 줄어든다.
-Activation까지 함께 양자화하면 낮은 정밀도의 행렬곱을 활용할 수 있지만, 입력에 따라 값이 달라지는 activation의 오차도 관리해야 한다.
+Activation은 연산 중 만들어져 다음 연산에 전달되는 값이다.
+Weight와 activation을 함께 양자화하면 낮은 정밀도의 행렬곱을 활용할 수 있지만, 입력에 따라 달라지는 activation의 오차도 관리해야 한다.
+
+양자화를 포함한 모델 경량화는 Song Han 교수(MIT)의 강의 [EfficientML.ai](https://efficientml.ai)에서도 다룬다.
+강의 영상과 슬라이드가 모두 공개되어 있다.
 
 ## 1. 양자화의 기본
 
@@ -161,7 +165,7 @@ $z$를 반올림한 만큼 격자가 옮겨져, $x_{\min}$과 $x_{\max}$도 $-0.
   <text x="278.0" y="106" font-size="13" text-anchor="start" fill="#2a78d6" font-weight="600">0.33</text>
   <line x1="274.0" y1="92" x2="279.5" y2="185" stroke="#2a78d6" stroke-width="1.6" marker-end="url(#zp-arrow)"/>
 </svg>
-<figcaption>예의 대응 관계. 실숫값 −0.2부터 1.1까지를 정수 0부터 15까지에 맞추면 눈금 한 칸이 s ≈ 0.087이고, 실숫값 0은 정수 2에 놓인다. 이 2가 zero-point z다. z를 정수로 반올림한 만큼 격자가 조금 옮겨져, 정수 0과 15의 눈금은 x<sub>min</sub>, x<sub>max</sub>(빈 원)와 약간 어긋난다. 0.12와 0.33은 가장 가까운 눈금인 정수 3과 6으로 저장된다.</figcaption>
+<figcaption>양자화 예시.</figcaption>
 </figure>
 
 Zero-point를 $z=0$으로 고정하고 0의 양쪽에 걸친 부호 있는 정수 $-2^{b-1}$부터 $2^{b-1}-1$까지를 쓰면 대칭(symmetric) 양자화가 된다(정수 범위는 음수 쪽이 하나 더 길다).
@@ -169,14 +173,14 @@ Zero-point를 $z=0$으로 고정하고 0의 양쪽에 걸친 부호 있는 정�
 $x_q=\operatorname{clamp}(\lfloor x/s\rceil;\ -2^{b-1},\ 2^{b-1}-1)$, $\hat{x}=s\,x_q$로 계산이 더 단순하다.
 대신 값이 한쪽으로 치우치면 값이 없는 쪽에도 격자를 나눠 준다.
 앞의 예를 대칭 INT4로 두면 $s=1.1/7\approx0.157$로 비대칭의 0.0867보다 간격이 두 배 가까이 넓다.
-그래서 0을 중심으로 고르게 퍼진 weight는 흔히 대칭으로, ReLU 뒤처럼 음수가 거의 없어 한쪽으로 치우친 activation은 비대칭으로 양자화한다.[^nagel]
+**그래서 0을 중심으로 고르게 퍼진 weight는 흔히 대칭으로, ReLU 뒤처럼 음수가 거의 없어 한쪽으로 치우친 activation은 비대칭으로 양자화한다.**[^nagel]
 
 <Callout type="example">
 Weight 네 개 $w=(0.12,\,-0.50,\,0.33,\,0.04)$를 대칭 INT4로 양자화하자.
 $s=0.50/7\approx0.0714$이므로 $w/s\approx(1.68,\,-7,\,4.62,\,0.56)$을 반올림해 $(2,\,-7,\,5,\,1)$을 저장한다.
 Dequantize하면 $(0.143,\,-0.500,\,0.357,\,0.071)$로, 오차는 모두 $s/2\approx0.036$ 이하다.
 
-여기에 값 하나가 $4.0$인 원소가 끼어 있다면 사정이 달라진다.
+여기에 **값 하나가 $4.0$인 아웃라이어 원소**가 끼어 있다면 사정이 달라진다.
 $s=4.0/7\approx0.571$로 커져,
 원래의 네 값을 $s$로 나누면 $(0.21,\,-0.88,\,0.58,\,0.07)$이고, 반올림하면 $(0,\,-1,\,1,\,0)$이 된다.
 Dequantize한 값은 $(0,\,-0.571,\,0.571,\,0)$이다.
@@ -191,11 +195,44 @@ Dequantize한 값은 $(0,\,-0.571,\,0.571,\,0)$이다.
 
 양자화 단위를 정하기 전에 무엇을 양자화하는지 구분하자.
 **Weight**는 학습된 선형층의 파라미터이고, **activation**은 입력이 그 층에 들어올 때 생기는 값이다.
-선형층 $Y=XW$에서 토큰 $T$개, 입력 channel $K$개, 출력 channel $N$개라면 $X$는 $T\times K$, $W$는 $K\times N$, $Y$는 $T\times N$ 행렬이다.
-$X$의 행은 토큰, 열은 입력 channel이고, $W$의 행은 입력 channel, 열은 출력 channel이다.
+**선형층 $Y=XW$에서 토큰 $T$개, 입력 channel $K$개, 출력 channel $N$개라면 $X$는 $T\times K$, $W$는 $K\times N$, $Y$는 $T\times N$ 행렬이다.**
+activation $X$의 행은 토큰, 열은 입력 channel이고, weight $W$의 행은 입력 channel, 열은 출력 channel이다.
 따라서 $X$의 열 하나와 곱해지는 $W$의 행 하나가 같은 입력 channel을 가리킨다.
 $Y$의 한 원소는 $X$의 한 행과 $W$의 한 열을 입력 channel 방향으로 곱해 더한 값이다.
 구현에 따라 weight를 $N\times K$로 저장하고 전치해서 곱하기도 하므로, 행과 열의 이름은 저장 형태를 확인해야 한다.
+
+<figure>
+<svg viewBox="0 0 554 245" role="img" aria-label="선형층 행렬곱 Y = XW. 토큰 T=2, 입력 channel K=4, 출력 channel N=2인 예에서 Y는 2×2, X는 2×4, W는 4×2다. X의 두 번째 행과 W의 첫 번째 열을 곱해 더하면 Y의 둘째 행 첫째 열 원소가 된다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <text x="78" y="34" font-size="16" text-anchor="middle" font-weight="600" fill="#0f172a">출력 Y</text>
+  <text x="78" y="55" font-size="14" text-anchor="middle" fill="#475569">T × N = 2 × 2</text>
+  <text x="276" y="34" font-size="16" text-anchor="middle" font-weight="600" fill="#0f172a">activation X</text>
+  <text x="276" y="55" font-size="14" text-anchor="middle" fill="#475569">T × K = 2 × 4</text>
+  <text x="476" y="34" font-size="16" text-anchor="middle" font-weight="600" fill="#0f172a">weight W</text>
+  <text x="476" y="55" font-size="14" text-anchor="middle" fill="#475569">K × N = 4 × 2</text>
+
+  <rect x="42" y="103" width="72" height="64" fill="#f8fafc" stroke="#64748b"/>
+  <rect x="42" y="135" width="36" height="32" fill="#bfdbfe"/>
+  <path d="M78 103 V167 M42 135 H114" fill="none" stroke="#94a3b8"/>
+  <text x="151" y="143" font-size="28" text-anchor="middle" fill="#334155">=</text>
+
+  <rect x="204" y="103" width="144" height="64" fill="#f8fafc" stroke="#64748b"/>
+  <rect x="204" y="135" width="144" height="32" fill="#bfdbfe"/>
+  <path d="M240 103 V167 M276 103 V167 M312 103 V167 M204 135 H348" fill="none" stroke="#94a3b8"/>
+  <text x="389" y="143" font-size="28" text-anchor="middle" fill="#334155">×</text>
+
+  <rect x="440" y="71" width="72" height="128" fill="#f8fafc" stroke="#64748b"/>
+  <rect x="440" y="71" width="36" height="128" fill="#bfdbfe"/>
+  <path d="M476 71 V199 M440 103 H512 M440 135 H512 M440 167 H512" fill="none" stroke="#94a3b8"/>
+
+  <text x="78" y="205" font-size="13" text-anchor="middle" fill="#475569">행: 토큰 T</text>
+  <text x="78" y="224" font-size="13" text-anchor="middle" fill="#475569">열: 출력 channel N</text>
+  <text x="276" y="205" font-size="13" text-anchor="middle" fill="#475569">행: 토큰 T</text>
+  <text x="276" y="224" font-size="13" text-anchor="middle" fill="#475569">열: 입력 channel K</text>
+  <text x="476" y="220" font-size="13" text-anchor="middle" fill="#475569">행: 입력 channel K</text>
+  <text x="476" y="239" font-size="13" text-anchor="middle" fill="#475569">열: 출력 channel N</text>
+</svg>
+<figcaption>토큰 2개, 입력 channel 4개, 출력 channel 2개인 선형층.</figcaption>
+</figure>
 
 양자화 단위의 이름은 **scale 하나를 공유하는 원소들의 묶음**을 뜻한다.
 다음은 $X$가 2행 4열이고 $W$가 4행 2열인 예다.
@@ -210,53 +247,41 @@ $Y$의 한 원소는 $X$의 한 행과 $W$의 한 열을 입력 channel 방향�
 | Weight per-channel | $W$의 한 열, 즉 한 출력 channel에 연결된 입력 weight 4개 | 2개 |
 | Weight per-group (크기 2) | $W$의 한 열 안에서 입력 방향으로 연속된 weight 2개 | 4개 |
 
-예를 들어 $W$의 첫 열을 위에서부터 $w_{11}, w_{21}, w_{31}, w_{41}$이라 하면,
-per-channel은 이 네 값을 하나의 scale로 묶고, 크기 2인 per-group은 앞의 두 값과 뒤의 두 값에 각각 scale을 둔다.
-Per-token은 행마다 다른 scale을 두지만 한 행 안에서는 열 방향으로 scale을 공유한다.
-Per-channel이라는 이름도 대상에 따라 다르다.
-여기서는 activation의 입력 channel($X$의 열)과 weight의 출력 channel($W$의 열)을 뜻한다.
-다른 축이나 activation의 group을 쓰는 방식도 있으므로 이름만 보고 축을 단정하지 말고 대상과 묶음을 확인해야 한다.
-Weight의 값은 추론 중 고정되지만 activation은 입력마다 바뀌므로 scale을 정하는 시점도 다를 수 있다.
+Per-channel이라 해도 이 표에서 activation은 입력 channel별로, weight는 출력 channel별로 묶는다.
+Activation의 per-token은 토큰마다 값의 크기에 맞는 scale을 쓸 수 있다.
+Per-channel은 큰 값이 있는 입력 channel을 따로 묶어 다른 channel에 미치는 영향을 줄일 수 있다.
+실제로 LLM에서는 큰 activation이 여러 토큰에 걸쳐 같은 channel에 반복해 나타나기도 한다(outlier feature).[^llmint8]
+이 경우 per-token에서는 각 행의 scale이 큰 값에 영향을 받지만, per-channel에서는 큰 값의 영향을 해당 열 안에 묶어 둘 수 있다.
 
-이렇게 나누면 왜 오차가 줄 수 있을까?
+Weight도 $W$의 한 행, 즉 같은 입력 channel에 연결된 weight끼리 묶을 수 있다.
+다만 weight와 activation을 모두 정수로 양자화해 행렬곱을 할 때는 출력 channel별 scale이 합이 끝난 뒤 적용할 수 있어 쓰기 쉽다.
+입력 channel별 scale을 쓰면 합하는 도중 scale이 바뀌므로 처리 비용이 늘 수 있다.
+Activation의 열별 양자화와 weight의 행별 양자화는 둘 다 이 문제를 겪는다.
+다만 두 대상의 값 분포와 묶이는 원소가 다르므로 양자화 오차에 미치는 영향은 각각 살펴봐야 한다.
+
+그리고 그룹화를 하면 왜 오차가 줄 수 있을까?
 한 출력 channel의 weight가 위에서부터 0.1, 0.3, 4, 6인 가상 예시를 보자.
-대칭 INT4에서 최댓값을 정수 7에 맞추어 열 전체에 scale을 하나 두면 scale은 약 0.857(6/7)이다.
-0.1과 0.3은 둘 다 이 scale로 나눈 뒤 0으로 반올림되어 복원할 때도 0이 된다.
-반면 앞의 두 값과 뒤의 두 값을 별도 group으로 나누면, 작은 값 group의 scale은 약 0.043(0.3/7)이다.
+대칭 INT4에서 열 전체를 하나로 묶으면 최댓값 6이 scale을 정해 $6/7\approx0.857$이 된다.
+0.1과 0.3은 둘 다 0으로 반올림되어 복원할 때도 0이 된다.
+앞의 두 값과 뒤의 두 값을 별도 group으로 나누면 작은 값 group의 scale은 $0.3/7\approx0.043$이다.
 이때 0.1과 0.3은 각각 정수 2와 7로 저장되어 약 0.086과 0.3으로 복원된다.
-큰 값 6이 작은 값 group의 scale을 결정하지 않기 때문이다.
-대신 이 열에 scale이 하나가 아니라 두 개 필요하다.
-더 잘게 나눈다고 모든 값의 오차나 전체 연산 비용이 반드시 줄어드는 것은 아니다.
+큰 값의 영향을 작은 값 group에서 분리한 덕분이다.
 
-범위를 작게 나눌수록 큰 값의 영향이 그 묶음 안에 갇히지만, scale을 저장할 공간이 늘어난다.
-LLM의 4-bit weight 양자화에서는 원소 128개마다 scale을 두는 group 크기 128이 흔한 기본값이다.
-4-bit weight 양자화 방법인 GPTQ의 논문은 이때 group마다 두는 scale과 zero-point 같은 부가 정보에 원소당 약 0.15 bits가 더 든다고 보고했다.[^gptq]
+대신 group마다 scale이 필요하므로 부가 정보를 저장할 공간이 늘어나고, 연산 비용도 달라질 수 있다.
+LLM의 4-bit weight 양자화에서는 원소 128개마다 scale을 두는 group 크기 128이 흔한 기본값이다.[^gptq]
 
 <Callout type="example">
 Llama 3.1 8B의 weight를 모두 group 128의 INT4로 저장하고 group마다 16-bit scale 하나만 둔다면 원소당 $4+16/128=4.125$ bits다.
-부가 정보는 원소당 0.125 bits로, zero-point를 두지 않은 만큼 위의 약 0.15 bits보다 조금 작다.
 파라미터 8.03B개에 곱하면 약 4.1 GB로, BF16의 16.1 GB에서 약 4분의 1이 된다.
-실제 배포에서는 embedding과 출력층(합쳐 약 1.05B개)을 16-bit로 남기는 경우가 많고, 그러면 전체 weight는 약 5.7 GB다.
-H100(80 GB) 한 대에서 엔진의 전체 메모리 예산과 다른 메모리 사용량이 같다면,
-절약한 약 10–12 GB를 KV cache에 추가로 쓸 수 있다.
-실제로는 kernel과 설정이 바뀌면 작업 공간도 달라질 수 있다.
+추가적으로, Embedding과 출력층을 16-bit로 남기는 등 실제 설정에 따라 전체 크기는 달라진다.
 </Callout>
-
-LLM의 activation에서 다른 값보다 유독 큰 값인 outlier는 아무 데나 생기지 않는다.
-Dettmers 등은 크기가 6 이상인 값이 여러 층과 토큰에 걸쳐 같은 channel에 반복해 나타난다는 것을 보고하고, 이를 outlier feature라 불렀다.[^llmint8]
-6.7B 모델에서는 모든 층과 약 75%의 토큰에 나타났고, 단 6개의 channel에 몰려 있었다.
-이 6개 channel을 0으로 만들면 성능이 크게 떨어졌다.
-수는 적어도 모델의 동작에 중요한 값이라, 양자화할 때 이 값들의 손상을 줄여야 한다.
-Outlier feature는 대부분의 토큰에 걸친 channel이라, 시작 토큰처럼 특정 토큰의 한두 성분에만 생기는 massive activation과는 다른 현상이다.[^massive]
-Per-token은 각 행 전체가 scale 하나를 공유하므로 각 행에 같은 outlier channel이 있다면, 모든 행의 scale이 그 큰 값에 영향을 받는다.
-Activation per-channel은 큰 값이 있는 열을 다른 열과 별도로 묶어 그 영향을 나눌 수 있지만, 정수 행렬곱에서 scale을 처리하는 비용이 늘 수 있다.
 
 ### 1-3. 양자화 단위와 행렬곱
 
 Weight와 activation을 모두 정수로 바꿔 정수 행렬곱을 하려면, scale을 어느 축에 두느냐가 정밀도뿐 아니라 계산 방식도 정한다.
-식을 단순하게 하려고 둘 다 대칭으로 두자(비대칭이면 zero-point가 만드는 항이 더 붙는다).
+**식을 단순하게 하려고 둘 다 대칭으로 두자**(비대칭이면 zero-point가 만드는 항이 더 붙는다).
 토큰을 $i$, 출력 channel을 $j$, 입력 channel을 $k$로 쓰고, 양자화해 저장한 정수에는 위첨자 $q$를 붙이자.
-Activation은 토큰 $i$마다 scale $s_{X,i}$를, weight는 출력 channel $j$마다 scale $s_{W,j}$를 두면,
+<strong>Activation은 토큰 $i$마다 scale $s_{X,i}$를, weight는 출력 channel $j$마다 scale $s_{W,j}$</strong>를 두면,
 
 $$
 Y_{ij}=\sum_k X_{ik}W_{kj}\approx\sum_k \bigl(s_{X,i}X^{q}_{ik}\bigr)\bigl(s_{W,j}W^{q}_{kj}\bigr)=s_{X,i}\,s_{W,j}\sum_k X^{q}_{ik}W^{q}_{kj}
@@ -269,7 +294,7 @@ $$
 예를 들어 weight scale을 1로 두고, 입력 channel 두 개의 정수 곱이 각각 2와 1인데 activation scale이 각각 1과 2라면, 복원한 합은 $1\times2+2\times1=4$다.
 정수 곱을 먼저 $2+1=3$으로 합치면 각 항에 서로 다른 scale을 적용할 수 없다.
 그러면 합을 그 단위마다 끊어 부분합마다 scale을 곱해야 하므로, 정수 행렬곱 한 번으로 끝나지 않고 추가 비용이 든다.[^nagel]
-그래서 일반적인 정수 행렬곱 kernel에서는 activation per-token과 weight 출력 per-channel의 조합을 쓰기 쉽다.
+**그래서 일반적인 정수 행렬곱 kernel에서는 activation per-token과 weight 출력 per-channel의 조합을 쓰기 쉽다.**
 다른 단위를 지원하는 전용 kernel이나 블록 단위 연산도 있으므로 모든 정수 행렬곱이 이 조합만 써야 한다는 뜻은 아니다.
 Weight만 양자화하고 행렬곱 전에 16-bit로 dequantize한다면 이런 제약이 없어, 4-bit weight에는 per-group을 흔히 쓴다.
 
@@ -306,7 +331,7 @@ Weight는 출력 channel별로 열을 고른 뒤, 각 열을 입력 방향으로
 
 이 노트에서 CC BY 4.0으로 표시한 논문 그림에는 [CC BY 4.0 라이선스](https://creativecommons.org/licenses/by/4.0/)가 적용된다.
 
-<Figure src="https://arxiv.org/html/2211.10438v7/quant_scheme.svg" alt="Activation X(토큰 T × 입력 channel C_i, 초록)와 weight W(입력 channel C_i × 출력 channel C_o, 노랑)의 곱을 두 가지 양자화 단위로 그린 그림. (a) per-tensor 양자화에서는 X와 W가 각각 작은 사각형 하나로 표시된 scale Δ_X, Δ_W 하나씩을 쓴다. (b)에서는 X 왼쪽에 길이 T의 세로 막대 Δ_X가 붙어 토큰(행)마다 scale을 두는 per-token 양자화를, W 위에 길이 C_o의 가로 막대 Δ_W가 붙어 출력 channel(열)마다 scale을 두는 per-channel 양자화를 나타낸다. 빨간 점선이 X의 한 행과 W의 한 열을 묶는다." caption="그림의 Δ는 본문의 scale s다. (b)처럼 토큰 T마다, 출력 channel C_o마다 둔 scale은 합의 바깥 축에 있어 합 밖으로 꺼낼 수 있다. 반면 합을 도는 축인 입력 channel C_i에 scale을 두면 합 밖으로 꺼낼 수 없다." source="Xiao et al. (2023), Figure 3 · CC BY 4.0" />
+<Figure src="https://arxiv.org/html/2211.10438v7/quant_scheme.svg" alt="Activation X(토큰 T × 입력 channel C_i, 초록)와 weight W(입력 channel C_i × 출력 channel C_o, 노랑)의 곱을 두 가지 양자화 단위로 그린 그림. (a) per-tensor 양자화에서는 X와 W가 각각 작은 사각형 하나로 표시된 scale Δ_X, Δ_W 하나씩을 쓴다. (b)에서는 X 왼쪽에 길이 T의 세로 막대 Δ_X가 붙어 토큰(행)마다 scale을 두는 per-token 양자화를, W 위에 길이 C_o의 가로 막대 Δ_W가 붙어 출력 channel(열)마다 scale을 두는 per-channel 양자화를 나타낸다. 빨간 점선이 X의 한 행과 W의 한 열을 묶는다." caption="양자화 단위. 그림의 Δ는 본문의 scale s다." source="Xiao et al. (2023), Figure 3" />
 
 ## 2. 양자화 방식과 실행 조건
 
@@ -512,7 +537,7 @@ $W$의 행, 곧 입력 차원을 위에서부터 차례로 양자화하고,
 
 ### 3-3. AWQ
 
-Lin 등의 AWQ는 반올림한 뒤 오차를 메우는 대신, 반올림하기 전에 중요한 weight를 보호하는 쪽을 택했다.[^awq]
+Lin 등의 AWQ는 반올림한 뒤 오차를 메우는 대신, 반올림하기 전에 중요한 weight를 보호하는 쪽을 택했다.[^awq]<Sidenote>[MLSys](https://mlsys.org/About)는 머신러닝과 컴퓨터 시스템의 접점을 다루는 학회다. 모델의 정확도뿐 아니라 학습·추론 속도, 메모리 사용량, 하드웨어와 소프트웨어 구현도 함께 연구한다. AWQ는 MLSys 2024에 발표되었다.</Sidenote>
 출발점은 weight마다 중요도가 다르다는 관찰이다.
 입력 channel 1%에 연결된 weight만 FP16으로 남겨도 양자화 오차가 크게 줄었는데, 어느 channel을 고르느냐가 중요했다.
 Weight 크기가 아니라 **거기에 곱해지는 activation의 크기**로 channel을 골랐을 때 효과가 컸다.
@@ -750,9 +775,36 @@ KIVI는 이렇게 KV cache를 2-bit로 줄여 모델 weight를 포함한 최대 
 이 처리량 비교는 같은 batch 크기에서 양자화만 바꾼 효과가 아니다.
 다만 KV cache는 생성 중에 계속 새로 쓰이므로, weight와 달리 실행 중에 양자화하고 dequantize하는 비용이 든다.
 
-## 6. 양자화를 고려한 학습
+## 6. QServe의 양자화와 kernel
 
-### 6-1. STE
+Weight, activation, KV cache의 양자화는 한 시스템 안에서 합쳐지기도 한다.
+Lin 등의 QServe는 세 대상을 함께 줄이면서, 양자화의 이론적 이득을 실제 서빙 속도로 이어 가려는 연구다.[^qserve]
+저자들은 기존 INT4 방식의 행렬곱 kernel에서 weight나 부분합을 dequantize하는 데 kernel 실행 시간의 20–90%가 들 수 있다고 지적했다.
+데이터를 적게 읽어도 복원과 부가 연산에 시간이 많이 들면 전체 속도는 기대만큼 빨라지지 않는다.
+
+이를 해결하려고 저자들은 weight는 4-bit, activation은 8-bit, KV cache는 4-bit로 두는 W4A8KV4 양자화 알고리즘 **QoQ**와 이를 실행하는 서빙 시스템 **QServe**를 함께 설계했다.
+Weight는 먼저 출력 channel별 scale로 INT8을 만들고, 그 정수를 다시 group별 정수 scale로 INT4에 담는다.
+실행할 때는 INT4 weight에 group별 정수 zero-point와 scale을 적용해 INT8로 복원한다.
+예를 들어 zero-point가 8, scale이 3인 group에서 저장된 13은 `(13 - 8) × 3 = 15`가 된다.
+그다음 8-bit activation과 INT8 행렬곱을 하고, channel별 부동소수점 scale은 합 밖에 있으므로 행렬곱이 끝난 뒤에 곱한다.
+
+여기서 연구는 양자화 방식만 정하는 데서 끝나지 않는다.
+예를 들어 QServe는 weight를 Tensor Core가 연산할 때 각 thread가 사용할 순서에 맞춰 미리 재배치한다.
+이렇게 하면 실행 중 데이터를 찾기 위한 주소 연산을 줄이고, 여러 값을 묶어 메모리에서 읽기 쉽다.
+또 INT4 값을 INT8로 복원할 때 정수 연산의 순서를 조정하고 여러 값을 묶어 처리해 복원 비용을 줄인다.
+**어떤 값을 몇 bits로 저장할지뿐 아니라, GPU에서 데이터를 어떻게 읽고 어떤 명령어로 처리할지까지 함께 고려한 것이다.**
+
+KV cache의 정확도도 따로 살핀다.
+QoQ의 SmoothAttention은 key의 큰 값을 줄이는 대신 query에 대응하는 배율을 적용해, 양자화하기 전의 attention 점수는 유지하면서 key의 4-bit 양자화를 쉽게 한다.
+같은 메모리 예산에서 Llama 3 8B의 최대 처리량을 비교한 실험에서는 QServe가 TensorRT-LLM의 세 설정 중 가장 빠른 설정보다 A100에서 약 1.2배 높았다.
+이 차이에는 양자화뿐 아니라 kernel과 서빙 시스템의 구현 차이도 함께 반영된다.
+
+논문에서는 [thread별 weight 배치](https://arxiv.org/html/2405.04532v3#S5.F12)와 [정수 복원 연산](https://arxiv.org/html/2405.04532v3#S5.F14)을 그림으로 설명한다.
+하드웨어에서 속도를 얻기 위해 어느 수준까지 설계를 세분화하는지 살펴볼 수 있다.
+
+## 7. 양자화를 고려한 학습
+
+### 7-1. STE
 
 지금까지 본 방법은 대부분 학습된 weight를 그대로 두거나 calibration 데이터로 조금 보정하는 PTQ였다.
 PTQ에서는 모델이 양자화 오차에 맞춰 다시 배울 기회가 없어, bits를 낮출수록 손상을 메우기 어렵다.
@@ -769,7 +821,7 @@ PTQ에서는 모델이 양자화 오차에 맞춰 다시 배울 기회가 없어
 격자 간격보다 작은 갱신도 실수 weight에 쌓이므로, 모델은 어느 격자점으로 옮겨 갈지를 학습할 수 있다.
 </Callout>
 
-### 6-2. Distillation을 쓰는 QAT
+### 7-2. Distillation을 쓰는 QAT
 
 LLM에서는 사전학습 데이터 전체로 다시 학습하기 어려워,
 원래 모델을 teacher로 삼아 양자화 모델의 다음 토큰 분포가 teacher의 분포를 따르게 하는 distillation을 함께 쓰기도 한다.
@@ -781,7 +833,7 @@ Google은 Gemma 3를 약 5,000스텝 동안 원래 정밀도 모델의 확률을
 27B 모델의 weight를 올리는 데 필요한 GPU 메모리는 BF16의 54 GB에서 INT4의 14.1 GB로 줄었다.[^gemma3qat]
 실행 중에는 KV cache 등에도 메모리가 추가로 필요하다.
 
-### 6-3. 처음부터 낮은 bits로 학습
+### 7-3. 처음부터 낮은 bits로 학습
 
 앞의 QAT는 이미 학습된 모델을 짧게 더 학습해 낮은 bits에 맞춘다.
 앞에서 본 것처럼 낮은 bits에서는 사후 양자화나 짧은 QAT만으로 품질을 지키기 어려울 수 있다.
@@ -827,7 +879,7 @@ BitNet b1.58 2B4T는 평균 55.01로 BF16 Qwen에 가까우면서, embedding을 
 또 세 값 weight의 이득은 그 형식을 위한 kernel이 있어야 나온다.
 공개 모델 카드는 Hugging Face Transformers로 돌리면 효율 이득을 기대하지 말고, 전용 inference 프레임워크 bitnet.cpp를 쓰라고 안내한다.[^bitnet-hf]
 
-## 7. 방법의 선택
+## 8. 방법의 선택
 
 어떤 양자화를 쓸지는 배포 환경의 병목과 함께, 양자화 후 품질을 지킬 수 있는지와 하드웨어·서빙 엔진이 해당 형식의 kernel을 지원하는지를 보고 정한다.
 병목을 기준으로 선택지를 roofline에 연결하면 다음과 같다.
@@ -842,17 +894,6 @@ BitNet b1.58 2B4T는 평균 55.01로 BF16 Qwen에 가까우면서, embedding을 
 FP4를 지원하는 GPU에서도 MXFP4나 NVFP4 가운데 어떤 형식을 엔진과 kernel이 지원하는지 확인한다.
 PTQ로 품질이 모자라면 Gemma 3처럼 QAT를 더하고,
 사전학습부터 새로 할 수 있다면 BitNet b1.58처럼 처음부터 1.58-bit weight로 학습하는 길도 있다.
-
-Weight, activation, KV cache의 양자화는 한 시스템 안에서 합쳐지기도 한다.
-Lin 등의 QServe는 기존 INT4 방법(W4A16, W4A4)의 행렬곱 kernel에서 weight나 부분합을 dequantize하는 데 kernel 실행 시간의 20–90%가 들 수 있다고 지적했다.
-이 부담 때문에 큰 batch의 서빙에서는 4-bit로 줄인 이점이 상쇄될 수 있다.[^qserve]
-그래서 QServe는 weight를 두 단계로 양자화한다.
-먼저 출력 channel별 scale로 INT8을 만들고, 그 정수를 다시 group별 정수 scale로 INT4에 담는다.
-행렬곱 안에서는 INT4 weight에 group별 정수 zero-point와 scale을 적용해 INT8로 되살린다.
-예를 들어 zero-point가 8, scale이 3인 group에서 저장된 13은 $(13-8)\times3=15$가 된다.
-이 복원은 정수의 뺄셈과 곱셈만으로 끝난다.
-그다음 8-bit activation과 INT8 행렬곱을 하고, channel별 부동소수점 scale은 합 밖에 있으므로 행렬곱이 끝난 뒤에 한 번 곱한다.
-KV cache는 4-bit로 둔다(W4A8KV4).
 
 품질은 실제로 쓸 곳에 맞춰 확인해야 한다.
 자동 벤치마크의 평균 점수가 거의 같아도 특정 task나 언어에서는 차이가 클 수 있다.
@@ -874,8 +915,6 @@ Marchisio 등의 다국어 LLM 실험에서는 평균적으로 라틴 문자가 
 [^awq]: Lin, J., Tang, J., Tang, H., et al. (2024). AWQ: Activation-aware Weight Quantization for On-Device LLM Compression and Acceleration. [*MLSys 2024*](https://proceedings.mlsys.org/paper_files/paper/2024/hash/42a452cbafa9dd64e9ba4aa95cc1ef21-Abstract-Conference.html). [arXiv:2306.00978](https://arxiv.org/abs/2306.00978).
 
 [^zhou]: Zhou, Z., Ning, X., Hong, K., et al. (2024). A Survey on Efficient Inference for Large Language Models. [arXiv:2404.14294v3](https://arxiv.org/abs/2404.14294v3).
-
-[^massive]: Sun, M., Chen, X., Kolter, J. Z., & Liu, Z. (2024). Massive Activations in Large Language Models. *COLM 2024*. [arXiv:2402.17762](https://arxiv.org/abs/2402.17762).
 
 [^llmint8]: Dettmers, T., Lewis, M., Belkada, Y., & Zettlemoyer, L. (2022). LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale. *NeurIPS 2022*. [arXiv:2208.07339](https://arxiv.org/abs/2208.07339).
 
