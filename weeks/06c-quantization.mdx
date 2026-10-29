@@ -4,6 +4,8 @@ week: 6
 order: 2
 ---
 
+import gptqAlgorithm from "./assets/week06-gptq-algorithm1.png";
+
 <strong>양자화(quantization)</strong>는 weight, activation, KV(key-value) cache 등을 더 적은 bits로 표현하는 방법이다.[^survey]
 예를 들어 Llama 3.1 8B의 weight 값을 BF16(bfloat16)에서 INT4(4-bit integer)로 바꾸면 약 16 GB에서 약 4 GB로 줄어든다.
 이 값은 weight 자체만 센 어림이며, 양자화에 필요한 부가 정보는 포함하지 않는다.
@@ -333,7 +335,7 @@ Weight는 출력 channel별로 열을 고른 뒤, 각 열을 입력 방향으로
 
 ## 2. 양자화 방식과 실행 조건
 
-### 2-1. 두 방식
+### 2-1. 양자화 방식
 
 양자화는 언제 하느냐에 따라 두 방식으로 나뉜다.
 하나는 학습을 마친 모델을 사후에 양자화하는 <strong>PTQ(post-training quantization)</strong>이고,
@@ -354,6 +356,10 @@ Calibration 데이터는 품질 검사를 위한 데이터와 겹치면 안 된�
 ### 2-2. 양자화 대상
 
 무엇을 양자화하느냐로도 나눌 수 있다.
+LLM 이전부터 이미지 인식 등의 신경망 추론에서는 weight와 activation을 함께 양자화해 저정밀 연산을 활용하는 방법이 연구되었다.[^jacob]
+LLM에서는 모델이 커지면서 GPU 메모리에 weight를 저장하고 읽는 비용이 중요한 문제가 되었고, weight만 낮은 bits로 저장하는 방법도 주목받았다.[^gptq]
+두 방식은 줄이려는 비용이 다르므로 모델과 실행 조건에 맞춰 선택한다.
+
 선형층의 행렬곱에는 두 방식이 있다.
 하나는 **weight만** 낮은 bits로 저장하고,
 계산할 때 GPU(graphics processing unit) kernel 안에서 FP16(16-bit floating point)이나 BF16으로 dequantize해 16-bit 행렬곱을 하는 weight-only 양자화다.
@@ -367,12 +373,17 @@ Static 방식은 calibration 데이터로 미리 잰 범위로 scale을 고정�
 실행 중에 범위를 재는 비용은 없지만, 고정된 양자화 범위를 벗어난 값은 끝 값으로 잘린다.[^survey]
 선형층 밖에서는 **attention이 읽는 KV cache**도 낮은 bits로 저장할 수 있다.
 
-**세 대상이 줄이는 비용은 다르다.**
-Weight-only는 읽는 weight bytes를 줄이므로, 읽는 데이터의 대부분이 weight인 작은 batch의 decode에서 효과가 크다.
-Weight-activation 양자화는 행렬곱을 BF16보다 빠른 저정밀 연산 장치로 하므로,
-긴 prefill처럼 행렬곱이 compute-bound인 경우에도 빨라질 수 있다.
-Attention은 요청마다 자기 KV cache를 읽으므로, 같은 조건에서도 메모리 대역폭이 병목일 수 있다.
-KV cache 양자화는 큰 batch와 긴 문맥의 decode에서 효과가 크다.
+**양자화 대상마다 줄이는 비용이 다르므로, 실행할 때의 병목에 맞춰 선택한다.**
+
+| 상황 | 줄이려는 비용 | 양자화 대상 |
+|---|---|---|
+| Weight를 읽는 비용이 큰 작은 batch의 decode | Weight 저장과 읽기 | Weight-only |
+| 행렬곱 연산이 병목인 prefill | 행렬곱 실행 시간 | Weight와 activation |
+| 긴 문맥이나 많은 동시 요청의 decode | KV cache 저장과 읽기 | KV cache |
+
+이들은 함께 적용할 수도 있다.
+예를 들어 weight와 KV cache를 모두 양자화하면 각각의 저장과 읽기 비용을 줄일 수 있다.
+같은 prefill이라도 선형층의 행렬곱은 연산이 병목일 수 있고, attention은 메모리 대역폭이 병목일 수 있으므로 작업별로 확인해야 한다.
 
 ### 2-3. 하드웨어와 kernel
 
@@ -419,436 +430,241 @@ FP8에는 지수와 가수의 bits를 다르게 배분한 E4M3와 E5M2 같은 �
 
 ### 3-1. 반올림의 한계
 
-Decode 스텝을 weight 읽기가 지배한다면 weight만 4-bit 이하로 줄이는 쪽이 이득이 크다.
-Activation과 달리 weight에는 큰 outlier가 드물어 8-bit에서는 단순 반올림(RTN, round-to-nearest)으로도 괜찮지만,
-4-bit 이하로 내려가면 오차가 쌓인다.
-GPTQ 논문의 OPT-175B 실험에서 WikiText-2 perplexity(낮을수록 좋다)는 FP16이 8.34, RTN 4-bit이 10.54였고,
-RTN 3-bit은 7,300으로 모델이 무너졌다.[^gptq]
+Weight-only 양자화는 weight를 낮은 bits로 저장해 메모리 사용량과 읽는 양을 줄인다.
+특히 작은 batch의 decode처럼 weight를 읽는 데 시간이 많이 드는 상황에서 유용하다.
+하지만 bits를 줄이면 표현할 수 있는 값이 줄어들어 반올림 오차가 커진다.
+단순히 가장 가까운 값으로 반올림하는 RTN(round-to-nearest)은 간단하지만, 4-bit 이하에서는 모델의 출력이 크게 달라질 수 있다.[^gptq]
 
-이 오차를 줄이는 방법은 두 갈래로 나뉜다.
-반올림한 뒤 남은 weight를 고쳐 오차를 메우는 GPTQ와, 반올림하기 전에 오차가 크게 드러날 weight를 보호하는 AWQ다.
+이 문제에 접근하는 두 방법을 살펴보자.
+GPTQ는 층 출력 오차의 Hessian을 이용해 weight를 양자화하고, 그 과정에서 생기는 오차를 보정한다.
+AWQ는 입력 activation을 살펴 중요한 weight를 찾고, 양자화 전에 weight의 크기를 조정한다.
 
 ### 3-2. GPTQ
 
-Frantar 등의 GPTQ는 층 하나를 양자화할 때 weight 자체의 오차보다 **층 출력의 오차**를 줄이는 문제로 본다.[^gptq]
-목표는 층 출력의 오차 $\lVert XW-X\hat{W}\rVert^2$를 최소로 하는 양자화된 weight $\hat{W}$다.
-Weight를 하나 양자화해 오차가 생기면,
-아직 양자화하지 않은 다른 weight를 조금씩 고쳐 그 오차를 출력에서 상쇄한다.
-두 입력 차원의 값이 여러 입력에서 함께 커지고 작아진다면, 한 weight의 오차를 다른 weight를 고쳐 출력에서 메울 수 있기 때문이다.
-
-<Callout type="example">
-출력이 $y=w_1x_1+w_2x_2$이고, 두 입력이 늘 같은 값($x_1=x_2=1$)이라고 하자.
-Weight는 $w=(0.35,\,0.35)$, 격자 간격은 0.25다.
-각자 반올림하면 $(0.25,\,0.25)$가 되어 $y$가 0.70에서 0.50으로 0.20 줄어든다.
-대신 $w_1$만 먼저 0.25로 반올림하고,
-생긴 오차 0.10을 $w_2$에 더해 0.45로 고친 뒤 반올림하면 $w_2=0.50$이 된다.
-출력은 $0.25+0.50=0.75$로 오차가 0.05다.
-두 입력이 늘 함께 움직이므로 $w_1$의 손실을 $w_2$가 메울 수 있었다.
-</Callout>
-
-실제 GPTQ는 calibration 데이터를 넣었을 때 그 선형층에 들어오는 activation을 모은 행렬 $X$로 입력 차원끼리의 이런 관계를 잰다.
-$X$는 토큰마다 한 행, 입력 차원마다 한 열을 두므로, $X^\top X$는 입력 차원끼리의 곱을 모든 토큰에 걸쳐 더한 행렬이다.
-입력이 두 개라면, $w_1$을 반올림해 생긴 오차 $e=w_1-\hat{w}_1$을 메우려고 $w_2$에 더할 값은 다음과 같다.
+양자화에서 무엇의 오차를 줄여야 할까?
+Weight를 각각 가장 가까운 값으로 반올림하면 각 weight의 오차는 작다.
+하지만 우리가 원하는 것은 **양자화된 층의 출력이 원래 층의 출력과 비슷한 것**이다.
+Weight의 오차가 서로 상쇄된다면 각 weight가 조금 달라져도 출력은 원래와 가까울 수 있다.
+GPTQ는 이 점에 착안해 calibration 데이터를 넣었을 때 양자화 전후의 층 출력 차이를 줄인다.[^gptq]
+입력 activation을 $X$, 원래 weight를 $W$, 양자화한 뒤 복원한 weight를 $\hat{W}$라고 하면 줄이려는 오차는 다음과 같다.
 
 $$
-\delta_2=e\cdot\frac{\sum x_1x_2}{\sum x_2^2}
+\lVert XW-X\hat{W}\rVert_F^2
 $$
 
-$\sum$은 calibration 데이터의 모든 토큰에 걸친 합이다.
-$w_1$의 오차가 출력에 남기는 $-e\,x_1$을 $\delta_2x_2$로 상쇄할 때, 모든 토큰에서 남는 차이의 제곱합 $\sum(\delta_2x_2-e\,x_1)^2$을 $\delta_2$로 미분해 0으로 두면 이 값이 나온다.
-앞의 예처럼 두 입력이 늘 같으면 비율이 1이라 오차를 그대로 더한다.
-분자 $\sum x_1x_2$가 정확히 0이고 분모가 양수라면 보정값도 0이므로 이 입력으로는 오차를 메울 수 없다.
-분자만 작다는 사실로는 부족하다.
-예를 들어 calibration 토큰 하나에서 $x_1=1$, $x_2=0.001$이면 분자와 분모가 모두 작지만, 이 식에서는 $w_2$를 $1{,}000e$만큼 고쳐 오차를 메울 수 있다.
-이는 아직 $w_2$를 반올림하기 전의 보정이다.
-분자와 분모는 $X^\top X$(입력 차원×입력 차원)의 원소다.
-입력 차원이 많으면 아직 양자화하지 않은 weight 모두가 오차를 나누어 메운다.
+$XW$와 $X\hat{W}$는 각각 같은 입력에 대한 양자화 전과 후의 층 출력이다.
+표시된 오차는 두 출력의 각 원소 차이를 제곱해 모두 더한 값이다.
+이는 모델의 최종 출력 오차를 직접 줄이는 대신, 각 층의 출력을 원래에 가깝게 복원하도록 풀기 쉬운 목표를 정한 것이다.
 
-<Details summary="입력 차원이 여러 개일 때의 보정">
-남은 weight에 대응하는 입력들을 모은 행렬을 $X_R$, 방금 양자화한 weight에 대응하는 입력을 모은 열을 $x_1$이라 하면,
-남은 weight의 보정 벡터 $\delta$는 $X_R^\top X_R\,\delta=eX_R^\top x_1$을 푸는 값이다.
-$X_R^\top X_R$이 역행렬을 가지면 $\delta=e(X_R^\top X_R)^{-1}X_R^\top x_1$이고, 남은 입력이 하나라면 위의 $\delta_2$ 식이 된다.
-다만 앞 예시처럼 입력들이 완전히 같으면 전체 $X^\top X$는 특이해 역행렬이 없다.
-실제 GPTQ는 수치 문제를 줄이려고 통계 행렬의 대각 원소에 대각 평균의 1%를 더해 계산한다.[^gptq]
+GPTQ는 이 <strong>층 출력 오차의 Hessian(헤시안)</strong>을 이용한다.
+Hessian은 오차를 weight에 대해 두 번 미분한 값을 모은 것으로, weight가 바뀔 때 출력 오차가 얼마나 달라지는지와 여러 weight의 변화가 함께 미치는 영향을 나타낸다.
+GPTQ에서는 **calibration 데이터를 층에 넣어 얻은 activation으로 Hessian**을 구한다.
+예를 들어 두 입력 channel이 여러 입력에서 비슷하게 움직인다면, 한쪽 weight의 변화가 출력에 미치는 영향을 다른 쪽 weight를 바꾸어 어느 정도 상쇄할 수 있다.
+
+GPTQ는 Hessian의 역행렬을 이용해 이런 관계를 고려하면서 weight를 차례로 양자화한다.
+GPTQ의 처리 순서를 이 방향에 맞춰 보면 다음과 같다.
+
+1. 연속된 입력 channel의 행들을 하나의 블록으로 잡는다.
+2. 블록의 현재 행을 양자화하고, 그 오차를 줄이도록 블록 안에서 아직 양자화하지 않은 뒤쪽 행들을 보정한다.
+3. 다음 행으로 넘어가 같은 과정을 블록 끝까지 반복한다.
+4. 블록 처리가 끝나면 그 블록의 오차를 반영해 블록 밖에 남은 행들을 한꺼번에 보정하고, 다음 블록으로 넘어간다.
+
+<Details summary="GPTQ 원논문의 알고리즘">
+
+논문은 weight를 이 노트와 전치된 방향으로 두므로, 위에서 설명한 행이 아래 알고리즘에서는 열이다.
+그림에서 $Q$는 양자화 결과, $E$는 블록의 오차, $B$는 처리 블록의 크기다.
+
+<Figure src={gptqAlgorithm.src} alt="GPTQ 원논문의 Algorithm 1. 블록 단위 반복문 안에서 현재 열을 양자화하고 오차를 구해 블록 안의 weight를 갱신한다. 안쪽 반복이 끝나면 블록 밖의 남은 weight를 일괄 갱신한다." caption="GPTQ의 블록 단위 양자화와 오차 보정." source="Frantar et al. (2023), Algorithm 1" wide />
+
 </Details>
-
-$W$의 행, 곧 입력 차원을 위에서부터 차례로 양자화하고,
-행 하나를 양자화할 때마다 아직 양자화하지 않은 아래 행들을 고쳐 방금 생긴 오차를 메운다.
-실제로는 행 여러 개를 블록으로 묶어 처리해 GPU에서 빠르게 돌린다.
-
-그 결과 OPT-175B를 A100 한 대에서 약 4시간에 양자화했고,
-4-bit perplexity가 8.37, 3-bit이 8.68로 FP16(8.34)에 가까웠다.
-3-bit OPT-175B는 A100 다섯 대 대신 한 대에 올라가 토큰당 지연이 3.24배 짧아졌다(batch 1, 128토큰 생성).
-이 속도 향상은 행렬곱의 연산량이 줄어서가 아니라 읽는 bytes가 줄어서 생긴다는 점도 원논문이 직접 밝힌다.
 
 ### 3-3. AWQ
 
-Lin 등의 AWQ는 반올림한 뒤 오차를 메우는 대신, 반올림하기 전에 중요한 weight를 보호하는 쪽을 택했다.[^awq]<Sidenote>[MLSys](https://mlsys.org/About)는 머신러닝과 컴퓨터 시스템의 접점을 다루는 학회다. 모델의 정확도뿐 아니라 학습·추론 속도, 메모리 사용량, 하드웨어와 소프트웨어 구현도 함께 연구한다. AWQ는 MLSys 2024에 발표되었다.</Sidenote>
-출발점은 weight마다 중요도가 다르다는 관찰이다.
-입력 channel 1%에 연결된 weight만 FP16으로 남겨도 양자화 오차가 크게 줄었는데, 어느 channel을 고르느냐가 중요했다.
-Weight 크기가 아니라 **거기에 곱해지는 activation의 크기**로 channel을 골랐을 때 효과가 컸다.
-INT3, group 128의 OPT-6.7B에서 RTN의 perplexity 23.54가,
-activation 기준으로 고른 1%를 FP16으로 두면 11.39가 되었지만,
-weight 크기 기준으로 고르면 22.37에 그쳤다.
-Outlier channel에 곱해지는 weight의 오차는 큰 activation과 곱해져 출력에서 크게 드러나기 때문이다.
+AWQ는 <strong>어떤 weight의 오차가 출력에 더 큰 영향을 줄까?</strong>라는 질문에서 출발한다.[^awq]<Sidenote>[MLSys](https://mlsys.org/About)는 머신러닝과 컴퓨터 시스템의 접점을 다루는 학회다. 모델의 정확도뿐 아니라 학습·추론 속도, 메모리 사용량, 하드웨어와 소프트웨어 구현도 함께 연구한다. AWQ는 MLSys 2024에서 Best Paper를 수상했다.</Sidenote>
+Weight의 오차는 입력 activation에 곱해져 출력에 반영된다.
+따라서 activation이 큰 입력 channel에 연결된 weight는 같은 크기의 오차가 생겨도 출력이 더 많이 달라질 수 있다.
+AWQ 논문은 이런 중요한 weight 일부를 높은 정밀도로 남겨 두면 오차가 줄어드는 것을 관찰했다.
 
-다만 weight 일부만 FP16으로 남기면 한 행렬에 두 형식이 섞여 하드웨어에서 다루기 번거롭다.
-그래서 AWQ는 중요한 channel의 weight에 1보다 큰 배율 $c$를 곱해 키운 뒤 양자화하고,
-대응하는 activation을 그만큼 나눈다(이 나눗셈은 대개 앞 층의 파라미터에 미리 합쳐 둔다).
-키운 원소는 group 안의 일부뿐이라, 그것이 group의 최솟값이나 최댓값을 바꾸지 않는 한 격자 간격은 그대로다.
-격자 간격이 그대로라면 반올림 오차의 상한도 그대로지만, activation을 $c$로 나누므로 이 weight의 오차가 출력에 미치는 영향의 상한은 $1/c$배가 된다.
-배율이 너무 크면 group의 최댓값이 커져 격자 간격이 넓어지고, 나머지 weight의 오차가 늘어난다.
-같은 OPT-6.7B 실험에서 중요한 1% channel에 배율을 곱했을 때 perplexity는 $c=1$(RTN) 23.54, $c=2$ 11.92, $c=4$ 12.36이었다.
+하지만 일부 weight만 높은 정밀도로 저장하면 서로 다른 형식이 섞여 실행하기 번거롭다.
+AWQ는 대신 **중요한 weight를 양자화하기 전에 키우고**, 그에 곱해지는 activation은 같은 배율로 나눈다.
+예를 들어 weight에 2를 곱하고 activation을 2로 나누면, 둘의 곱은 양자화하기 전과 같다.
+이 선형층의 성질을 이용해 행렬곱 결과를 유지하면서 weight가 양자화되는 방식을 바꾼다.
+AWQ는 **calibration 데이터에서 출력 오차가 작아지도록 channel별 배율**을 고른다.
 
-<Callout type="example">
-격자 간격이 0.1인 group에서 중요한 weight $w=0.23$을 그대로 반올림하면 0.2가 되어 오차가 0.03이다.
-배율 $c=2$를 곱한 0.46을 반올림하면 0.5다.
-Activation을 2로 나누므로 이 weight가 출력에 기여하는 값은 $0.5/2=0.25$에 해당하고, 오차는 0.02다.
-격자 간격은 그대로인데 $w$ 입장에서는 간격이 0.05로 촘촘해진 셈이라, 오차 상한도 0.05에서 0.025로 준다.
-</Callout>
-
-실제 AWQ는 1%만 고르지 않고 모든 입력 channel에 배율을 둔다.
-배율은 channel별 activation 평균 크기의 $\alpha$제곱으로 둔다.
-$\alpha>0$이면 activation이 상대적으로 큰 channel의 weight에 더 큰 배율을 주고, $\alpha=0$이면 배율이 모두 1이다.
-모든 channel에 배율을 곱하면 격자 간격도 바뀌지만, 효과를 내는 것은 channel 사이 배율의 상대적 크기이고 그 정도를 $\alpha$로 조절한다.
-$\alpha$는 0과 1 사이의 여러 값을 시험해(grid search) calibration 데이터에서 층 출력의 오차가 가장 작은 값을 고른다.
-찾을 변수가 하나뿐이라 역전파 없이 금방 정해진다.
-Weight를 자를 범위도 calibration 데이터에서 양자화 뒤 출력 오차가 작아지도록 고른다.
-범위를 최솟값·최댓값보다 조금 좁히면 끝의 값 몇 개는 잘리지만, 격자 간격이 줄어 나머지 값의 오차가 준다.
-
-AWQ는 calibration 데이터로 channel별 크기를 재고 $\alpha$와 자를 범위를 고를 뿐, GPTQ처럼 weight 하나하나의 오차를 다른 weight로 메우도록 고치지는 않는다.
-AWQ 논문의 비교에서는 GPTQ보다 calibration 데이터의 분포에 덜 민감했다.
-OPT-6.7B를 INT3로 양자화할 때 calibration과 평가에 다른 분포의 데이터를 쓰면, GPTQ의 perplexity는 2.3–4.9 나빠졌지만 AWQ는 0.5–0.6 오르는 데 그쳤다.[^awq]
-
-두 갈래는 함께 쓸 수도 있다.
-AWQ로 배율을 정한 뒤 GPTQ로 양자화하면, INT2처럼 아주 낮은 bits에서 GPTQ만 쓸 때보다 perplexity가 더 낮았다.[^awq]
-AWQ와 함께 공개한 inference 프레임워크 TinyChat은 batch 1로 200토큰을 생성할 때 Hugging Face의 FP16 구현보다 RTX 4090에서 2.7–3.9배 빨랐다.[^awq]
-TinyChat은 양자화된 선형층 외에도 다른 연산을 최적화했으므로, 이 배율 전체를 weight의 정밀도를 낮춘 효과로 볼 수는 없다.
-비교 대상 중 Falcon의 당시 Hugging Face 구현은 KV cache를 제대로 지원하지 않아, 그 비교에는 cache 구현 차이도 반영되었다.
+<Figure src="https://arxiv.org/html/2306.00978v6/method.svg" alt="세 가지 weight 양자화 방법 비교. 왼쪽은 모든 weight를 단순 양자화하고, 가운데는 중요한 일부 weight를 높은 정밀도로 유지한다. 오른쪽은 activation을 참고해 channel별로 크기를 조정한 뒤 weight를 양자화하는 AWQ다." caption="단순 양자화, 일부 weight를 높은 정밀도로 유지하는 방식, AWQ." source="Lin et al. (2024), Figure 2" wide />
 
 ### 3-4. Weight-only의 한계
 
-Weight-only의 이득은 batch가 커지거나 prefill로 가면 줄어든다.
-첫째, batch가 크고 문맥이 길면 읽는 데이터의 대부분이 KV cache다.
-Llama 3.1 8B에서 문맥이 2,048토큰인 요청 192개를 묶고 weight와 각 요청의 KV cache를 한 번씩 읽는다고 근사하면 decode 스텝은 약 67.8 GB를 읽는다.
-그중 weight는 약 16 GB이므로,
-weight를 INT4로 줄여도 읽는 데이터는 약 56 GB로 18%쯤 줄어드는 데 그친다.
-둘째, weight-only는 읽는 bytes를 줄이지만 행렬곱의 연산량은 그대로이고, weight를 dequantize하는 연산이 더해진다.
-작은 batch의 decode에서는 놀던 연산 장치가 이 계산을 맡지만,
-prefill처럼 선형층이 이미 compute-bound이면 weight를 덜 읽어 아끼는 시간은 거의 없고 dequantize 계산이 비용으로 더해진다.
-Zhou 등의 서베이는 AWQ 4-bit weight로 Llama 2를 실험해,
-weight-only가 decode를 크게 빠르게 하지만 prefill에서는 dequantize 비용 때문에 오히려 느려질 수 있고,
-batch와 입력이 커질수록 이득이 줄어든다고 정리했다.[^zhou]
+Weight-only는 weight를 덜 읽게 해 주지만, 항상 전체 데이터 이동을 크게 줄이지는 않는다.
+예를 들어 긴 문맥의 요청이 많으면 각 요청의 KV cache도 읽어야 하므로, weight가 전체 읽기에서 차지하는 비중이 작아진다.
+이때는 weight만 줄이는 것 외에 KV cache를 줄이는 방법도 필요하다.
 
-이 한계는 weight-only가 행렬곱 자체는 16-bit로 하기 때문이다.
-큰 batch와 prefill에서도 빨라지려면 activation까지 낮은 bits로 바꿔 행렬곱을 저정밀 연산 장치로 해야 하는데,
-activation에는 weight에 없던 어려움이 있다.
+또 weight-only는 낮은 bits로 저장한 **weight를 연산할 때 복원**하므로, 행렬곱 자체는 여전히 16-bit로 수행한다.
+작은 batch의 decode에서는 메모리에서 아낀 시간이 복원 비용보다 클 수 있다.
+반면 prefill처럼 행렬곱의 연산이 병목이면 weight를 덜 읽어도 빨라지기 어렵고, 복원 비용 때문에 느려질 수도 있다.[^zhou]
+이때는 activation까지 양자화해 저정밀 행렬곱을 활용하는 방법을 생각할 수 있다.
 
 ## 4. Weight-activation 양자화
 
+Weight와 activation을 함께 낮은 bits로 바꾸면 이를 지원하는 연산 장치에서 저정밀 행렬곱을 수행할 수 있다.
+그런데 **activation에는 다른 값보다 훨씬 큰 outlier**가 나타날 수 있다.
+큰 값에 맞춰 scale을 정하면 간격이 넓어져, 나머지 작은 값들의 반올림 오차가 커진다.
+다음 방법들은 이 문제를 각기 다르게 다룬다.
+
 ### 4-1. LLM.int8()
 
-AWQ가 중요한 weight를 고를 때 기댄 outlier feature는, activation 자체를 양자화할 때는 걸림돌이 된다.
-8-bit 정도면 반올림만 해도 충분할 것 같지만,
-Dettmers 등은 모델이 커져 outlier feature가 뚜렷해지면 단순한 8-bit 양자화의 성능이 무너진다는 것을 보였다.[^llmint8]
-Outlier channel은 대부분의 토큰에 나타나므로, per-token으로 토큰마다 scale을 따로 두어도 각 토큰의 scale이 결국 outlier로 정해진다.
-그러면 앞의 균일 양자화 예시처럼 나머지 값의 정밀도가 무너진다.
+큰 activation이 **소수의 입력 channel에 집중**되어 있고 여러 토큰에 걸쳐 나타난다고 하자.
+토큰마다 따로 scale을 정해도 각 토큰에 큰 값이 포함되므로 작은 값의 정밀도를 지키기 어렵다.
+Dettmers 등의 LLM.int8()은 이런 channel을 다른 값과 **나누어 계산**한다.[^llmint8]
 
-LLM.int8()의 해법은 **나누어 계산하기**다.
-실행 중에 크기가 6 이상인 값이 하나라도 있는 입력 channel과 거기에 곱해지는 weight는 FP16 행렬곱으로,
-나머지는 INT8 행렬곱으로 계산한 뒤 결과를 더한다.[^llmint8]
+큰 값이 있는 activation channel과 그에 곱해지는 weight는 FP16으로 계산한다.
+나머지 activation과 weight는 INT8로 양자화해 행렬곱을 수행하고, 두 결과를 더한다.
+즉 양자화하기 어려운 일부를 높은 정밀도로 남겨 출력 오차를 줄이는 방법이다.
 
-<Figure src="https://arxiv.org/html/2208.07339v2/method2_horizontal.svg" alt="LLM.int8()의 계산 흐름도. 왼쪽에 FP16 activation X(3행 5열)와 weight W(5행 2열)가 있고, X의 둘째와 넷째 열(45, 12, 37과 −17, −63, −83)과 그에 곱해지는 W의 둘째와 넷째 행이 노란 outlier로 칠해져 있다. 위쪽 상자 8-bit Vector-wise Quantization은 나머지 하늘색 값만 모아 (1) X의 행마다 최대 절댓값 C_x(2, 3, 1)와 W의 열마다 최대 절댓값 C_w(1, 2)를 구하고, (2) X_F16·(127/C_x)=X_I8, W_F16·(127/C_w)=W_I8로 양자화한 뒤, (3) INT8 행렬곱으로 Out_I32를 얻고, (4) Out_I32·(C_x⊗C_w)/(127·127)로 dequantize해 FP16 결과를 얻는다. 아래쪽 상자 16-bit Decomposition은 노란 outlier 열과 행만 모아 FP16 행렬곱을 한다. 두 결과를 더해 Out_FP16을 낸다." caption="노란 outlier channel(X의 열과 거기에 곱해지는 W의 행)은 아래쪽 FP16 행렬곱으로, 나머지는 위쪽에서 토큰마다(X의 행), 출력 channel마다(W의 열) 대칭 INT8로 양자화해 정수 행렬곱을 한다. 그림의 127/C는 본문의 1/s에 해당한다. 최대 절댓값 C를 정수 127에 맞추므로 s=C/127이다." source="Dettmers et al. (2022), Figure 2 · CC BY 4.0" wide />
-이것으로 OPT-175B까지 정확도 손실 없이 8-bit로 inference했고, BLOOM-176B의 메모리를 1.96배 줄였다.
-다만 행렬을 둘로 나누어 따로 계산하는 부담 때문에, BLOOM-176B의 생성 속도는 16-bit와 비슷하거나 조금 느렸다.
+<Figure src="https://arxiv.org/html/2208.07339v2/method2_horizontal.svg" alt="Activation과 weight를 outlier가 있는 부분과 나머지로 나누어 계산하는 LLM.int8()의 흐름도. 노란 부분은 FP16으로, 하늘색 부분은 INT8로 행렬곱한 뒤 두 결과를 더한다." caption="LLM.int8()은 outlier가 있는 노란 부분을 FP16으로 계산하고, 나머지는 INT8로 계산한 뒤 결과를 더한다." source="Dettmers et al. (2022), Figure 2" wide />
 
 ### 4-2. SmoothQuant
 
-LLM.int8()은 정확도를 지켰지만 행렬을 둘로 나누어 계산하는 부담이 있다.
-Xiao 등의 SmoothQuant는 행렬을 나누지 않고 모든 값을 INT8 행렬곱 하나로 계산하는 길을 찾았다.[^smoothquant]
-실마리는 outlier가 activation의 **같은 channel에 고정되어** 나타나고,
-그 channel에 곱해지는 weight $W$의 행은 평범한 크기라는 점이다.
-Activation은 양자화하기 어렵고 weight는 쉬운 셈이다.
+SmoothQuant는 행렬곱을 둘로 나누지 않고 activation의 outlier를 다룬다.[^smoothquant]
+핵심은 AWQ에서 본 선형층의 성질이다.
+Activation을 어떤 배율로 나누고 거기에 곱해지는 weight를 같은 배율로 키우면, 양자화하기 전 행렬곱 결과는 유지된다.
 
-<Figure src="https://arxiv.org/html/2211.10438v7/aw-dist-long.png" alt="OPT-13B 한 층의 activation과 weight 크기를 3차원으로 그린 네 그림이다. 첫째, 원래 activation은 몇몇 channel에서 값이 70에 이르는 빨간 벽처럼 솟아 있고 나머지는 2 이하로 낮다. 둘째, smoothing 후 activation은 모든 channel이 10 이하로 고르다. 셋째, 원래 weight는 전체가 평평하다. 넷째, smoothing 후 weight는 일부 입력 channel에 작은 봉우리가 생겼지만 여전히 낮다. 위쪽 화살표는 양자화의 어려움을 activation에서 weight로 옮긴다는 뜻이다." caption="양자화의 어려움을 activation에서 weight로 옮기기 전과 후. 옮기기 전(첫째, 셋째 그림)에는 activation의 몇몇 channel만 벽처럼 솟고 weight는 평평하다. 옮긴 뒤(둘째, 넷째 그림)에는 activation의 outlier channel이 평평해지는 대신 weight에 작은 봉우리가 생긴다." source="Xiao et al. (2023), Figure 4 · CC BY 4.0" wide />
+예를 들어 activation이 100이고 weight가 0.1이면 둘의 곱은 10이다.
+Activation을 10으로 나누고 weight를 10배 하면 10과 1이 되어 곱은 여전히 10이다.
+이처럼 큰 activation을 줄이는 대신 weight를 키우면 양자화하기 어려운 정도를 두 쪽으로 나눌 수 있다.
+실제로는 입력 channel마다 배율을 정하며, weight가 너무 커져 오차가 늘지 않도록 함께 고려한다.
 
-Activation을 입력 channel마다 다른 scale로 양자화하면 정확도는 지킬 수 있다.
-하지만 앞의 행렬곱 식에서 보았듯 입력 channel마다 둔 scale은 합 안에 남아, 정수 행렬곱 한 번으로 끝나지 않는다.
+<Figure src="https://arxiv.org/html/2211.10438v7/aw-dist-long.png" alt="OPT-13B 한 층의 activation과 weight 크기를 조정 전후로 나타낸 그림. 조정 전 activation의 일부 channel이 크게 솟아 있고, 조정 후에는 activation이 고르게 줄어든 대신 weight 일부가 커진다." caption="SmoothQuant는 activation의 큰 값을 줄이는 대신 그에 대응하는 weight를 키운다." source="Xiao et al. (2023), Figure 4" wide />
 
-SmoothQuant는 그 어려움을 weight 쪽으로 옮긴다.
-입력 channel $k$마다 smoothing factor $c_k$를 정해 activation을 $c_k$로 나누고 weight의 해당 행에 $c_k$를 곱하면,
-행렬곱의 결과는 그대로다.
-$c_k$들을 대각선에 놓은 행렬을 $\operatorname{diag}(c)$라 쓰면 아래 식과 같다.
-
-$$
-Y=\bigl(X\operatorname{diag}(c)^{-1}\bigr)\bigl(\operatorname{diag}(c)\,W\bigr),
-\qquad
-c_k=\frac{\max\lvert X_k\rvert^{\alpha}}{\max\lvert W_k\rvert^{1-\alpha}}
-$$
-
-$X_k$는 calibration 입력의 모든 토큰에서 모은 $k$번째 입력 channel의 값, $W_k$는 거기에 곱해지는 weight의 $k$번째 행이고, $\max\lvert\cdot\rvert$는 그 값들의 최대 절댓값이다.
-$\alpha$는 어려움을 얼마나 옮길지를 정한다.
-$\alpha=0.5$이면 변환 뒤 activation과 weight의 channel $k$ 최댓값이 모두 $\sqrt{\max\lvert X_k\rvert\max\lvert W_k\rvert}$로 같아진다.
-OPT와 BLOOM에서는 $\alpha=0.5$가 균형점이었다.[^smoothquant]
-이 smoothing은 AWQ의 배율과 같은 등가 변환이고, 다른 것은 목적과 $c_k$를 고르는 기준이다.
-Weight만 양자화하는 AWQ는 중요한 weight를 보호하도록 배율을 정하고, activation까지 양자화하는 SmoothQuant는 activation의 channel별 크기 차이를 줄이도록 정한다.
-Activation이 정규화층이나 선형층에서 나온다면, 실행할 때마다 $c_k$로 나누지 않도록 그 앞 층의 파라미터를 미리 바꿔 둘 수 있다.
-앞 층이 LayerNorm(layer normalization)이나 RMSNorm(root mean square normalization)이면,
-정규화 뒤 channel마다 곱하는 학습 배율 $\gamma_k$(LayerNorm이면 bias $\beta_k$도)를 $c_k$로 나누어 둔다.
-앞 층이 선형층이면 그 weight의 해당 열을 $c_k$로 나누어 둔다.
-그래서 실행 중 비용이 거의 없다.
-
-<Figure src="https://arxiv.org/html/2211.10438v7/transform.png" alt="SmoothQuant 변환을 작은 정수 행렬로 보인 그림. 왼쪽 Original에서 activation X는 2행 4열(1, −16, 2, 6 / −2, 8, −1, −9)이고, 아래 점선 칸에 열마다의 최대 절댓값 (2, 16, 2, 9)가 있다. Weight W는 4행 3열이고 오른쪽 점선 칸에 행마다의 최대 절댓값 (2, 1, 2, 1)이 있다. 오른쪽 SmoothQuant에서는 s=√(max|X|/max|W|)로 구한 s=(1, 4, 1, 3)이 점선 칸에 있고, X̂=X·diag(s)⁻¹은 1, −4, 2, 2 / −2, 2, −1, −3이 되며, Ŵ=diag(s)·W는 둘째 행이 4, −4, −4, 넷째 행이 −3, −3, 3으로 커진다." caption="α=0.5일 때의 SmoothQuant. 그림의 s는 본문의 smoothing factor c다. X의 둘째 channel은 최대 절댓값이 16이고 거기에 곱해지는 W의 둘째 행은 1이라 c=√(16/1)=4다. 그 channel을 4로 나누고 W의 그 행에 4를 곱하면, activation의 channel별 최댓값 가운데 가장 큰 값이 16에서 4로 줄고 그만큼 weight 행이 커진다. 행렬곱의 결과는 그대로다." source="Xiao et al. (2023), Figure 5 · CC BY 4.0" />
-
-이렇게 모든 선형층의 행렬곱을 INT8로 하면서도 정확도 손실이 거의 없었다.
-A100 80GB 한 대에서 OPT-13B와 OPT-30B를 NVIDIA의 inference 라이브러리 FasterTransformer로 돌린 context(prefill) 단계는 FP16보다 최대 1.56배 빨랐고 메모리는 약 2배 줄었다.
-OPT-175B는 GPU 8대 대신 4대로 비슷하거나 더 짧은 지연에 돌렸다.[^smoothquant]
+AWQ와 SmoothQuant는 같은 곱과 나눗셈을 이용하지만 목적이 다르다.
+AWQ는 weight만 양자화할 때 중요한 weight의 오차를 줄이도록 배율을 고르고, SmoothQuant는 activation과 weight를 모두 양자화하기 쉽게 고른다.
 
 ### 4-3. 직교 회전
 
-SmoothQuant는 outlier의 크기를 activation과 weight 사이에서 나누었다.
-Activation을 4-bit까지 내리면 이렇게 크기를 나누는 것만으로는 부족하다.
-격자점이 16개뿐이라 남은 outlier 몇 개가 scale을 정하면 나머지 값이 대부분 0으로 뭉개진다.
-Ashkboos 등의 QuaRot은 outlier를 줄이는 대신 **여러 좌표에 고르게 흩는** 방법을 택했다.[^quarot]
-직교 행렬 $Q$($QQ^\top=I$)를 activation에 곱하고 weight에는 그 전치를 곱하면 행렬곱의 결과는 그대로다.
+Activation을 4-bit처럼 더 낮은 정밀도로 표현하려면 outlier가 여전히 문제가 될 수 있다.
+QuaRot은 한 channel에 몰린 큰 값을 여러 channel에 **흩뿌리는 회전변환**을 사용한다.[^quarot]
+여기서 회전은 벡터의 길이를 유지하면서 값을 다른 좌표로 표현하는 변환이다.
+**Activation을 회전하고 weight에 대응하는 역변환을 적용**하면 양자화하기 전의 행렬곱 결과는 그대로다.
 
-$$
-Y=XW=(XQ)(Q^\top W)
-$$
+회전이 모든 입력의 최댓값을 줄이는 것은 아니다.
+어떤 회전을 쓰느냐에 따라 양자화 결과가 달라지며, 회전을 실행하는 비용도 고려해야 한다.
+QuaRot은 가능한 회전을 weight에 미리 반영하고, 필요한 곳에서는 실행 중에 적용한다.
+이 방식으로 weight와 activation뿐 아니라 KV cache도 4-bit로 양자화했다.
+SpinQuant는 어떤 회전이 좋은지 학습하는 접근을 제안했다.[^spinquant]
 
-$Q$로 Hadamard 행렬처럼 모든 원소의 크기가 같은 직교 행렬을 쓰면,
-한 channel에 몰려 있던 큰 값이 회전 뒤에 여러 channel로 나뉠 수 있다.
-
-<Callout type="example">
-네 channel의 activation이 $x=(8,\,0.5,\,-0.5,\,0.5)$라고 하자.
-최댓값 8이 scale을 정하므로 대칭 INT4($s=8/7$)로는 나머지 세 값이 모두 0이 된다.
-여기에 원소가 $\pm1$인 $4\times4$ Hadamard 행렬에 $1/2$을 곱한 직교 행렬 $Q$를 곱해 보자.
-
-$$
-Q=\frac{1}{2}\begin{pmatrix}1&1&1&1\\1&-1&1&-1\\1&1&-1&-1\\1&-1&-1&1\end{pmatrix}
-$$
-
-그러면 $xQ=(4.25,\,3.25,\,4.25,\,4.25)$가 된다.
-최댓값이 4.25로 줄고 값들이 비슷해져, $s=4.25/7$인 INT4로 양자화하면 $(7,\,5,\,7,\,7)$을 저장하고 오차는 둘째 값의 0.21뿐이다.
-저장한 정수에 $s$를 곱해 복원하고 $Q^\top$을 곱해 원래 좌표로 되돌리면 $(7.89,\,0.61,\,-0.61,\,0.61)$로,
-회전 없이는 0이 되었던 작은 값들이 0.11 오차 안에서 살아난다.
-</Callout>
-
-다만 모든 입력에서 최댓값이 줄어드는 것은 아니다.
-예를 들어 이 행렬 $Q$를 $(1,\,1,\,1,\,1)$에 적용하면 $(2,\,0,\,0,\,0)$이 되어 오히려 한 좌표에 모인다.
-어떤 회전을 쓰는지와 실제 activation 분포에 따라 효과가 달라진다.
-
-QuaRot은 회전을 가능한 곳에서는 미리 weight에 합쳐 실행 중 비용을 줄이고, 나머지 필요한 곳에서는 실행 중에 회전한다.
-
-<Details summary="QuaRot의 회전 적용">
-
-QuaRot은 층 사이를 흐르는 residual stream을 통째로 회전된 좌표로 표현한다.
-Residual stream은 각 층이 입력에 자기 출력을 더해 다음 층으로 넘기는 hidden 벡터의 흐름이다.
-이 벡터 $h$를 처음부터 회전된 좌표 $hQ$로 들고 다닌다고 하자.
-처음 흐름을 만드는 embedding 행렬에 $Q$를 곱해 두면 된다.
-그러면 흐름에서 값을 읽는 선형층(attention의 query·key·value 투영, FFN의 입력 투영, 마지막 출력층)은 weight $W$를 $Q^\top W$로 바꿔 두어야 $(hQ)(Q^\top W)=hW$로 원래 결과가 나온다.
-흐름에 값을 더하는 선형층(attention의 출력 투영, FFN의 출력 투영)은 weight $W'$를 $W'Q$로 바꿔 두어, 출력도 같은 회전된 좌표로 더해지게 한다.
-이렇게 회전은 대부분 앞뒤 weight에 미리 곱해 둘 수 있다.
-
-Residual stream과 선형층 사이의 RMSNorm은 벡터를 크기로만 나누고 회전은 벡터의 크기를 바꾸지 않으므로, 회전과 순서를 바꾸어도 결과가 같다.
-다만 RMSNorm이 channel마다 곱하는 학습 배율 $\gamma$는 회전과 순서를 바꿀 수 없어, 먼저 다음 선형층의 weight에 합쳐 둔다.
-FFN(feed-forward network) 안의 비선형 함수 뒤처럼 회전을 앞 weight에 미리 곱해 둘 수 없는 곳에서는,
-실행 중에 빠른 Hadamard 변환으로 activation을 회전하고 짝이 되는 회전은 다음 weight에 합쳐 둔다.
-KV cache도 4-bit로 두려면 key의 큰 값도 흩어야 한다.
-그래서 RoPE(rotary position embedding)를 거친 query와 key에 실행 중에 같은 회전을 걸어, 내적은 그대로 두고 key를 양자화하기 쉽게 만든다.
-
-</Details>
-
-QuaRot은 이렇게 weight, activation, KV cache를 모두 4-bit로 두고도 Llama 2 70B의 WikiText-2 perplexity 증가를 0.47 이내로 막았다.[^quarot]
-Liu 등의 SpinQuant는 회전에 따라 결과가 크게 달라진다는 데 주목해 회전 행렬 자체를 학습했고,
-같은 4-bit 설정에서 Llama 2 7B의 zero-shot reasoning task 정확도를 원래 모델과 2.9점 차이까지 좁혔다.
-같은 설정의 SmoothQuant보다 25.0점 높은 값이다.[^spinquant]
-Meta는 Llama 3.2 1B와 3B의 양자화 배포판 가운데 하나를 SpinQuant로 만들었다.[^llama32q]
+DuQuant 논문은 activation의 outlier를 두 종류로 구분한다.[^duquant]
+**Normal outlier**는 여러 토큰에서 특정 channel에 반복해서 나타나는 큰 값이다.
+**Massive outlier**는 소수의 토큰에만 나타나지만 그 크기가 훨씬 큰 값이다.
+DuQuant는 두 종류의 outlier를 다루기 위해 회전에 **channel의 순서를 바꾸는 permutation**을 함께 사용한다.
+먼저 activation을 작은 블록으로 나누어 각 블록 안에서 회전해 큰 값을 흩는다.
+이후 channel의 순서를 바꾸어 큰 값이 특정 블록에 몰리지 않게 배분하고, 각 블록을 다시 회전해 값을 더 고르게 만든다.
+Weight에도 대응하는 변환을 적용하므로 양자화하기 전의 선형층 출력은 유지된다.
+DuQuant는 이 방법으로 일부 토큰에 나타나는 매우 큰 outlier까지 다루어 weight와 activation을 4-bit로 양자화하고자 했다.
 
 ## 5. KV cache 양자화
 
-QuaRot은 KV cache까지 4-bit로 두었지만, KV cache는 따로 다룰 만한 대상이다.
-앞의 192개 요청 예시처럼 batch가 크고 문맥이 길면, decode에서 읽는 데이터의 대부분이 weight가 아니라 KV cache이기 때문이다.
-KV cache 크기는 원소당 bytes에 비례하므로, 이를 줄이면 같은 메모리에 더 많은 토큰이 들어가고 스텝마다 읽는 bytes도 준다.
-vLLM 같은 서빙 엔진은 KV cache를 FP8로 저장하는 옵션을 제공한다.[^vllm-fp8]
-Llama 3.1 8B라면 토큰당 KV cache가 BF16의 약 131 KB에서 약 66 KB로 준다.
-Weight를 BF16으로 두고 H100 한 대에서 vLLM으로 돌린다고 하자.
-엔진이 쓰는 GPU 메모리 73.6 GB(80 GB의 92%)에서 weight 16.1 GB와 작업 공간 약 4 GB를 뺀다고 가정하면 KV cache에 약 53.5 GB가 남는다.
-여기에 BF16이면 약 408,000토큰, FP8이면 약 816,000토큰이 들어간다(scale 같은 부가 정보 제외).
-요청 길이가 같다면 KV cache 공간만 따질 때 같은 메모리에 약 두 배의 요청이 들어간다.
-실제 동시 요청 수는 엔진의 설정과 다른 자원의 제한도 받는다.
-KV cache가 BF16이고 문맥이 2,048토큰이면 요청마다 약 0.27 GB를 읽는다.
-FP8로 줄이면 요청마다 읽는 KV cache도 약 0.13 GB가 되어, 같은 연산을 할 때 데이터 이동이 줄어든다.
-실제 전송량은 kernel의 KV 재사용과 다른 데이터의 이동에도 좌우된다.
+KV cache는 이전 토큰들의 key와 value를 저장해 다음 토큰을 생성할 때 다시 사용하는 메모리다.
+문맥이 길거나 동시에 처리하는 요청이 많으면 cache의 크기와 읽는 비용이 커진다.
+KV cache를 낮은 bits로 저장하면 같은 메모리에 더 많은 토큰을 담고, decode에서 읽는 bytes도 줄일 수 있다.
+예를 들어 BF16 cache를 FP8로 바꾸면 값 하나의 크기가 2 byte에서 1 byte로 줄어든다.
+실제 절약량에는 scale 등 부가 정보와 다른 메모리 사용량도 영향을 준다.[^vllm-fp8]
 
-FP8은 cache를 절반으로 줄이는 데 그친다.
-2-bit처럼 더 내리면 scale을 어느 축으로 묶을지가 오차를 좌우한다.
-Liu 등의 KIVI는 key와 value의 분포가 다르다는 데서 출발했다.[^kivi]
+더 낮은 bits에서는 어떤 값끼리 묶어 scale을 공유할지가 중요해진다.
+**KIVI는 key와 value의 값 분포와 attention에서의 역할이 다르므로 양자화 단위**도 다르게 정한다.[^kivi]
+Attention head 하나의 cache를 행렬로 그리면 행은 토큰, 열은 channel이다.
 
-여기서 대상은 선형층의 weight가 아니라 **KV cache의 key와 value**다.
-Attention head 하나에서 저장된 토큰이 $T$개, head 차원이 $d_h$라고 하자.
-Key cache $K_c$와 value cache $V_c$를 각각 $T\times d_h$ 행렬로 놓으면 행은 토큰, 열은 그 head의 channel이다.
-새 토큰의 query $q$는 $1\times d_h$이고, $qK_c^\top$은 저장된 토큰마다 점수 하나씩을 담는 $1\times T$이다.
-이 점수에 softmax를 적용한 attention weight $a$에 $V_c$를 곱하면 $aV_c$는 $1\times d_h$ 출력이 된다(점수의 크기 조정은 생략했다).
+- **Key는 per-channel:** 같은 channel의 여러 토큰을 묶는다. 일부 channel에 큰 값이 집중되는 경향이 있어, 그 channel을 다른 channel과 따로 묶으면 큰 값이 다른 channel의 정밀도를 해치는 것을 줄일 수 있다.
+- **Value는 per-token:** 한 토큰의 여러 channel을 묶는다. Attention은 토큰별 value를 가중합하므로, 토큰마다 scale을 따로 두면 중요한 토큰의 값이 다른 토큰의 값 범위에 영향을 덜 받는다.
 
-이 행렬에서 key의 per-channel은 **한 열 안에서 여러 토큰을 묶는 것**이고, value의 per-token은 **한 행 안에서 channel을 묶는 것**이다.
-예를 들어 4토큰, 3 channel이면 key의 둘째 channel은 둘째 열의 값 4개이고, value의 셋째 토큰은 셋째 행의 값 3개다.
-앞에서 본 선형층 weight의 per-channel은 출력 channel을 고정한 $W$의 열이었지만, KV cache에서 channel은 head의 feature 차원이다.
-대상과 행렬 배치를 먼저 지정해야 같은 이름의 축을 올바르게 읽을 수 있다.
-Key에는 값이 유독 큰 channel이 몇 개 고정되어 나타난다.
-Activation의 outlier feature와 같은 모양이므로,
-같은 channel끼리 묶어(per-channel) scale을 두어야 그 큰 값이 다른 channel의 정밀도를 망치지 않는다.
-저자들이 살펴본 value cache에서는 이처럼 고정된 channel의 outlier 패턴이 뚜렷하지 않았다.
-대신 attention 출력은 토큰별 value의 가중합이고, softmax를 거친 attention weight가 소수의 토큰에 몰리면 그 토큰들의 value가 출력에 크게 기여한다.
-Value를 토큰마다 따로 묶으면(per-token) 양자화 오차가 각 토큰 안에 갇혀, 출력에 크게 기여하는 몇 토큰의 value가 다른 토큰 때문에 손상되지 않는다.
-Llama 2 13B에서 value를 per-channel로 묶으면 attention 출력의 상대 오차가 per-token보다 약 14배 컸다.[^kivi]
+다음 두 그림은 같은 모델, 층, head에서 key와 value의 값 크기를 나타낸다.
+Key에는 여러 토큰에 걸쳐 특정 channel의 값이 큰 패턴이 나타나지만, value에는 그런 패턴이 뚜렷하지 않다.
 
-<Figure src="https://arxiv.org/html/2402.02750v2/Llama-2-13b-hf_layer16_head0_k.svg" alt="Llama 2 13B 16층 head 0의 key cache 크기를 3차원 곡면으로 그린 그림. 가로축은 토큰(0–200), 깊이축은 channel(0–127), 세로축은 절댓값이다. 대부분의 channel은 절댓값 2.5 이하의 낮은 파란 바닥을 이루지만, 몇몇 channel은 모든 토큰에 걸쳐 10을 넘게 솟은 빨간 벽을 이룬다." caption="Key cache. 큰 값이 몇몇 channel에 고정되어 토큰 축을 따라 벽처럼 이어진다. 그래서 같은 channel끼리 묶어 scale을 둔다." source="Liu et al. (2024), Figure 2 · CC BY 4.0 · Llama 2 13B 16층 head 0의 key 패널만 사용" />
+| Key cache | Value cache |
+| --- | --- |
+| ![일부 channel에서 큰 값이 여러 토큰에 걸쳐 벽처럼 나타나는 key cache 분포](https://arxiv.org/html/2402.02750v2/Llama-2-13b-hf_layer16_head0_k.svg) | ![특정 channel에 큰 값이 지속되는 뚜렷한 패턴이 보이지 않는 value cache 분포](https://arxiv.org/html/2402.02750v2/Llama-2-13b-hf_layer16_head0_v.svg) |
 
-두 경우 모두 scale이 합을 구하는 축을 따라 바뀐다.
-Query와 key의 내적은 channel에 걸친 합이라 key의 per-channel scale이 합 안에 남고,
-attention 출력은 토큰에 걸친 가중합이라 value의 per-token scale이 합 안에 남는다.
-그래서 scale을 마지막에 한 번만 곱하는 정수 행렬곱은 쓸 수 없다.
-KIVI는 query와 attention weight를 원래 정밀도로 두고, weight-only 양자화처럼 양자화한 KV cache를 행렬곱 kernel 안에서 작은 블록씩 dequantize해 곱한다.[^kivi]
+Value에 per-token을 쓰는 이유는 분포 그림만으로는 충분히 설명되지 않는다.
+Attention 출력이 토큰별 value의 가중합이라는 점까지 고려했을 때, 논문의 실험에서는 per-token 양자화가 출력 오차를 더 작게 만들었다.
 
-또 per-channel 묶음은 같은 channel의 값을 토큰 여러 개에 걸쳐 모아야 만들 수 있어, 토큰이 하나씩 생기는 decode와 바로 맞지 않는다.
-그래서 KIVI는 새 key를 원래 정밀도로 모아 두었다가, 정해 둔 수(예: 128토큰)가 차면 양자화한다.
-이때 각 channel에서 토큰 여러 개(예: 32개)를 한 group으로 묶어 group마다 scale을 둔다(per-channel을 토큰 방향의 group으로 나눈 것).
-Value는 토큰마다 바로 양자화할 수 있지만, 정확도를 위해 최근 토큰 일부는 역시 원래 정밀도로 둔다.
-
-KIVI는 이렇게 KV cache를 2-bit로 줄여 모델 weight를 포함한 최대 메모리를 2.6배 줄였다(Llama 2 7B, A100 한 대).[^kivi]
-비슷한 최대 메모리 사용량에서 batch를 최대 4배 키우자 처리량은 2.35–3.47배 높아졌다.
-이 처리량 비교는 같은 batch 크기에서 양자화만 바꾼 효과가 아니다.
-다만 KV cache는 생성 중에 계속 새로 쓰이므로, weight와 달리 실행 중에 양자화하고 dequantize하는 비용이 든다.
+Decode에서는 새 토큰의 key와 value가 하나씩 생긴다.
+Key를 여러 토큰에 걸쳐 묶으려면 값이 모일 때까지 기다려야 하므로, KIVI는 최근 값을 원래 정밀도로 두었다가 일정량이 쌓이면 양자화한다.
+Value도 정확도를 위해 최근 일부는 원래 정밀도로 유지한다.
+Cache를 읽어 attention을 계산할 때는 양자화된 값을 복원해야 하므로, 메모리 절약과 함께 양자화·복원 비용도 고려해야 한다.
 
 ## 6. QServe의 양자화와 kernel
 
-Weight, activation, KV cache의 양자화는 한 시스템 안에서 합쳐지기도 한다.
-Lin 등의 QServe는 세 대상을 함께 줄이면서, 양자화의 이론적 이득을 실제 서빙 속도로 이어 가려는 연구다.[^qserve]
-저자들은 기존 INT4 방식의 행렬곱 kernel에서 weight나 부분합을 dequantize하는 데 kernel 실행 시간의 20–90%가 들 수 있다고 지적했다.
-데이터를 적게 읽어도 복원과 부가 연산에 시간이 많이 들면 전체 속도는 기대만큼 빨라지지 않는다.
+지금까지 양자화 대상과 오차를 줄이는 방법을 살펴보았다.
+실제로 속도를 높이려면 그 값을 GPU에서 어떻게 읽고 연산할지도 함께 설계해야 한다.
+QServe는 weight, activation, KV cache를 각각 4-bit, 8-bit, 4-bit로 다루는 양자화 방법과 서빙 시스템을 함께 제안했다.[^qserve]
+이를 W4A8KV4라고 부른다.
 
-이를 해결하려고 저자들은 weight는 4-bit, activation은 8-bit, KV cache는 4-bit로 두는 W4A8KV4 양자화 알고리즘 **QoQ**와 이를 실행하는 서빙 시스템 **QServe**를 함께 설계했다.
-Weight는 먼저 출력 channel별 scale로 INT8을 만들고, 그 정수를 다시 group별 정수 scale로 INT4에 담는다.
-실행할 때는 INT4 weight에 group별 정수 zero-point와 scale을 적용해 INT8로 복원한다.
-예를 들어 zero-point가 8, scale이 3인 group에서 저장된 13은 `(13 - 8) × 3 = 15`가 된다.
-그다음 8-bit activation과 INT8 행렬곱을 하고, channel별 부동소수점 scale은 합 밖에 있으므로 행렬곱이 끝난 뒤에 곱한다.
+Weight를 4-bit로 저장하면 메모리에서 읽는 양이 줄어든다.
+QServe는 읽은 weight를 INT8로 복원해 8-bit activation과 행렬곱한다.
+그런데 복원에 시간이 많이 들면 데이터를 덜 읽은 이득이 줄어든다.
+따라서 어떤 값을 몇 bits로 저장할지뿐 아니라 **복원과 행렬곱을 GPU에서 어떻게 수행할지**가 중요하다.
 
-여기서 연구는 양자화 방식만 정하는 데서 끝나지 않는다.
-예를 들어 QServe는 weight를 Tensor Core가 연산할 때 각 thread가 사용할 순서에 맞춰 미리 재배치한다.
-이렇게 하면 실행 중 데이터를 찾기 위한 주소 연산을 줄이고, 여러 값을 묶어 메모리에서 읽기 쉽다.
-또 INT4 값을 INT8로 복원할 때 정수 연산의 순서를 조정하고 여러 값을 묶어 처리해 복원 비용을 줄인다.
-**어떤 값을 몇 bits로 저장할지뿐 아니라, GPU에서 데이터를 어떻게 읽고 어떤 명령어로 처리할지까지 함께 고려한 것이다.**
+예를 들어 QServe는 각 thread가 연산에 사용할 순서에 맞게 weight를 미리 배치해, 실행 중 주소를 계산하고 데이터를 가져오는 부담을 줄인다.
+또 여러 INT4 값을 함께 처리하고 복원에 필요한 정수 명령어의 순서를 조정한다.
+KV cache도 4-bit로 저장하며, key의 큰 값을 다루기 위해 query와 key의 크기를 조정한다.
+이처럼 양자화 방법과 kernel, 서빙 시스템의 설계가 함께 최종 속도를 결정한다.
 
-KV cache의 정확도도 따로 살핀다.
-QoQ의 SmoothAttention은 key의 큰 값을 줄이는 대신 query에 대응하는 배율을 적용해, 양자화하기 전의 attention 점수는 유지하면서 key의 4-bit 양자화를 쉽게 한다.
-같은 메모리 예산에서 Llama 3 8B의 최대 처리량을 비교한 실험에서는 QServe가 TensorRT-LLM의 세 설정 중 가장 빠른 설정보다 A100에서 약 1.2배 높았다.
-이 차이에는 양자화뿐 아니라 kernel과 서빙 시스템의 구현 차이도 함께 반영된다.
-
-논문에서는 [thread별 weight 배치](https://arxiv.org/html/2405.04532v3#S5.F12)와 [정수 복원 연산](https://arxiv.org/html/2405.04532v3#S5.F14)을 그림으로 설명한다.
-하드웨어에서 속도를 얻기 위해 어느 수준까지 설계를 세분화하는지 살펴볼 수 있다.
+논문의 [thread별 weight 배치](https://arxiv.org/html/2405.04532v3#S5.F12)와 [정수 복원 연산](https://arxiv.org/html/2405.04532v3#S5.F14) 그림을 보면, 실제 GPU에서 이득을 얻기 위해 데이터를 배치하고 명령어를 고르는 수준까지 설계한다는 것을 볼 수 있다.
 
 ## 7. 양자화를 고려한 학습
 
+PTQ는 학습된 모델을 양자화하므로 비교적 적은 비용으로 적용할 수 있다.
+하지만 bits를 아주 낮추면 앞의 보정만으로는 품질을 유지하기 어려울 수 있다.
+QAT는 학습 중에도 양자화된 값으로 계산해, 모델이 양자화 오차에 적응할 기회를 준다.
+
 ### 7-1. STE
 
-지금까지 본 방법은 대부분 학습된 weight를 그대로 두거나 calibration 데이터로 조금 보정하는 PTQ였다.
-PTQ에서는 모델이 양자화 오차에 맞춰 다시 배울 기회가 없어, bits를 낮출수록 손상을 메우기 어렵다.
-**QAT**는 학습 중에 양자화를 넣어, 모델이 양자화된 값으로 계산해도 손실이 작도록 weight를 조정하게 한다.
-실수 weight를 따로 두고 갱신하되, forward에서는 그 weight를 양자화했다 dequantize한 값으로 계산한다.
-반올림은 거의 모든 곳에서 미분이 0이라, 그대로는 gradient가 흐르지 않는다.
-그래서 backward에서는 반올림의 미분을 1로 보는 STE(straight-through estimator)로 gradient를 근사하고, 정수 범위 밖으로 잘린 값의 gradient만 0으로 둔다.[^nagel]
+QAT에서는 갱신할 실수 weight를 따로 유지하면서, forward에서는 그 weight를 양자화하고 복원한 값으로 계산한다.
+이렇게 하면 inference 때 생길 양자화 오차를 학습 중에도 경험한다.
+
+문제는 반올림의 미분이 대부분의 구간에서 0이라는 점이다.
+예를 들어 반올림 전 weight가 조금 바뀌어도 같은 격자점으로 반올림된다면 forward의 값은 변하지 않는다.
+그대로 미분하면 backward에서 gradient가 전달되지 않아 weight를 학습하기 어렵다.
+
+STE(straight-through estimator)는 backward에서 반올림을 통과하는 gradient를 근사해 이 문제를 다룬다.[^nagel]
+대표적으로 반올림의 미분을 1로 취급해, 양자화된 값에 도착한 gradient를 실수 weight로 전달한다.
+이는 실제 반올림의 미분이 아니라 학습을 위한 근사다.
 
 <Callout type="example">
-실수 weight가 $w=0.30$이고 격자 간격이 0.25라면 forward는 반올림한 0.25로 계산한다.
-양자화된 값에 대한 손실의 gradient가 $-0.4$로 나왔다면, STE는 반올림의 미분을 1로 보고 이 값을 그대로 $w$의 gradient로 쓴다.
-학습률 0.1로 갱신하면 $w$는 0.34가 되지만 반올림한 값은 여전히 0.25다.
-같은 방향의 gradient가 몇 번 더 쌓여 $w$가 0.375를 넘으면 그때 forward의 값이 0.50으로 바뀐다.
-격자 간격보다 작은 갱신도 실수 weight에 쌓이므로, 모델은 어느 격자점으로 옮겨 갈지를 학습할 수 있다.
+실수 weight가 0.30이고 격자 간격이 0.25라면 forward에는 0.25가 쓰인다.
+STE로 전달한 gradient에 따라 실수 weight가 0.34로 바뀌어도 forward의 값은 아직 0.25다.
+하지만 작은 갱신이 계속 쌓여 실수 weight가 0.375를 넘으면 반올림 결과가 0.50으로 바뀐다.
+실수 weight를 따로 두기 때문에 격자 간격보다 작은 변화도 학습 중에 쌓을 수 있다.
 </Callout>
 
 ### 7-2. Distillation을 쓰는 QAT
 
-LLM에서는 사전학습 데이터 전체로 다시 학습하기 어려워,
-원래 모델을 teacher로 삼아 양자화 모델의 다음 토큰 분포가 teacher의 분포를 따르게 하는 distillation을 함께 쓰기도 한다.
-Liu 등의 LLM-QAT는 원래 모델이 직접 생성한 텍스트로 양자화 모델을 distillation해,
-원래 사전학습 데이터 없이 weight와 KV cache를 4-bit, activation을 8-bit로 양자화했다.[^llmqat]
-원논문은 activation까지 4-bit로 내리기에는 이 방법도 부족하다고 밝혔다.
-Google은 Gemma 3를 약 5,000스텝 동안 원래 정밀도 모델의 확률을 목표로 QAT해,
-로컬 실행용 프로그램 llama.cpp의 4-bit 형식(Q4_0)으로 양자화할 때 perplexity가 나빠지는 폭을, QAT 없이 양자화했을 때보다 54% 줄였다고 밝혔다.
-27B 모델의 weight를 올리는 데 필요한 GPU 메모리는 BF16의 54 GB에서 INT4의 14.1 GB로 줄었다.[^gemma3qat]
-실행 중에는 KV cache 등에도 메모리가 추가로 필요하다.
+이미 학습된 모델이 있다면 사전학습을 처음부터 다시 하기보다, 양자화에 맞게 추가 학습할 수 있다.
+이때 원래 모델을 **teacher**, 양자화할 모델을 **student**로 두고 student가 teacher의 다음 토큰 확률 분포를 따르도록 학습하기도 한다.
+이 방법을 distillation이라고 하며, 양자화 모델이 원래 모델의 동작을 유지하도록 돕는다.
+
+LLM-QAT는 원래 모델이 생성한 텍스트와 teacher의 출력을 이용해 양자화 모델을 추가 학습했다.[^llmqat]
+Google도 Gemma 3에 distillation을 이용한 QAT를 적용해, 4-bit로 양자화할 때 PTQ보다 perplexity 손실을 줄였다고 보고했다.[^gemma3qat]
+추가 학습은 품질을 회복할 기회를 주지만, PTQ보다 학습 데이터와 연산 비용이 더 든다.
 
 ### 7-3. 처음부터 낮은 bits로 학습
 
-앞의 QAT는 이미 학습된 모델을 짧게 더 학습해 낮은 bits에 맞춘다.
-앞에서 본 것처럼 낮은 bits에서는 사후 양자화나 짧은 QAT만으로 품질을 지키기 어려울 수 있다.
-이 오차를 줄이려는 또 다른 접근으로, 사전학습 처음부터 양자화된 weight로 학습하는 방법이 나왔다.
-Wang 등의 BitNet은 선형층을 BitLinear라는 층으로 바꾸어, weight는 1-bit($\pm1$), activation은 8-bit로 양자화한 채 사전학습했다.[^bitnet]
-같은 설정으로 학습한 6.7B 16-bit 모델을 PTQ로 1-bit weight까지 내리면 perplexity가 $10^{21}$을 넘어 모델이 무너졌지만,
-처음부터 BitNet으로 학습한 모델은 17.07로 16-bit 모델의 15.19에 가까웠다.
+아주 낮은 bits를 목표로 한다면 사전학습부터 양자화를 포함할 수도 있다.
+BitNet은 선형층의 weight를 -1 또는 1로 양자화해 계산하는 방식으로 모델을 처음부터 학습했다.[^bitnet]
+BitNet b1.58은 여기에 0을 추가해 weight를 -1, 0, 1의 세 값으로 표현한다.[^bitnet158]
+세 값을 구분하는 데 필요한 정보량이 이론상 weight 하나당 약 1.58 bits이므로 이런 이름이 붙었다.
+실제 저장에는 값을 묶는 방식과 scale 등 부가 정보가 영향을 준다.
 
-Ma 등의 BitNet b1.58은 weight가 가질 수 있는 값을 $-1$, $0$, $1$ 셋으로 넓혔다.[^bitnet158]
-가능한 값이 세 개이므로, 이를 구분하는 데 이론상 weight 하나당 $\log_2 3\approx1.58$ bits가 필요하다.
-$n\times m$ weight 행렬마다 절댓값의 평균 $\mu$로 나눈 뒤 반올림하고, $-1$과 $1$ 사이로 자른다(아래 식의 RoundClip).
-최댓값으로 나누면 대부분의 weight가 0으로 반올림될 수 있으므로, 평균으로 나누어 값이 0에 몰리는 것을 줄이려 한다.
-$\mu$는 행렬 전체에 하나뿐인 per-tensor scale이다.
+이 선형층에서 weight가 1이면 입력을 더하고, -1이면 빼고, 0이면 그 입력을 건너뛸 수 있다.
+예를 들어 입력이 3, -2, 5이고 대응하는 weight가 1, 0, -1이면 이 세 항은 3에서 5를 뺀 -2가 된다.
+공유하는 scale이 있다면 이 결과에 scale을 곱한다.
+학습할 때는 QAT처럼 갱신을 위한 실수 weight를 따로 둔다.
 
-$$
-\tilde{W}=\operatorname{RoundClip}\!\left(\frac{W}{\mu+\epsilon},\,-1,\,1\right),
-\qquad
-\mu=\frac{1}{nm}\sum_{i,j}\lvert W_{ij}\rvert
-$$
-
-$\epsilon$은 0으로 나누지 않게 하는 작은 수다.
-학습 중에는 STE처럼 실수 weight(latent weight)를 따로 두고 갱신하며, forward에서만 이 세 값으로 바꾼다.
-Inference에서는 이 선형층의 weight를 세 값과 scale $\mu$로 표현한다.
-Embedding이나 정규화처럼 양자화 대상이 아닌 부분은 별도의 형식으로 남을 수 있다.
-
-Weight가 $-1$, $0$, $1$뿐이면 입력에 weight를 곱하는 대신 더하거나 빼면 된다.
-출력 하나는 weight가 1인 입력을 더하고 $-1$인 입력을 빼서 얻고, 공통 scale $\mu$만 마지막에 한 번 곱한다.
-
-<Callout type="example">
-입력이 $x=(3,\,-2,\,5,\,1)$이고 세 값 weight가 $(1,\,0,\,-1,\,1)$, $\mu=0.4$라고 하자.
-출력은 곱셈 없이 $3-5+1=-1$을 계산한 뒤 $\mu$를 한 번 곱한 $-0.4$다.
-Weight가 0인 둘째 입력은 계산에서 빠진다.
-</Callout>
-
-100B 토큰으로 학습한 실험에서 BitNet b1.58은 3B부터 같은 데이터로 학습한 16-bit Llama 구조 모델과 perplexity가 비슷했다(BitNet b1.58 9.91, Llama 10.04).
-FasterTransformer에 2-bit kernel을 붙여 잰 GPU 메모리는 3.55배 적고 토큰당 지연은 2.71배 짧았다.[^bitnet158]
-이후 Ma 등은 이 방식으로 4T 토큰을 처음부터 학습한 2B 모델 BitNet b1.58 2B4T를 공개했다.[^bitnet2b4t]
-같은 보고서는 instruction tuning을 거친 모델끼리 비교했다.
-Qwen2.5 1.5B는 MMLU, GSM8K, IFEval 세 벤치마크의 평균이 BF16에서 55.72였고, INT4로 PTQ하면 GPTQ 52.15, AWQ 51.17로 떨어졌다.
-BitNet b1.58 2B4T는 평균 55.01로 BF16 Qwen에 가까우면서, embedding을 뺀 weight는 0.4 GB로 INT4 Qwen의 0.7 GB보다 작았다.
-
-다만 PTQ나 짧은 QAT와 달리 사전학습 전체를 새로 해야 한다.
-또 세 값 weight의 이득은 그 형식을 위한 kernel이 있어야 나온다.
-공개 모델 카드는 Hugging Face Transformers로 돌리면 효율 이득을 기대하지 말고, 전용 inference 프레임워크 bitnet.cpp를 쓰라고 안내한다.[^bitnet-hf]
-
-## 8. 방법의 선택
-
-어떤 양자화를 쓸지는 배포 환경의 병목과 함께, 양자화 후 품질을 지킬 수 있는지와 하드웨어·서빙 엔진이 해당 형식의 kernel을 지원하는지를 보고 정한다.
-병목을 기준으로 선택지를 roofline에 연결하면 다음과 같다.
-
-| 상황 | 병목 | 선택지 |
-|---|---|---|
-| 작은 batch의 decode, 메모리가 작은 GPU | Weight 읽기 | Weight-only 4-bit(GPTQ, AWQ) |
-| 긴 prefill, batch가 아주 큰 decode의 선형층 | 행렬곱 연산 | W8A8(SmoothQuant, FP8), 더 낮추면 회전을 쓴 W4A4(QuaRot, SpinQuant) |
-| 긴 문맥, 많은 동시 요청 | KV cache 읽기와 용량 | KV cache 양자화(FP8, KIVI) |
-
-이 표는 쓰려는 GPU와 서빙 엔진이 그 형식의 kernel을 갖추었다는 전제에서 성립한다.
-FP4를 지원하는 GPU에서도 MXFP4나 NVFP4 가운데 어떤 형식을 엔진과 kernel이 지원하는지 확인한다.
-PTQ로 품질이 모자라면 Gemma 3처럼 QAT를 더하고,
-사전학습부터 새로 할 수 있다면 BitNet b1.58처럼 처음부터 1.58-bit weight로 학습하는 길도 있다.
-
-품질은 실제로 쓸 곳에 맞춰 확인해야 한다.
-자동 벤치마크의 평균 점수가 거의 같아도 특정 task나 언어에서는 차이가 클 수 있다.
-Marchisio 등의 다국어 LLM 실험에서는 평균적으로 라틴 문자가 아닌 언어의 성능이 더 많이 떨어졌고, 수학 reasoning 같은 어려운 task의 성능이 빠르게 나빠졌다.
-자동 benchmark에서 나타난 저하는 사람이 실제 사용에 가까운 프롬프트를 평가했을 때보다 훨씬 작았다.[^marchisio]
-두 평가는 task 구성이 다르므로 같은 응답을 두 방법으로 채점한 비교는 아니다.
-양자화 모델을 평가할 때는 그 모델이 실제로 쓰일 task로, 원래 정밀도 모델과 같은 조건에서 비교한다.
+이 접근은 매우 낮은 정밀도에 맞춰 모델을 학습할 수 있지만, 사전학습부터 새로 해야 한다.
+실제 속도와 메모리 이득도 해당 형식을 효율적으로 처리하는 kernel의 지원에 달려 있다.[^bitnet-hf]
 
 [^survey]: Gong, R., Ding, Y., Wang, Z., et al. (2025). A Survey of Low-bit Large Language Models: Basics, Systems, and Algorithms. *Neural Networks*, 192, 107856. [arXiv:2409.16694v3](https://arxiv.org/abs/2409.16694v3).
+
+[^jacob]: Jacob, B., Kligys, S., Chen, B., et al. (2018). Quantization and Training of Neural Networks for Efficient Integer-Arithmetic-Only Inference. [*CVPR 2018*](https://openaccess.thecvf.com/content_cvpr_2018/html/Jacob_Quantization_and_Training_CVPR_2018_paper.html).
 
 [^nagel]: Nagel, M., Fournarakis, M., Amjad, R. A., Bondarenko, Y., van Baalen, M., & Blankevoort, T. (2021). A White Paper on Neural Network Quantization. [arXiv:2106.08295](https://arxiv.org/abs/2106.08295).
 
@@ -869,6 +685,8 @@ Marchisio 등의 다국어 LLM 실험에서는 평균적으로 라틴 문자가 
 [^quarot]: Ashkboos, S., Mohtashami, A., Croci, M. L., Li, B., Cameron, P., Jaggi, M., Alistarh, D., Hoefler, T., & Hensman, J. (2024). QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs. *NeurIPS 2024*. [arXiv:2404.00456](https://arxiv.org/abs/2404.00456).
 
 [^spinquant]: Liu, Z., Zhao, C., Fedorov, I., et al. (2025). SpinQuant: LLM Quantization with Learned Rotations. *ICLR 2025*. [arXiv:2405.16406](https://arxiv.org/abs/2405.16406).
+
+[^duquant]: Lin, H., Xu, H., Wu, Y., et al. (2024). DuQuant: Distributing Outliers via Dual Transformation Makes Stronger Quantized LLMs. *NeurIPS 2024*. [arXiv:2406.01721](https://arxiv.org/abs/2406.01721).
 
 [^llama32q]: Meta. (2024). Introducing quantized Llama models with increased speed and a reduced memory footprint. *Meta AI Blog*. [ai.meta.com](https://ai.meta.com/blog/meta-llama-quantized-lightweight-models/).
 
@@ -892,10 +710,6 @@ Marchisio 등의 다국어 LLM 실험에서는 평균적으로 라틴 문자가 
 
 [^bitnet158]: Ma, S., Wang, H., Ma, L., et al. (2024). The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits. [arXiv:2402.17764](https://arxiv.org/abs/2402.17764).
 
-[^bitnet2b4t]: Ma, S., Wang, H., Huang, S., et al. (2025). BitNet b1.58 2B4T Technical Report. [arXiv:2504.12285](https://arxiv.org/abs/2504.12285).
-
 [^bitnet-hf]: Microsoft. (2025). bitnet-b1.58-2B-4T. *Hugging Face model card*. [huggingface.co](https://huggingface.co/microsoft/bitnet-b1.58-2B-4T).
 
 [^qserve]: Lin, Y., Tang, H., Yang, S., et al. (2025). QServe: W4A8KV4 Quantization and System Co-design for Efficient LLM Serving. *MLSys 2025*. [arXiv:2405.04532](https://arxiv.org/abs/2405.04532).
-
-[^marchisio]: Marchisio, K., Dash, S., Chen, H., Aumiller, D., Üstün, A., Hooker, S., & Ruder, S. (2024). How Does Quantization Affect Multilingual LLMs? *Findings of EMNLP 2024*. [arXiv:2407.03211](https://arxiv.org/abs/2407.03211).
