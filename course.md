@@ -21,7 +21,7 @@ weeks:
   - { n: 10, topic: "Diffusion Model, Diffusion LLM" }
   - { n: 11, topic: "Flow Matching, Consistency Model" }
   - { n: 12, topic: "3D Generation, Gaussian Splatting" }
-  - { n: 13, topic: "Vision-Language-Action Model, World Model", submissionLinks: [{ label: "초청 특강 (조준호)" }, { label: "과제 제출", url: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/7" }] }
+  - { n: 13, topic: "Vision-Language-Action Model, World Model", submissionLinks: [{ label: "초청 특강 (조준호)", url: "https://drive.google.com/file/d/14mos0-JMv1W7-zb4nYl8FuZ4OLY-00rp/view?usp=sharing" }, { label: "과제 제출", url: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/7" }] }
   - { n: 14, topic: "Safety", submissionLinks: [{ label: "초청 특강 (최명섭)" }, { label: "과제 제출" }] }
   - { n: 15, topic: "Final Project — Open Peer Review" }
 ---
