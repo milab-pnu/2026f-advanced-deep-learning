@@ -4,11 +4,9 @@ week: 6
 order: 3
 ---
 
-import distillationOverview from "./assets/week06-distillation-overview.jpg";
-
 양자화는 파라미터 하나를 적은 bits로 저장한다.
 이 노트는 weight를 지우거나 더 작은 모델을 만들어 **파라미터의 수 자체**를 줄이는 방법을 다룬다.
-깊이 pruning과 연결해, 파라미터를 지우지는 않지만 실행 중 계산할 층을 줄이는 방법도 살펴본다.
+층을 통째로 지우는 깊이 pruning과 연결해, 파라미터를 지우지는 않지만 실행 중 계산할 층을 줄이는 방법도 살펴본다.
 남은 weight만 저장하고 계산하거나 처음부터 더 작은 모델을 쓰면, 읽을 weight bytes와 계산할 FLOPs(floating-point operations)가 함께 줄어든다.
 그러면 weight를 읽는 시간이 병목인 decode에서는 메모리 접근 시간이, 연산이 병목인 prefill에서는 연산 시간이 줄 수 있고,
 절약한 GPU(graphics processing unit) 메모리는 KV(key-value) cache에 더 쓸 수 있다.
@@ -33,7 +31,7 @@ Zhu 등의 LLM(large language model) 압축 서베이도 pruning, distillation, 
 이렇게 값을 0으로 만드는 것과 실제 저장 공간을 줄이는 것은 별개의 단계다.
 저장 공간을 줄이려면 0을 생략하는 저장 형식을 쓰거나 모델 구조 자체를 줄여야 한다.
 
-작은 모델에서는 weight를 지운 뒤 재학습으로 품질을 되살리는 방식이 잘 통했다.
+작은 모델에서는 weight를 지운 뒤 재학습으로 품질을 되살리는 방식이 잘 통했다.[^han]
 그러나 LLM에서는 이 재학습 자체가 매우 비싸다.[^sparsegpt]
 재학습 없이 크기만 보고 지우면 품질이 크게 떨어진다.
 Frantar와 Alistarh는 OPT-175B에 magnitude pruning을 하면 sparsity(전체 weight 중 0으로 만든 비율) 10%까지는 정확도가 거의 그대로지만, 30%를 넘으면 급격히 무너진다고 보고했다.[^sparsegpt]
@@ -49,18 +47,29 @@ $W$를 pruning한 결과를 $\hat{W}$라 하면, 같은 입력에 대한 출력�
 두 출력이 가까울수록 이 입력에서 pruning의 영향이 작다.
 
 **SparseGPT**는 GPTQ와 마찬가지로 층 출력 오차의 Hessian을 이용한다.[^sparsegpt]
-Hessian에는 여러 weight의 변화가 층 출력 오차에 함께 어떤 영향을 주는지에 관한 정보가 담겨 있다.
-이를 이용해 weight 하나를 지웠을 때의 영향을 살피고 남은 weight로 그 오차를 보정할 수 있다.
-예를 들어 두 입력 channel이 비슷하게 움직인다면 한쪽 weight를 지웠을 때 다른 쪽 weight를 조절해 출력 변화를 일부 줄일 수 있다.
-입력 사이의 관계에 따라 얼마나 보정할 수 있는지는 달라진다.
+출력 오차 $\lVert XW-X\hat{W}\rVert^2$를 weight로 두 번 미분하면 $X^\top X$에 비례하는 행렬이 나오므로,
+여기서 Hessian $H$는 곧 calibration 데이터에서 입력 channel들이 얼마나 함께 움직이는지를 담은 행렬이다.
+대각 원소는 각 입력 channel의 크기이고, 대각 밖의 원소는 두 channel 사이의 상관이다.
+두 입력 channel이 비슷하게 움직인다면 한쪽 weight를 지우고 다른 쪽 weight를 조절해 출력 변화를 일부 되돌릴 수 있고,
+두 channel이 무관하게 움직인다면 그런 보정이 통하지 않는다.
 GPTQ가 weight를 낮은 정밀도의 값으로 바꾸었다면, SparseGPT는 선택한 weight를 0으로 만든다.
 
-예를 들어 입력이 $(1,1)$이고 한 출력에 연결된 weight가 $(2,1)$이면 출력은 $1\times2+1\times1=3$이다.
+<Callout type="example">
+입력이 $(1,1)$이고 한 출력에 연결된 weight가 $(2,1)$이면 출력은 $1\times2+1\times1=3$이다.
 두 번째 weight를 0으로 지우면 출력은 2가 되지만, 첫 번째 weight를 2에서 3으로 바꾸면 이 입력의 출력을 다시 3으로 맞출 수 있다.
-다만 입력이 달라지면 이 보정이 정확히 맞지 않을 수도 있다.
+두 입력 channel이 늘 같은 값이라 한쪽이 다른 쪽을 대신할 수 있는 것이다.
+반대로 calibration 데이터가 $(1,0)$과 $(0,1)$ 두 입력뿐이라면, 두 번째 weight를 지웠을 때 사라지는 $(0,1)$의 출력 1을 첫 번째 weight로는 되돌릴 수 없다.
+첫 번째 weight는 $(0,1)$에서 0과 곱해지기 때문이다.
+어느 쪽이든 보정은 calibration 데이터에 맞춘 것이라, 다른 입력에서는 정확히 맞지 않을 수 있다.
+</Callout>
+
+지울 weight를 고르는 기준도 이 Hessian에서 나온다.
+weight $w_m$을 0으로 만들고 남은 weight로 최선의 보정을 했을 때 늘어나는 출력 오차는 $w_m^2/[H^{-1}]_{mm}$이다.[^sparsegpt]
+분자는 weight가 작을수록 작고, 분모 $[H^{-1}]_{mm}$는 그 입력 channel의 크기가 작거나 다른 channel들로 잘 대신될수록 크다.
+그러니 "작은 weight"뿐 아니라 "지워도 다른 weight가 메울 수 있는 weight"가 먼저 지워진다.
 
 SparseGPT는 weight를 블록으로 나누어 처리한다.
-각 블록에서 지울 weight를 고르고, 지우면서 생기는 출력 오차가 작아지도록 남은 weight를 갱신한다.
+각 블록에서 이 오차가 작은 weight를 지우고, 지우면서 생기는 출력 오차가 작아지도록 남은 weight를 갱신한다.
 이 과정을 반복해 전체 weight를 pruning하므로, 별도의 재학습 없이도 출력 변화를 줄일 수 있다.
 예를 들어 OPT-175B의 weight를 절반 지웠을 때 WikiText-2 perplexity(낮을수록 좋은 다음 토큰 예측 지표)는 원래 모델의 8.35에서 SparseGPT 적용 후 8.21로 비슷했다.
 같은 비율을 크기만 보고 지운 magnitude pruning의 perplexity는 43,000이었다.[^sparsegpt]
@@ -75,13 +84,13 @@ $W_{ij}$는 입력 channel $i$와 출력 channel $j$를 잇는 weight다.
 Wanda는 해당 weight의 절댓값과 입력 channel $i$의 activation 크기를 곱해 점수를 매긴다.
 Activation 크기는 calibration 데이터의 여러 토큰에 걸친 해당 channel 값을 각각 제곱해 더하고 제곱근을 씌운 L2 norm으로 잰다.
 출력 channel마다 그 출력에 연결된 weight의 점수를 비교해 낮은 것을 지우고, 남은 weight는 그대로 둔다.
+층 전체에서 한꺼번에 비교하지 않고 출력마다 따로 비교하면 모든 출력이 같은 비율로 지워지는데,
+LLaMA-7B 실험에서 층 전체 비교의 perplexity 7.95보다 출력별 비교의 7.26이 좋았다.[^wanda]
 
 <figure>
 <a href="https://arxiv.org/html/2306.11695v3/main_final_v2-crop.png"><img src="https://arxiv.org/html/2306.11695v3/main_final_v2-crop.png" alt="Magnitude pruning과 Wanda의 중요도 계산 비교. 왼쪽은 weight의 절댓값만 비교하고, 오른쪽은 각 입력 channel의 activation 크기를 weight에 곱해 출력별로 비교한다." loading="lazy" /></a>
 <figcaption>Magnitude pruning과 Wanda. 왼쪽은 층 전체에서 weight 크기를 비교하고, 오른쪽은 activation 크기를 반영한 점수를 출력별로 비교한다. 오른쪽에서 activation 크기 8인 입력에 연결된 weight는 값이 작아도 높은 점수를 받는다. 그림은 출력별 weight를 가로로 놓아 본문의 W를 전치한 방향이다. 그림을 누르면 원본을 볼 수 있다. (출처: Sun et al. (2024), Figure 1)</figcaption>
 </figure>
-
-<Details summary="Wanda 점수 계산 예시">
 
 <Callout type="example">
 한 출력 channel로 들어가는 weight가 $(0.8,\,-0.1,\,0.3,\,0.05)$이고, 네 입력 channel의 activation 크기가 각각 $(0.5,\,10,\,1,\,9)$라고 하자.
@@ -89,8 +98,6 @@ Activation 크기는 calibration 데이터의 여러 토큰에 걸친 해당 cha
 Wanda의 점수는 $(0.4,\,1.0,\,0.3,\,0.45)$이므로 점수가 낮은 $0.3$과 $0.8$을 지운다.
 $-0.1$과 $0.05$는 작지만 큰 activation에 곱해지므로 남기는 것이다.
 </Callout>
-
-</Details>
 
 LLaMA-7B의 weight를 50% 지웠을 때 WikiText-2 perplexity는 원래 모델 5.68, magnitude pruning 17.29, SparseGPT 7.22, Wanda 7.26이었다.
 이 실험에서 Wanda는 단순한 점수만으로 SparseGPT에 가까운 품질을 얻었다.[^wanda]
@@ -261,7 +268,7 @@ WikiText-2 perplexity를 SparseGPT의 10.42에서 6.72(dense 5.12)로 낮추었�
 ### 2-3. 실제 속도
 
 속도 이득도 사양표의 두 배에 못 미친다.
-Wanda 논문에서는 A6000 GPU와 CUTLASS 행렬곱 kernel을 사용해 LLaMA-65B 선형층의 행렬곱을 batch 1로 따로 모의 측정했다.
+Wanda 논문에서는 A6000 GPU와 NVIDIA의 행렬곱 라이브러리 CUTLASS의 kernel을 사용해 LLaMA-65B 선형층의 행렬곱을 batch 1로 따로 모의 측정했다.
 2:4 행렬곱은 1.54–1.63배 빨랐고,
 2:4 LLaMA-7B의 전체 지연은 312 ms에서 251 ms로 1.24배 빨라지는 데 그쳤다.[^wanda]
 MaskLLM 논문이 A6000·batch 1에서 NVIDIA의 서빙 라이브러리 TensorRT-LLM으로 잰 2:4 모델의 처리량은 7B가 1.36–1.41배, 13B가 1.50–1.57배였다.[^maskllm]
@@ -307,9 +314,7 @@ Embedding 차원 하나를 지울 때는 함께 지워야 하는 weight가 훨�
 Ma 등의 LLM-Pruner는 이런 의존 관계를 자동으로 찾아 묶고,
 묶음을 지웠을 때 loss가 얼마나 변할지를 gradient로 추정해 덜 중요한 묶음부터 지운 뒤,
 작은 행렬만 덧붙여 학습하는 LoRA(low-rank adaptation)로 회복했다.
-LLaMA-7B의 파라미터 20%를 지우고 회복한 모델은 zero-shot 분류 task 일곱 개의 평균 정확도가 원래 모델의 94.97% 수준이었다.[^llmpruner]
-
-이 그림은 [CC BY 4.0 라이선스](https://creativecommons.org/licenses/by/4.0/)로 공개되어 있다.
+LLaMA-7B의 파라미터 20%를 지우고 회복한 모델은 zero-shot(예시 없이 질문만 주는) 분류 task 일곱 개의 평균 정확도가 원래 모델의 94.97% 수준이었다.[^llmpruner]
 
 <figure>
 <a href="https://arxiv.org/html/2305.11627v3/main_v5.png"><img src="https://arxiv.org/html/2305.11627v3/main_v5.png" alt="LLM-Pruner의 세 가지 구조 묶음. 왼쪽은 FFN 중간 channel, 가운데는 attention head, 오른쪽은 embedding channel에 연결된 weight를 함께 지운다." loading="lazy" /></a>
@@ -318,9 +323,12 @@ LLaMA-7B의 파라미터 20%를 지우고 회복한 모델은 zero-shot 분류 t
 
 ### 3-2. 깊이 pruning
 
-층 전체를 지우는 깊이 pruning도 있다.
-Men 등의 ShortGPT는 입력과 출력이 거의 같은 층,
-곧 표현을 별로 바꾸지 않는 층을 찾아 지운다.
+층 전체를 지울 수 있는 바탕은 residual connection이다.
+Transformer의 각 층은 입력 $x$를 새 값으로 바꾸는 것이 아니라, $x+f(x)$처럼 자신이 계산한 변화량 $f(x)$를 입력에 더한다.
+그래서 모든 층이 같은 차원의 벡터(residual stream)를 이어받아 조금씩 고쳐 쓰고,
+어떤 층의 $f(x)$가 $x$에 비해 작다면 그 층을 빼도 다음 층은 거의 같은 입력을 받는다.
+Men 등의 ShortGPT는 층의 입력과 출력 hidden state 사이의 cosine 유사도를 재어,
+유사도가 높아 표현을 별로 바꾸지 않는 층부터 지운다.
 예를 들어 Llama-2-13B에서 파라미터의 24.6%를 줄였을 때, 선다형 벤치마크 11개의 평균 점수는 58.49에서 53.57로 내려가 원래 평균의 91.59%가 남았다.[^shortgpt]
 
 Gromov 등은 입력과 출력이 가장 비슷한 연속된 층들을 지운 뒤, 4-bit로 양자화한 모델에 LoRA를 붙이는 QLoRA(quantized LoRA)로 짧게 미세조정해 회복(healing)했다.
@@ -331,30 +339,32 @@ Gromov 등은 입력과 출력이 가장 비슷한 연속된 층들을 지운 �
 
 ## 4. Distillation
 
-### 4-1. Pruning 후 회복
+### 4-1. Distillation의 목표
 
-지운 모델의 품질은 더 학습해서 되살린다.
-Xia 등의 Sheared-LLaMA는 LLaMA2-7B를 1.3B와 2.7B로 구조적으로 줄인 뒤 50B 토큰으로 사전학습을 이어 갔다.
-그중 2.7B 모델은 원래 7B의 학습 비용을 빼고 보면 비슷한 크기의 OpenLLaMA-3B-v2를 처음부터 학습한 계산의 약 3%로 그와 비슷한 품질을 얻었다고 보고했다.[^sheared]
-
-회복 학습의 목표를 바꿀 수도 있다.
 일반 사전학습은 매 위치에서 데이터에 실제로 나온 다음 토큰 하나를 맞히도록 학습한다.
-대신 같은 문맥을 원래 모델(teacher)과 지운 모델(student)에 함께 넣고,
-위치마다 두 모델의 다음 토큰 분포 차이를 KL(Kullback–Leibler) divergence로 재서 이를 줄이도록 student를 학습할 수도 있다.
-이때 teacher는 목표 분포를 제공하며, 이 분포에 맞도록 student의 weight만 갱신한다.
-그러면 정답 토큰 하나만이 아니라 다른 후보 토큰이 얼마나 그럴듯한지까지 student에게 전해진다.[^kd-overview]
-
-<Figure src={distillationOverview.src} alt="큰 teacher 모델이 데이터에서 얻은 정보를 작은 student 모델의 학습에 전달하는 그림." caption="Teacher의 정보를 이용해 작은 student를 학습한다. 이 노트에서는 그 정보로 다음 토큰의 확률분포를 사용한다." source="Alkhulaifi et al. (2021), Figure 1 · CC BY 4.0" wide />
-
-이 그림은 [CC BY 4.0 라이선스](https://creativecommons.org/licenses/by/4.0/)로 공개되어 있다.
+Distillation은 그 대신 이미 학습된 큰 모델(teacher)의 출력 분포를 목표로 삼아 작은 모델(student)을 학습한다.[^hinton]
+압축에서 쓰는 것은 word-level KD다.
+같은 문맥을 teacher와 student에 함께 넣고, 위치마다 두 모델의 다음 토큰 분포 $p_T$와 $p_S$ 사이의 forward KL divergence
+$\mathrm{KL}(p_T\,\|\,p_S)=\sum_v p_T(v)\log\big(p_T(v)/p_S(v)\big)$가 줄어들도록, teacher는 고정한 채 student의 weight만 갱신한다.
+그러면 정답 토큰 하나만이 아니라 다른 후보 토큰이 얼마나 그럴듯한지까지 student에게 전해진다.
 
 <Callout type="example">
 문맥이 “고양이가 생선을”일 때 실제 다음 토큰이 “먹었다”라고 하자.
-일반 사전학습에서는 “먹었다”의 확률을 높인다.
-Teacher가 “먹었다”에 70%, “좋아한다”에 20%, 나머지에 10%를 주었다면, distillation은 student가 이 확률 분포에 가까워지도록 학습한다.
-정답 외에도 문맥에 어울리는 다른 후보가 있다는 정보를 배울 수 있지만, teacher가 잘못 판단하면 그 오류도 따라 배울 수 있다.
+일반 사전학습에서는 “먹었다”의 확률만 높인다.
+Teacher가 “먹었다”에 0.7, “좋아한다”에 0.2, 나머지 토큰 전체에 0.1을 주었다고 하자.
+Student A가 이 세 묶음에 $(0.5,\,0.4,\,0.1)$, student B가 $(0.9,\,0.05,\,0.05)$를 주었다면, 자연로그로 잰 KL divergence는 A가 약 0.10, B가 약 0.17이다.
+정답 토큰만 보는 손실 $-\log p_S(\text{먹었다})$는 A가 0.69, B가 0.11이라 B를 선호하지만, distillation은 teacher의 분포 전체에 가까운 A를 선호한다.
+정답 외에도 문맥에 어울리는 다른 후보가 있다는 정보를 배우는 대신, teacher가 잘못 판단하면 그 오류도 따라 배운다.
 </Callout>
 
+### 4-2. Pruning 후 회복
+
+지운 모델의 품질은 더 학습해서 되살린다.
+Xia 등의 Sheared-LLaMA는 LLaMA2-7B를 1.3B와 2.7B로 구조적으로 줄인 뒤, 데이터의 다음 토큰을 목표로 50B 토큰의 사전학습을 이어 갔다.
+비슷한 크기의 OpenLLaMA-3B-v2를 처음부터 학습하는 데 든 계산과 비교하면, 2.7B 모델은 그 약 3%의 계산으로 비슷한 품질에 도달했다.
+이 비교에 원래 7B를 학습한 비용은 들어 있지 않다.[^sheared]
+
+회복 학습의 목표를 데이터의 다음 토큰 대신 teacher의 분포로 바꿀 수도 있다.
 NVIDIA의 Minitron은 줄이기와 이 distillation 회복을 하나의 절차로 묶었다.
 먼저 작은 calibration 데이터로 각 단위의 중요도를 추정한다.
 Attention head, FFN channel, embedding 차원은 forward pass에서 얻은 activation 크기로 잰다.
@@ -379,7 +389,7 @@ H100 한 대에서 TensorRT-LLM을 FP8(8-bit floating point)로 돌려 여러 �
 보고서의 마지막 관찰 부분은 너비 모델을 1.7배로 표기한다.
 이 실험에서는 순서대로 계산할 층 수 자체를 줄인 깊이 쪽이 더 빨랐지만, 회복 학습을 마친 base 모델의 MMLU는 너비를 줄인 쪽이 더 높았다.
 
-### 4-2. 작은 모델의 사전학습
+### 4-3. 작은 모델의 사전학습
 
 Distillation은 지운 모델을 되살리는 데만 쓰이지 않는다.
 처음부터 **작은 모델을 사전학습**할 때도 데이터의 다음 토큰 대신 큰 teacher의 분포를 목표로 삼을 수 있다.
@@ -388,17 +398,20 @@ Google의 Gemma 2는 2B와 9B 모델을 이렇게 사전학습했다.[^gemma2]
 다음 토큰을 예측한다는 점은 그대로이고 목표 분포만 바뀐다.
 2B 모델을 500B 토큰으로 사전학습한 비교 실험에서, 데이터의 다음 토큰을 목표로 하면 세 벤치마크의 평균이 60.3, 7B teacher의 분포를 목표로 하면 67.7이었다.
 
-Chinchilla scaling law는 주어진 학습 연산량에서 loss가 가장 낮아지는 모델 크기와 학습 토큰 수의 배분(compute-optimal)을 예측하고, 그 배분에서는 모델 크기마다 알맞은 토큰 수가 정해진다.[^chinchilla]
-실제 2B와 9B 모델은 같은 크기에 대한 그 토큰 수의 수십 배인 2T와 8T 토큰으로 학습했다.
-
 Meta의 Llama 3.2 1B와 3B는 pruning과 distillation을 함께 썼다.
 Llama 3.1 8B를 구조적으로 한 번에 pruning하고,
-사전학습 단계에서 Llama 3.1 8B와 70B의 logit을 토큰별 목표로 넣어 distillation으로 성능을 되살렸다.[^llama32]
+사전학습 단계에서 Llama 3.1 8B와 70B의 logit(softmax를 거치기 전 토큰별 점수)을 토큰별 목표로 넣어 distillation으로 성능을 되살렸다.[^llama32]
+
+작은 모델을 얼마나 오래 학습할지도 선택이다.
+Gemma 2의 2B와 9B는 각각 2T와 8T 토큰으로 학습했다.[^gemma2]
+Chinchilla scaling law는 주어진 학습 연산량에서 loss가 가장 낮아지는 모델 크기와 학습 토큰 수의 배분(compute-optimal)을 예측하고, 그 배분에서는 모델 크기마다 알맞은 토큰 수가 정해지는데,[^chinchilla]
+2T와 8T는 같은 크기에 대한 그 토큰 수의 수십 배다.
 
 Compute-optimal 배분은 학습 계산만 따진 것이다.
 같은 품질을 목표로 더 작은 모델을 더 많은 토큰으로 학습하면, 학습 비용은 늘 수 있지만 큰 모델보다 요청 하나를 처리하는 연산량은 줄어든다.
 요청이 많으면 inference에서 아낀 비용이 학습의 추가 비용을 넘는다.
-Sardana 등은 배포 뒤의 inference까지 더하고 학습과 inference의 장치 활용률과 비용도 반영해, 요청이 약 10억 건에 이르는 큰 수요를 예상하면 compute-optimal보다 작은 모델을 더 오래 학습하는 편이 전체 비용에서 유리하다고 계산했다.[^sardana]
+Sardana 등은 학습 계산에 배포 뒤의 inference 계산을 더하고, 학습과 inference의 장치 활용률과 비용 차이도 반영해 이 손익을 계산했다.
+요청이 약 10억 건에 이르는 큰 수요를 예상한다면, compute-optimal보다 작은 모델을 더 오래 학습하는 편이 전체 비용에서 유리하다는 결과다.[^sardana]
 정확한 손익분기점은 요청 길이와 장치 비용 같은 조건에 따라 달라진다.
 큰 모델을 한 번 학습해 두고 거기서 여러 크기의 작은 모델을 pruning과 distillation으로 뽑아내는 방식은,
 그 작은 모델들을 각각 처음부터 오래 학습하는 비용까지 줄일 수 있다.
@@ -419,15 +432,19 @@ Rank는 행렬이 만들어 낼 수 있는 서로 독립인 출력 방향의 수
 두 행렬의 weight 수가 줄어들려면 $(K+N)r$이 $KN$보다 작아야 한다.
 예를 들어 $4096\times4096$ 행렬을 $r=1024$로 분해하면 weight 수가 절반으로 줄고, 행렬곱의 FLOPs도 절반이 된다.
 다만 행렬곱이 두 번으로 나뉘고 중간 결과도 저장하고 읽어야 하므로, 실제 지연이 정확히 절반이 되는 것은 아니다.
+앞에서 본 LoRA도 $K\times r$와 $r\times N$ 두 행렬의 곱을 쓰지만, 원래 $W$는 그대로 두고 그 곱을 더해 학습한다.
+Low-rank factorization은 $W$ 자체를 그 곱으로 바꾸어 파라미터를 줄인다.
 
 $A$와 $B$는 어떻게 고를까?
-<strong>SVD(singular value decomposition)</strong>는 행렬을 입력과 출력의 여러 방향으로 나누고 각 방향의 크기를 특이값으로 나타낸다.
-큰 특이값에 해당하는 방향만 남기면, 같은 rank에서 weight의 원소별 오차 제곱합이 가장 작은 근사를 얻는다.
+<strong>SVD(singular value decomposition)</strong>는 임의의 행렬을 $W=U\Sigma V^\top$로 분해한다.
+$U$의 열은 입력 쪽, $V$의 열은 출력 쪽의 서로 수직인 방향이고,
+대각행렬 $\Sigma$에 놓인 특이값(singular value)은 짝지어진 두 방향이 출력에 기여하는 크기다.
+특이값이 큰 순서로 $r$개만 남겨 $A=U_r\Sigma_r$, $B=V_r^\top$로 두면, 같은 rank에서 weight의 원소별 오차 제곱합이 가장 작은 근사를 얻는다.
 하지만 weight의 오차가 작다고 해서 **층 출력의 오차**도 작은 것은 아니다.
 
 <Callout type="example">
-$W=\operatorname{diag}(2,1)$이고 입력이 $X=\operatorname{diag}(1,4)$라고 하자.
-$\operatorname{diag}(a,b)$는 대각에 $a$, $b$를 놓고 나머지는 0으로 둔 행렬이다.
+$W=\operatorname{diag}(2,1)$이고, calibration 입력이 $(1,0)$과 $(0,4)$ 두 토큰뿐이라고 하자.
+$\operatorname{diag}(a,b)$는 대각에 $a$, $b$를 놓고 나머지는 0으로 둔 행렬이고, 두 입력을 행으로 쌓으면 $X=\operatorname{diag}(1,4)$다.
 이 예에서 오차의 크기는 오차 행렬의 원소를 각각 제곱해 더한 뒤 제곱근을 씌운 값(Frobenius norm)이다.
 Rank 1만 남기는 일반 SVD는 큰 특이값 2를 보존해 $\hat W=\operatorname{diag}(2,0)$으로 근사한다.
 원래 행렬은 두 방향의 값을 각각 바꿀 수 있지만, 근사한 행렬은 둘째 방향이 0이 되어 독립인 출력 방향 하나만 남는다.
@@ -445,12 +462,13 @@ ASVD 실험에서는 일반 SVD로 LLaMA-7B의 파라미터를 5%만 줄여도 W
 Wanda와 AWQ(activation-aware weight quantization)처럼, 분해할 때도 weight와 함께 **실제 입력 activation**을 고려할 수 있다.
 ASVD는 calibration 데이터에서 입력 channel별 activation의 크기를 살펴, 큰 activation이 들어오는 channel에 연결된 weight를 키운 뒤 분해한다.[^asvd]
 
-분해 전에 같은 배율로 입력을 나누면 곱의 결과는 바뀌지 않는다.
-이 배율은 입력값 하나를 weight로 옮기는 것이 아니라 calibration 데이터의 channel별 통계를 보고 정한다.
+입력 channel $i$마다 배율 $s_i$를 정해 $W$의 $i$번째 행을 $s_i$배 하고 입력의 $i$번째 channel을 $s_i$로 나누면, 곱은 바뀌지 않는다.
+대각행렬 $S=\operatorname{diag}(s_1,\dots,s_K)$로 쓰면 $XW=(XS^{-1})(SW)$다.
 예를 들어 입력이 8, weight가 0.5이면 곱은 4다.
 입력을 4로 나눠 2로 만들고 weight를 4배 해 2로 만들면 곱은 여전히 4다.
-SVD는 이렇게 키운 weight의 방향을 더 중요하게 다루므로, 큰 activation이 들어올 때 출력에 미치는 오차를 줄이는 데 도움이 된다.
-분해가 끝나면 입력을 나누던 배율을 분해된 weight에 반영해 원래 입력으로 실행한다.
+$s_i$는 calibration 데이터에서 channel $i$의 activation이 클수록 크게 잡는다.
+SVD는 이렇게 키운 $SW$의 행을 더 중요하게 다루므로, 큰 activation이 들어올 때 출력에 미치는 오차가 줄어든다.
+분해가 끝나면 $S^{-1}$을 $A$에 흡수해 $A=S^{-1}U_r\Sigma_r$로 두고 원래 입력으로 실행한다.
 
 앞의 대각행렬 예에서 둘째 입력 channel의 배율을 4로 잡으면 weight $\operatorname{diag}(2,1)$은 $\operatorname{diag}(2,4)$로 바뀐다.
 이 행렬을 rank 1로 근사하면 큰 값 4가 남아 $\operatorname{diag}(0,4)$가 되고, 둘째 입력을 나누는 배율을 weight에 반영하면 $\operatorname{diag}(0,1)$이 된다.
@@ -461,13 +479,15 @@ LLaMA-7B의 파라미터를 5%, 10%, 15% 줄였을 때 perplexity는 각각 5.78
 
 <figure>
 <a href="https://arxiv.org/html/2312.05821v5/asvd_concept.png"><img src="https://arxiv.org/html/2312.05821v5/asvd_concept.png" alt="일반 SVD와 ASVD의 출력 오차 비교. 둘째 입력 channel에 큰 activation이 있는 상황에서 일반 SVD보다 ASVD의 출력 오차가 작다." loading="lazy" /></a>
-<figcaption>일반 SVD와 ASVD의 출력 오차 비교. 붉게 표시한 둘째 입력 channel의 activation이 크다. ASVD는 이 channel을 고려해 출력 오차를 줄인다. 논문은 W와 X의 곱을 WX로 표기하므로 본문의 XW와 행렬 방향이 반대다. 그림을 누르면 원본을 볼 수 있다. (출처: Yuan et al. (2025), Figure 2)</figcaption>
+<figcaption>일반 SVD와 ASVD의 출력 오차 비교. 붉게 표시한 둘째 입력 channel의 activation이 크다. ASVD는 이 channel을 고려해 출력 오차를 줄인다. 논문은 W와 X의 곱을 WX로 표기하므로 본문의 XW와 행렬 방향이 반대다. 그림을 누르면 원본을 볼 수 있다. (출처: Yuan et al. (2023), Figure 2)</figcaption>
 </figure>
 
 SVD-LLM은 입력 channel의 크기뿐 아니라 **channel 사이의 관계**까지 고려한다.[^svdllm]
-예를 들어 두 channel의 값이 여러 입력에서 비슷하게 커지고 작아지는지 살핀다.
-두 입력이 함께 움직인다면 한 channel의 오차가 다른 channel의 오차와 출력에서 서로 더해지거나 상쇄될 수 있어, 각 channel의 크기만 따로 볼 때와 중요한 방향이 달라진다.
-Calibration 입력을 변환해 channel 간 관계를 반영한 뒤 분해하면, 작은 특이값부터 제거하는 선택이 calibration 입력에서 층 출력 오차를 줄이는 것과 연결된다.
+두 입력 channel이 함께 움직인다면 한 channel의 오차가 다른 channel의 오차와 출력에서 서로 더해지거나 상쇄될 수 있어, 각 channel의 크기만 따로 볼 때와 중요한 방향이 달라진다.
+그래서 ASVD의 대각 배율 대신, SparseGPT의 Hessian과 같은 입력 상관 행렬 $X^\top X$를 $S^\top S$로 분해(Cholesky 분해)한 행렬 $S$를 쓴다.
+그러면 $XS^{-1}$의 channel들은 서로 상관이 없고 크기가 모두 1이 되어(whitening),
+$SW$의 SVD에서 특이값 하나를 버릴 때 늘어나는 calibration 출력 오차가 정확히 그 특이값과 같아진다.
+작은 특이값부터 버리는 선택이 곧 층 출력 오차를 가장 적게 늘리는 선택이 되는 것이다.
 분해한 모델은 추가 학습으로 품질을 더 회복할 수도 있다.
 
 예를 들어 SVD-LLM 실험에서 LLaMA-2-7B의 파라미터를 20% 줄였을 때 WikiText-2 perplexity는 원래 모델 5.47, 일반 SVD 18,192, ASVD 10.10이었다.
@@ -475,12 +495,13 @@ SVD-LLM은 입력 변환만 적용하면 8.50, 추가로 미세조정하면 7.73
 입력을 고려하면 품질 손실을 줄일 수 있지만, 압축 비율이 커질수록 원래 모델의 품질을 유지하기 어려울 수 있다.
 Pruning과 마찬가지로 파라미터 수뿐 아니라 실제 지연과 품질을 함께 확인해야 한다.
 
-## 6. 적응형 계산
+## 6. 적응형 계산과 층 공유
 
 ### 6-1. Early exit
 
 깊이 pruning은 층을 지워 모든 입력에 같은 작은 모델을 사용한다.
 반면 적응형 계산은 층을 유지하면서 토큰마다 수행하는 연산량을 다르게 정한다.
+층을 건너뛰어도 되는 바탕은 깊이 pruning과 같아서, 건너뛴 층의 변화량이 더해지지 않은 residual stream이 그대로 다음 계산에 쓰인다.
 "The United States of" 다음의 "America"처럼 쉬운 토큰은 앞쪽 몇 층만으로 맞힐 수 있지만,
 계산 결과처럼 어려운 토큰에는 모든 층이 필요할 수 있다(설명을 위한 예).
 
@@ -534,7 +555,7 @@ Early exit는 한 번 멈춘 토큰이 남은 층을 모두 건너뛴다.
 한 층만 건너뛰고 다음 층에서 다시 계산할 수도 있을까?
 Raposo 등의 <strong>Mixture-of-Depths(MoD)</strong>는 블록마다 학습한 router로 계산할 토큰을 고른다.[^mod]
 Router는 각 토큰의 hidden state를 보고 블록에서 계산할 필요가 얼마나 큰지 점수를 내는 작은 모듈이다.
-선택된 토큰은 attention과 FFN을 거치고, 나머지는 블록을 우회해 다음 층으로 간다.
+선택된 토큰은 attention과 FFN을 거치고, 나머지는 residual connection을 따라 블록을 우회해 다음 층으로 간다.
 따라서 어떤 토큰은 중간 블록을 건너뛴 뒤 더 깊은 블록에서 다시 계산할 수 있다.
 
 <figure class="lecture-figure lecture-figure--wide">
@@ -553,11 +574,10 @@ Router는 각 토큰의 hidden state를 보고 블록에서 계산할 필요가 
 한편, 토큰마다 다른 깊이에서 멈추더라도 효율적으로 묶을 수는 없을까?
 **Recursive Transformer**는 서로 다른 층을 계속 쌓는 대신, 같은 층 묶음을 여러 번 반복한다.[^recursive]
 예를 들어 4개 층을 3번 반복하면 입력은 총 12번 층을 통과하지만, 큰 weight는 4개 층의 것을 공유한다.
-서로 다른 weight를 저장하는 공간은 줄지만, 같은 층을 여러 번 실행하므로 연산량도 자동으로 3분의 1이 되는 것은 아니다.
+서로 다른 weight를 저장하는 공간은 3분의 1로 줄지만, 입력이 층을 통과하는 횟수는 12번 그대로이므로 연산량은 줄지 않는다.
 
 Relaxed Recursive Transformer는 공유한 weight에 반복 단계마다 작은 LoRA를 더해, 각 반복이 조금씩 다른 역할을 할 수 있게 한다.
 아래 그림의 가운데가 층을 그대로 반복하는 구조이고, 오른쪽이 반복 단계마다 작은 변화를 더한 구조다.
-그림은 [CC BY 4.0 라이선스](https://creativecommons.org/licenses/by/4.0/)로 공개되어 있다.
 
 <figure class="lecture-figure lecture-figure--wide">
 <a href="https://arxiv.org/html/2410.20672v3/overview_convert_removed.png"><img src="https://arxiv.org/html/2410.20672v3/overview_convert_removed.png" alt="일반 Transformer, 같은 층을 반복하는 Recursive Transformer, 반복마다 LoRA를 더한 Relaxed Recursive Transformer의 구조 비교." loading="lazy" /></a>
@@ -590,7 +610,26 @@ MoR은 반복을 계속하는 토큰만 그 반복 단계의 attention에 포함
 후자는 앞 토큰의 첫 번째 반복에서 만든 key·value를 두 번째 반복에서도 참조한다.
 두 방식은 사용하는 문맥 정보와 cache 크기가 다르므로, 속도와 품질을 함께 살펴야 한다.
 
+## 7. 정리
+
+도입에서 본 두 병목으로 돌아가면, decode에서는 읽는 weight bytes가, prefill에서는 FLOPs가 줄어야 시간이 준다.
+각 방법이 무엇을 줄이고, 그 이득을 실제 속도로 바꾸는 데 무엇이 필요한지 모으면 다음과 같다.
+
+| 방법 | 줄이는 것 | 속도로 바꾸는 조건 | 품질 |
+| --- | --- | --- | --- |
+| Unstructured pruning (SparseGPT, Wanda) | 0이 아닌 weight 수 | 흩어진 0을 건너뛰는 특수 kernel, GPU에서는 드묾 | one-shot으로 대부분 유지 |
+| 2:4 semi-structured | FP16 weight bytes 약 44%, 행렬곱 FLOPs 절반 | Sparse Tensor Core와 이를 쓰는 엔진 | 작은 모델은 one-shot 손실이 커서 mask 학습으로 회복 |
+| Structured pruning (너비·깊이) | 파라미터 수와 FLOPs, 깊이는 층 수 | 일반 dense kernel이면 충분 | 대개 재학습이나 distillation 필요 |
+| Low-rank factorization | 파라미터 수와 FLOPs | 일반 dense kernel, 행렬곱 두 번 | activation을 고려한 분해, 필요하면 미세조정 |
+| Early exit, MoD, MoR | 토큰마다 계산하는 층 수 | batch와 KV cache를 함께 다루는 설계 | 모델과 함께 학습 |
+
+Distillation은 이 표의 어느 줄에도 속하지 않는 회복 수단이다.
+줄인 모델이든 처음부터 작은 모델이든 teacher의 분포로 학습하면 같은 토큰 수로 더 높은 품질에 이르고, 그 비용은 teacher를 함께 실행하는 데서 나온다.
+표의 어느 방법도 품질 손실이 0은 아니므로, 압축 비율은 perplexity뿐 아니라 생성 task의 점수까지 보고 정한다.
+
 [^survey]: Zhu, X., Li, J., Liu, Y., Ma, C., & Wang, W. (2024). A Survey on Model Compression for Large Language Models. *Transactions of the Association for Computational Linguistics*, 12, 1556–1577. [arXiv:2308.07633v4](https://arxiv.org/abs/2308.07633v4).
+
+[^han]: Han, S., Pool, J., Tran, J., & Dally, W. J. (2015). Learning both Weights and Connections for Efficient Neural Networks. *NeurIPS 2015*. [arXiv:1506.02626](https://arxiv.org/abs/1506.02626).
 
 [^sparsegpt]: Frantar, E., & Alistarh, D. (2023). SparseGPT: Massive Language Models Can Be Accurately Pruned in One-Shot. *ICML 2023*. [arXiv:2301.00774](https://arxiv.org/abs/2301.00774).
 
@@ -609,6 +648,8 @@ MoR은 반복을 계속하는 토큰만 그 반복 단계의 attention에 포함
 [^shortgpt]: Men, X., Xu, M., Zhang, Q., et al. (2025). ShortGPT: Layers in Large Language Models are More Redundant Than You Expect. *Findings of ACL 2025*, 20192–20204. [ACL Anthology](https://aclanthology.org/2025.findings-acl.1035/).
 
 [^gromov]: Gromov, A., Tirumala, K., Shapourian, H., Glorioso, P., & Roberts, D. A. (2025). The Unreasonable Ineffectiveness of the Deeper Layers. *ICLR 2025*. [arXiv:2403.17887](https://arxiv.org/abs/2403.17887).
+
+[^hinton]: Hinton, G., Vinyals, O., & Dean, J. (2015). Distilling the Knowledge in a Neural Network. *NIPS 2014 Deep Learning Workshop*. [arXiv:1503.02531](https://arxiv.org/abs/1503.02531).
 
 [^sheared]: Xia, M., Gao, T., Zeng, Z., & Chen, D. (2024). Sheared LLaMA: Accelerating Language Model Pre-training via Structured Pruning. *ICLR 2024*. [arXiv:2310.06694](https://arxiv.org/abs/2310.06694).
 
@@ -639,5 +680,3 @@ MoR은 반복을 계속하는 토큰만 그 반복 단계의 attention에 포함
 [^asvd]: Yuan, Z., Shang, Y., Song, Y., et al. (2023). ASVD: Activation-aware Singular Value Decomposition for Compressing Large Language Models. [arXiv:2312.05821](https://arxiv.org/abs/2312.05821).
 
 [^svdllm]: Wang, X., Zheng, Y., Wan, Z., & Zhang, M. (2025). SVD-LLM: Truncation-aware Singular Value Decomposition for Large Language Model Compression. *ICLR 2025*. [arXiv:2403.07378](https://arxiv.org/abs/2403.07378).
-
-[^kd-overview]: Alkhulaifi, A., Alsahli, F., & Ahmad, I. (2021). Knowledge distillation in deep learning and its applications. *PeerJ Computer Science*, 7, e474. [DOI:10.7717/peerj-cs.474](https://doi.org/10.7717/peerj-cs.474).
