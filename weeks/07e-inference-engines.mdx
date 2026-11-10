@@ -25,7 +25,8 @@ Park 등은 오픈소스와 상용 엔진 25개를 살펴보고, 엔진들이 �
    블록이 모자라면 실행 중인 요청 하나를 골라 선점(preemption)해 블록을 비운다.
 3. **KV cache manager**가 요청에 블록을 배정·해제하고, 일치하는 prefix의 블록을 찾아 재사용한다.
 4. **Model runner**가 batch의 입력 텐서를 준비하고,
-   attention·선형층 kernel과 CUDA graph로 모델을 한 번 실행한다.
+   attention·선형층 kernel을 실행해 모델의 출력을 구한다.
+   지원하는 설정에서는 CUDA graph로 여러 kernel의 실행을 묶을 수도 있다.
 5. **Sampler**가 일반 decode에서는 마지막 위치의 logits로 다음 토큰을 고르고,
    speculative decoding에서는 추측한 토큰 위치들의 logits로 각 토큰의 수락 여부를 정한다.
 
@@ -207,6 +208,8 @@ vLLM과 SGLang 모두 측정 사이에 prefix cache를 비우는 방법을 제�
 NVIDIA의 측정 안내는 ITL을 TPOT(time per output token)와 같은 값으로 정의하지만,
 vLLM은 ITL을 출력 묶음 사이의 간격으로, TPOT를 첫 출력 뒤의 시간을 나머지 출력 토큰 수로 나눈 값으로 따로 보고한다.[^nvidia-bench][^vllm-bench]
 그래서 speculative decoding처럼 토큰이 묶여 나오면 두 값이 달라진다.
+예를 들어 첫 토큰 이후 4개 토큰이 20 ms 뒤에 한 묶음으로 도착했다면, 출력 묶음 사이 간격은 20 ms지만 토큰당 평균인 TPOT는 $20/4=5$ ms다.
+사용자가 다음 출력을 기다린 시간과 생성된 토큰당 평균 비용은 서로 다른 관찰이다.
 
 ### 5-2. 부하와 성능 곡선
 

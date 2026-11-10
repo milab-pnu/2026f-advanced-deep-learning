@@ -161,6 +161,8 @@ Sarathi-Serve는 스텝마다 처리할 토큰 수의 상한, 곧 토큰 예산�
 예산이 작으면 한 스텝에 넣는 prefill 조각도 작아져 스텝이 대체로 짧아지지만, 너무 작으면 prefill을 잘게 나누는 부담이 커진다.
 그래서 ITL의 SLO를 지키는 범위에서 예산을 정한다.
 스텝마다 진행 중인 decode를 먼저 넣은 뒤 남는 예산만큼 prefill 조각을 채운다.
+예를 들어 예산이 8토큰이고 진행 중인 decode가 3개라면, 각 요청에 1토큰씩 배정한 뒤 남은 5토큰을 새 요청의 prefill에 쓸 수 있다.
+새 요청의 프롬프트가 12토큰이라면 나머지는 다음 스텝에서 처리한다.
 이렇게 하면 긴 prefill을 통째로 실행하느라 decode가 한참 멈추는 일(generation stall)을 막는다.
 대신 각 decode 스텝은 함께 넣은 조각만큼 길어질 수 있다.
 
@@ -376,6 +378,7 @@ MoE 층의 expert를 GPU마다 나누어 두고, attention은 DP 복제본으로
 
 그림은 LMSYS 블로그 저장소의 MIT 라이선스(<a href={lmsysLicense}>전문</a>)에 따라 실었다.
 
+<Details summary="DeepSeek-V3의 대규모 expert parallelism">
 DeepSeek-V3는 prefill과 decode를 나누어 배포하고, 두 단계에 서로 다른 규모의 EP를 쓴다.[^dsv3]
 Prefill은 GPU 32대를 한 묶음으로 써서 MoE 층의 expert를 32대에 나눈다(EP=32).
 Decode는 GPU 320대를 한 묶음으로 써서 GPU마다 expert 하나만 둔다(EP=320).
@@ -394,8 +397,9 @@ Decode에서는 attention 복제본 80개가 처리한 토큰이 각자 고른 r
 보고서도 expert 하나가 받는 토큰은 대개 256개 이내이고 병목은 메모리 접근이라고 적는다.[^dsv3]
 이 구조에서는 dispatch와 combine의 all-to-all 통신이 비용으로 남는다.
 학습에서 EP가 겪던 것과 같은 종류의 통신이고, DeepSeek-V3는 decode에서 그 지연을 줄이려고 InfiniBand 위의 직접 point-to-point 전송을 쓴다.[^dsv3]
+</Details>
 
-앞의 계산은 routing이 고르다고 가정했지만, 실제로는 토큰이 일부 expert에 크게 쏠릴 수 있다.[^vllm-ep]
+실제로는 토큰이 expert에 고르게 나뉘지 않고 일부 expert에 크게 쏠릴 수 있다.[^vllm-ep]
 MoE 층은 모든 GPU가 층마다 맞춰 진행하므로 가장 많은 토큰을 받은 GPU가 끝나야 다음 층으로 넘어가고, MoE의 expert 쏠림이 서빙에서는 곧 지연이 된다.[^vllm-dp]
 vLLM의 EPLB(expert parallel load balancer)는 forward마다 expert 부하를 모아 주기적으로 expert를 GPU 사이에 다시 배치하고,
 설정하면 부하가 몰리는 expert를 redundant expert로 복제해 부하를 고르게 맞춘다.

@@ -15,6 +15,9 @@ GPU 메모리 중 사용 예산을 73.6 GB로 잡고 weight 16.1 GB와 실행 �
 토큰당 약 131 KB라서 요청마다 8,192토큰(약 1.07 GB)까지 자란다면 요청 49개까지 들어간다고 어림할 수 있다.
 이 계산은 공간을 한 칸도 낭비하지 않고, 여러 요청이 같은 앞부분(prefix)을 가져도 요청마다 따로 저장한다고 가정한다.
 
+이 숫자는 저장 용량의 어림이다.
+실제 서빙에서는 요청이 끝나면 공간을 돌려받고 새 요청에 다시 나누어 주어야 하므로, 공간이 남아 있어도 배치 방법에 따라 활용하지 못할 수 있다.
+
 이 노트는 실제 서빙에서 이 공간을 관리하는 방법을 다룬다.
 GQA(grouped-query attention)·MLA(multi-head latent attention)나 sliding window처럼 모델 구조를 바꿔 KV cache를 줄이는 방법 자체는 다루지 않고,
 Jiang 등의 서베이처럼 서빙 단계에서 KV cache를 다루는 방법을 본다.[^survey]
@@ -76,6 +79,7 @@ KV cache 공간이 batch 크기를 제한하는 상황에서는 이 낭비만큼
 가상 주소가 연속된 두 page라도 실제 메모리에서는 떨어진 frame에 놓을 수 있다.
 어떤 page가 어느 frame에 있는지는 프로세스의 **page table**에 기록한다.[^os-paging]
 
+<Details summary="운영체제 paging의 주소 변환 예">
 프로세스가 가상 주소를 사용하면 메모리 관리 장치(MMU, memory management unit)가 그 주소를 page 번호와 page 안의 위치인 offset으로 나눈다.
 Page table에서 page 번호에 해당하는 frame을 찾아, frame 번호와 같은 offset을 합쳐 실제 메모리의 주소를 얻는다.
 자주 쓰는 변환은 TLB(translation lookaside buffer)라는 작은 cache에 보관해 page table을 매번 처음부터 찾는 비용을 줄인다.[^linux-pagetables]
@@ -98,6 +102,7 @@ Table에서 page 2에 대응하는 frame 7을 찾으면 물리 주소는 $7\time
 바로 다음 가상 page가 물리 frame 8에 있을 필요는 없다.
 고정 크기 frame이면 흩어진 빈 공간도 한 frame씩 사용할 수 있지만, 마지막 page에서 쓰지 않는 부분과 page table 자체의 공간은 남는다.
 </Callout>
+</Details>
 
 Kwon 등은 이 아이디어를 KV cache 관리에 적용해 vLLM을 만들었다.
 vLLM은 같은 생각으로 KV cache를 고정 크기 **블록**으로 나누어 GPU 메모리 곳곳에 둔다.
@@ -286,8 +291,9 @@ GPU 메모리에 둘 KV cache를 더 줄이는 방법은 크게 세 갈래다.
 양자화(quantization)는 KV 원소의 정밀도를 낮춰 토큰 하나를 더 적은 byte로 저장한다.
 Eviction은 일부 토큰의 key·value를 지우고, merging은 여러 key·value를 합친다.
 Offloading은 cache를 GPU 밖의 더 큰 저장소로 옮긴다.
-양자화와 eviction·merging은 GPU에 둘 크기와 스텝마다 읽을 양을 함께 줄이고,
-offloading은 GPU 밖의 용량을 빌려 GPU에 둘 크기만 줄인다.
+양자화와 eviction·merging은 GPU에 둘 크기와 스텝마다 읽을 양을 함께 줄일 수 있다.
+다만 이득을 얻으려면 kernel이 압축된 상태의 cache를 활용할 수 있어야 하고, 복원이나 점수 관리에도 비용이 든다.
+Offloading은 GPU 밖의 용량을 빌려 GPU에 둘 크기를 줄이지만, 필요한 데이터를 다시 가져오는 비용이 생긴다.
 여기서는 양자화는 빼고 eviction·merging과 offloading을 본다.
 
 ### 4-1. Eviction과 merging
@@ -364,6 +370,7 @@ LongBench의 긴 입력 데이터셋 16개에서 1,024–4,096토큰 예산으�
 다만 하락이 큰 경우도 있었다.
 예를 들어 LWM-Text-Chat-1M의 GovReport 요약 점수는 압축하지 않았을 때 27.97이었지만 1,024토큰 예산에서는 19.79였다.
 
+<Details summary="Head마다 다른 토큰을 남길 때의 블록 관리">
 이런 eviction은 앞의 블록 관리와 그대로 맞물리지는 않는다.
 vLLM 구현에서는 블록의 한 칸에 토큰 하나에 대한 모든 head의 key·value가 들어가는데,
 H2O처럼 생성 중에 head마다 다른 토큰을 지우면, 예를 들어 head A는 지우고 head B는 남긴 칸이 생긴다.
@@ -375,6 +382,7 @@ head마다 남은 key·value를 차례로 새 블록에 채워 넣을 수 있다
 위치 정보는 저장된 key에 이미 들어 있고, 각 key의 점수와 짝을 이룬 value를 가중해 더하기 때문이다.
 반면 상대 위치에 따른 점수 편향이나 sliding window처럼 위치를 기준으로 일부 쌍을 가리는 mask가 있다면, 원래 위치를 함께 보존하고 그 기준을 적용해야 한다.
 이는 남겨 둔 쌍의 저장 순서를 바꿔도 같다는 뜻이지, 토큰을 지우기 전의 full cache와 결과가 같다는 뜻은 아니다.
+</Details>
 
 어떤 토큰을 고르든, eviction은 지운 토큰의 정보를 그대로 버린다.
 Zhang 등은 CaM(cache merging)을 제안하며 이 점을 짚었다.[^cam]

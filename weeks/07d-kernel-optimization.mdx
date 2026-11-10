@@ -211,6 +211,10 @@ Dao 등의 Flash-Decoding은 나눌 방향을 하나 더 만들었다.
 각 thread block은 자기 조각의 점수만으로 softmax를 계산한 부분 출력을 만들고,
 그 조각의 softmax 분모(지수 합)에 로그를 씌운 스칼라 하나(LSE, log-sum-exp)를 함께 남긴다.
 마지막에 짧은 reduce kernel이 LSE의 차이로 조각별 지수 합의 상대적인 크기를 구하고, 그 비중으로 부분 출력을 합친다.
+각 조각의 출력을 똑같이 평균하면 안 된다.
+예를 들어 공통 기준으로 계산한 지수 합이 한 조각에서 다른 조각의 3배라면, 전체 결과에서는 그 조각의 부분 출력을 3배 큰 비중으로 합쳐야 한다.
+조각마다 안정화를 위해 뺀 최댓값이 다를 수 있으므로, 조각 내부의 지수 합만 그대로 비교해서는 안 된다.
+LSE를 이용하면 이 차이를 반영해 수치적으로 안정적인 비중을 계산할 수 있다.
 
 <figure>
 <svg viewBox="0 0 600 250" role="img" aria-label="Flash-Decoding의 계산 흐름. 위쪽 왼편에 새 토큰의 query q가 있고, 오른쪽으로 긴 KV cache 막대가 네 조각(split 1–4)으로 나뉘어 있다. 각 조각 아래에 thread block 1–4가 있어, 모두 같은 query와 자기 조각의 key·value로 부분 출력 o_i와 log-sum-exp LSE_i를 동시에 계산한다. 네 결과는 아래의 reduce 상자로 모이고, reduce는 log-sum-exp로 각 부분 출력의 비중을 맞춰 최종 출력 o를 만든다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
