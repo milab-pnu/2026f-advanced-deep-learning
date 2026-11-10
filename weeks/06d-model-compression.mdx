@@ -346,7 +346,8 @@ Gromov 등은 입력과 출력이 가장 비슷한 연속된 층들을 지운 �
 ### 4-1. Distillation의 목표
 
 일반 사전학습은 매 위치에서 데이터에 실제로 나온 다음 토큰 하나를 맞히도록 학습한다.
-Distillation은 이미 학습된 모델(teacher)의 출력 분포를 목표로 다른 모델(student)을 학습하는 방법이다.[^hinton]
+Distillation은 이미 학습된 모델(teacher)이 제공하는 신호를 이용해 다른 모델(student)을 학습하는 방법이다.[^hinton]
+Teacher의 출력 분포뿐 아니라 teacher가 생성한 답이나 중간 표현을 학습 신호로 쓸 수도 있다.[^fitnets]
 여기서는 같은 토크나이저와 어휘를 쓰는 큰 teacher와 작은 student를 예로 들어, 토큰 위치마다 다음 토큰의 분포를 비교한다.
 같은 문맥을 teacher와 student에 함께 넣고, 위치마다 두 모델의 다음 토큰 분포 $p_T$와 $p_S$ 사이의 forward KL divergence
 $\mathrm{KL}(p_T\,\|\,p_S)=\sum_v p_T(v)\log\big(p_T(v)/p_S(v)\big)$가 줄어들도록, teacher는 고정한 채 student의 weight만 갱신한다.
@@ -649,6 +650,8 @@ MoR은 반복을 계속하는 토큰만 그 반복 단계의 attention에 포함
 [^gromov]: Gromov, A., Tirumala, K., Shapourian, H., Glorioso, P., & Roberts, D. A. (2025). The Unreasonable Ineffectiveness of the Deeper Layers. *ICLR 2025*. [arXiv:2403.17887](https://arxiv.org/abs/2403.17887).
 
 [^hinton]: Hinton, G., Vinyals, O., & Dean, J. (2015). Distilling the Knowledge in a Neural Network. *NIPS 2014 Deep Learning Workshop*. [arXiv:1503.02531](https://arxiv.org/abs/1503.02531).
+
+[^fitnets]: Romero, A., Ballas, N., Ebrahimi Kahou, S., et al. (2015). FitNets: Hints for Thin Deep Nets. *ICLR 2015*. [arXiv:1412.6550](https://arxiv.org/abs/1412.6550).
 
 [^sheared]: Xia, M., Gao, T., Zeng, Z., & Chen, D. (2024). Sheared LLaMA: Accelerating Language Model Pre-training via Structured Pruning. *ICLR 2024*. [arXiv:2310.06694](https://arxiv.org/abs/2310.06694).
 

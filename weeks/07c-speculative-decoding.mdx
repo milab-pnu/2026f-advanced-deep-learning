@@ -41,11 +41,13 @@ Speculative decoding은 토큰을 하나씩 확정하는 대신, 추측과 검�
 큰 모델(target)은 앞 문맥을 KV cache에 두고, 아직 cache에 없는 직전 확정 토큰과 추측 $\gamma$개만 함께 입력해 forward 한 번으로 각 위치의 다음 토큰 분포 $\gamma+1$개를 모두 구한다.
 그 분포로 추측이 맞았는지 검증(verify)하고, 맞은 데까지 받아들인다.[^leviathan][^chen]
 
-<Figure src="https://raw.githubusercontent.com/jax-ml/scaling-book/173fb0851d7e654872f0327aff2e17607cf24106/assets/img/spec-sampling2.png" alt="손으로 그린 speculative decoding 진행도. 왼쪽부터 세 번의 반복이 이어진다. 각 반복에서 Draft model이라 적힌 좁은 주황 상자 세 개가 토큰을 하나씩 추측하고(never gonna find, you a sign, never gonna turn), 바로 뒤의 넓은 검은 상자가 Target model의 forward 한 번이다. 상자 아래에는 판정이 적혀 있다. 첫 반복은 never와 gonna를 수락하고 find를 거부해 target이 give로 고친다. 둘째 반복은 you만 수락하고 a와 sign을 거부하며, target이 up을 낸다. 셋째 반복은 never와 gonna를 수락하고 turn을 let으로 고친다. 고친 토큰은 화살표를 따라 다음 반복의 draft 입력으로 넘어간다." caption="Draft와 target이 번갈아 도는 모습. 좁은 상자 세 개는 작은 draft 모델을 세 번 돌려 토큰 세 개를 추측하는 과정이고, 넓은 상자 하나는 그 추측을 한꺼번에 검증하는 target의 forward 한 번이다. 예시 문장은 노래 가사이니 내용보다 상자의 배치를 본다. 초록은 수락, 빨간 ×는 거부된 추측이고, 거부된 자리에는 target이 고른 토큰(give, up, let)이 들어간다." source="Austin et al. (2025), How to Scale Your Model, Transformer Inference 부록 D · MIT License, © 2025 Google LLC" wide />
+<Figure src="https://arxiv.org/html/2211.17192v2/figure1.png" alt="문장이 생성되는 아홉 차례의 speculative decoding. 각 줄은 한 번의 검증을 나타낸다. 이미 확정된 토큰은 검정, draft가 제안해 수락된 토큰은 초록, 거부된 토큰은 빨강, target이 대신 고른 토큰은 파랑이다. 각 줄의 결과가 다음 줄의 확정 문맥으로 이어진다." caption="Speculative decoding의 실제 생성 예. 한 줄이 target의 검증 한 번이다. 초록은 수락한 draft, 빨강은 거부한 draft, 파랑은 그 자리에 target이 고른 토큰이다. 결과는 다음 줄의 문맥으로 이어진다." source="Leviathan et al. (2023), Figure 1 · CC BY 4.0" wide />
 
 ### 1-2. Greedy 검증
 
 가장 단순한 경우는 target이 greedy decoding을 할 때다.
+설명을 위해 아래 영어 단어와 마침표는 각각 한 토큰이라고 가정한다.
+실제 토큰 구분은 tokenizer에 따라 다를 수 있다.
 지금까지 "the cat sat on"이 확정되었고, KV cache에는 `sat`까지 들어 있으며 직전에 고른 `on`이 다음 입력이라고 하자.
 Draft가 그 뒤로 `the mat .`를 추측했다면($\gamma=3$),
 target은 `on the mat .` 네 토큰을 한 번에 입력해 네 위치의 출력을 낸다.
@@ -443,7 +445,7 @@ vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-boun
 <Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.31.0/docs/assets/benchmarking/latency-metrics-speculative-decoding-light.svg" alt="'Latency with token bundling' 시간축 그림. 요청을 0 ms에 보내고, Output 1로 토큰 T1이 100 ms에, Output 2로 T2, T3, T4가 묶여 140 ms에, Output 3으로 T5가 180 ms에 도착한다. 0–100 ms가 TTFT 100 ms이고, 출력 사이 간격은 두 번 모두 ITL 40 ms다. 100–180 ms가 80 ms의 생성 구간이다. 아래 왼쪽 상자는 Mean ITL = (40 ms + 40 ms) ÷ 2 = 40 ms, 오른쪽 상자는 TPOT = (180 − 100) ms ÷ (5 − 1) = 20 ms/token이다." caption="토큰이 묶여 도착할 때의 ITL과 TPOT. 토큰 다섯 개가 출력 세 번에 나뉘어 도착하면 ITL은 관측된 간격 두 개의 평균인 40 ms이지만, TPOT는 첫 토큰 뒤 80 ms를 토큰 네 개로 나눈 20 ms다." source="vLLM Project (v0.31.0), Benchmark CLI 문서 · Apache-2.0" wide />
 
 이 노트의 Medusa·LayerSkip·MTP 논문 그림은 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), EAGLE 저장소와 vLLM 문서 그림은 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)에 따른다.
-How to Scale Your Model의 그림은 [MIT 라이선스](https://github.com/jax-ml/scaling-book/blob/173fb0851d7e654872f0327aff2e17607cf24106/LICENSE)에 따른다.
+Speculative decoding 원논문 그림은 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)에 따른다.
 
 [^survey]: Xia, H., Yang, Z., Dong, Q., et al. (2024). Unlocking Efficiency in Large Language Model Inference: A Comprehensive Survey of Speculative Decoding. *Findings of ACL 2024*, 7655–7671. [arXiv:2401.07851v3](https://arxiv.org/abs/2401.07851v3).
 

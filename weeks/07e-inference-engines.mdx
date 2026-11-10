@@ -132,8 +132,9 @@ SGLang은 LLM(large language model)을 여러 번 부르는 프로그램,
 정해진 형식으로 출력을 내게 하는 constrained decoding도 런타임이 맡는다.
 출력이 JSON(JavaScript Object Notation) 스키마를 따라야 한다면,
 생성 도중 스키마가 허용하는 토큰만 고르도록 매 스텝 마스크를 씌운다.
-SGLang 논문은 스키마 같은 형식을 정규식(regular expression)으로 나타내고 이를 유한 상태 기계(finite state machine, FSM)로 바꾼다.[^sglang]
+SGLang 논문은 정규식(regular expression)으로 표현할 수 있는 형식을 유한 상태 기계(finite state machine, FSM)로 바꾼다.[^sglang]
 FSM은 생성한 내용에 따라 상태를 바꾸고, 각 상태는 그 뒤에 어떤 문자열이 올 수 있는지를 제한한다.
+깊이 제한이 없는 재귀적 중첩처럼 정규식으로 표현할 수 없는 형식에는 별도의 문법 기반 처리가 필요하다.
 다음에 올 수 있는 문자열이 하나뿐인 구간은 한 단계로 압축한다.
 예를 들어 다음이 `{"name": "`로 정해져 있다면 모델에게 토큰을 하나씩 고르게 하지 않는다.
 그 문자열을 프롬프트와 지금까지의 출력에 이어 붙여 다시 토큰화한다(이어 붙인 문자가 기존 마지막 토큰과 합쳐질 수 있기 때문이다).
@@ -246,8 +247,13 @@ vLLM v0.31.0의 이 계산은 성공한 요청만 세고, 출력이 한 토큰 �
 예를 들어 요청 100개 중 TTFT만 넘긴 요청이 10개, TPOT만 넘긴 다른 요청이 10개라면 각 지표는 90개가 목표를 지키지만, 두 목표를 모두 지킨 요청은 80개다.
 따라서 요청별로 두 조건을 함께 확인해야 한다.
 
+예를 들어 Llama 3.1 8B를 같은 H100에서 BF16(bfloat16)과 FP8(8-bit floating point)으로 서빙한다고 하자.
+모델 정밀도 외의 설정과 요청 분포를 맞추고 동시 요청 수를 바꾸어 가며 TPOT와 처리량을 비교할 수 있다.
+실제로 실행할 수 있는 서버와 측정 명령은 다음에 정리했다.
+
+<Details summary="BF16과 FP8 서버 측정 예시">
 <Callout type="example">
-기말 프로젝트에서 Llama 3.1 8B를 H100 한 대로 서빙하며 BF16(bfloat16)과 FP8(8-bit floating point)을 비교한다고 하자.
+기말 프로젝트에서 Llama 3.1 8B를 H100 한 대로 서빙하며 BF16과 FP8을 비교한다고 하자.
 서버를 두 번 띄우되 정밀도만 다르게 하고, 엔진 버전과 KV cache 정밀도, batch 관련 설정은 같게 둔다.
 앞선 측정의 prefix cache가 결과에 섞이지 않게 두 서버 모두 `--no-enable-prefix-caching`으로 prefix caching을 끈다.
 FP8 서버는 미리 FP8로 양자화한 checkpoint를 불러오거나(이때는 아래 `--model`도 그 이름으로 바꾼다),
@@ -316,8 +322,9 @@ Prefix 재사용이나 draft 수락처럼 입력 내용에 좌우되는 효과�
 요청 수가 상한에 비해 적으면 시작과 끝 구간의 영향이 커지므로, 요청 수를 늘려 다시 잰다.
 TTFT와 대기 시간이 섞여 있어 1/TPOT와 다르므로, decode 중에 사용자가 느끼는 속도는 TPOT로 따로 본다.
 </Callout>
+</Details>
 
-앞의 예시를 roofline으로 보면, 동시 요청이 적고 weight 읽기가 주된 병목이라면 FP8이 TPOT를 줄일 것으로 기대할 수 있다.
+BF16과 FP8의 비교를 roofline으로 보면, 동시 요청이 적고 weight 읽기가 주된 병목이라면 FP8이 TPOT를 줄일 것으로 기대할 수 있다.
 다만 vLLM의 FP8 문서가 설명하는 online 모드(`fp8_per_tensor`)는 매 forward마다 activation의 scale을 새로 구하는 비용이 들어,
 문서도 이 모드의 지연 개선이 제한된다고 적는다.[^vllm-fp8w8a8]
 동시 요청이 많아 행렬곱 연산이 병목이 되면 FP8 Tensor Core로 처리량이 높아질 수 있다.

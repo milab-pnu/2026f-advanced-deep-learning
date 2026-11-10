@@ -48,6 +48,7 @@ Scheduler는 모델이 batch를 한 번 처리할 때마다, 곧 스텝마다 �
 그 사이에 끝난 요청은 바로 batch에서 빼서 돌려주고, 새로 도착한 요청은 지금 스텝이 끝나면 다음 스텝의 batch에 뽑힐 수 있다.
 Batch의 구성이 스텝마다 바뀌므로 이를 **continuous batching**이라고도 부른다.
 기다리는 요청이 있고 메모리와 batch 상한이 허용하면 끝난 자리에 바로 새 요청이 들어가므로, 앞 예시의 빈 칸이 줄어든다.
+[LLM Inference Illustrated의 그림](https://tedkyi.github.io/llm-inference/chapters/scheduling.html)은 static batching에서 비는 자리와 continuous batching에서 새 요청으로 채우는 과정을 시간축으로 비교한다.
 
 이렇게 하려면 길이와 진행 상태가 다른 요청들을 한 번의 forward로 처리할 수 있어야 한다.
 새로 들어온 요청은 프롬프트 전체를 prefill해야 하고, 기존 요청은 토큰 하나를 decode한다.
@@ -321,7 +322,8 @@ Router라는 작은 층이 토큰마다 expert별 점수를 매기고, 점수가
 MoE에서는 토큰마다 선택된 expert만 계산하므로, 토큰당 FLOPs는 활성 파라미터 크기의 dense 모델과 비슷하다.
 하지만 메모리에는 모든 expert를 올려 두어야 하고, decode 스텝이 그 가운데 얼마를 읽는지는 batch에 달려 있다.
 
-Decode 스텝에서 MoE 층이 읽는 expert weight는 batch 안의 토큰이 **하나라도 고른 expert 전부**다.
+Decode 스텝에서 MoE 층이 계산에 사용하는 expert는 batch 안의 토큰이 **하나라도 고른 expert 전부**다.
+이들의 weight를 어디서 읽는지는 cache와 구현에 따라 달라진다.
 각 토큰이 다른 토큰과 무관하게 $E$개 expert 가운데 $k$개를 균등한 확률로 고른다고 가정하자.
 토큰 하나가 특정 expert를 고르지 않을 확률은 $(E-k)/E$이고, 토큰 $b$개가 모두 그 expert를 고르지 않을 확률은 그 $b$제곱이다.
 그러니 그 expert가 한 번이라도 선택될 확률은 1에서 이 값을 뺀 것이다.
@@ -333,10 +335,11 @@ n_{\text{act}}(b)=E\left(1-\left(\frac{E-k}{E}\right)^{b}\right)
 $$
 
 <Callout type="example">
-Qwen3-30B-A3B처럼 층마다 expert 128개 가운데 8개를 고르는 모델이라면, batch 1에서는 expert 8개만 읽는다.
-토큰이 8개면 약 52개, 32개면 약 112개, 64개면 약 126개로,
-batch의 토큰이 수십 개만 되어도 거의 모든 expert를 읽는다.
-그때 스텝마다 읽는 weight는 활성 파라미터보다 전체 파라미터에 가까워진다.
+Qwen3-30B-A3B처럼 층마다 expert 128개 가운데 8개를 고르는 모델이라면, batch 1에서는 expert 8개가 선택된다.
+위의 독립·균등 선택을 가정하면, 토큰이 8개일 때 선택되는 서로 다른 expert 수의 기댓값은 약 52개다.
+32개면 약 112개, 64개면 약 126개로, batch의 토큰이 수십 개만 되어도 거의 모든 expert가 선택된다.
+이때 계산에 필요한 weight는 토큰 하나의 활성 파라미터보다 전체 파라미터에 가까워진다.
+실제 선택은 고르게 이뤄지지 않을 수 있고, HBM에서 읽는 양도 cache와 구현에 따라 다르다.
 </Callout>
 
 Gupta 등의 Lynx는 실제 요청에서 batch 크기에 따라 MoE의 decode 지연이 어떻게 달라지는지 측정했다.[^lynx]
@@ -347,8 +350,9 @@ Gupta 등의 Lynx는 실제 요청에서 batch 크기에 따라 MoE의 decode �
 <Figure src="https://arxiv.org/html/2411.08982v3/qwen3_slo_region.svg" alt="가로축은 최대 batch 크기(1, 2, 4, 8, 16, 32, 64), 세로축은 p99 TPOT(ms)인 꺾은선 그래프. 진한 파란 아래쪽 삼각형 선(Qwen3-32B)은 약 21 ms에서 48 ms로, 초록 원 선(Qwen3-30B-A3B)은 약 6 ms에서 46 ms로, 연한 파란 위쪽 삼각형 선(Qwen3-4B)은 약 5 ms에서 20 ms로 오른다. 25 ms와 50 ms에 회색 가로 점선이 있다. 초록 선과 연한 파란 선 사이에 1.7×, 2.1×, 2.3×, 3.0×, 2.5×, 2.3×가 적혀 있다. 위쪽 상자에는 batch가 크면 MoE 성능이 큰 dense 모델에 수렴한다는 관찰이, 아래쪽 상자에는 MoE's perf promise가 적혀 있고 연한 파란 선을 가리킨다." caption="최대 batch 크기에 따른 p99 TPOT. 초록 원은 Qwen3-30B-A3B(MoE, 활성 3B), 연한 파란 위쪽 삼각형은 Qwen3-4B(dense), 진한 파란 아래쪽 삼각형은 Qwen3-32B(dense)다. 굵은 숫자(1.7×–3.0×)는 같은 batch에서 MoE의 지연이 4B 모델의 몇 배인지를 나타낸다." source="Gupta et al. (2026), Figure 1(b) · CC BY 4.0" wide />
 
 Batch가 커지면 이처럼 토큰당 지연은 늘지만, 처리량은 다르다.
-Roofline으로 보면, 거의 모든 expert를 읽게 된 뒤에는 batch를 더 키워도 읽는 weight는 그대로이고 토큰당 연산량은 작다.
-그래서 연산 쪽이 병목이 되기 전까지 처리량은 batch와 함께 늘어난다.
+Roofline으로 보면, 거의 모든 expert가 선택된 뒤에는 batch를 더 키워도 계산에 필요한 expert weight의 양은 거의 늘지 않고 토큰당 연산량은 작다.
+Expert weight 읽기가 시간을 지배하고 다른 비용을 무시하는 이상적인 경우에는 batch가 커지며 처리량을 높일 수 있다.
+하지만 요청마다 따로 읽는 KV cache와 activation도 늘어나므로, 긴 문맥에서는 메모리 이동이 병목이어도 처리량 증가가 둔화할 수 있다.
 Batch를 크게 키울 수 있는 서빙에서는, 총 파라미터가 비슷한 dense 모델이 연산 병목에 걸리는 batch에서도 MoE는 계산이 적어 처리량을 더 낼 수 있다.
 반대로 메모리가 작은 환경에서는 쓰지 않는 expert까지 모두 올려 두는 비용이 먼저 드러나, 같은 활성 파라미터의 작은 dense 모델이 더 다루기 쉬울 수 있다.
 
