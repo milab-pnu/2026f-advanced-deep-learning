@@ -108,6 +108,8 @@ Router는 요청 $q$를 보고 큰 모델의 답이 더 나을 확률 $P(\text{w
 이 확률이 문턱값 $\alpha$ 이상이면 큰 모델에, 아니면 작은 모델에 보낸다.
 $\alpha$를 높이면 작은 모델로 가는 요청이 늘어 비용이 줄지만 품질이 내려갈 수 있다.
 학습 데이터는 사람들이 두 모델의 답을 비교해 고른 Chatbot Arena의 선호 기록이다.
+예를 들어 BERT 분류기 router는 요청을 BERT로 읽어 맨 앞 분류 토큰 위치의 표현을 얻고, 거기에 선형층과 sigmoid를 붙여 이 확률을 낸다.
+선호 기록에서 큰 모델이 이긴 요청과 진 요청을 정답으로 삼아 모델 전체를 미세조정한다.
 GSM8K에서는 여기에 GPT-4를 LLM judge로 써서 붙인 선호 판정을 더하자, BERT 분류기와 Llama 3 8B 기반 분류기로 만든 router가 무작위 routing보다 나아졌다.
 MMLU에서는 judge 대신 해당 task의 정답을 활용한 선호 데이터를 추가했다.
 GPT-4와 Mixtral 8x7B 사이에서 routing했을 때, MT Bench에서 GPT-4 점수의 95%를 내는 데 무작위 routing보다 GPT-4 호출을 3.66배 적게 썼다.
@@ -176,8 +178,9 @@ LLM에게 판단을 맡기는 흔한 방법은 답을 글로 쓰게 하고 그 �
 판단 앞에 이유를 먼저 쓰게 하면 출력 토큰은 수백 개까지 늘어난다.
 
 <Callout type="example">
-Llama 3.1 8B를 H100 SXM에서 요청 하나만 처리한다고 하고, 사양상 최대 속도로 이상적인 시간을 어림하자.
-1,000토큰 프롬프트의 prefill은 약 16 ms이고, decode 스텝 하나는 weight를 읽는 데 약 4.8 ms가 걸린다.
+Llama 3.1 8B를 BF16(bfloat16)으로 H100 SXM에서 요청 하나만 처리한다고 하고, 사양상 최대 속도로 이상적인 시간을 어림하자.
+1,000토큰 프롬프트의 prefill은 토큰당 약 16 GFLOPs(giga floating-point operations)인 선형층 연산량 약 16 TFLOPs를 최대 연산 성능 989 TFLOP/s로 나눈 약 16 ms이고,
+decode 스텝 하나는 weight 16 GB를 메모리 대역폭 3.35 TB/s로 읽는 약 4.8 ms가 걸린다.
 답이 8토큰짜리 JSON이면 첫 토큰은 prefill에서 나오고 decode 7스텝이 이어져 약 $16+7\times4.8\approx50$ ms가 든다.
 이유를 200토큰 먼저 쓰게 하면 약 $16+207\times4.8\approx1{,}010$ ms로 늘어난다.
 반면 prefill이 끝난 시점에 이미 계산된 다음 토큰 분포에서 답을 바로 읽을 수 있다면 약 16 ms로 끝난다.
@@ -489,8 +492,9 @@ $d$는 $W_Q$, $W_K$가 바꾼 벡터의 차원으로 strands-decider의 단일 h
 </figure>
 
 이 구조에서는 선택지가 레이블 토큰이 아니라 자기 문장 그대로 들어가므로, 선택지가 여러 토큰이어도 되고 개수도 레이블 수에 묶이지 않는다.
-Head에는 선택지 자리마다 따로 붙은 파라미터가 없어서, A 자리를 선호하는 식의 사전 분포를 head의 weight에 담을 수 없다.
-그래도 순서의 영향이 모두 사라지지는 않는다.
+Head에는 선택지 자리마다 따로 붙은 파라미터가 없어서, 레이블 토큰별 출력 weight에 담기던 사전 선호는 사라진다.
+다만 hidden state에는 선택지의 번호와 자리 정보도 담기므로, 공유 projection이 그 정보로 특정 자리를 선호하도록 학습될 수는 있다.
+순서의 영향이 모두 사라지지는 않는다.
 Causal attention에서는 뒤쪽 선택지가 앞쪽 선택지를 읽지만 앞쪽 선택지는 뒤쪽을 읽지 못하므로, 같은 선택지라도 놓인 자리에 따라 표현이 달라진다.
 strands-decider 문서도 선택지 목록을 뒤집으면 확률 분포가 조금(문서의 수치로 약 0.016) 움직인다고 보고한다.[^strands-arch]
 Cloudflare의 Clef도 Qwen 모델의 weight를 고정하고 판단용 head와 low-rank adapter를 붙여 prefill 한 번에 선택지들의 점수를 매긴다.
@@ -516,7 +520,7 @@ Yu 등은 이 구분을 빌려, 느린 추론의 결과를 빠른 답으로 옮�
 Chain-of-thought처럼 중간 추론을 생성해 계산을 더 쓰는 방법(System 2)을 정답이 없는 입력에 적용해 최종 답만 남기고,
 여러 번 샘플링한 답의 다수결이나 선택지 순서를 바꿔도 답이 같은지로 믿을 만한 답만 걸러,
 모델이 중간 추론 없이 그 답을 바로 내도록(System 1) fine-tuning한다.
-여러 추론 기법이 이렇게 옮겨졌지만, Llama-2-70B-chat을 사용한 GSM8K 수학 문제 실험에서는 한 답을 생성해 평가했을 때 zero-shot chain-of-thought를 증류한 모델의 정확도가 7.13%에 그쳐 원래 zero-shot chain-of-thought로 푼 52.77%에 크게 못 미쳤다.
+여러 추론 기법이 이렇게 옮겨졌지만, Llama 2 70B Chat을 사용한 GSM8K 수학 문제 실험에서는 한 답을 생성해 평가했을 때 zero-shot chain-of-thought를 증류한 모델의 정확도가 7.13%에 그쳐 원래 zero-shot chain-of-thought로 푼 52.77%에 크게 못 미쳤다.
 Tacit은 이 방식을 판단에 적용했다.[^tacit]
 바탕 모델이 스스로 판단 문제를 만들고, reasoning을 켠 채 풀어 답을 얻은 뒤, 그 답을 forward 한 번에 내도록 학습했으며, 사람이 붙인 정답이나 다른 모델은 쓰지 않았다.
 TypeSafe가 Jev 같은 모델을 "System One Model"이라 부르는 것도 같은 구분에서 온 이름이다.[^jev-blog]
