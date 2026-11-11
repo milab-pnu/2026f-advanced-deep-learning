@@ -54,8 +54,6 @@ v0.31.0에서는 호환되지 않는 설정이 아니면 기본으로 켠다.[^v
 
 <Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.31.0/docs/assets/design/model_runner_v2/async_sched.png" alt="Async scheduling의 실행 타임라인. 가로축은 시간이고, 위 줄은 Scheduler, 아래는 Worker의 CPU 줄과 GPU 줄이다. GPU 줄에는 Execute step N, N+1, N+2가 빈틈없이 이어진다. GPU가 Execute step N을 실행하는 동안 Scheduler가 Schedule step N+1을, Worker CPU가 Prepare step N+1을 끝내고, 화살표가 Prepare step N+1에서 Execute step N+1로 이어진다. 같은 패턴이 N+2, N+3에서 되풀이된다." caption="Async scheduling. GPU가 스텝 N을 실행하는 동안 CPU가 스텝 N+1을 scheduling하고 입력을 준비한다. CPU 준비가 제때 끝나면 GPU 줄의 실행 구간 사이에 CPU를 기다리는 빈 구간이 생기지 않는다." source="vLLM Project (v0.31.0), Model Runner V2 설계 문서 · Apache-2.0" />
 
-그림은 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)으로 제공된다.
-
 ## 2. vLLM
 
 ### 2-1. V1 구조
@@ -145,7 +143,7 @@ SGLang 팀은 이렇게 정해진 구간을 건너뛰는 decoding을 jump-forwar
 
 <Figure src="https://raw.githubusercontent.com/lm-sys/lm-sys.github.io/105adb035528f55f3d1823329f170a30b48f2b19/public/images/blog/compressed_fsm/compare.png" alt="같은 프롬프트(Please fill in the following information about Harry Potter.)로 JSON을 생성하는 두 방식의 비교. 위의 Jump-Forward Decoding With Compressed FSM에서는 초록 prefill 상자 뒤에 여는 중괄호와 name 키를 담은 주황 상자 하나가 붙고, 파랑 decode 상자 Har, ry, _Pot, ter와 닫는 따옴표·쉼표를 담은 파랑 상자 뒤에 age 키를 담은 주황 상자, 파랑 1, 1, house 키를 담은 주황 상자, 파랑 G, ryffindor와 닫는 중괄호를 담은 주황 상자, 종료 토큰이 이어진다. 아래의 Normal Decoding With FSM에서는 비슷한 출력을 파랑 decode 상자로 한 토큰씩 만들어 상자가 네 줄에 걸친다. 왼쪽의 나이 토큰은 1, 1인데 오른쪽 JSON에는 age가 15로 적혀 있어 원본 그림 안의 값이 맞지 않는다. 범례는 초록 Prefill, 파랑 Decode, 주황 Jump-Forward다." caption="Compressed FSM을 쓴 jump-forward decoding(위)과 FSM으로 한 토큰씩 decode하는 일반 방식(아래). 초록은 프롬프트의 prefill, 파랑은 한 토큰씩 decode한 토큰, 주황은 형식이 정해진 문자열을 forward 한 번에 처리한 jump-forward 구간이다. 왼쪽 나이 토큰은 11인데 오른쪽 JSON은 15로, 원본 그림 안의 값이 일치하지 않으므로 토큰별 출력 예가 아닌 처리 방식의 비교로 읽는다." source="LMSYS Org (2024), Compressed FSM 블로그 · © 2023 LMSYS Org, MIT License" wide />
 
-그림의 [MIT 라이선스 원문](https://github.com/lm-sys/lm-sys.github.io/blob/105adb035528f55f3d1823329f170a30b48f2b19/LICENSE)에는 저작권 표시와 이용 조건이 담겨 있다.
+그림은 LMSYS 블로그 저장소의 [MIT 라이선스](https://github.com/lm-sys/lm-sys.github.io/blob/105adb035528f55f3d1823329f170a30b48f2b19/LICENSE)에 따라 실었다.
 
 엔진을 여러 인스턴스로 띄우면, 요청을 어느 인스턴스로 보내느냐도 prefix 재사용에 영향을 준다.
 SGLang v0.4는 이를 위한 cache-aware routing을 cache-aware load balancer로 구현했다.
@@ -324,6 +322,51 @@ TTFT와 대기 시간이 섞여 있어 1/TPOT와 다르므로, decode 중에 사
 </Callout>
 </Details>
 
+아래 그림은 이렇게 얻은 곡선의 예다(설명을 위한 가상의 값).
+
+<figure>
+<svg viewBox="0 0 600 300" role="img" aria-label="동시 요청 수를 바꿔 가며 잰 BF16과 FP8 서버의 성능 곡선. 가로축은 사용자당 처리량(tokens/s/user) 0부터 250, 세로축은 GPU 한 대의 처리량(tokens/s) 0부터 12,000이다. 회색 BF16 곡선은 동시 요청 1에서 (150, 150), 4에서 (140, 560), 16에서 (119, 1,900), 64에서 (80, 5,100), 256에서 (35, 9,000)을 지난다. 진한 FP8 곡선은 1에서 (220, 220), 4에서 (205, 820), 16에서 (169, 2,700), 64에서 (106, 6,800), 256에서 (43, 11,000)을 지난다. 가로축 100 tokens/s/user에 세로 점선이 있고, 그 오른쪽에서 세로축이 가장 높은 점은 FP8의 동시 요청 64다. FP8 곡선이 Pareto 경계로 표시되어 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <text x="310" y="20" font-size="14" text-anchor="middle" fill="#0f172a" font-weight="600">동시 요청 수에 따른 BF16과 FP8 서버의 성능 곡선(가상의 값)</text>
+  <line x1="60" y1="260" x2="560" y2="260" stroke="#0f172a" stroke-width="1.2"/>
+  <line x1="60" y1="260" x2="60" y2="40" stroke="#0f172a" stroke-width="1.2"/>
+  <text x="310" y="292" font-size="12" text-anchor="middle" fill="#0f172a">사용자당 처리량 (tokens/s/user)</text>
+  <text x="14" y="150" font-size="12" text-anchor="middle" fill="#0f172a" transform="rotate(-90 14 150)">GPU당 처리량 (tokens/s)</text>
+  <text x="60" y="275" font-size="11" text-anchor="middle" fill="#64748b">0</text>
+  <text x="260" y="275" font-size="11" text-anchor="middle" fill="#64748b">100</text>
+  <text x="460" y="275" font-size="11" text-anchor="middle" fill="#64748b">200</text>
+  <text x="54" y="264" font-size="11" text-anchor="end" fill="#64748b">0</text>
+  <text x="54" y="154" font-size="11" text-anchor="end" fill="#64748b">6,000</text>
+  <text x="54" y="44" font-size="11" text-anchor="end" fill="#64748b">12,000</text>
+  <line x1="260" y1="260" x2="260" y2="40" stroke="#ea580c" stroke-width="1.2" stroke-dasharray="5 4"/>
+  <text x="266" y="52" font-size="11" fill="#ea580c">사용자당 100 tokens/s 이상</text>
+  <polyline points="360,257 340,250 298,225 220,166 130,95" fill="none" stroke="#94a3b8" stroke-width="2"/>
+  <circle cx="360" cy="257" r="4" fill="#94a3b8"/><circle cx="340" cy="250" r="4" fill="#94a3b8"/><circle cx="298" cy="225" r="4" fill="#94a3b8"/><circle cx="220" cy="166" r="4" fill="#94a3b8"/><circle cx="130" cy="95" r="4" fill="#94a3b8"/>
+  <text x="368" y="252" font-size="10" fill="#64748b">1</text>
+  <text x="348" y="244" font-size="10" fill="#64748b">4</text>
+  <text x="306" y="220" font-size="10" fill="#64748b">16</text>
+  <text x="206" y="162" font-size="10" text-anchor="end" fill="#64748b">64</text>
+  <text x="116" y="91" font-size="10" text-anchor="end" fill="#64748b">256</text>
+  <polyline points="500,256 470,245 398,210 272,135 146,58" fill="none" stroke="#1d4ed8" stroke-width="3"/>
+  <circle cx="500" cy="256" r="4.5" fill="#1d4ed8"/><circle cx="470" cy="245" r="4.5" fill="#1d4ed8"/><circle cx="398" cy="210" r="4.5" fill="#1d4ed8"/><circle cx="272" cy="135" r="6" fill="none" stroke="#ea580c" stroke-width="2.5"/><circle cx="272" cy="135" r="4.5" fill="#1d4ed8"/><circle cx="146" cy="58" r="4.5" fill="#1d4ed8"/>
+  <text x="508" y="251" font-size="10" fill="#1d4ed8">1</text>
+  <text x="478" y="240" font-size="10" fill="#1d4ed8">4</text>
+  <text x="406" y="205" font-size="10" fill="#1d4ed8">16</text>
+  <text x="282" y="131" font-size="10" fill="#1d4ed8">64</text>
+  <text x="156" y="55" font-size="10" fill="#1d4ed8">256</text>
+  <line x1="380" y1="110" x2="400" y2="110" stroke="#1d4ed8" stroke-width="3"/>
+  <text x="406" y="114" font-size="11" fill="#0f172a">FP8 (Pareto 경계)</text>
+  <line x1="380" y1="130" x2="400" y2="130" stroke="#94a3b8" stroke-width="2"/>
+  <text x="406" y="134" font-size="11" fill="#0f172a">BF16</text>
+  <text x="406" y="154" font-size="11" fill="#64748b">점 옆 숫자는 동시 요청 상한</text>
+</svg>
+<figcaption>동시 요청 수를 바꿔 가며 잰 BF16과 FP8 서버의 성능 곡선(설명을 위한 가상의 값). 가로축은 사용자당 처리량, 세로축은 GPU 한 대의 처리량이고, 점 옆 숫자는 동시 요청 상한이다. 점선은 사용자당 100 tokens/s 조건이고, 주황 테두리는 그 조건에서 고른 점이다. 이 예에서는 FP8의 점들이 BF16의 점들보다 두 축 모두에서 낫거나 같아 Pareto 경계는 FP8 곡선이 된다.</figcaption>
+</figure>
+
+곡선에서 설정을 고를 때는 먼저 사용자당 속도의 조건을 긋고, 그 조건을 만족하는 점 가운데 GPU당 처리량이 가장 높은 점을 택한다.
+사용자당 100 tokens/s 이상이 조건이라면 FP8의 동시 요청 64(약 106 tokens/s/user에 6,800 tokens/s)를 고르고, BF16으로는 동시 요청 16(약 119에 1,900)까지만 조건을 만족한다.
+동시 요청을 늘려 왼쪽 위로 갈수록 사용자당 속도를 내주고 GPU당 처리량을 얻는 맞교환이 보인다.
+Pareto 경계는 측정한 점들 가운데, 두 축 모두 자신보다 나쁘지 않으면서 적어도 한 축은 더 나은 다른 점이 없는 점들을 이은 선이다.
+
 BF16과 FP8의 비교를 roofline으로 보면, 동시 요청이 적고 weight 읽기가 주된 병목이라면 FP8이 TPOT를 줄일 것으로 기대할 수 있다.
 다만 vLLM의 FP8 문서가 설명하는 online 모드(`fp8_per_tensor`)는 매 forward마다 activation의 scale을 새로 구하는 비용이 들어,
 문서도 이 모드의 지연 개선이 제한된다고 적는다.[^vllm-fp8w8a8]
@@ -348,10 +391,12 @@ Profiler는 실행을 느리게 만들 수 있어, 지연과 처리량의 본 �
 vLLM은 이렇게 설정과 부하를 바꿔 가며 재는 일을 자동화하는 `vllm bench sweep`도 제공한다.
 서버 설정의 조합마다 측정을 돌리고, 부하 수준을 바꿔 지연과 처리량의 맞교환을 찾으며,
 위와 같은 정의의 사용자당 처리량과 GPU당 처리량으로 Pareto 곡선을 그린다.[^vllm-sweep]
-Pareto 곡선은 측정한 점들 가운데, 두 축 모두 자신보다 나쁘지 않으면서 적어도 한 축은 더 나은 다른 측정점이 없는 점들을 이은 경계다.
+위 그림의 Pareto 경계가 그것이다.
 따라서 이 경계는 이번에 시험한 설정 중의 선택지를 보여 주며, 시험하지 않은 설정까지 포함한 최적을 보장하지는 않는다.
 결과를 보고할 때는 곡선과 함께 측정 조건 전체를 적어,
 다른 사람이 같은 조건에서 다시 잴 수 있게 한다.
+
+이 노트의 vLLM 문서 그림은 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)에 따른다.
 
 [^survey]: Park, S., Jeon, S., Lee, C., Jeon, S., Kim, B.-S., & Lee, J. (2025). A Survey on Inference Engines for Large Language Models: Perspectives on Optimization and Efficiency. [arXiv:2505.01658v2](https://arxiv.org/abs/2505.01658v2).
 
