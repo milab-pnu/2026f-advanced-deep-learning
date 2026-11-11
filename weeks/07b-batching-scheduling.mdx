@@ -153,8 +153,8 @@ Agrawal 등의 해법은 긴 prefill을 잘게 나누는 것이었다.
 Decode만 하는 스텝은 memory-bound라 연산 능력을 충분히 쓰지 못한다.
 여기에 prefill 조각을 섞으면 조각의 계산이 남는 연산 능력을 쓰고, decode는 조각을 계산하려고 읽어 온 weight를 함께 쓴다.
 원논문은 이를 decode가 prefill 조각에 얹힌다(piggyback)고 표현했다.
-LLaMA-13B를 A6000에서 조각 256토큰으로 돌린 실험에서, prefill 조각만 실행한 시간과 decode를 함께 얹어 실행한 시간의 차이를 decode 토큰 수로 나누어 토큰당 비용을 구했다.
-이 값은 decode만 하는 batch에서 토큰 하나에 드는 시간보다 최대 약 10배 짧았다.[^sarathi]
+LLaMA-13B를 A6000에서 돌린 예에서, 1,021토큰 prefill 조각 하나에 decode 3개를 얹었을 때 얹은 decode가 더한 시간을 decode 수로 나눈 토큰당 비용은 1.2 ms였다.
+Decode만 하는 batch에서 토큰 하나에 드는 12.49 ms보다 약 10배 짧다.[^sarathi]
 
 후속 Sarathi-Serve는 이를 scheduler로 일반화했다.[^sarathi-serve]
 서빙 시스템은 TTFT나 ITL 같은 지연 지표에 서비스가 정해 둔 목표, 곧 SLO(service-level objective)를 지켜야 한다.
@@ -245,8 +245,7 @@ GPU 여러 대를 묶은 서버 한 대를 노드라 하고, H100 서버처럼 �
 H100 서버에서 노드 안 NVLink를 한 방향 약 450 GB/s, 노드 밖 연결을 한 방향 50 GB/s로 가정하면, 이 양을 옮기는 시간의 하한은 각각 약 2.7 ms와 약 24 ms다.
 필요한 대역폭은 요청률에 비례한다.
 위에서 계산한 약 1.21 GB를 초당 10건 옮기려면 초당 약 12.1 GB, 곧 약 97 Gbps가 필요하다.
-DistServe는 1.13 GB와 초당 10건을 곱해 약 90 Gbps라고 적었다.[^distserve]
-앞의 정확한 byte 수에 10과 8을 곱한 값과 차이가 나므로, 단위를 명시해 계산한 값을 쓰는 편이 안전하다.
+DistServe가 적은 약 90 Gbps는 같은 계산을 이진 단위(1.13 GiB)로 한 값에 십진 단위 이름을 붙인 것이다.[^distserve]
 대역폭이 필요한 평균 전송률보다 모자라면 전송이 밀려 지연이 늘어난다.
 
 노드 사이 대역폭이 부족하고 두 단계가 모두 PP로 층을 여러 묶음(stage)으로 나누어 여러 노드에 걸친다면,
