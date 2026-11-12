@@ -8,38 +8,36 @@ Batching은 한 번 읽은 weight를 여러 요청의 토큰에 나눠 써서 �
 speculative decoding은 한 번의 검증으로 출력 토큰 여러 개를 얻어 요청 하나의 토큰당 지연을 줄이려 한다.[^survey]
 두 경우 모두 roofline으로 구한 시간은 정한 연산량과 데이터 이동량을 최대 속도로 처리할 때의 이상적인 값이다.
 실제 실행은 보통 그보다 오래 걸린다.
-Llama 3.1 8B를 H100 한 대에서 batch 1로, speculative decoding 없이 돌린다.
-문맥이 약 2,048토큰인 구간의 TPOT(time per output token), 곧 첫 토큰 이후 출력 토큰 하나에 걸린 평균 시간이 8.0 ms라고 하자(설명을 위한 값).
-그러면 TPOT는 weight와 KV(key-value) cache를 BF16(bfloat16)으로 한 번씩 읽는다고 단순화한 4.9 ms의 약 1.6배다.
+예를 들어 Llama 3.1 8B를 H100 한 대에서 batch 1로, speculative decoding 없이 돌렸다고 하자.
+문맥이 약 2,048토큰인 구간의 TPOT(time per output token), 곧 첫 토큰 이후 출력 토큰 하나에 걸린 평균 시간이 8.0 ms였다고 하자(설명을 위한 값).
+BF16(bfloat16) weight 약 16 GB와 KV(key-value) cache 약 0.27 GB를 한 번씩 읽는다고 단순화하면, H100 SXM의 최대 대역폭 3.35 TB/s로 약 4.9 ms가 걸린다.
+측정한 TPOT는 이 값의 약 1.6배다.
 모델 weight와 KV cache의 크기를 TPOT로 나눈 값이 최대 대역폭의 몇 %인지를 MBU(model bandwidth utilization)라 한다.[^mbu]
 4.9 ms가 그 bytes를 최대 대역폭으로 나눈 값이므로, 여기서는 $4.9/8.0\approx61\%$다.
-MBU가 61%라는 사실만으로는 대역폭을 다 쓰지 못한 원인이 어디에 있는지 나눌 수 없다.
+MBU가 61%라는 사실만으로는 대역폭을 다 쓰지 못한 원인이 어디에 있는지 알 수 없다.
 이 값은 모델의 weight와 KV cache를 한 번 읽는다고 가정한 추정치다.
 실제 HBM에서 오간 모든 bytes를 하드웨어 counter로 잰 대역폭 사용률과는 다르다.
 대역폭 사용률을 비교할 때는 분자에 실제 전송량을 쓰는지 모델이 읽어야 할 양을 추정해 쓰는지 먼저 확인해야 한다.
 또 TPOT에 서버 대기나 네트워크 시간이 들어가면 GPU(graphics processing unit) 실행 시간만으로 구한 값과 비교할 수 없다.
 
 연산 쪽에는 MFU(model FLOPs utilization)가 있다.
-모델이 필요로 하는 FLOPs를 실제 경과 시간과 해당 정밀도의 이론상 peak FLOP/s의 곱으로 나눈 값이다.[^palm]
+모델이 필요로 하는 FLOPs(floating-point operations)를 실제 경과 시간과 해당 정밀도의 이론상 peak FLOP/s의 곱으로 나눈 값이다.[^palm]
 예를 들어 같은 스텝에 모델 연산량 약 17 GFLOPs와 GPU 실행 시간 8.0 ms를 가정하면, H100 BF16 peak 989 TFLOP/s 대비 MFU는 약 0.21%다.
 이 값은 모델에 필요한 연산량을 세므로 재계산이나 padding 등 실제 수행한 모든 연산을 포함하는 하드웨어 연산 사용률과 같지 않다.
 Decode처럼 메모리 이동이 병목인 경우 MFU가 낮다고 해서 그것만으로 kernel이 잘못되었다고 결론 내릴 수 없다.
-이상적인 계산에서 정한 데이터의 양에 비해 실행이 느린 이유를 찾으려면 **그 계산을 GPU에서 실행하는 방식**을 살펴야 한다.
+실제 실행이 roofline으로 구한 시간보다 오래 걸리는 이유를 찾으려면 **그 계산을 GPU에서 실행하는 방식**을 살펴야 한다.
 Kernel 최적화는 두 가지 일을 한다.
 하나는 kernel fusion처럼 중간값의 HBM(high-bandwidth memory) 왕복을 없애 실제로 옮기는 bytes를 줄이는 것이다.
 같은 계산에 bytes가 줄면 intensity가 올라 roofline 위의 점이 오른쪽으로 옮겨 간다.
 다른 하나는 일을 GPU의 연산 단위에 고르게 나누거나 kernel 사이의 빈 시간을 없애는 것이다.
 이때는 intensity가 그대로인 채 실제 속도가 올라, 점이 같은 가로축 위치에서 위로 움직여 지붕에 가까워진다.
 
-다만 kernel 하나의 배율이 곧 서비스의 배율은 아니다.
+다만 kernel 하나를 두 배 빠르게 해도 서비스 전체가 두 배 빨라지지는 않는다.
 문맥이 길어 attention이 스텝 시간의 4분의 1을 차지한다고 해도,
 attention kernel을 두 배 빠르게 하면 스텝은 8분의 7로 줄어 약 1.14배 빨라질 뿐이다(Amdahl의 법칙).
 그래서 스텝 시간을 연산별로 나누어 보고, 시간을 많이 차지하는 부분부터 손댄다.
 
 Pan과 Li의 inference 시스템 서베이는 attention kernel이 작업을 GPU의 연산 단위에 나누어 주는 방식이 어떻게 바뀌어 왔는지를 계보로 정리한다.[^survey]
-이 노트는 kernel이 GPU에서 실행되는 방식과 kernel의 시간을 재는 도구를 먼저 보고,
-그 계보를 따라 decode를 중심으로 attention kernel, 선형층과 MoE(mixture of experts)의 kernel,
-그리고 kernel 바깥에서 새는 시간을 차례로 본다.
 
 ## 1. GPU에서 kernel이 실행되는 방식
 
@@ -156,7 +154,7 @@ Nsight Systems로 고른 kernel의 이름 일부를 `-k regex:` 옵션으로, �
 연산 장치와 메모리 각각의 처리량을 이론 최댓값에 대한 비율로 보여 주므로,[^ncu]
 도입에서 스텝 전체로 계산한 MBU와 비슷한 지표를 kernel 하나 단위로 보는 셈이다.
 다만 이 보고서는 실제 하드웨어 자원의 활동을 세며, 메모리 항목에는 HBM뿐 아니라 cache 등 여러 하위 자원이 포함된다.
-모델 크기로 추정한 MBU와 같은 값으로 해석하지 않는다.
+그래서 모델 크기로 추정한 MBU와 같은 값으로 읽으면 안 된다.
 Roofline 차트는 그 kernel의 arithmetic intensity와 달성한 성능을 점 하나로 찍어 roofline의 지붕과 함께 보여 준다.[^ncu]
 해당 intensity에서 대역폭 지붕이 연산 지붕보다 낮으면 roofline의 이론적 한계는 메모리 대역폭이 정한다.
 실측 점이 그 지붕에서 멀다면 대역폭을 충분히 활용하지 못하거나 다른 비용이 있을 수 있으므로, 그 위치만으로 실제 병목을 확정하지 않는다.
@@ -208,10 +206,10 @@ SM 132개가 함께 쓰도록 설계된 3.35 TB/s를 SM 32개만으로 끌어 �
 ### 3-2. Flash-Decoding
 
 Dao 등의 Flash-Decoding은 나눌 방향을 하나 더 만들었다.
-**Key·value의 시퀀스 길이**다.[^flashdecoding]
+**Key·value의 시퀀스 길이** 방향이다.[^flashdecoding]
 긴 KV cache를 여러 조각(split)으로 나누고, 조각마다 thread block을 하나씩 두어 동시에 계산한다.
 각 thread block은 자기 조각의 점수만으로 softmax를 계산한 부분 출력을 만들고,
-그 조각의 softmax 분모(지수 합)에 로그를 씌운 스칼라 하나(LSE, log-sum-exp)를 함께 남긴다.
+그 조각 점수들의 log-sum-exp인 스칼라 $\text{LSE}=\log\sum_j e^{x_j}$ 하나를 함께 남긴다.
 마지막에 짧은 reduce kernel이 LSE의 차이로 조각별 지수 합의 상대적인 크기를 구하고, 그 비중으로 부분 출력을 합친다.
 각 조각의 출력을 똑같이 평균하면 안 된다.
 예를 들어 공통 기준으로 계산한 지수 합이 한 조각에서 다른 조각의 3배라면, 전체 결과에서는 그 조각의 부분 출력을 3배 큰 비중으로 합쳐야 한다.
@@ -270,7 +268,8 @@ FlashAttention이라면 thread block 하나가 두 블록 $[1,2]$와 $[3,0]$을 
 Flash-Decoding은 두 블록을 조각 두 개로 보고 동시에 계산한다.
 조각 1($[1,2]$)은 부분 출력 약 17.31과 $\text{LSE}_1=\log(e^{1}+e^{2})\approx2.313$을,
 조각 2($[3,0]$)는 부분 출력 약 30.47과 $\text{LSE}_2=\log(e^{3}+e^{0})\approx3.049$를 각자 낸다.
-LSE는 online softmax에서 들고 다닌 최댓값 $m$과 지수 합 $\ell$을 한 값으로 접은 것으로, $m+\log\ell$과 같다(조각 1이면 $m=2$, $\ell=e^{-1}+e^{0}\approx1.368$이므로 $2+\log1.368$).
+LSE는 online softmax에서 들고 다닌 최댓값 $m$과 지수 합 $\ell$로도 구할 수 있고, $m+\log\ell$과 같다.
+조각 1이면 $m=2$, $\ell=e^{-1}+e^{0}\approx1.368$이므로 $2+\log1.368\approx2.313$이다.
 Reduce는 각 조각의 비중을 $e^{\text{LSE}_i}$에 비례하게 잡는다.
 조각의 부분 출력은 자기 조각의 지수 합으로 이미 나눈 값이라, 그 지수 합 $e^{\text{LSE}_i}$를 다시 곱해 분자로 되돌리고 전체 지수 합으로 나누는 것이다.
 지수가 너무 커지지 않게 두 LSE에서 같은 기준값 3을 빼고 $e^{2.313-3}\approx0.503$과 $e^{3.049-3}\approx1.050$을 비중으로 쓰면 $(0.503\times17.31+1.050\times30.47)/1.553\approx26.21$로,
@@ -304,7 +303,7 @@ PagedAttention의 흩어진 블록,
 여러 요청이 공유하는 prefix, 요청마다 다른 길이가 모두 이 형식 하나로 표현된다.
 Kernel은 흩어진 블록을 타일 단위로 GPU 메모리에서 shared memory의 연속된 공간에 모은 뒤,
 거기서 dense한 연산을 하고 다음 타일로 넘어간다.
-Query tile이 충분히 크면 Tensor Core를 쓰고, tile 크기가 1이면 CUDA Core를 쓴다.<Sidenote>CUDA Core는 원소 하나씩 덧셈과 곱셈을 하는 범용 연산 장치이고, Tensor Core는 작은 행렬 블록의 곱셈과 누산을 한 번에 처리하는 행렬곱 전용 장치다. Query 하나만 따로 처리하면 Tensor Core가 요구하는 행렬 타일을 채우기 어렵다. 다만 GQA에서 같은 KV를 쓰는 여러 query head를 묶거나 빈 행을 채워 Tensor Core를 쓰는 구현도 있으므로, query 길이 하나만으로 실행 장치를 단정할 수는 없다.</Sidenote>
+Query tile이 충분히 크면 Tensor Core를 쓰고, tile 크기가 1이면 CUDA Core를 쓴다.<Sidenote>CUDA Core는 원소 하나씩 덧셈과 곱셈을 하는 범용 연산 장치이고, Tensor Core는 작은 행렬 블록의 곱셈과 누산을 한 번에 처리하는 행렬곱 전용 장치다. Query 하나만 따로 처리하면 Tensor Core가 요구하는 행렬 타일을 채우기 어렵다. 다만 GQA(grouped-query attention)에서 같은 KV를 쓰는 여러 query head를 묶거나 빈 행을 채워 Tensor Core를 쓰는 구현도 있으므로, query 길이 하나만으로 실행 장치를 단정할 수는 없다.</Sidenote>
 공유 prefix를 읽는 query들은 이 행렬에서 여러 행을 한 블록으로 묶어 함께 계산해, shared memory에 한 번 복사한 KV를 여러 query가 재사용하게 한다.
 이를 위해 GPU 메모리에 저장된 KV cache를 재배치하지는 않고, 접근 관계를 나타내는 색인만 새로 만든다.
 예를 들어 두 요청의 KV 블록이 $[A,B,C]$와 $[A,B,D]$라면,
@@ -315,7 +314,7 @@ FlashInfer는 Flash-Decoding의 부분 결과 합치기도 일반화했다.
 Query 하나에 대한 (부분 출력, log-sum-exp) 쌍을 attention state라 부르고,
 두 state는 Flash-Decoding의 reduce처럼 지수 합을 비중으로 삼아 하나로 합칠 수 있다.
 이 합치기는 덧셈처럼 결합법칙과 교환법칙을 만족하므로, KV를 어떻게 나누어 계산하고 어떤 순서로 합쳐도 수학적으로 결과가 같다.[^flashinfer]
-State를 합칠 수 있으니 긴 KV를 여러 작업으로 나눠도 출력을 되살릴 수 있다.
+부분 state들을 합쳐 전체 출력을 구할 수 있으므로, 긴 KV를 여러 작업으로 나누어 계산해도 된다.
 그래서 요청마다 다른 KV 길이를 SM들에 고르게 나누는 계획을 CPU에서 미리 세우고(plan),
 GPU kernel은 그 계획대로 실행한다(run).
 요청별 query와 KV 길이 등 계획의 조건이 같은 층들은 스텝마다 세운 계획을 함께 재사용할 수 있다.
@@ -364,19 +363,20 @@ FlashDecoding++는 batch 쪽 타일을 Tensor Core가 한 번에 처리하는 8�
 Weight-only 양자화(quantization)에서 낮은 정밀도로 저장한 weight를 더 높은 정밀도의 activation과 곱하려면,
 kernel 안에서 weight를 곱셈에 맞는 정밀도로 되돌릴 수 있다(dequantize).
 Frantar 등의 Marlin은 4-bit weight와 FP16 activation의 행렬곱을 위한 kernel이다.[^marlin]
-다음 4-bit weight를 HBM에서 읽어 shared memory를 거쳐 레지스터로 가져오는 동안 이미 가져온 weight로 계산하고,
-레지스터 안에서 FP16으로 되돌려 Tensor Core에 넣는다.
+이미 가져온 weight는 register 안에서 FP16으로 되돌려 Tensor Core에 넣는다.
+이 계산이 도는 동안 다음 4-bit weight를 HBM에서 읽어 shared memory를 거쳐 register로 가져온다.
 Weight는 kernel이 읽고 변환하는 순서에 맞게 미리 재배치해 저장해 둔다.
 
 작은 batch에서는 일을 SM에 고르게 나누는 것도 문제다.
 출력 타일 수가 SM 수로 나누어떨어지지 않으면 마지막 차례에서 일부 SM이 논다.
 출력의 열 타일 하나를 만들려면, 그 열에 해당하는 weight 타일들을 입력의 대응하는 부분과 각각 곱해 모두 더해야 한다.
-Marlin은 전체 weight 타일 수를 SM 수로 나눈 값을 올림해 SM당 몫으로 정하고, 한 SM의 몫이 한 출력 열의 타일을 다 맡고도 남으면 다음 출력 열의 위에서 이어 받게 배정한다(striped partitioning).
+Marlin은 전체 weight 타일 수를 SM 수로 나눈 값을 올림해 SM 하나가 맡을 타일 수를 정한다.
+Weight 타일을 첫 출력 열의 위에서부터 열을 따라 내려가며 SM마다 그 수만큼 이어서 배정하고, 한 열이 끝났는데도 그 SM의 몫이 남으면 다음 출력 열의 맨 위에서 이어 배정한다(striped partitioning).
 그러면 SM마다 일이 거의 같아지고, 부분합을 더하는 일은 한 출력 열을 나누어 맡은 SM들 사이에서만 생긴다.[^marlin]
 
 <Figure src="https://arxiv.org/html/2408.11743v1/marlin-partition.svg" alt="Marlin의 striped partitioning 그림. 위쪽의 weight 행렬(Weights)이 세로 열 네 개로 나뉘고, 색이 다른 칸 일곱 개에 SM 번호 1부터 7이 적혀 있다. SM 1은 첫째 열의 위쪽을, SM 2는 첫째 열의 아래쪽과 둘째 열의 맨 위를, SM 3은 둘째 열의 가운데를, SM 4는 둘째 열의 맨 아래와 셋째 열의 위쪽을, SM 5는 셋째 열의 아래쪽을, SM 6과 7은 넷째 열의 위와 아래를 맡는다. 아래쪽 출력(Output) 띠의 네 칸에는 각 열을 함께 계산하는 SM이 1/2, 2/3/4, 4/5, 6/7로 적혀 있다." caption="Marlin의 striped partitioning(그림의 세로 라벨 Overlapped Partitioning이 이 배정 방식이다). Weight 행렬의 열 하나가 출력의 열 하나를 만들며, 칸 안의 숫자는 SM 번호, 아래 띠는 그 출력 열을 함께 계산해 합치는 SM이다. SM마다 같은 양을 맡고, 한 열의 끝에 닿으면 다음 열의 위에서 이어 받는다." source="Frantar et al. (2025), Figure 5 · CC BY 4.0" />
 
-Scale 저장과 activation 이동을 무시한 이상적인 roofline 계산으로 보면, 4-bit weight 하나는 0.5 byte인데 토큰 하나가 weight 하나마다 2 FLOPs(floating-point operations)를 쓰므로 batch $b$에서 intensity는 약 $4b$ FLOP/byte다.
+Scale 저장과 activation 이동을 무시한 이상적인 roofline 계산으로 보면, 4-bit weight 하나는 0.5 byte인데 토큰 하나가 weight 하나마다 2 FLOPs를 쓰므로 batch $b$에서 intensity는 약 $4b$ FLOP/byte다.
 H100에서는 이 값이 ridge point 295에 닿는 $b\approx74$까지 4-bit 쪽도 memory-bound라, 읽는 bytes가 FP16의 4분의 1인 만큼 이상적으로 4배 빠르다.
 연산량은 그대로라 batch가 더 커지면 4-bit 쪽부터 compute-bound에 가까워지고,
 이득은 약 $295/b$배로 줄다가 intensity가 $b$인 FP16 쪽도 compute-bound가 되는 $b\approx295$에서 사라진다.
@@ -387,7 +387,7 @@ vLLM에 넣은 end-to-end 측정에서는 RTX A6000으로 Llama 2 7B를 서빙�
 
 ### 4-3. MoE의 grouped GEMM
 
-MoE 층에서는 router가 토큰마다 expert 몇 개를 고르므로, batch의 토큰들이 서로 다른 expert로 흩어지고 expert마다 받는 토큰 수가 다르다.
+MoE(mixture of experts) 층에서는 router가 토큰마다 expert 몇 개를 고르므로, batch의 토큰들이 서로 다른 expert로 흩어지고 expert마다 받는 토큰 수가 다르다.
 각 expert는 자기에게 온 토큰들에만 FFN(feed-forward network) 행렬곱을 하므로, expert마다 행렬곱의 크기가 달라진다.
 모든 expert에 같은 수의 토큰을 맞춰 하나의 batched 행렬곱으로 계산하는 단순한 구현은,
 넘치는 토큰을 버리거나 모자란 자리를 0으로 채워야 했다.
@@ -402,6 +402,13 @@ Grouped GEMM은 이처럼 크기가 다른 작업들을 묶어 처리한다.
 
 Gale 등의 MegaBlocks는 토큰을 expert별로 묶어 행에, expert들의 weight를 열에 놓는다.
 각 토큰 묶음은 자기 expert의 weight와만 곱하므로, 첫 선형층의 결과는 대각선 위의 블록에만 생기는 행렬(block-diagonal)이 되고 MegaBlocks는 이 블록들만 block-sparse 행렬곱으로 계산했다.
+앞의 예시라면 다음 표에서 대각선의 두 블록만 계산한다.
+
+| | expert A의 weight | expert B의 weight |
+|---|---|---|
+| A로 간 토큰 3개 | 계산($3\times h$) | 계산하지 않음 |
+| B로 간 토큰 1개 | 계산하지 않음 | 계산($1\times h$) |
+
 Expert마다 대각 블록의 행 수는 그 expert가 받은 토큰 수만큼이고, 실제 계산은 이를 고정 크기의 작은 블록 여러 개로 나누어 한다.
 그래서 expert마다 토큰 수를 맞추거나 넘치는 토큰을 버릴 필요가 없다.[^megablocks]
 이 결과에 활성화를 적용한 뒤, 이 희소한 행렬을 입력으로 받는 둘째 선형층의 행렬곱도 block-sparse 연산으로 계산한다.
@@ -419,7 +426,7 @@ vLLM v0.31.0의 fused MoE kernel은 한 경로에서 토큰을 expert 순서로 
 Kernel 자체가 빨라도 그 사이가 빈다면 GPU는 논다.
 CPU는 kernel을 하나씩 GPU에 제출하는데, 제출마다 마이크로초 단위의 비용이 든다.
 같은 stream에 제출한 kernel은 순서대로 실행되므로, kernel 하나의 실행이 제출 비용보다 짧으면 대기열이 비어 GPU가 다음 제출을 기다릴 수 있다.
-NVIDIA의 측정에서 V100에서 실행 시간 2.9 μs짜리 kernel을 제출할 때마다 끝나기를 기다리면, kernel당 9.6 μs가 걸렸다.[^cudagraph-nv]
+NVIDIA가 V100에서 잰 예에서는, 실행 시간이 2.9 μs인 kernel을 제출하고 매번 끝나기를 기다리면 kernel당 9.6 μs가 걸렸다.[^cudagraph-nv]
 Decode 한 스텝은 층마다 정규화, 투영,
 attention, 활성화 같은 kernel 여러 개를 수십 층에 걸쳐 실행하므로, fusion 정도에 따라 kernel이 수백 개에 이를 수 있다.
 그 가운데 정규화·원소별 연산 kernel은 수 μs면 끝나 대기열이 비기 쉽다.
@@ -436,7 +443,7 @@ NVIDIA의 같은 측정에서 동기화 없이 이어 제출하면 kernel당 3.8
 입력값은 기록할 때 쓴 고정 버퍼에 새로 복사해 넣으면 바꿀 수 있지만, 버퍼의 모양은 바꿀 수 없다.[^cudagraph-pt]
 그런데 서빙에서는 batch 크기가 스텝마다 바뀐다.
 그래서 vLLM은 예를 들어 처리할 토큰 수 1, 2, 4, 8, 16, 24, …에 맞춘 그래프를 미리 기록해 두고,
-실제 토큰 수를 그 수 이상인 가장 작은 기록 크기로 채워(padding) 재생한다.
+실제 토큰 수 이상인 기록 크기 가운데 가장 작은 것을 골라, 입력을 그 크기에 맞게 채운(padding) 뒤 그 그래프를 재생한다.
 기록할 크기는 설정에 따라 달라지며, 기록 범위를 넘거나 맞는 그래프가 없으면 그래프를 재생하지 않고 실행한다.
 요청마다 query가 하나인 보통의 decode에서는 이 토큰 수가 곧 batch 크기다.
 Attention은 요청마다 KV 길이가 달라 실행할 일이 스텝마다 바뀌므로 고정된 그래프에 담기 어렵다.
@@ -449,11 +456,11 @@ vLLM V1의 기본 설정은 모델을 attention을 경계로 나누어 컴파일
 
 Kernel을 하나하나 손으로 쓰지 않고 컴파일러에 맡기는 길도 있다.
 Tillet 등의 Triton은 GPU의 thread 대신 데이터 타일 단위로 연산을 쓰게 하는 언어이자 컴파일러로,
-당시 GTX 1070 실험에서 행렬곱이 cuBLAS에 비견하는 성능을 냈다.[^triton]
+당시 GTX 1070 실험에서 행렬곱이 cuBLAS에 견줄 만한 성능을 냈다.[^triton]
 PyTorch 2의 `torch.compile`에서는 TorchDynamo가 Python 프로그램의 연산을 실행 중에 그래프로 잡고,
-TorchInductor가 그 그래프로 GPU용 Triton kernel을 생성하거나 일부 연산은 라이브러리 kernel을 호출한다.
-A100에서 180개 넘는 모델의 inference를 기하평균 2.27배 빠르게 했다.[^pt2]
-Kernel fusion을 사람이 일일이 하지 않아도 컴파일러가 찾아 준다.
+TorchInductor가 그 그래프에서 GPU용 Triton kernel을 생성하고, 일부 연산에는 라이브러리 kernel을 호출한다.
+PyTorch 2는 A100에서 180개 넘는 모델의 inference를 기하평균 2.27배 빠르게 했다.[^pt2]
+합칠 수 있는 연산을 컴파일러가 찾아 묶어 주므로, 사람이 kernel fusion을 일일이 하지 않아도 된다.
 Fusion은 HBM 왕복과 함께 제출할 kernel 수도 줄이므로, 컴파일러는 kernel 안과 바깥의 시간을 함께 줄인다.
 
 Inference 엔진은 둘을 섞어 쓴다.
