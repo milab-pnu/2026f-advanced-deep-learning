@@ -16,8 +16,7 @@ Distillation은 흔히 큰 teacher의 출력을 학습 신호로 삼아 작은 s
 Low-rank factorization은 weight 행렬을 작은 행렬 두 개의 곱으로 바꾼다.
 어느 방법이든 모델의 출력을 얼마나 유지하는지와 실제 하드웨어에서 얼마나 빨라지는지를 함께 보아야 한다.
 
-모델을 줄이는 것과 별도로, 모든 입력에 같은 양의 연산을 수행하지 않는 방법도 있다.
-적응형 계산은 입력에 따라 일부 층을 건너뛰고, 층 공유는 같은 weight를 여러 번 사용한다.
+모델을 줄이는 것과 별도로, 입력에 따라 일부 층을 건너뛰어 연산량을 달리하는 적응형 계산과, 같은 weight를 여러 층에서 다시 써 저장 공간을 줄이는 층 공유도 있다.
 저장할 weight와 실행할 연산을 각각 얼마나 줄이는지는 방법마다 다르다.
 
 ## 1. Pruning의 출발
@@ -33,8 +32,8 @@ Low-rank factorization은 weight 행렬을 작은 행렬 두 개의 곱으로 �
 작은 모델에서는 weight를 지운 뒤 재학습으로 품질을 되살리는 방식이 잘 통했다.[^han]
 그러나 LLM에서는 이 재학습 자체가 매우 비싸다.[^sparsegpt]
 재학습 없이 크기만 보고 많이 지우면 품질이 크게 떨어질 수 있다.
-OPT-175B에 magnitude pruning을 하면 sparsity(전체 weight 중 0으로 만든 비율) 10%까지는 정확도가 거의 그대로지만, 30%를 넘으면 급격히 무너진다고 보고했다.[^sparsegpt]
-필요한 것은 재학습 없이 한 번에(one-shot) 지우면서도 품질을 지키는 방법이었다.
+OPT-175B에 magnitude pruning을 하면 sparsity(전체 weight 중 0으로 만든 비율) 10%까지는 정확도가 거의 그대로지만, 30%를 넘으면 급격히 무너진다.[^sparsegpt]
+그래서 재학습 없이 한 번에(one-shot) 지우면서도 품질을 지키는 방법이 필요했다.
 
 ### 1-2. SparseGPT
 
@@ -43,8 +42,8 @@ OPT-175B에 magnitude pruning을 하면 sparsity(전체 weight 중 0으로 만�
 이 데이터는 지울 위치나 보정 값을 정하는 데 쓰며, 압축 후 품질을 평가하는 데이터와 역할이 다르다.
 선형층 $Y=XW$에서 $X$는 calibration 데이터가 층에 들어올 때의 activation이고, $W$는 weight다.
 $W$를 pruning한 결과를 $\hat{W}$라 하면, 같은 입력에 대한 출력은 각각 $XW$와 $X\hat{W}$다.
-두 출력의 차이를 제곱해 더한 오차 $\lVert XW-X\hat{W}\rVert^2$가 작을수록, 이 입력에서 pruning의 영향이 작다.
-따라서 같은 sparsity의 후보 중에서는 이 오차가 작은 $\hat{W}$를 선호한다.
+두 출력의 차이를 제곱해 더한 오차 $\lVert XW-X\hat{W}\rVert_F^2$가 작을수록, 이 입력에서 pruning의 영향이 작다.
+같은 sparsity라면 이 오차가 작은 $\hat{W}$가 더 좋은 선택이다.
 
 **SparseGPT**는 GPTQ와 마찬가지로 층 출력 오차의 Hessian을 이용한다.[^sparsegpt]
 Hessian에는 입력 channel의 크기와 channel 사이의 관계가 담긴다.
@@ -81,7 +80,7 @@ SparseGPT는 weight를 블록으로 나누어 처리한다.
 
 ### 1-3. Wanda
 
-**Wanda**는 weight를 보정하는 과정 없이도 어떤 weight를 지울지 잘 고를 수 있을지 살핀다.[^wanda]
+**Wanda**는 남은 weight를 보정하지 않고, 지울 weight를 잘 고르는 것만으로 품질을 지키려 한다.[^wanda]
 핵심은 weight의 크기뿐 아니라 **그 weight에 곱해지는 입력 activation의 크기**도 함께 고려하는 것이다.
 입력이 큰 channel에서는 작은 weight라도 출력에 큰 영향을 줄 수 있기 때문이다.
 
@@ -242,7 +241,7 @@ GPU에서 같은 이득을 내기는 어렵다.
 NVIDIA는 Ampere GPU부터 하드웨어가 직접 가속할 수 있는 sparsity 패턴을 정했다.
 연속된 원소 4개마다 적어도 2개를 0으로 두는 **2:4 sparsity**다.
 선형층 $XW$에서 이 묶음은 $W$의 각 출력 열을 따라 입력 차원 네 개씩 잡는다.
-전체의 절반이 0이기만 하면 되는 것이 아니라, 행렬곱에서 곱을 더하는 입력 방향의 각 묶음이 조건을 만족해야 한다.
+전체의 절반이 0이라고 해서 되는 것이 아니고, 묶음 하나하나가 이 조건을 만족해야 한다.
 예를 들어 $(0.1,0,0.8,0)$은 네 개 중 둘이 0이므로 조건을 만족하지만, $(0.1,0.3,0.8,0)$은 하나만 0이므로 만족하지 않는다.
 뒤의 묶음에 0이 더 많더라도 이 묶음의 부족한 0을 대신할 수 없다.
 
@@ -255,15 +254,14 @@ NVIDIA 아키텍처 백서에 적힌 H100 SXM의 16-bit 연산 성능 1,979 TFLO
 2:4는 unstructured pruning보다 제약이 강해 품질 손실이 커질 수 있다.
 SparseGPT로 OPT-175B를 2:4로 지우면 perplexity가 8.35에서 8.74로 조금 늘었지만,
 OPT-2.7B에서는 12.47에서 17.18로 크게 늘었다.[^sparsegpt]
-One-shot 방법은 작은 calibration 데이터로 근사한 중요도로 mask를 정한다.
+One-shot 방법은 소량의 calibration 데이터로 weight의 중요도를 추정하고, 이를 기준으로 mask를 정한다.
 Mask는 각 위치의 weight를 남길지 0으로 만들지 표시하는 것이다.
 2:4에서는 네 개마다 0이 아닌 weight를 최대 두 개만 남길 수 있으므로, 중요한 weight가 한 묶음에 셋 몰려 있어도 둘만 남길 수 있고 다른 묶음에서 자리를 빌려 올 수도 없다.
 이 제약 아래에서는 어떤 둘을 남길지 잘 고르는 것이 중요하지만, 소량의 데이터로 추정한 중요도는 실제와 다를 수 있다.
 
 그래서 mask를 학습으로 고르는 방법도 나왔다.
 Fang 등의 MaskLLM은 weight를 고정한 채, 네 개 묶음마다 가능한 2:4 mask를 선택할 확률을 학습 데이터로 조정한다.[^maskllm]
-학습할 때는 후보 mask를 선택하는 과정을 미분할 수 있도록 근사해 확률을 조정한다.
-어느 mask 하나를 고르는 이산적인 선택은 그대로 미분하기 어렵기 때문에 연속적인 근사를 사용하는 것이다.
+Mask 하나를 고르는 이산적인 선택은 그대로는 미분할 수 없으므로, 학습할 때는 이 선택을 연속적인 값으로 근사해 확률을 조정한다.
 학습이 끝나면 각 묶음에서 확률이 가장 높은 mask를 고른다.
 Llama 2 7B의 WikiText-2 perplexity는 dense 모델이 5.12, SparseGPT가 10.42, MaskLLM이 6.72였다.
 다만 SparseGPT는 C4의 소량 데이터로 calibration했고, MaskLLM은 여러 분야를 섞은 데이터로 mask를 2,000스텝 학습했다.
@@ -286,7 +284,7 @@ MaskLLM 논문이 A6000·batch 1에서 NVIDIA의 서빙 라이브러리 TensorRT
 
 Checkpoint에 2:4 패턴이 있다는 것만으로 sparse kernel이 실행되지는 않는다.
 엔진과 GPU가 해당 형식을 지원하는지 확인하고, 실행 기록에서 sparse 행렬곱 kernel이 실제로 선택되었는지 확인해야 한다.
-Dense kernel이 실행된 측정값은 패턴의 품질이나 dense 실행 비용은 보여 주지만, sparse Tensor Core의 속도 이득을 보여 주지는 않는다.
+Dense kernel이 실행된 측정값은 패턴의 품질이나 dense 실행 비용은 보여 주지만, Sparse Tensor Core의 속도 이득을 보여 주지는 않는다.
 
 ## 3. Structured pruning
 
@@ -369,25 +367,29 @@ Xia 등의 Sheared-LLaMA는 Llama 2 7B를 1.3B와 2.7B로 구조적으로 줄인
 회복 학습의 목표를 데이터의 다음 토큰 대신 teacher의 분포로 바꿀 수도 있다.
 NVIDIA의 Minitron은 줄이기와 이 distillation 회복을 하나의 절차로 묶었다.
 먼저 작은 calibration 데이터로 각 단위의 중요도를 추정한다.
-Attention head, FFN channel, embedding 차원은 forward pass에서 얻은 activation 크기로 잰다.
-층은 하나씩 지웠을 때 perplexity가 얼마나 변하는지, 또는 층의 입력과 출력이 얼마나 다른지로 잰다.
-목표 크기를 정하면 각 구조 단위 안에서 중요도가 낮은 것부터 잘라 내고, 그렇게 만든 후보 구조 몇 개를 짧게 회복 학습해 비교한다.
+Attention head, FFN channel, embedding 차원의 중요도는 forward pass에서 얻은 activation 크기로 잰다.
+층의 중요도는 하나씩 지웠을 때 perplexity가 얼마나 변하는지, 또는 층의 입력과 출력이 얼마나 다른지로 잰다.
+목표 크기를 정하면 head, FFN channel, embedding 차원 같은 종류마다 중요도가 낮은 것부터 잘라 내고, 그렇게 만든 후보 구조 몇 개를 짧게 회복 학습해 비교한다.
 고른 모델은 원래 모델을 teacher로 삼아 distillation으로 품질을 되살린다.[^minitron]
 
 Minitron은 Nemotron-4 15B의 너비(embedding 차원, head, FFN channel)를 줄여 8B와 4B 모델을 만들고(층 수는 32 그대로),
 원래 모델의 사전학습에 사용한 토큰의 3% 미만으로 각 모델을 distillation 학습해 품질을 되살렸다.
 논문은 Minitron 8B의 회복 학습에 사용한 토큰 수가 처음부터 학습한 Nemotron-3 8B의 약 40분의 1이었다고 보고했다.[^minitron]
 
-이때 이미 학습된 큰 모델이 있어야 하고, distillation 중 teacher도 실행해야 한다.
+다만 이 방법을 쓰려면 이미 학습된 큰 모델이 있어야 하고, distillation하는 동안 teacher도 실행해야 한다.
+<Details summary="세 모델을 만드는 계산량의 비교">
 논문은 세 모델을 각각 같은 토큰 수로 처음부터 학습하는 경우와 큰 모델에서 두 작은 모델을 만드는 경우를 비교해 계산량을 추정했다.
 두 작은 모델의 학습 토큰 수를 각각 40분의 1로 가정하면 후자의 계산량은 약 1.8분의 1이다.
 이 추정에는 teacher의 forward 비용이 포함되지 않았다.
+</Details>
+
 이렇게 만든 8B 모델의 MMLU 점수는 63.8로, 처음부터 학습한 Nemotron-3 8B의 54.7보다 높았다.[^minitron]
 이 실험에서는 회복 학습 뒤 깊이보다 너비를 줄인 모델의 품질이 더 좋았다.
 다만 어느 구조가 좋은지는 모델과 줄이는 비율, 회복 학습에 따라 달라질 수 있다.
 
 후속 보고서는 같은 방법으로 Llama 3.1 8B에서 층을 절반으로 줄인 모델과 너비를 줄인 모델을 만들었다.[^minitron-practice]
-H100 한 대에서 TensorRT-LLM을 FP8(8-bit floating point)로 돌려 여러 입출력 길이로 잰 평균 처리량은 원래 8B보다 깊이를 줄인 모델이 2.7배, 너비를 줄인 모델이 1.8배 높았다.
+H100 한 대에서 TensorRT-LLM을 FP8(8-bit floating point)로 돌려 여러 입출력 길이에서 처리량을 쟀다.
+평균 처리량은 원래 8B보다 깊이를 줄인 모델이 2.7배, 너비를 줄인 모델이 1.8배 높았다.
 작은 모델에는 두 배 큰 batch를 주었으므로 이 배율에는 batch를 키운 이득도 섞여 있다.
 보고서의 마지막 관찰 부분은 너비 모델을 1.7배로 표기한다.
 이 실험에서는 순서대로 계산할 층 수 자체를 줄인 깊이 쪽이 더 빨랐지만, 회복 학습을 마친 base 모델의 MMLU는 너비를 줄인 쪽이 더 높았다.
@@ -405,7 +407,7 @@ Google의 Gemma 2는 2B와 9B 모델을 이렇게 사전학습했다.[^gemma2]
 다음 토큰을 예측한다는 점은 그대로이고 목표 분포만 바뀐다.
 2B 모델을 500B 토큰으로 사전학습한 비교 실험에서, 데이터의 다음 토큰을 목표로 하면 세 벤치마크의 평균이 60.3, 7B teacher의 분포를 목표로 하면 67.7이었다.
 
-작은 모델을 얼마나 오래 학습할지도 선택이다.
+작은 모델을 얼마나 오래 학습할지도 정해야 한다.
 Gemma 2의 2B와 9B는 각각 2T와 8T 토큰으로 학습했다.[^gemma2]
 Chinchilla scaling law는 주어진 학습 연산량에서 loss가 가장 낮아지는 모델 크기와 학습 토큰 수의 배분(compute-optimal)을 예측한다.[^chinchilla]
 2T와 8T는 이 배분에서 같은 크기의 모델에 할당하는 토큰 수의 수십 배다.
@@ -475,7 +477,7 @@ SVD는 이렇게 키운 $SW$의 행을 더 중요하게 다루므로, 큰 activa
 
 앞의 대각행렬 예에서 둘째 입력 channel의 배율을 4로 잡으면 weight $\operatorname{diag}(2,1)$은 $\operatorname{diag}(2,4)$로 바뀐다.
 이 행렬을 rank 1로 근사하면 큰 값 4가 남아 $\operatorname{diag}(0,4)$가 되고, 분해 결과에 역배율 1/4를 반영하면 $\operatorname{diag}(0,1)$이 된다.
-이는 앞의 예에서 입력을 고려했을 때 출력 오차가 더 작았던 근사다.
+앞의 예에서 출력 오차가 더 작았던 바로 그 근사다.
 
 또 층마다 압축에 얼마나 민감한지 살펴 분해 후의 rank를 다르게 정한다.
 LLaMA-7B의 파라미터를 5%, 10%, 15% 줄였을 때 perplexity는 각각 5.78, 6.09, 6.80이었다.[^asvd]
@@ -488,7 +490,7 @@ SVD-LLM은 입력 channel의 크기뿐 아니라 **channel 사이의 관계**까
 SVD-LLM은 이 관계를 반영해 입력을 변환한 뒤 분해하므로, weight 자체보다 calibration 입력에 대한 층 출력의 오차를 줄이는 데 맞출 수 있다.
 
 <Details summary="SVD-LLM의 입력 변환">
-그래서 ASVD의 대각 배율 대신, SparseGPT의 Hessian에 비례하는 Gram 행렬 $X^\top X$를 $S^\top S$로 분해(Cholesky 분해)한 행렬 $S$를 쓴다.
+SVD-LLM은 ASVD의 대각 배율 대신, SparseGPT의 Hessian에 비례하는 Gram 행렬 $X^\top X$를 $S^\top S$로 분해(Cholesky 분해)한 행렬 $S$를 쓴다.
 $X^\top X$가 양의 정부호라 $S$가 가역이라고 가정하면, $XS^{-1}$의 channel들은 서로의 내적이 0이고 각 channel의 제곱합이 1이 된다(whitening).
 Calibration 데이터가 부족하면 행렬이 특이할 수 있어, 실제 계산에서는 안정화를 위해 대각에 작은 값을 더할 수 있으며 이 경우 whitening은 근사다.
 이 가정 아래에서는 $SW$의 SVD에서 성분 하나만 버렸을 때 calibration 출력 오차의 Frobenius norm이 그 특이값과 같다.
@@ -552,8 +554,7 @@ SkipDecode는 CALM처럼 위쪽 층을 건너뛰는 대신, 맨 아래 warmup �
 같은 생성 단계의 토큰은 batch 전체가 같은 수의 층을 건너뛰게 해 첫째 문제를 피한다.
 또 뒤 토큰은 앞 토큰이 건너뛴 중간 층을 계속 건너뛰고 필요하면 그 위의 층을 더 건너뛴다.
 예를 들어 앞 토큰이 1층과 3–8층을 계산했다면, 뒤 토큰은 1층과 4–8층을 계산한다.
-뒤 토큰이 계산하는 층은 모두 앞 토큰도 계산한 층이다.
-뒤 토큰이 필요한 층에는 앞 토큰의 key·value가 이미 있으므로 cache를 따로 채울 필요가 없다.
+이처럼 뒤 토큰은 앞 토큰도 계산한 층만 계산하므로, 필요한 key·value가 이미 cache에 있어 따로 채울 필요가 없다.
 대신 토큰마다 깊이를 고른다는 장점은 그만큼 사라진다.
 또 같은 batch의 요청들이 생성 위치마다 같은 경로를 따라야 하므로, 논문도 새 요청은 생성 위치가 남은 요청들과 같을 때만 batch에 합류할 수 있다고 밝힌다.[^skipdecode]
 중간에 끝난 요청의 자리에 새 요청을 즉시 넣는 continuous batching에는 그대로 적용하기 어렵다.
@@ -575,13 +576,13 @@ Router는 각 토큰의 hidden state를 보고 블록에서 계산할 필요가 
 이 방식은 한 시퀀스의 토큰 점수를 서로 비교하므로, 어떤 토큰의 선택 여부가 뒤 토큰의 점수에도 영향을 받는다.
 하지만 실제 생성에서는 뒤 토큰이 아직 없으므로 같은 비교를 할 수 없다.
 그래서 논문은 작은 보조 predictor를 함께 학습한다.
-학습 중 각 토큰이 상위에 들어 선택되었는지를 정답으로 삼아, 그 토큰의 hidden state만 보고 선택 여부를 맞히도록 학습하고,
-생성할 때는 이 predictor가 선택이라고 판단한 토큰만 블록을 계산한다.[^mod]
+학습 중 각 토큰이 점수 상위에 들어 선택되었는지를 정답으로 삼아, predictor가 그 토큰의 hidden state만 보고 선택 여부를 맞히도록 학습한다.
+생성할 때는 predictor가 고른 토큰에만 블록을 계산한다.[^mod]
 또 블록을 우회한 토큰은 그 블록의 attention에 참여하지 않으므로, 뒤 토큰도 그 블록에서는 해당 토큰을 참조하지 못한다.
 
 ### 6-4. 반복하는 층과 batching
 
-한편, 토큰마다 다른 깊이에서 멈추더라도 효율적으로 묶을 수는 없을까?
+층마다 다른 weight를 저장하는 부담은 같은 층 묶음을 반복해 줄일 수 있다.
 **Recursive Transformer**는 서로 다른 층을 계속 쌓는 대신, 같은 층 묶음을 여러 번 반복한다.[^recursive]
 예를 들어 4개 층을 3번 반복하면 입력은 총 12번 층을 통과하지만, 큰 weight는 4개 층의 것을 공유한다.
 서로 다른 weight를 저장하는 공간은 3분의 1로 줄지만, 입력이 층을 통과하는 횟수는 12번 그대로이므로 연산량은 줄지 않는다.
@@ -596,7 +597,7 @@ Relaxed Recursive Transformer는 공유한 weight에 반복 단계마다 작은 
 반면 반복 구조에서는 한 요청이 첫 번째 반복, 다른 요청이 두 번째 반복 중이어도 같은 층의 weight를 사용한다.
 같은 층에 도달한 요청들을 한 batch로 묶으면 weight를 한 번 읽어 함께 처리할 수 있다.
 논문은 이를 **depth-wise batching**이라 부른다.
-다만 실제 이득은 반복마다 다른 LoRA와 KV cache를 처리하는 비용까지 고려해야 한다.
+다만 실제 이득을 따질 때는 반복마다 다른 LoRA와 KV cache를 처리하는 비용까지 고려해야 한다.
 
 ### 6-5. Mixture-of-Recursions
 
