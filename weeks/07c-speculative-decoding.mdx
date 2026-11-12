@@ -182,7 +182,6 @@ Timor 등은 어휘가 달라도 target의 분포를 보존하는 방법을 제�
 Target의 층을 다 돌리지 않으면 마지막 층의 예측과 조금 덜 일치하는 예측을 더 빨리 얻는다.
 이 예측을 draft로 쓰고, 층을 모두 돌린 결과로 검증한다.
 Zhang 등은 짐작할 때 중간 층 일부를 건너뛰고, 검증은 원래 모델 전체로 forward 한 번에 한다.[^draftverify]
-모델을 추가로 학습하지 않고 메모리도 더 쓰지 않지만, 검증 forward는 짐작에 쓴 층까지 모든 층을 다시 계산한다.[^layerskip]
 
 Elhoushi 등의 LayerSkip은 짐작에 쓴 계산을 검증에서 이어 쓴다.
 앞쪽 층까지만 돌리고 일찍 빠져나와(early exit), 그 층의 hidden state를 LM(language model) head에 바로 넣어 짐작한다.[^layerskip]
@@ -222,21 +221,41 @@ Elhoushi 등의 LayerSkip은 짐작에 쓴 계산을 검증에서 이어 쓴다.
 ### 2-3. Medusa의 병렬 head
 
 다른 갈래는 target에 작은 head나 모듈을 붙인다.
-Cai 등의 Medusa는 학습을 마친 target은 그대로 두고, 마지막 층의 hidden state 위에 작은 decoding head를 여러 개 붙인다.[^medusa]
+Cai 등의 Medusa는 학습을 마친 target은 그대로 두고, 마지막 층의 hidden state 위에 decoding head를 여러 개 붙인다.[^medusa]
 Head 하나는 residual connection을 둔 feed-forward 층 하나와, 어휘 분포를 내는 출력층으로 이루어진다.
 위치 $t$에서 기존 LM head가 $t+1$번째 토큰을 예측하므로, 추가한 head $k$는 $t+k+1$번째 토큰을 맡는다.
 Head들은 같은 hidden state를 받아 서로 다른 미래 위치를 동시에 예측하므로, 짐작 여러 개가 한 번에 나온다.
-기본 방식은 target을 고정한 채 head만, 각자 맡은 위치의 정답 토큰을 맞히도록 학습한다.
 
-짐작을 만들려고 target을 따로 돌릴 필요도 없다.
-검증 forward(처음에는 prefill)가 끝나면 마지막으로 수락된 위치의 hidden state가 이미 나와 있으므로, 이를 LM head와 head들에 넣어 다음 짐작을 만든다.
-LM head가 고른 토큰은 target 자신의 선택이라 확정되지만, 아직 입력된 적이 없으므로 짐작들과 함께 다음 검증 forward에 들어간다.
+기본 방식은 target을 기존 LM head까지 모두 고정하고, 새로 붙인 head만 학습한다.
+학습 데이터는 보통의 텍스트이고, 정답을 따로 만들 필요가 없다.
+위치 $t$에서 LM head의 정답이 텍스트의 $t+1$번째 토큰이듯, head $k$의 정답은 같은 텍스트의 $t+k+1$번째 토큰이다.
+예를 들어 `the cat sat on the mat .`에서 `on`까지 읽은 hidden state를 받으면, LM head의 정답은 `the`, head 1의 정답은 `mat`, head 2의 정답은 `.`이다.
+Head마다 자기 정답에 대한 cross-entropy loss를 구해 더하되, 먼 위치일수록 맞히기 어려워 loss가 크므로 뒤쪽 head에는 더 작은 가중치를 준다.
+갱신하는 weight가 새 head뿐이라 학습 비용이 작다.
+논문은 Vicuna 7B에 붙인 head를 대화 6만 건으로 GPU 한 장에서 5시간쯤 학습했다고 보고한다.
+
+생성할 때는 target의 forward 한 번이 앞선 짐작의 검증과 다음 짐작의 준비를 함께 맡는다.
+앞의 문장으로 따라가 보자.
+
+1. Target이 `the cat sat on`까지 읽으면(prefill) `on` 위치의 hidden state가 나온다.
+   이를 LM head에 넣으면 `the`가, head 1과 head 2에 넣으면 `mat`과 `.`이 나온다.
+   `the`는 target 자신의 선택이라 검증 없이 확정되고, `mat`과 `.`은 짐작이다.
+2. 다음 forward에 `the mat .` 세 토큰을 한꺼번에 넣는다.
+   `the`는 확정됐지만 target이 아직 입력으로 읽은 적이 없다.
+   `mat`이 맞는지는 `the` 위치의 출력으로, `.`이 맞는지는 `mat` 위치의 출력으로 판정하므로 두 토큰 모두 입력에 있어야 한다.
+3. Target은 이 forward에서 `the` 다음에 올 토큰과 `mat` 다음에 올 토큰을 예측한다.
+   이 예측이 짐작 `mat`, `.`과 일치하면 수락한다.
+4. 둘 다 수락됐다면 같은 forward에서 `.` 위치의 hidden state도 이미 나와 있다.
+   이를 다시 LM head와 head들에 넣어 다음 확정 토큰과 다음 짐작을 얻고, 2로 돌아간다.
+   `mat`이 거부됐다면 마지막으로 수락된 `the` 위치의 hidden state를 쓴다.
+
+짐작용 forward를 따로 돌리지 않으므로, 짐작에 더 드는 계산은 head뿐이다.
 
 <figure class="lecture-figure">
 <svg viewBox="0 0 480 216" role="img" aria-label="Medusa의 생성 루프. 왼쪽 target의 검증 forward가 마지막으로 수락된 위치의 hidden state를 낸다. 이 hidden state가 기존 LM head와 추가한 head 1, head 2에 함께 들어간다. LM head는 확정될 다음 토큰 the 하나를, head 1은 그다음 자리의 상위 2개 mat과 rug를, head 2는 그 뒤 자리의 상위 3개 마침표, and, on을 낸다. 이 토큰들이 오른쪽의 후보 나무로 모이고, 후보 나무는 아래쪽 화살표를 따라 다음 검증 forward의 입력으로 돌아간다.">
   <defs><marker id="md-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/></marker></defs>
   <g text-anchor="middle">
-    <rect x="16" y="56" width="96" height="72" fill="#f8fafc" stroke="#0f172a"/><text x="64" y="88" font-size="14" font-weight="bold" fill="#0f172a">target</text><text x="64" y="106" font-size="12" fill="#64748b">검증 forward</text>
+    <rect x="16" y="56" width="96" height="72" fill="#f8fafc" stroke="#0f172a"/><text x="64" y="88" font-size="14" font-weight="bold" fill="#0f172a">target의 층</text><text x="64" y="106" font-size="12" fill="#64748b">검증 forward</text>
     <rect x="160" y="28" width="90" height="32" fill="#f8fafc" stroke="#0f172a"/><text x="205" y="49" font-size="13" fill="#0f172a">LM head</text>
     <rect x="160" y="76" width="90" height="32" fill="#e2e8f0" stroke="#0f172a"/><text x="205" y="97" font-size="13" fill="#0f172a">head 1</text>
     <rect x="160" y="124" width="90" height="32" fill="#e2e8f0" stroke="#0f172a"/><text x="205" y="145" font-size="13" fill="#0f172a">head 2</text>
@@ -256,14 +275,13 @@ LM head가 고른 토큰은 target 자신의 선택이라 확정되지만, 아�
   <text x="242" y="206" font-size="12" fill="#64748b" text-anchor="middle">다음 검증 forward에 함께 입력</text>
   <text x="64" y="46" font-size="11" fill="#64748b" text-anchor="middle">수락된 위치의 hidden state</text>
 </svg>
-<figcaption>Medusa의 생성 루프. 검증 forward에서 마지막으로 수락된 위치의 hidden state를 LM head와 추가한 head들에 함께 넣는다. 기존 head(흰 상자)는 확정될 다음 토큰을, 추가한 head(회색 상자)는 그 뒤 자리의 후보를 내고, 이들을 이은 나무가 다음 검증 forward에 들어간다.</figcaption>
+<figcaption>Medusa의 생성 루프. 검증 forward에서 마지막으로 수락된 위치의 hidden state를 LM head와 추가한 head들에 함께 넣는다.</figcaption>
 </figure>
 
 Head의 1순위만 이어 쓰면 하나만 틀려도 그 뒤가 모두 버려진다.
-그래서 head마다 상위 몇 개를 후보로 두어, 한 차례에 얻는 토큰 수의 기댓값을 늘린다.
+그래서 head마다 **상위 몇 개를 후보**로 두어, 한 차례에 얻는 토큰 수의 기댓값을 늘린다.
 Head들은 서로의 선택을 모른 채 예측하므로, head 2의 후보는 head 1의 어느 후보 뒤에나 똑같이 붙는다.
 LM head가 고른 토큰 뒤에 head 1의 상위 2개와 head 2의 상위 3개를 이으면 후보 경로 6개짜리 나무가 된다.
-실제로는 모든 조합 대신, head별 후보가 맞을 확률을 미리 재어 가능성이 큰 노드만 남긴 고정된 나무를 쓴다.
 
 Medusa는 이 나무 전체를 forward 한 번으로 검증하려고 **tree attention**을 쓴다.
 나무의 토큰들을 한 줄로 이어 입력하되, 각 토큰이 확정된 문맥과 자기 자신, 나무에서의 조상만 보도록 attention mask를 만든다.
@@ -271,7 +289,7 @@ Medusa는 이 나무 전체를 forward 한 번으로 검증하려고 **tree atte
 같은 깊이의 형제 후보(`mat`과 `rug`)는 문장에서 같은 자리이기 때문이다.
 그러면 경로마다 batch를 늘리지 않고도 여러 경로를 한 번에 계산한다.
 
-<Figure src="https://arxiv.org/html/2401.10774v3/tree_attention.png" alt="Medusa의 tree attention 그림. 왼쪽은 후보 나무다. Root에서 head 1의 후보 두 개(It, I)가 나오고, 각각에서 head 2의 후보 세 개(is, 따옴표, the)가 이어져 후보 경로가 모두 6개다. 오른쪽은 8×8 attention mask로, 행은 query, 열은 key다. 각 후보 토큰은 자기 자신과 나무에서의 조상에만 체크 표시가 있어, 예를 들어 It 아래의 is는 It과 자기 자신만 본다." caption="Tree attention. Head 1의 상위 2개와 head 2의 상위 3개로 만든 후보 6개 경로를 한 번에 검증한다. Mask가 8×8인 것은 head 1의 후보 2개와, 그 각각 뒤에 붙은 head 2의 후보 3개(모두 6개)를 한 줄로 이어 넣었기 때문이고, 각 토큰은 자기 자신과 나무에서의 조상만 본다. 실제 생성에서는 root 자리에 기존 LM head가 고른 다음 토큰이 온다." source="Cai et al. (2024), Figure 2 · CC BY 4.0" wide />
+<Figure src="https://arxiv.org/html/2401.10774v3/tree_attention.png" alt="Medusa의 tree attention 그림. 왼쪽은 후보 나무다. Root에서 head 1의 후보 두 개(It, I)가 나오고, 각각에서 head 2의 후보 세 개(is, 따옴표, the)가 이어져 후보 경로가 모두 6개다. 오른쪽은 8×8 attention mask로, 행은 query, 열은 key다. 각 후보 토큰은 자기 자신과 나무에서의 조상에만 체크 표시가 있어, 예를 들어 It 아래의 is는 It과 자기 자신만 본다." caption="Tree attention. Head 1의 상위 2개와 head 2의 상위 3개로 만든 후보 6개 경로를 한 번에 검증한다. Mask가 8×8인 것은 head 1의 후보 2개와, 그 각각 뒤에 붙은 head 2의 후보 3개(모두 6개)를 한 줄로 이어 넣었기 때문이고, 각 토큰은 자기 자신과 나무에서의 조상만 본다." source="Cai et al. (2024), Figure 2 · CC BY 4.0" wide />
 
 Greedy 검증이라면 모든 후보 경로를 앞에서부터 target의 선택과 비교해, 가장 길게 일치한 앞부분을 받아들인다.
 그 자리에서 target이 고른 토큰 하나를 더 얻는 것은 짐작이 한 줄일 때와 같고, 이 토큰이 다음 나무의 root가 된다.
