@@ -8,36 +8,20 @@ Batching은 한 번 읽은 weight를 여러 요청의 토큰에 나눠 써서 �
 speculative decoding은 한 번의 검증으로 출력 토큰 여러 개를 얻어 요청 하나의 토큰당 지연을 줄이려 한다.[^survey]
 두 경우 모두 roofline으로 구한 시간은 정한 연산량과 데이터 이동량을 최대 속도로 처리할 때의 이상적인 값이다.
 실제 실행은 보통 그보다 오래 걸린다.
-예를 들어 Llama 3.1 8B를 H100 한 대에서 batch 1로, speculative decoding 없이 돌렸다고 하자.
-문맥이 약 2,048토큰인 구간의 TPOT(time per output token), 곧 첫 토큰 이후 출력 토큰 하나에 걸린 평균 시간이 8.0 ms였다고 하자(설명을 위한 값).
-BF16(bfloat16) weight 약 16 GB와 KV(key-value) cache 약 0.27 GB를 한 번씩 읽는다고 단순화하면, H100 SXM의 최대 대역폭 3.35 TB/s로 약 4.9 ms가 걸린다.
-측정한 TPOT는 이 값의 약 1.6배다.
-모델 weight와 KV cache의 크기를 TPOT로 나눈 값이 최대 대역폭의 몇 %인지를 MBU(model bandwidth utilization)라 한다.[^mbu]
-4.9 ms가 그 bytes를 최대 대역폭으로 나눈 값이므로, 여기서는 $4.9/8.0\approx61\%$다.
+예를 들어 Llama 3.1 8B를 H100 한 대에서 batch 1로 돌려, 문맥이 약 2,048토큰인 구간의 TPOT(time per output token)가 8.0 ms였다고 하자(설명을 위한 값).
+BF16(bfloat16) weight 약 16 GB와 KV(key-value) cache 약 0.27 GB를 최대 대역폭 3.35 TB/s로 한 번씩 읽는 데는 약 4.9 ms가 걸린다.
+두 시간의 비인 MBU(model bandwidth utilization)는 $4.9/8.0\approx61\%$다.[^mbu]
 MBU가 61%라는 사실만으로는 대역폭을 다 쓰지 못한 원인이 어디에 있는지 알 수 없다.
-이 값은 모델의 weight와 KV cache를 한 번 읽는다고 가정한 추정치다.
-실제 HBM에서 오간 모든 bytes를 하드웨어 counter로 잰 대역폭 사용률과는 다르다.
-대역폭 사용률을 비교할 때는 분자에 실제 전송량을 쓰는지 모델이 읽어야 할 양을 추정해 쓰는지 먼저 확인해야 한다.
-또 TPOT에 서버 대기나 네트워크 시간이 들어가면 GPU(graphics processing unit) 실행 시간만으로 구한 값과 비교할 수 없다.
+그 원인을 찾으려면 **그 계산을 GPU(graphics processing unit)에서 실행하는 방식**을 살펴야 한다.
 
-연산 쪽에는 MFU(model FLOPs utilization)가 있다.
-모델이 필요로 하는 FLOPs(floating-point operations)를 실제 경과 시간과 해당 정밀도의 이론상 peak FLOP/s의 곱으로 나눈 값이다.[^palm]
-예를 들어 같은 스텝에 모델 연산량 약 17 GFLOPs와 GPU 실행 시간 8.0 ms를 가정하면, H100 BF16 peak 989 TFLOP/s 대비 MFU는 약 0.21%다.
-이 값은 모델에 필요한 연산량을 세므로 재계산이나 padding 등 실제 수행한 모든 연산을 포함하는 하드웨어 연산 사용률과 같지 않다.
-Decode처럼 메모리 이동이 병목인 경우 MFU가 낮다고 해서 그것만으로 kernel이 잘못되었다고 결론 내릴 수 없다.
-실제 실행이 roofline으로 구한 시간보다 오래 걸리는 이유를 찾으려면 **그 계산을 GPU에서 실행하는 방식**을 살펴야 한다.
-Kernel 최적화는 두 가지 일을 한다.
-하나는 kernel fusion처럼 중간값의 HBM(high-bandwidth memory) 왕복을 없애 실제로 옮기는 bytes를 줄이는 것이다.
-같은 계산에 bytes가 줄면 intensity가 올라 roofline 위의 점이 오른쪽으로 옮겨 간다.
-다른 하나는 일을 GPU의 연산 단위에 고르게 나누거나 kernel 사이의 빈 시간을 없애는 것이다.
-이때는 intensity가 그대로인 채 실제 속도가 올라, 점이 같은 가로축 위치에서 위로 움직여 지붕에 가까워진다.
+Kernel, 곧 GPU에서 연산을 실행하는 프로그램을 최적화하는 일은 두 갈래다.
+하나는 이어지는 연산을 한 kernel로 묶어 중간값의 HBM(high-bandwidth memory) 왕복을 없애, 실제로 옮기는 bytes를 줄이는 것이다.
+다른 하나는 일을 GPU의 연산 단위에 고르게 나누거나 kernel 사이의 빈 시간을 없애, 같은 bytes를 더 빨리 처리하는 것이다.
 
 다만 kernel 하나를 두 배 빠르게 해도 서비스 전체가 두 배 빨라지지는 않는다.
 문맥이 길어 attention이 스텝 시간의 4분의 1을 차지한다고 해도,
 attention kernel을 두 배 빠르게 하면 스텝은 8분의 7로 줄어 약 1.14배 빨라질 뿐이다(Amdahl의 법칙).
 그래서 스텝 시간을 연산별로 나누어 보고, 시간을 많이 차지하는 부분부터 손댄다.
-
-Pan과 Li의 inference 시스템 서베이는 attention kernel이 작업을 GPU의 연산 단위에 나누어 주는 방식이 어떻게 바뀌어 왔는지를 계보로 정리한다.[^survey]
 
 ## 1. GPU에서 kernel이 실행되는 방식
 
@@ -53,14 +37,12 @@ GPU는 수많은 연산 장치를 SM(streaming multiprocessor)이라는 단위�
 Kernel은 계산을 작은 실행 단위인 thread들에 나누고, thread들을 thread block으로 묶어 SM들에 나누어 준다.
 Thread block 하나는 한 SM에서 실행되며, 그 안의 thread는 32개씩 warp로 묶여 같은 명령을 함께 실행한다.
 H100 SXM에는 SM이 132개 있고, SM마다 thread들이 함께 쓰는 shared memory가 최대 228 KB까지 있다.[^hopper]
-칩 안의 작고 빠른 메모리를 통틀어 SRAM(static random-access memory)이라 하며, register, shared memory, L2 cache가 여기에 든다.
-FlashAttention 논문이 SRAM이라 부르며 블록을 올려 두는 곳은 그중 SM마다 있는 shared memory다.
+SM의 연산 장치는 원소 하나씩 더하고 곱하는 CUDA core와, 작은 행렬 블록의 곱을 한 번에 계산하는 행렬곱 전용 Tensor Core로 나뉜다.
 
 이 구조에서 kernel이 하드웨어를 다 쓰려면 두 가지가 필요하다.
 첫째, **모든 SM에 일이 돌아가야** 한다.
 일이 thread block 40개로만 나뉘면 SM 132개 가운데 적어도 92개가 논다.
 그래서 보통은 thread block을 SM 수보다 많이 만들어, 한 block이 끝나면 기다리던 block이 이어 실행되게 한다.
-Persistent kernel을 쓰기도 하는데, 적은 수의 thread block(예: SM마다 하나)만 띄우고 각 block이 작업 하나를 마쳐도 끝나지 않고 다음 작업 조각을 가져와 처리하게 하는 방식이다.
 둘째, HBM에서 데이터를 읽는 지연을 숨길 만큼 다른 일을 준비해야 한다.
 한 warp가 데이터를 기다리는 동안 같은 SM의 다른 준비된 warp가 실행될 수 있다.
 Kernel 안에서 다음 데이터의 읽기와 현재 데이터의 계산을 겹치는 방법도 있다.
@@ -76,17 +58,13 @@ Decode에서는 특히 첫째 조건이 어렵다.
 **Nsight Compute**는 kernel 하나가 GPU의 연산 장치와 메모리 대역폭을 얼마나 쓰는지 분석한다.
 보통은 Nsight Systems로 시간을 많이 쓰는 kernel과 빈 구간을 찾은 뒤, 그 kernel만 Nsight Compute로 들여다본다.
 
-### 2-1. Nsight Systems
-
 Nsight Systems(`nsys`)는 CPU(central processing unit) thread, CUDA API 호출, GPU에서 실행된 kernel과 메모리 복사를 한 시간축 위에 그린다.[^nsys]
 `nsys profile -o report <실행 명령>`으로 실행하면 기록이 `report.nsys-rep` 파일에 저장되고, GUI에서 열면 타임라인이 보인다.
 이 타임라인에서 볼 것은 두 가지다.
 
 첫째는 kernel별 시간의 합이다.
-`nsys stats` 명령이 만드는 `cuda_gpu_kern_sum` 보고서는 kernel 이름마다 실행 횟수와 총 시간, 전체에서 차지하는 비율을 모아 준다.[^nsys]
-이 비율은 보고서에 포함된 kernel 실행 시간의 합을 분모로 쓰므로, GPU가 빈 시간이나 메모리 복사까지 포함한 스텝 전체 시간의 비율은 아니다.[^nsys-analysis]
-또 여러 stream의 kernel이 겹쳐 실행되면 각 실행 시간의 합이 실제 경과 시간보다 클 수 있다.
-Amdahl의 법칙에 쓸 몫은 관심 있는 스텝의 타임라인에서 겹침과 빈 구간을 함께 살펴 추정한다.
+`nsys stats` 명령이 만드는 `cuda_gpu_kern_sum` 보고서는 kernel 이름마다 실행 횟수와 총 시간, 전체에서 차지하는 비율을 모아 준다.[^nsys-analysis]
+이 비율의 분모는 kernel 실행 시간의 합이므로, GPU 줄에 빈 구간이 많으면 스텝 시간에서 차지하는 몫은 이보다 작다.
 도입의 예처럼 attention이 4분의 1이라면 attention kernel을 아무리 빠르게 해도 스텝은 4분의 3 아래로 줄지 않는다.
 
 둘째는 GPU 줄의 빈 구간이다.
@@ -128,27 +106,18 @@ CPU의 제출이 늦었을 수도 있지만, 데이터 복사나 다른 작업�
   <line x1="346" y1="143" x2="358" y2="162" stroke="#64748b" stroke-dasharray="3 2" marker-end="url(#nsys-arrow)"/>
   <line x1="376" y1="143" x2="388" y2="162" stroke="#64748b" stroke-dasharray="3 2" marker-end="url(#nsys-arrow)"/>
   <path d="M308,194 L308,200 L386,200 L386,194" fill="none" stroke="#0f172a"/>
-  <text x="347" y="220" font-size="13" text-anchor="middle" fill="#0f172a">빈 구간: GPU가 다음 launch를 기다림</text>
+  <text x="347" y="220" font-size="13" text-anchor="middle" fill="#0f172a">kernel 사이의 빈 구간: GPU가 다음 launch를 기다림</text>
 </svg>
 <figcaption>Nsight Systems 타임라인의 개념도. CUDA API 줄의 launch는 CPU가 kernel을 제출한 시점이고, GPU kernel 줄의 상자는 실제 실행 구간이다. 이름 없는 좁은 상자는 정규화나 원소별 연산처럼 짧은 kernel이다. 긴 GEMM(general matrix multiplication, 행렬곱)과 attention이 실행되는 동안에는 제출이 앞서 쌓이지만, 짧은 kernel이 이어지면 다음 제출보다 먼저 끝나 GPU 줄에 빈 구간이 생긴다. Nsight Systems의 화면 구성을 바탕으로 직접 구성했으며 시간 축척은 임의다.</figcaption>
 </figure>
 
-vLLM 문서는 Nsight Systems로 vLLM을 잴 때 `--trace-fork-before-exec=true`와 `--cuda-graph-trace=node`를 붙이라고 권한다.[^vllm-profile]
-앞의 옵션은 프로세스를 복제해 자식을 만드는 `fork`부터, 그 자식이 `exec` 함수로 다른 프로그램을 실행하기 전까지의 작업도 추적한다.
-이 옵션은 Linux에서만 쓸 수 있고, NVIDIA는 이 구간의 추적이 충돌이나 교착을 일으킬 수 있다고 주의한다.[^nsys]
-뒤의 옵션은 여러 kernel을 묶어 한 번에 재생하는 CUDA graph 안의 kernel도 하나하나 기록하게 한다.
-Nsight Systems는 가능하면 기본적으로 CUDA graph를 통째로 한 구간으로 기록하므로, 이 옵션이 없으면 그래프 안의 kernel별 시간을 볼 수 없다.[^nsys]
-대신 kernel 단위로 기록하는 만큼 측정 부담이 커지므로, 지연 자체는 profiler 없이 따로 잰다.
-
-### 2-2. Nsight Compute
+vLLM 문서는 Nsight Systems로 vLLM을 잴 때 `--cuda-graph-trace=node`를 붙이라고 권한다.[^vllm-profile]
+이 옵션이 없으면 여러 kernel을 묶어 한 번에 재생하는 CUDA graph가 통째로 한 구간으로 기록되어, 그래프 안의 kernel별 시간을 볼 수 없다.[^nsys]
+Profiler는 측정 부담을 더하므로, 지연 자체는 profiler 없이 따로 잰다.
 
 Nsight Compute(`ncu`)는 kernel 하나를 대상으로 GPU의 하드웨어 counter를 모아 분석한다.[^ncu]
-필요한 지표를 한 번에 모을 수 없을 때는 같은 kernel을 여러 번 다시 실행한다(kernel replay).
-기본 설정에서는 측정값의 변동을 줄이려고 kernel들을 차례로 실행하고 각 replay pass 전에 GPU cache를 비운다.[^ncu]
-그래서 Nsight Compute가 보여 주는 실행 시간은 실제 서빙 중의 시간과 다를 수 있고, 엔진 전체에 걸면 매우 느려진다.
-Nsight Systems로 고른 kernel의 이름 일부를 `-k regex:` 옵션으로, 잴 실행 횟수를 `-c` 옵션으로 정해 대상을 좁힌다.[^ncu-cli]
-예를 들어 `ncu --set full -k regex:flash -c 1 -o attn <실행 명령>`은 이름에 flash가 들어간 kernel의 첫 실행 하나를 `full` section set의 지표로 재서 attn이라는 이름의 보고서로 저장한다.
-`full`은 제공되는 모든 개별 지표를 뜻하는 것이 아니라 여러 분석 section을 묶은 설정이다.
+필요한 지표를 모으려고 같은 kernel을 여러 번 다시 실행하므로 엔진 전체에 걸면 매우 느려지고, 보여 주는 실행 시간도 실제 서빙 중의 시간과 다를 수 있다.
+그래서 Nsight Systems로 고른 kernel만 이름으로 지정해 잰다.
 
 보고서에서 먼저 볼 것은 Speed Of Light 절이다.
 연산 장치와 메모리 각각의 처리량을 이론 최댓값에 대한 비율로 보여 주므로,[^ncu]
@@ -184,18 +153,18 @@ $e^{x_j-m_{\text{old}}}\,e^{m_{\text{old}}-m_{\text{new}}}=e^{x_j-m_{\text{new}}
 </Details>
 
 FlashAttention 1은 key·value 블록 하나를 불러 여러 query 블록에 차례로 적용한 뒤 다음 key·value 블록으로 넘어갔다.
-이 순서는 key·value 블록을 여러 query 블록에 재사용하는 데 맞춘 것이다.
 일을 SM에 나누는 단위는 batch와 attention head였다.
 FlashAttention-2는 반복 순서를 바꿔, query 블록 하나가 모든 key·value 블록을 차례로 도는 구조로 만들었다.
-그러면 query 블록끼리는 서로 기다릴 일이 없으므로, **query의 시퀀스 길이** 방향으로도 나누어 query 블록마다 thread block을 둘 수 있다.[^fa2]
-학습과 긴 prompt의 prefill에서는 query가 많아 thread block이 넉넉하다.<Sidenote>Prefill 쪽에서는 FlashAttention-2가 H100의 peak에 한참 못 미쳤고, FlashAttention-3가 데이터 이동과 softmax를 행렬곱과 겹쳐 FP16(16-bit floating point)에서 peak에 훨씬 가깝게 올렸다.[^fa3] Tensor Core가 지수 계산이나 shared memory 대역폭보다 훨씬 빨라진 Blackwell GPU에서는 FlashAttention-4가 softmax의 지수 계산 일부를 소프트웨어로 근사하는 등 행렬곱이 아닌 일을 줄이도록 kernel을 다시 설계했다.[^fa4]</Sidenote>
+그러면 query 블록 하나의 계산이 다른 query 블록과 무관하게 처음부터 끝까지 이어지므로, **query의 시퀀스 길이** 방향으로도 나누어 query 블록마다 thread block을 둘 수 있다.[^fa2]
+학습과 긴 prompt의 prefill에서는 query가 많아 thread block이 넉넉하다.<Sidenote>Prefill 쪽에서는 FlashAttention-2의 연산 속도가 H100의 최대 연산 성능에 한참 못 미쳤고, FlashAttention-3가 데이터 이동과 softmax를 행렬곱과 겹쳐 FP16(16-bit floating point)에서 최대 성능에 훨씬 가깝게 올렸다.[^fa3] Tensor Core가 지수 계산이나 shared memory 대역폭보다 훨씬 빨라진 Blackwell GPU에서는 FlashAttention-4가 softmax의 지수 계산 일부를 소프트웨어로 근사하는 등 행렬곱이 아닌 일을 줄이도록 kernel을 다시 설계했다.[^fa4]</Sidenote>
 
 보통의 decode에서는 요청마다 query가 하나뿐이다.
-Query 방향으로 나눌 것이 없으므로 병렬성은 batch × head만 남는다.
-Dao 등은 이렇게 생기는 thread block이 SM 수보다 적으면 이 연산이 GPU의 작은 일부만 쓴다고 지적했다.[^flashdecoding]
+Query 방향으로 나눌 것이 없으므로 병렬성은 batch × head만 남는다.[^fa2]
+Dao 등은 이때 batch 크기가 SM 수보다 작으면 이 연산이 GPU의 작은 일부만 쓴다고 지적했다.[^flashdecoding]
 
 <Callout type="example">
 Llama 3.1 8B를 batch 1로 decode한다고 하자.
+이 모델은 query head 32개가 네 개씩 KV head 8개를 나누어 쓰는 GQA(grouped-query attention) 구조다.
 KV cache를 시퀀스 방향으로 더 나누지 않고 query head마다 thread block 하나를 두면, thread block은 32개뿐이고 H100의 SM 132개 가운데 100개가 논다.
 문맥이 32,768토큰이고 head 차원이 128이라면, 한 층에서 KV head 하나의 key와 value(×2)는 원소당 2 bytes인 BF16으로 $32768\times128\times2\times2\ \text{bytes}\approx16.8$ MB다.
 각 thread block이 자기 KV head의 16.8 MB를 처음부터 끝까지 차례로 읽어야 하므로,
@@ -208,13 +177,10 @@ SM 132개가 함께 쓰도록 설계된 3.35 TB/s를 SM 32개만으로 끌어 �
 Dao 등의 Flash-Decoding은 나눌 방향을 하나 더 만들었다.
 **Key·value의 시퀀스 길이** 방향이다.[^flashdecoding]
 긴 KV cache를 여러 조각(split)으로 나누고, 조각마다 thread block을 하나씩 두어 동시에 계산한다.
-각 thread block은 자기 조각의 점수만으로 softmax를 계산한 부분 출력을 만들고,
+각 thread block은 자기 조각의 점수만으로 softmax를 계산한 부분 출력 $o_i$를 만들고,
 그 조각 점수들의 log-sum-exp인 스칼라 $\text{LSE}=\log\sum_j e^{x_j}$ 하나를 함께 남긴다.
 마지막에 짧은 reduce kernel이 LSE의 차이로 조각별 지수 합의 상대적인 크기를 구하고, 그 비중으로 부분 출력을 합친다.
-각 조각의 출력을 똑같이 평균하면 안 된다.
-예를 들어 공통 기준으로 계산한 지수 합이 한 조각에서 다른 조각의 3배라면, 전체 결과에서는 그 조각의 부분 출력을 3배 큰 비중으로 합쳐야 한다.
-조각마다 안정화를 위해 뺀 최댓값이 다를 수 있으므로, 조각 내부의 지수 합만 그대로 비교해서는 안 된다.
-LSE를 이용하면 이 차이를 반영해 수치적으로 안정적인 비중을 계산할 수 있다.
+조각마다 지수 합이 다르므로 부분 출력을 똑같이 평균하면 안 되고, 지수 합에 비례한 비중으로 합쳐야 한다.
 
 <figure>
 <svg viewBox="0 0 600 250" role="img" aria-label="Flash-Decoding의 계산 흐름. 위쪽 왼편에 새 토큰의 query q가 있고, 오른쪽으로 긴 KV cache 막대가 네 조각(split 1–4)으로 나뉘어 있다. 각 조각 아래에 thread block 1–4가 있어, 모두 같은 query와 자기 조각의 key·value로 부분 출력 o_i와 log-sum-exp LSE_i를 동시에 계산한다. 네 결과는 아래의 reduce 상자로 모이고, reduce는 log-sum-exp로 각 부분 출력의 비중을 맞춰 최종 출력 o를 만든다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -277,17 +243,14 @@ Reduce는 각 조각의 비중을 $e^{\text{LSE}_i}$에 비례하게 잡는다.
 순서대로 갱신하든 따로 계산해 합치든 수학적으로 결과가 같으므로, 조각을 나누어 병렬로 계산할 수 있다.
 </Callout>
 
-Flash-Decoding은 아주 긴 시퀀스의 decode를 크게 빠르게 했고,
-attention만 따로 잰 미시 벤치마크에서는 FlashAttention보다 그보다도 훨씬 큰 폭으로 빨랐다.
+Flash-Decoding은 아주 긴 시퀀스에서 FlashAttention을 쓸 때보다 생성 속도를 크게 높였다.
+Attention만 따로 잰 미시 벤치마크에서는 차이가 그보다 훨씬 컸다.
 시퀀스가 꽤 길어질 때까지 attention 시간이 거의 일정했다.[^flashdecoding]
 KV를 여러 조각으로 나누어 여러 SM이 함께 읽으면서 GPU를 충분히 쓰게 되었기 때문이다.
 
 조각을 나누는 데도 대가가 있다.
 부분 결과를 HBM에 썼다가 reduce kernel이 다시 읽어야 하고, kernel이 하나 늘어난다.
 Batch × head만으로 이미 SM이 꽉 찬다면 더 쪼개도 얻는 것이 적다.
-vLLM v0.10.1의 PagedAttention kernel이 이 선택을 보여 준다.
-시퀀스를 512토큰 조각으로 나누어 계산하고 reduce kernel로 합치는 v2와 나누지 않는 v1이 있었고,
-최대 길이가 8,192토큰 이하이면서 시퀀스가 짧거나 batch × head만으로 thread block이 이미 충분하면 v1을 골랐다.[^vllm-pa]
 
 ### 3-3. 흩어진 KV cache와 FlashInfer
 
@@ -303,7 +266,7 @@ PagedAttention의 흩어진 블록,
 여러 요청이 공유하는 prefix, 요청마다 다른 길이가 모두 이 형식 하나로 표현된다.
 Kernel은 흩어진 블록을 타일 단위로 GPU 메모리에서 shared memory의 연속된 공간에 모은 뒤,
 거기서 dense한 연산을 하고 다음 타일로 넘어간다.
-Query tile이 충분히 크면 Tensor Core를 쓰고, tile 크기가 1이면 CUDA Core를 쓴다.<Sidenote>CUDA Core는 원소 하나씩 덧셈과 곱셈을 하는 범용 연산 장치이고, Tensor Core는 작은 행렬 블록의 곱셈과 누산을 한 번에 처리하는 행렬곱 전용 장치다. Query 하나만 따로 처리하면 Tensor Core가 요구하는 행렬 타일을 채우기 어렵다. 다만 GQA(grouped-query attention)에서 같은 KV를 쓰는 여러 query head를 묶거나 빈 행을 채워 Tensor Core를 쓰는 구현도 있으므로, query 길이 하나만으로 실행 장치를 단정할 수는 없다.</Sidenote>
+Query tile이 충분히 크면 Tensor Core를 쓰고, tile 크기가 1이면 CUDA core를 쓴다.<Sidenote>Query 하나만 따로 처리하면 Tensor Core가 요구하는 행렬 타일을 채우기 어렵다. 다만 GQA에서 같은 KV를 쓰는 여러 query head를 묶거나 빈 행을 채워 Tensor Core를 쓰는 구현도 있으므로, query 길이 하나만으로 실행 장치를 단정할 수는 없다.</Sidenote>
 공유 prefix를 읽는 query들은 이 행렬에서 여러 행을 한 블록으로 묶어 함께 계산해, shared memory에 한 번 복사한 KV를 여러 query가 재사용하게 한다.
 이를 위해 GPU 메모리에 저장된 KV cache를 재배치하지는 않고, 접근 관계를 나타내는 색인만 새로 만든다.
 예를 들어 두 요청의 KV 블록이 $[A,B,C]$와 $[A,B,D]$라면,
@@ -317,12 +280,9 @@ Query 하나에 대한 (부분 출력, log-sum-exp) 쌍을 attention state라 �
 부분 state들을 합쳐 전체 출력을 구할 수 있으므로, 긴 KV를 여러 작업으로 나누어 계산해도 된다.
 그래서 요청마다 다른 KV 길이를 SM들에 고르게 나누는 계획을 CPU에서 미리 세우고(plan),
 GPU kernel은 그 계획대로 실행한다(run).
-요청별 query와 KV 길이 등 계획의 조건이 같은 층들은 스텝마다 세운 계획을 함께 재사용할 수 있다.
-Full attention과 sliding window가 섞여 층마다 읽을 KV 범위가 다르면 같은 계획을 그대로 재사용한다고 단정할 수 없으므로, 각 층의 조건과 구현을 확인해야 한다.
 요청마다 query tile이 하나인 decode로 단순화하면,
 계획은 전체 KV 길이를 thread block 수로 나눈 값을 조각의 최대 길이로 삼아 긴 KV를 자르고,
 긴 조각부터 지금까지 맡은 예상 비용이 가장 적은 thread block에 하나씩 배정한다.[^flashinfer]
-원논문의 비용 모형은 KV 길이뿐 아니라 query tile의 길이도 반영한다.
 
 <Callout type="example">
 Decode 요청 네 개의 KV 길이가 8K, 2K, 1K, 1K이고, 설명을 위해 thread block 네 개가 SM 네 개에서 동시에 돈다고 하자.
@@ -336,18 +296,16 @@ FlashInfer의 계획은 전체 12K를 4로 나눈 3K를 조각의 최대 길이�
 요청마다 같은 수로 자르는 방식과 달리, 짧은 요청은 자르지 않고 긴 요청만 필요한 만큼 자른다.
 </Callout>
 
-SGLang에 붙여 비교한 실험에서 FlashInfer는 Triton 언어로 작성한 attention backend보다 ITL(inter-token latency)을 뚜렷하게 줄였다.[^flashinfer]
+SGLang에 붙여 비교한 실험에서 FlashInfer는 GPU kernel용 언어 Triton으로 작성한 기존 attention backend보다 ITL(inter-token latency)을 뚜렷하게 줄였다.[^flashinfer]
 지금은 vLLM과 SGLang 모두 FlashInfer를 attention backend의 하나로 쓴다.
-다만 엔진이 FlashInfer를 지원한다는 사실만으로 모든 설정에서 그것이 선택되는 것은 아니다.
-실제 측정에서는 엔진이 보고한 backend와 profiler 실행 기록을 확인해 어떤 attention kernel과 행렬곱 kernel이 시간을 쓰는지 본다.
-Attention 비중이 작다면 attention kernel만 바꾼 효과가 전체 지연에서는 작을 수 있다.
 
 ## 4. 선형층과 MoE의 kernel
 
 ### 4-1. 작은 batch의 행렬곱
 
 Decode의 선형층은 batch가 작으면 행렬과 벡터의 곱에 가깝다.
-Weight가 16-bit라면 이런 작업의 intensity는 토큰 수와 거의 같다.
+Weight 하나(16-bit, 2 bytes)에 토큰마다 2 FLOPs(floating-point operations)를 쓰므로 intensity는 토큰 수와 거의 같고,
+H100의 ridge point 295보다 훨씬 작아 memory-bound다.
 이때 kernel의 주된 목표는 **weight를 메모리 대역폭에 최대한 가까운 속도로 읽는 것**이다.
 큰 행렬곱에 맞춰 조율한 kernel을 그대로 쓰면,
 한쪽 차원이 아주 작은 이 납작한 행렬곱에서는 대역폭을 다 쓰지 못한다.
@@ -361,20 +319,11 @@ FlashDecoding++는 batch 쪽 타일을 Tensor Core가 한 번에 처리하는 8�
 ### 4-2. 양자화 weight의 kernel
 
 Weight-only 양자화(quantization)에서 낮은 정밀도로 저장한 weight를 더 높은 정밀도의 activation과 곱하려면,
-kernel 안에서 weight를 곱셈에 맞는 정밀도로 되돌릴 수 있다(dequantize).
+kernel 안에서 weight를 곱셈에 맞는 정밀도로 되돌려야 한다(dequantize).
 Frantar 등의 Marlin은 4-bit weight와 FP16 activation의 행렬곱을 위한 kernel이다.[^marlin]
 이미 가져온 weight는 register 안에서 FP16으로 되돌려 Tensor Core에 넣는다.
 이 계산이 도는 동안 다음 4-bit weight를 HBM에서 읽어 shared memory를 거쳐 register로 가져온다.
 Weight는 kernel이 읽고 변환하는 순서에 맞게 미리 재배치해 저장해 둔다.
-
-작은 batch에서는 일을 SM에 고르게 나누는 것도 문제다.
-출력 타일 수가 SM 수로 나누어떨어지지 않으면 마지막 차례에서 일부 SM이 논다.
-출력의 열 타일 하나를 만들려면, 그 열에 해당하는 weight 타일들을 입력의 대응하는 부분과 각각 곱해 모두 더해야 한다.
-Marlin은 전체 weight 타일 수를 SM 수로 나눈 값을 올림해 SM 하나가 맡을 타일 수를 정한다.
-Weight 타일을 첫 출력 열의 위에서부터 열을 따라 내려가며 SM마다 그 수만큼 이어서 배정하고, 한 열이 끝났는데도 그 SM의 몫이 남으면 다음 출력 열의 맨 위에서 이어 배정한다(striped partitioning).
-그러면 SM마다 일이 거의 같아지고, 부분합을 더하는 일은 한 출력 열을 나누어 맡은 SM들 사이에서만 생긴다.[^marlin]
-
-<Figure src="https://arxiv.org/html/2408.11743v1/marlin-partition.svg" alt="Marlin의 striped partitioning 그림. 위쪽의 weight 행렬(Weights)이 세로 열 네 개로 나뉘고, 색이 다른 칸 일곱 개에 SM 번호 1부터 7이 적혀 있다. SM 1은 첫째 열의 위쪽을, SM 2는 첫째 열의 아래쪽과 둘째 열의 맨 위를, SM 3은 둘째 열의 가운데를, SM 4는 둘째 열의 맨 아래와 셋째 열의 위쪽을, SM 5는 셋째 열의 아래쪽을, SM 6과 7은 넷째 열의 위와 아래를 맡는다. 아래쪽 출력(Output) 띠의 네 칸에는 각 열을 함께 계산하는 SM이 1/2, 2/3/4, 4/5, 6/7로 적혀 있다." caption="Marlin의 striped partitioning(그림의 세로 라벨 Overlapped Partitioning이 이 배정 방식이다). Weight 행렬의 열 하나가 출력의 열 하나를 만들며, 칸 안의 숫자는 SM 번호, 아래 띠는 그 출력 열을 함께 계산해 합치는 SM이다. SM마다 같은 양을 맡고, 한 열의 끝에 닿으면 다음 열의 위에서 이어 받는다." source="Frantar et al. (2025), Figure 5 · CC BY 4.0" />
 
 Scale 저장과 activation 이동을 무시한 이상적인 roofline 계산으로 보면, 4-bit weight 하나는 0.5 byte인데 토큰 하나가 weight 하나마다 2 FLOPs를 쓰므로 batch $b$에서 intensity는 약 $4b$ FLOP/byte다.
 H100에서는 이 값이 ridge point 295에 닿는 $b\approx74$까지 4-bit 쪽도 memory-bound라, 읽는 bytes가 FP16의 4분의 1인 만큼 이상적으로 4배 빠르다.
@@ -409,15 +358,12 @@ Gale 등의 MegaBlocks는 토큰을 expert별로 묶어 행에, expert들의 wei
 | A로 간 토큰 3개 | 계산($3\times h$) | 계산하지 않음 |
 | B로 간 토큰 1개 | 계산하지 않음 | 계산($1\times h$) |
 
-Expert마다 대각 블록의 행 수는 그 expert가 받은 토큰 수만큼이고, 실제 계산은 이를 고정 크기의 작은 블록 여러 개로 나누어 한다.
-그래서 expert마다 토큰 수를 맞추거나 넘치는 토큰을 버릴 필요가 없다.[^megablocks]
+Expert마다 대각 블록의 행 수는 그 expert가 받은 토큰 수에 따라 달라지고, 실제 계산은 이를 고정 크기의 작은 블록 여러 개로 나누어 한다(구현은 expert별 토큰을 블록 크기의 배수까지만 0으로 채운다).
+그래서 모든 expert의 토큰 수를 같게 맞추거나 넘치는 토큰을 버릴 필요가 없다.[^megablocks]
 이 결과에 활성화를 적용한 뒤, 이 희소한 행렬을 입력으로 받는 둘째 선형층의 행렬곱도 block-sparse 연산으로 계산한다.
 Inference 엔진도 토큰 수가 다른 여러 expert의 행렬곱을 한꺼번에 처리한다.
-vLLM v0.31.0의 fused MoE kernel은 한 경로에서 토큰을 expert 순서로 정렬한 뒤,
+vLLM v0.31.0의 fused MoE kernel은 토큰을 expert 순서로 정렬한 뒤(일부 설정에서는 정렬을 건너뛴다),
 블록마다 어떤 expert의 weight를 쓸지를 표시해 같은 선형층에 속한 모든 expert의 행렬곱을 kernel 하나로 처리한다.[^vllm-fusedmoe]
-토큰과 expert의 배정 수가 전체 expert 수에 비해 매우 적은 일부 설정에서는 정렬을 건너뛰고,
-토큰과 expert의 배정 하나씩 블록에 넣는 경로도 쓴다.
-첫 선형층, 활성화, 둘째 선형층까지 한 kernel로 합치지는 않고 따로 호출한다.
 
 ## 5. Kernel 바깥의 시간
 
@@ -425,30 +371,25 @@ vLLM v0.31.0의 fused MoE kernel은 한 경로에서 토큰을 expert 순서로 
 
 Kernel 자체가 빨라도 그 사이가 빈다면 GPU는 논다.
 CPU는 kernel을 하나씩 GPU에 제출하는데, 제출마다 마이크로초 단위의 비용이 든다.
-같은 stream에 제출한 kernel은 순서대로 실행되므로, kernel 하나의 실행이 제출 비용보다 짧으면 대기열이 비어 GPU가 다음 제출을 기다릴 수 있다.
+CPU가 제출한 kernel은 대기열(stream)에서 순서대로 실행되므로, kernel 하나의 실행이 제출 비용보다 짧으면 대기열이 비어 GPU가 다음 제출을 기다릴 수 있다.
 NVIDIA가 잰 예에서는, 실행 시간이 아주 짧은 kernel을 제출하고 매번 끝나기를 기다리면 kernel당 걸린 시간이 실행 시간의 몇 배였다.[^cudagraph-nv]
 Decode 한 스텝은 층마다 정규화, 투영,
 attention, 활성화 같은 kernel 여러 개를 수십 층에 걸쳐 실행하므로, fusion 정도에 따라 kernel이 수백 개에 이를 수 있다.
-그 가운데 정규화·원소별 연산 kernel은 수 μs면 끝나 대기열이 비기 쉽다.
-vLLM 팀도 GPU가 빨라져 모델의 GPU 실행 시간이 매우 짧아지면서,
-CPU 쪽의 비용이 무시할 수 없게 된다고 밝혔다.[^vllm-v1]
+그 가운데 정규화·원소별 연산 kernel은 실행 시간이 수 μs 수준으로 짧을 수 있어 대기열이 비기 쉽다.
 
 **CUDA graph**는 이 비용을 줄인다.
 한 스텝에서 실행할 kernel들의 순서와 인자를 한 번 기록(capture)해 두고,
-이후에는 기록한 그래프 전체를 한 번에 재생(replay)한다.
-NVIDIA의 같은 측정에서 동기화 없이 이어 제출하면 kernel당 시간이 실행 시간에 가깝게 줄었고, CUDA graph로 재생하면 조금 더 줄었다.
-이 단순한 예에서는 차이가 작지만, CPU의 kernel 제출 비용이 병목인 모델에서는 이득이 커질 수 있다.
-예를 들어 PyTorch 팀은 MLPerf 학습 벤치마크의 Mask R-CNN에서 backbone 구간의 시간이 몇 분의 일로 줄었다고 보고했다.[^cudagraph-pt]
+이후에는 기록한 그래프 전체를 제출 한 번으로 재생(replay)하므로, kernel마다 치르던 제출 비용이 사라진다.
 대신 재생은 같은 kernel을 같은 메모리 주소로 실행한다.
 입력값은 기록할 때 쓴 고정 버퍼에 새로 복사해 넣으면 바꿀 수 있지만, 버퍼의 모양은 바꿀 수 없다.[^cudagraph-pt]
 그런데 서빙에서는 batch 크기가 스텝마다 바뀐다.
+요청마다 query가 하나인 보통의 decode에서는 한 스텝에 처리할 토큰 수가 곧 batch 크기다.
 그래서 vLLM은 예를 들어 처리할 토큰 수 1, 2, 4, 8, 16, 24, …에 맞춘 그래프를 미리 기록해 두고,
 실제 토큰 수 이상인 기록 크기 가운데 가장 작은 것을 골라, 입력을 그 크기에 맞게 채운(padding) 뒤 그 그래프를 재생한다.
 기록할 크기는 설정에 따라 달라지며, 기록 범위를 넘거나 맞는 그래프가 없으면 그래프를 재생하지 않고 실행한다.
-요청마다 query가 하나인 보통의 decode에서는 이 토큰 수가 곧 batch 크기다.
 Attention은 요청마다 KV 길이가 달라 실행할 일이 스텝마다 바뀌므로 고정된 그래프에 담기 어렵다.
 이를 지원하는 attention backend는 바뀌는 길이와 작업 계획을 고정 주소의 버퍼에 넣어, 같은 그래프를 재생하면서도 다른 입력을 처리한다.
-vLLM V1의 기본 설정은 모델을 attention을 경계로 나누어 컴파일한다(piecewise compilation).
+vLLM V1의 기본 설정은 모델을 attention을 경계로 여러 구간으로 나눈다.
 이때 attention backend가 지원하면 요청마다 query 길이가 같은 decode batch는 전체를 그래프 하나로 기록하고,
 나머지는 attention 사이의 구간만 그래프로 기록한다.[^vllm-cg]
 
@@ -469,11 +410,7 @@ attention은 FlashAttention이나 FlashInfer처럼 직접 최적화한 kernel을
 FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kernel만큼 빠르지 않아 CUDA 코드를 생성한다고 밝힌다.[^flashinfer]
 성능이 가장 중요한 몇 개의 kernel은 손으로, 나머지는 컴파일러로 처리하는 분업이다.
 
-이 노트의 Marlin 논문 그림은 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)에 따른다.
-
 [^survey]: Pan, J., & Li, G. (2025). A Survey of LLM Inference Systems. [arXiv:2506.21901](https://arxiv.org/abs/2506.21901).
-
-[^palm]: Chowdhery, A., Narang, S., Devlin, J., et al. (2022). PaLM: Scaling Language Modeling with Pathways. [arXiv:2204.02311](https://arxiv.org/abs/2204.02311).
 
 [^mbu]: Agarwal, M., Qureshi, A., Sardana, N., Li, L., Quevedo, J., & Khudia, D. (2023). LLM Inference Performance Engineering: Best Practices. *Databricks Blog*. [databricks.com](https://www.databricks.com/blog/llm-inference-performance-engineering-best-practices).
 
@@ -487,8 +424,6 @@ FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kern
 
 [^ncu]: NVIDIA. (2026). Nsight Compute Kernel Profiling Guide. *NVIDIA documentation*, 최신 문서. [docs.nvidia.com](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html).
 
-[^ncu-cli]: NVIDIA. (2026). Nsight Compute CLI. *NVIDIA documentation*, 최신 문서. [docs.nvidia.com](https://docs.nvidia.com/nsight-compute/NsightComputeCli/index.html).
-
 [^fa1]: Dao, T., Fu, D. Y., Ermon, S., Rudra, A., & Ré, C. (2022). FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. *NeurIPS 2022*. [arXiv:2205.14135](https://arxiv.org/abs/2205.14135).
 
 [^online-softmax]: Milakov, M., & Gimelshein, N. (2018). Online normalizer calculation for softmax. [arXiv:1805.02867](https://arxiv.org/abs/1805.02867).
@@ -501,8 +436,6 @@ FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kern
 
 [^flashdecoding]: Dao, T., Haziza, D., Massa, F., & Sizov, G. (2023). Flash-Decoding for long-context inference. *Stanford CRFM Blog*. [crfm.stanford.edu](https://crfm.stanford.edu/2023/10/12/flashdecoding.html).
 
-[^vllm-pa]: vLLM Project. (2026). vLLM Paged Attention. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/paged_attention/); [attention kernel 소스(v0.10.1)](https://docs.vllm.ai/en/v0.10.1/api/vllm/attention/ops/paged_attn.html).
-
 [^flashinfer]: Ye, Z., Chen, L., Lai, R., et al. (2025). FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving. *MLSys 2025*. [arXiv:2501.01005](https://arxiv.org/abs/2501.01005).
 
 [^fdpp]: Hong, K., Dai, G., Xu, J., et al. (2024). FlashDecoding++: Faster Large Language Model Inference with Asynchronization, Flat GEMM Optimization, and Heuristics. [*MLSys 2024*](https://proceedings.mlsys.org/paper_files/paper/2024/hash/5321b1dabcd2be188d796c21b733e8c7-Abstract-Conference.html). [arXiv:2311.01282](https://arxiv.org/abs/2311.01282).
@@ -514,8 +447,6 @@ FlashInfer 논문도 Triton이 아직 여러 경우에 CUDA·CUTLASS로 쓴 kern
 [^vllm-fusedmoe]: vLLM Project. (2026). fused_moe.py. *GitHub v0.31.0*. [github.com](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/model_executor/layers/fused_moe/fused_moe.py).
 
 [^cudagraph-nv]: Gray, A. (2019). Getting Started with CUDA Graphs. *NVIDIA Technical Blog*. [developer.nvidia.com](https://developer.nvidia.com/blog/cuda-graphs/).
-
-[^vllm-v1]: vLLM Team. (2025). vLLM V1: A Major Upgrade to vLLM's Core Architecture. *vLLM Blog*. [vllm.ai](https://vllm.ai/blog/2025-01-27-v1-alpha-release).
 
 [^cudagraph-pt]: Nguyen, V., Carilli, M., Eryilmaz, S. B., et al. (2021). Accelerating PyTorch with CUDA Graphs. *PyTorch Blog*. [pytorch.org](https://pytorch.org/blog/accelerating-pytorch-with-cuda-graphs/).
 
