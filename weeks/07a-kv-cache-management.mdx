@@ -278,62 +278,73 @@ Paging과 prefix 재사용으로 낭비와 중복을 없애도,
 남은 KV cache는 여전히 토큰 하나에 약 131 KB씩 문맥 길이에 비례해 자란다.
 Roofline 분석에서처럼 문맥이 길고 batch가 크면 decode 스텝에서 이 KV cache를 읽는 시간이 weight를 읽는 시간보다 커진다.
 GPU에 둘 KV cache를 더 줄이는 방법은 크게 세 갈래다.
-양자화(quantization)는 원소의 정밀도를 낮추고, eviction은 일부 토큰의 key·value를 지우며, offloading은 cache를 GPU 밖으로 옮긴다.
-여기서는 양자화는 빼고 eviction과 offloading을 본다.
+양자화(quantization)는 정밀도를 낮추고, eviction과 merging은 토큰 수를 줄이며, offloading은 cache를 GPU 밖으로 옮긴다.
 
-### 4-1. Eviction
+### 4-1. Eviction과 merging
 
 여기서 말하는 eviction은 실행 중인 요청이 볼 과거 토큰의 key·value를 지우는 것이다.
-앞의 prefix caching에서 내보낸 블록은 다시 계산하면 되므로 출력이 바뀌지 않지만,
-이 eviction은 요청이 볼 문맥 자체를 줄이므로 출력이 달라질 수 있다.
-앞에서 본 vLLM과 SGLang의 cache 관리는 모두 출력을 바꾸지 않는 방법이었다.
-TensorRT-LLM v1.2.1 문서는 StreamingLLM 방식에서 남길 처음 토큰 수를 정하는 `sink_token_length`를 deprecated로 표시한다.[^trtllm-kvcache]
-여러 eviction 기법은 NVIDIA의 kvpress처럼 연구자가 새 기법을 만들고 비교하도록 Hugging Face transformers 위에 구현한 라이브러리에 모여 있다.[^kvpress]
-여기서는 대표적인 아이디어 세 가지만 본다.
+앞에서 본 vLLM과 SGLang의 cache 관리는 모두 출력을 바꾸지 않는 **손실 없는(lossless) 압축**이었다.
+Prefix caching에서 내보낸 블록도 다시 계산하면 되므로 출력이 바뀌지 않는다.
+반면 이 eviction은 요청이 볼 문맥 자체를 줄이는 **손실 있는(lossy) 압축**이다.
+지운 key·value는 처음부터 다시 prefill하지 않는 한 되살릴 수 없고, 출력이 달라질 수 있다.
+여러 eviction 기법은 NVIDIA의 kvpress처럼 연구자가 새 기법을 만들고 비교하도록 Hugging Face transformers 위에 구현한 라이브러리에 모여 있다.<Sidenote>kvpress 저장소: [github.com/NVIDIA/kvpress](https://github.com/NVIDIA/kvpress)</Sidenote>
+여기서는 대표적인 아이디어 네 가지를 다음 예시로 본다.
 
-Zhang 등의 H2O(Heavy-Hitter Oracle)는 모든 과거 토큰이 똑같이 중요하지는 않다는 관찰에서 출발한다.[^h2o]
-Key 토큰마다 지금까지의 query들에게서 받은 attention weight를 모두 더하면, 이 누적 점수가 소수의 토큰에 크게 몰렸다.
-저자들은 이런 토큰을 heavy hitter라 불렀다.
+<Callout type="example">
+10만 토큰짜리 사업 보고서를 프롬프트로 넣고 맨 끝에 "4분기 연구개발비는 얼마인가?"라고 묻는다고 하자.
+Llama 3.1 8B에서 이 프롬프트의 KV cache는 $100{,}000\times131\ \text{KB}\approx13.1\ \text{GB}$이고, 답을 생성하는 스텝마다 이를 모두 읽는다.
+그런데 답에 필요한 내용은 보고서의 몇 군데에만 있다.
+아래의 방법들은 어느 토큰을 남길지 정하는 기준이 다르다.
+</Callout>
+
+<figure class="lecture-figure">
+<svg viewBox="0 0 480 196" role="img" aria-label="프롬프트 16토큰 가운데 여섯 토큰만 남길 때 세 방법이 남기는 위치를 비교한 그림. 프롬프트는 앞의 문서 14토큰과 끝의 질문 2토큰으로 이루어진다. StreamingLLM은 처음 2토큰과 마지막 4토큰을 남긴다. H2O는 문서에 흩어진 1번, 5번, 9번 토큰과 마지막 3토큰을 남긴다. SnapKV는 문서 가운데에서 이웃한 6–7번과 10–11번 토큰, 그리고 질문 2토큰을 남긴다.">
+  <g font-size="13" fill="#64748b" text-anchor="middle"><text x="266" y="18">문서</text><text x="442" y="18">질문</text></g>
+  <g stroke="#94a3b8" fill="none"><path d="M114,32 v-6 h304 v6"/><path d="M422,32 v-6 h40 v6"/></g>
+    <text x="104" y="55" font-size="13" fill="#0f172a" text-anchor="end">프롬프트 전체</text><rect x="112" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="134" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="156" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="178" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="200" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="222" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="244" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="266" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="288" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="310" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="332" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="354" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="376" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="398" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="420" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="442" y="40" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/>
+    <text x="104" y="87" font-size="13" fill="#0f172a" text-anchor="end">StreamingLLM</text><rect x="112" y="72" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="134" y="72" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="156" y="72" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="178" y="72" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="200" y="72" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="222" y="72" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="244" y="72" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="266" y="72" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="288" y="72" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="310" y="72" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="332" y="72" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="354" y="72" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="376" y="72" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="398" y="72" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="420" y="72" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="442" y="72" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/>
+    <text x="104" y="119" font-size="13" fill="#0f172a" text-anchor="end">H2O</text><rect x="112" y="104" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="134" y="104" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="156" y="104" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="178" y="104" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="200" y="104" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="222" y="104" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="244" y="104" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="266" y="104" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="288" y="104" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="310" y="104" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="332" y="104" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="354" y="104" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="376" y="104" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="398" y="104" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="420" y="104" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="442" y="104" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/>
+    <text x="104" y="151" font-size="13" fill="#0f172a" text-anchor="end">SnapKV</text><rect x="112" y="136" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="134" y="136" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="156" y="136" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="178" y="136" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="200" y="136" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="222" y="136" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="244" y="136" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="266" y="136" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="288" y="136" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="310" y="136" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="332" y="136" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="354" y="136" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="376" y="136" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="398" y="136" width="22" height="20" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><rect x="420" y="136" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/><rect x="442" y="136" width="22" height="20" fill="#e2e8f0" stroke="#0f172a"/>
+  <g font-size="13" fill="#64748b">
+    <rect x="112" y="172" width="22" height="14" fill="#e2e8f0" stroke="#0f172a"/><text x="140" y="184">남기는 토큰</text>
+    <rect x="250" y="172" width="22" height="14" fill="none" stroke="#94a3b8" stroke-dasharray="3 3"/><text x="278" y="184">지우는 토큰</text>
+  </g>
+</svg>
+<figcaption>같은 프롬프트에서 세 방법이 남기는 토큰(위치는 설명을 위한 가상의 예). StreamingLLM은 처음과 최근, H2O는 attention을 많이 받은 토큰과 최근, SnapKV는 질문이 주목한 위치와 질문 자체를 남긴다.</figcaption>
+</figure>
+
+**위치로 고른다.** Xiao 등의 StreamingLLM은 처음 몇 토큰과 최근 토큰만 남긴다.[^streamingllm]
+최근 토큰만 남기면 내용과 상관없이 큰 attention weight를 받던 처음 몇 토큰(attention sink)이 사라져 생성이 무너지기 때문이다.<Sidenote>Hidden state의 극소수 성분이 다른 값보다 훨씬 큰 massive activation을 보고하고, 이것이 해당 토큰으로 attention sink현상을 일으킨다고 분석했다([arXiv:2402.17762](https://arxiv.org/abs/2402.17762)). Peri-LN 논문은 sub-layer 출력을 정규화하지 않는 Pre-LN에서 hidden state가 크게 자라 massive activation이 생길 수 있다고 분석했다([arXiv:2502.02732](https://arxiv.org/abs/2502.02732)). 다만 massive activation을 줄여도 attention sink가 남는다는 보고도 있어, 둘의 인과 관계는 확정되지 않았다.</Sidenote>
+위치는 원래 문서의 위치 대신 cache 안에서 이어지는 위치로 다시 매겨, 학습한 길이보다 길게 생성을 이어 간다.
+다만 가운데 토큰은 중요해도 지워진다.
+앞의 예시에서는 보고서 본문이 거의 다 사라져 질문에 답할 수 없다.
+**긴 문맥을 기억하는 방법이라기 보다, 끝없이 이어지는 생성을 안정시키는 방법**에 가깝다.
+
+**받은 attention으로 고른다.** Zhang 등의 H2O(Heavy-Hitter Oracle)는 모든 과거 토큰이 똑같이 중요하지는 않다는 관찰에서 출발한다.[^h2o]
+Key 토큰마다 지금까지의 query들에게서 받은 attention weight를 모두 더하면, 이 누적 점수가 소수의 토큰(heavy hitter)에 크게 몰렸다.
 H2O는 층의 head마다 이 점수를 누적하다가, cache가 정해 둔 크기(KV cache 예산)를 넘으면 최근 토큰은 보호하고 나머지 가운데 누적 점수가 가장 낮은 위치의 key·value를 지운다.
 지운 토큰은 다시 볼 수 없으므로, 생성 중에는 남아 있는 토큰에 대해서만 점수를 갱신한다.
-OPT 모델에서 예산을 full cache보다 훨씬 작게 잡아도 요약 같은 task에서 full cache와 비슷한 성능을 냈다.
+앞의 예시에서는 보고서 가운데에 있어도 attention을 많이 받은 토큰은 남는다.
 
-Xiao 등의 StreamingLLM은 점수 대신 위치로 남길 토큰을 정한다.
-최근 토큰만 남기면 내용과 상관없이 큰 attention weight를 받던 처음 몇 토큰(attention sink)이 사라져 생성이 무너진다.
-그래서 처음 몇 토큰과 최근 토큰을 함께 남기고, 위치는 원래 문서의 위치 대신 cache 안에서 이어지는 위치로 다시 매겨 학습한 길이보다 길게 생성을 이어 간다.[^streamingllm]
-가운데 토큰은 중요해도 지워지므로, 긴 문맥을 기억하게 하는 방법은 아니다.
-
-긴 문서를 넣고 짧게 답하는 요약이나 문서 질의응답에서는 cache의 대부분이 프롬프트 몫이다.
+**질문이 보는 곳을 고른다.** 앞의 예시처럼 긴 문서를 넣고 짧게 답하는 작업에서는 cache의 대부분이 프롬프트 몫이다.
 Li 등의 SnapKV는 prefill이 끝날 때 프롬프트의 KV cache를 한 번 압축하고, 생성 중에 새로 만든 토큰의 key·value는 그 뒤에 그대로 쌓는다.[^snapkv]
 프롬프트의 마지막 부분(observation window)이 앞부분의 어느 위치에 attention하는지 보면, 생성하는 동안 각 head가 주목할 위치를 어느 정도 미리 알 수 있다는 관찰에 기댄다.
+예시에서는 맨 끝의 질문이 window가 되어, 보고서에서 연구개발비를 다룬 위치가 높은 점수를 받는다.
 Head마다 window의 attention weight를 앞부분의 위치별로 더하고, 이웃 위치의 점수를 함께 반영하는 1차원 pooling을 거쳐 상위 위치를 고른다.
 Pooling은 서로 이어진 정보의 일부만 남는 문제를 줄이려는 장치다.
 고른 위치의 key·value에 window 자체의 key·value를 이어 붙인 것이 압축된 KV cache다.
 
 <Figure src="https://arxiv.org/html/2404.14469v2/illustration.png" alt="왼쪽 사용자가 긴 대화를 보낸다. 맨 위 'Help me analyze the Q4 report of this company...'는 주황, 마지막 질문 'Can you tell me the details of R&D expense of Q4?'는 초록으로 칠해져 있다. 가운데 상자에는 층마다 입력의 KV가 긴 Prefix와 오른쪽 끝의 초록 Obs. window로 나뉘어 있고, window에서 attention weight를 계산해 prefix의 중요한 위치에 투표(Voting & Selecting Important Features)한다. 그 아래 prefix 막대에는 고른 위치가 주황 조각으로 흩어져 있고, 이를 모아(Clustering & Concatenating Features) window 앞에 붙인 짧은 Compressed KVs가 만들어진다. 오른쪽 모델은 Q4 R&D 비용에 대해 답한다." caption="SnapKV의 흐름. 프롬프트 끝의 observation window(초록)가 prefix에서 주목하는 위치(주황)를 head마다 골라, window와 이어 붙인 압축 KV cache로 생성한다." source="Li et al. (2024), Figure 1 · CC BY 4.0" wide />
 
-<Callout type="example">
-프롬프트가 10토큰이고 마지막 2토큰을 observation window로 삼아, 앞 8토큰 가운데 3토큰만 남긴다고 하자.
-'점수 합'은 한 head에서 window의 두 토큰이 각 위치에 준 attention weight의 합이고,
-'Pooling 뒤'는 자기와 양옆 위치 가운데 최댓값이다(설명을 위한 가상의 값이고, 양 끝 바깥은 0으로 채운다).
-
-| 위치 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
-|---|---|---|---|---|---|---|---|---|
-| 점수 합 | 0.04 | 0.02 | 0.15 | 0.40 | 0.12 | 0.03 | 0.08 | 0.16 |
-| Pooling 뒤 | 0.04 | 0.15 | 0.40 | 0.40 | 0.40 | 0.12 | 0.16 | 0.16 |
-
-점수 합만으로 고르면 4, 8, 3번이 남아 4번의 오른쪽 이웃인 5번이 빠진다.
-Pooling 뒤에는 4번을 가운데 둔 3, 4, 5번이 함께 남고, 여기에 window의 9, 10번을 더한 5토큰이 압축된 cache다.
-</Callout>
-
-SnapKV 저자들은 매우 긴 문맥을 지원하는 모델에서 프롬프트 KV cache를 입력보다 훨씬 짧은 고정 길이로 압축해, 긴 입력에서 토큰당 decode 지연을 줄였다.
-LongBench에서 잰 품질은 압축하지 않은 모델과 대체로 비슷했지만, 예산을 가장 작게 잡았을 때 GovReport 요약 점수는 크게 낮아졌다.[^snapkv]
-
-<Callout type="warning">
-Eviction은 손실이 있는 압축이다.
-지운 key·value는 처음부터 다시 prefill하지 않는 한 되살릴 수 없고, 앞의 품질 결과도 특정 모델과 task에서 잰 것이다.
-압축 뒤에 다른 질문이 이어지는 대화처럼 어떤 토큰이 나중에 필요할지 미리 알기 어려운 작업에서는 품질을 직접 확인한다.
-</Callout>
+**지우기 전에 value를 옮긴다.** 위의 세 방법은 지운 토큰의 정보를 통째로 버린다.
+Merging은 같은 크기의 cache에서 이 손실을 줄이려는 방법이다.
+Zhang 등의 CaM(cache merging)은 지울 토큰을 고르는 방법이 아니라, StreamingLLM이나 H2O 같은 기존 eviction이 고른 토큰을 지우기 전에 한 단계를 더하는 방법이다.[^cam]
+지울 토큰의 value에는 여전히 쓸모 있는 내용이 있으므로, 이를 최근 토큰들의 value에 더해 둔 뒤 key와 value를 지운다.
+남는 key·value의 수는 eviction과 같고, 최근 토큰의 value 값만 달라진다.
+최근 토큰으로 옮기는 까닭은 기존 eviction이 모두 최근 토큰을 남기고, 최근 토큰은 이후의 query에게서 꾸준히 attention을 받기 때문이다.
+최근 토큰이 attention을 받을 때마다 거기에 더해 둔 내용도 출력에 함께 실린다.
+CaM은 $V_i$를 최근 토큰 $m$개에 $V_i/m$씩 고르게 나누어 더하는 근사를 쓴다.
+토큰 하나가 받을 attention은 예측하기 어렵지만 연속한 최근 토큰들의 평균은 안정적이라는 관찰에 기댄 것이다.
 
 ### 4-2. Offloading과 계층 저장
 
@@ -392,11 +403,11 @@ H100 SXM의 HBM(3.35 TB/s)에서 읽으면 약 1.3 ms다.
 [^sglang-radix]: SGLang Team. (2026). radix_cache.py. *GitHub*. [github.com](https://github.com/sgl-project/sglang/blob/010776e94f31a94106fdeeb723fcdd951cb6c4ee/python/sglang/srt/mem_cache/radix_cache.py).
 
 
+[^cam]: Zhang, Y., Du, Y., Luo, G., Zhong, Y., Zhang, Z., Liu, S., & Ji, R. (2024). CaM: Cache Merging for Memory-efficient LLMs Inference. *ICML 2024*, PMLR 235, 58840–58850. [proceedings.mlr.press](https://proceedings.mlr.press/v235/zhang24n.html).
+
 [^h2o]: Zhang, Z., Sheng, Y., Zhou, T., et al. (2023). H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. *NeurIPS 2023*. [arXiv:2306.14048](https://arxiv.org/abs/2306.14048).
 
 [^trtllm-kvcache]: NVIDIA. (2026). KV Cache System. *TensorRT-LLM documentation v1.2.1*. [github.com](https://github.com/NVIDIA/TensorRT-LLM/blob/v1.2.1/docs/source/features/kvcache.md).
-
-[^kvpress]: NVIDIA. (2026). kvpress. *GitHub, v0.5.5*. [github.com](https://github.com/NVIDIA/kvpress/tree/v0.5.5).
 
 [^streamingllm]: Xiao, G., Tian, Y., Chen, B., Han, S., & Lewis, M. (2024). Efficient Streaming Language Models with Attention Sinks. *ICLR 2024*. [arXiv:2309.17453](https://arxiv.org/abs/2309.17453).
 
