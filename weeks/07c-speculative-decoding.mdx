@@ -10,139 +10,126 @@ Speculative는 짐작에 근거한다는 뜻이다.
 Speculative decoding은 다음 토큰 여러 개를 값싼 방법으로 먼저 짐작하고(drafting), 큰 모델이 그 짐작을 forward 한 번으로 검증해(verifying) 맞은 데까지만 받아들인다.[^survey]
 짐작이 맞으면 큰 모델의 forward 한 번에 토큰 여러 개를 얻는다.
 
-이 용어는 프로세서 디자인의 speculative execution에서 온 이름이다.
+이 용어는 speculative execution에서 온 이름이다.
 조건문의 결과가 나오기 전에 한쪽을 짐작해 미리 실행해 두고, 짐작이 맞으면 그 결과를 쓰고 틀리면 버린다.[^leviathan]
 
 ## 1. 짐작과 검증
 
 ### 1-1. 여러 토큰의 병렬 검증
 
-짐작 여러 개를 forward 한 번으로 검증해서 이득을 보려면, 큰 모델이 위치 여러 개를 한 번에 처리해도 시간이 거의 늘지 않아야 한다.
+짐작 여러 개를 forward 한 번으로 검증해서 이득을 보려면, 큰 모델이 토큰 여러 개를 한 번에 처리해도 시간이 거의 늘지 않아야 한다.
 수치로 확인해 보자.
 H100 SXM에서 문맥 2,048토큰인 요청 하나를 decode하면, Llama 3.1 8B의 weight 16 GB와 KV(key-value) cache 약 0.27 GB를 읽는 시간의 하한이 약 4.9 ms다.
 반면 연산량 약 17 GFLOPs(giga floating-point operations)를 최대 연산 성능으로 계산한 하한은 0.02 ms다(roofline의 이상적인 어림이다).
-같은 forward에 위치 5개를 넣어도 weight와 기존 KV cache는 한 번만 읽으므로, 연산 시간만 약 0.09 ms로 늘고 스텝 시간은 여전히 약 4.9 ms다.
-**이 어림에서는 위치 1개를 처리하든 5개를 처리하든 걸리는 시간이 거의 같다.**
+같은 forward에 토큰 5개를 넣어도 weight와 기존 KV cache는 한 번만 읽으므로, 연산 시간만 약 0.09 ms로 늘고 스텝 시간은 여전히 약 4.9 ms다.
+**이 어림에서는 토큰 1개를 처리하든 5개를 처리하든 걸리는 시간이 거의 같다.**
 
-이 성질을 쓰려면 다음 위치들에 넣을 토큰을 미리 알아야 한다.
+이 성질을 쓰려면 뒤에 올 토큰들을 미리 알아야 한다.
 학습 때는 정답 문장이 있어서 teacher forcing으로 모든 위치를 한 번에 계산했지만,
 생성 때는 다음 토큰을 골라야 그다음 입력이 정해진다.
 Speculative decoding은 그 자리를 짐작으로 채운다.
-짐작을 만드는 쪽을 draft, 검증하는 큰 모델을 target이라 한다.
+**짐작을 만드는 쪽을 draft, 검증하는 큰 모델을 target**이라 한다.
 먼저 draft가 다음 토큰 $\gamma$개를 짐작한다.
 가장 단순한 draft는 target보다 훨씬 작은 모델로, 토큰을 하나씩 $\gamma$번 생성한다.
 Target은 앞 문맥을 KV cache에 두고, 아직 cache에 없는 직전 확정 토큰과 짐작 $\gamma$개만 함께 입력해 forward 한 번으로 각 위치의 다음 토큰 분포 $\gamma+1$개를 모두 구한다.
-그 분포로 짐작이 맞았는지 검증하고, 맞은 데까지 받아들인다.[^leviathan][^chen]
+그 분포로 짐작이 맞았는지 검증하고, 맞은 데까지 받아들인다. 맞지 않는 위치의 경우, target이 고른 토큰을 선택한다.[^leviathan][^chen]
 
-<Figure src="https://arxiv.org/html/2211.17192v2/figure1.png" alt="문장이 생성되는 아홉 차례의 speculative decoding. 각 줄은 한 번의 검증을 나타낸다. 이미 확정된 토큰은 검정, draft가 제안해 수락된 토큰은 초록, 거부된 토큰은 빨강, target이 대신 고른 토큰은 파랑이다. 각 줄의 결과가 다음 줄의 확정 문맥으로 이어진다." caption="Speculative decoding의 실제 생성 예. 한 줄이 target의 검증 한 번이다. 초록은 수락한 draft, 빨강은 거부한 draft, 파랑은 그 자리에 target이 고른 토큰이다. 결과는 다음 줄의 문맥으로 이어진다." source="Leviathan et al. (2023), Figure 1 · CC BY 4.0" wide />
+<Figure src="https://arxiv.org/html/2211.17192v2/figure1.png" alt="문장이 생성되는 아홉 차례의 speculative decoding. 각 줄은 한 번의 검증을 나타낸다. 이미 확정된 토큰은 검정, draft가 제안해 수락된 토큰은 초록, 거부된 토큰은 빨강, target이 대신 고른 토큰은 파랑이다. 각 줄의 결과가 다음 줄의 확정 문맥으로 이어진다." caption="Speculative decoding의 실제 생성 예. 한 줄이 target의 검증 한 번이다. 초록은 수락한 draft, 빨강은 거부한 draft, 파랑은 그 자리에 target이 고른 토큰이다." source="Leviathan et al. (2023), Figure 1 · CC BY 4.0" wide />
 
 ### 1-2. Greedy 검증
 
 가장 단순한 경우는 target이 greedy decoding을 할 때다.
 설명을 위해 아래 영어 단어와 마침표는 각각 한 토큰이라고 가정한다.
 실제 토큰 구분은 tokenizer에 따라 다를 수 있다.
-지금까지 "the cat sat on"이 확정되었고, KV cache에는 `sat`까지 들어 있으며 직전에 고른 `on`이 다음 입력이라고 하자.
-Draft가 그 뒤로 `the mat .`를 짐작했다면($\gamma=3$),
-target은 `on the mat .` 네 토큰을 한 번에 입력해 네 위치의 출력을 낸다.
-아래 표의 argmax는 각 위치에서 target이 가장 높은 확률을 준 토큰이다.
+지금까지 "the cat sat on"이 확정되었고, 마지막 `on`은 직전 스텝의 출력으로 방금 고른 토큰이라고 하자.
+KV cache에는 입력으로 들어간 토큰만 저장되므로, cache에는 `sat`까지 있고 `on`이 다음 입력이다.
+Draft가 그 뒤로 `the mat . it was` 다섯 토큰을 짐작했다고 하자($\gamma=5$).
+Target은 `on`과 짐작 다섯 개를 한 번에 입력해, 입력한 토큰마다 그다음 토큰을 하나씩 고른다.
+아래 표는 짐작 하나하나를 target이 같은 문맥에서 고른 토큰(argmax)과 비교한 것이다.
 
-| 위치 | 입력까지의 문맥 | draft의 짐작 | target의 argmax | 판정 |
+| 위치 | 문맥 | draft의 짐작 | target의 선택 | 판정 |
 |---|---|---|---|---|
 | 1 | the cat sat on | the | the | 수락 |
 | 2 | … on the | mat | mat | 수락 |
-| 3 | … the mat | . | and | 거부, target의 `and`로 교체 |
-| 4 | … mat . | (없음) | (쓰지 않음) | 버림 |
+| 3 | … the mat | . | and | 거부, target의 `and`를 씀 |
+| 4 | … mat . | it | it | 버림 |
+| 5 | … . it | was | is | 버림 |
 
 앞에서부터 비교해 처음 어긋나기 직전까지의 짐작을 받아들이고, 어긋난 자리에는 target이 고른 토큰을 쓴다.
 이번 forward로 `the mat and` 세 토큰이 확정되었다.
-세 짐작이 모두 맞았다면 마지막 위치의 출력까지 써서 네 토큰을 얻는다.
+위치 4와 5는 문맥에 틀린 짐작 `.`가 들어 있으므로, 위치 4처럼 두 모델의 답이 같아도 버린다.
+Target은 마지막 입력 `was` 뒤에 올 토큰도 함께 계산한다.
+짐작 다섯 개가 모두 맞았다면 이 토큰까지 써서 여섯 토큰을 얻는다.
 첫 짐작부터 틀려도 그 자리에서 target의 토큰 하나는 얻으므로,
 **한 번의 forward가 내는 토큰은 최소 1개, 최대 $\gamma+1$개**다.
-종료 토큰이나 출력 길이 제한을 만나면 실제로 사용자에게 내보내는 토큰 수는 그 지점에서 잘린다.
-결과는 target 혼자 greedy decoding한 것과 같다.
-위치 4처럼 버린 계산과 draft의 비용이 대가다.
+위치 4와 5처럼 버린 계산과 draft의 비용이 대가다.
 
-구현에서는 판정 뒤에 KV cache도 되감는다.
-검증 forward가 입력한 토큰의 key·value를 모두 써 넣었으므로, 확정된 토큰의 칸만 남기고 거부된 짐작의 칸은 지운다.
+### 1-3. Target의 분포를 보존하는 수락 규칙
 
-### 1-3. 분포를 보존하는 수락 규칙
+Greedy 검증은 target 혼자 생성한 것과 같은 토큰을 낸다.
+Sampling에서는 target 혼자 생성해도 매번 다른 토큰이 나오므로, 같은 토큰을 기준으로 삼을 수 없다.
+대신 **각 토큰이 나올 확률이 target 혼자 sampling할 때와 같으면** 된다.
+Leviathan 등과 Chen 등은 draft의 토큰을 확률적으로 받아들여 target의 확률을 정확히 되살리는 **speculative sampling**을 같은 시기에 각자 제안했다.[^leviathan][^chen]
 
-Sampling으로 생성할 때는 "argmax가 같은가"로 판정할 수 없다.
-같은 문맥에서도 target은 매번 다른 토큰을 뽑을 수 있기 때문이다.
-Leviathan 등과 Chen 등은 같은 시기에 각자 **speculative sampling**을 제안했다.
-출력이 target에서 직접 sampling한 것과 정확히 같은 분포를 따르게 하는 수락 규칙이다.[^leviathan][^chen]
-같은 분포라는 것은 가능한 결과가 나올 확률이 같다는 뜻이다.
-난수를 쓰는 sampling에서는 같은 요청을 두 방식으로 실행했을 때 매번 같은 문장이 나온다는 뜻은 아니다.
-아래에서는 target의 분포를 $p$, draft의 분포를 $q$라 쓴다.
-두 분포는 모델의 softmax 출력에 sampling 설정(temperature, top-k, top-p)을 모두 적용한 뒤 실제로 토큰을 뽑는 분포다.
+Target이 토큰을 뽑는 분포를 $p$, draft가 뽑는 분포를 $q$라 하자.
+둘 다 temperature 같은 sampling 설정을 적용한 뒤의 분포다.
+규칙은 두 단계다.
 
-Draft가 target보다 어떤 토큰을 더 자주 뽑는다면, 그 초과분만큼은 거부해야 target의 분포가 된다.
-그래서 draft가 $q$에서 토큰 $x$를 뽑았다면, target은 그 토큰을 확률 $\min(1,\,p(x)/q(x))$로 받아들인다.
-$q(x)\le p(x)$이면 항상 받고,
-$q(x)>p(x)$이면 $p(x)/q(x)$의 확률로만 받는다.
-거부되면 그 자리의 토큰을 다음 분포에서 새로 뽑는다($y$는 어휘의 각 토큰이다).[^leviathan]
+1. Draft가 뽑은 토큰 $x$를 확률 $\min(1,\,p(x)/q(x))$로 받아들인다.
+2. 거부되면 target이 draft보다 높은 확률을 준 토큰 가운데에서, $\max(0,\,p-q)$에 비례해 새로 뽑는다.
 
-$$
-p'(y)=\frac{\max\bigl(0,\,p(y)-q(y)\bigr)}{\sum_{y'}\max\bigl(0,\,p(y')-q(y')\bigr)}
-$$
-
-Draft가 target보다 낮은 확률을 준 토큰, 곧 $p$가 $q$보다 큰 부분만 남긴 분포다.
-두 분포가 완전히 같으면 분모가 0이지만, 그때는 짐작이 항상 수락되므로 이 분포에서 뽑을 일이 없다.
-이렇게 하면 토큰 $x$가 수락되어 나올 확률과 거부 뒤 새로 뽑혀 나올 확률을 더한 값이 정확히 $p(x)$가 된다.
-
-<Callout type="example">
-어휘가 A·B·C 셋뿐이고 target은 $p=(0.5,\,0.3,\,0.2)$, draft는 $q=(0.2,\,0.6,\,0.2)$라고 하자.
-Draft가 A나 C를 뽑으면 $q\le p$이므로 항상 받고, B를 뽑으면 $0.3/0.6=0.5$의 확률로 받는다.
-수락으로 나오는 확률은 A $0.2$, B $0.3$, C $0.2$로 합이 0.7이고, 거부되는 0.3은 $p$가 $q$보다 큰 A에서만 다시 뽑는다.
-최종 확률은 A $0.2+0.3=0.5$, B $0.3$, C $0.2$로 $p$와 같다.
-</Callout>
+두 단계가 하려는 일은 draft의 분포 $q$를 target의 분포 $p$로 고치는 것이다.
 
 <figure class="lecture-figure">
-<svg viewBox="0 0 480 232" role="img" aria-label="수락 규칙을 토큰 A, B, C의 막대로 그린 그림. Target 분포 p는 A 0.5, B 0.3, C 0.2이고 draft 분포 q는 A 0.2, B 0.6, C 0.2다. 막대마다 아래쪽은 p와 q 가운데 작은 값으로, 수락되는 부분이다(A 0.2, B 0.3, C 0.2). B의 위쪽 0.3은 q가 p보다 넘치는 부분이라 거부된다. A의 위쪽 0.3은 p가 q보다 남는 부분으로, 거부되었을 때 여기서 다시 뽑는다. 화살표가 B의 거부된 부분에서 A의 남는 부분으로 이어진다.">
-  <defs><marker id="ar-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/></marker></defs>
-  <line x1="60" y1="170" x2="420" y2="170" stroke="#94a3b8"/>
-  <g font-size="12" fill="#0f172a" text-anchor="middle">
-    <rect x="90" y="70" width="70" height="60" fill="#f8fafc" stroke="#0f172a"/><text x="125" y="105">0.3</text>
-    <rect x="90" y="130" width="70" height="40" fill="#e2e8f0" stroke="#0f172a"/><text x="125" y="155">0.2</text>
-    <rect x="205" y="50" width="70" height="60" fill="none" stroke="#94a3b8" stroke-dasharray="4 3"/><text x="240" y="85">0.3</text>
-    <rect x="205" y="110" width="70" height="60" fill="#e2e8f0" stroke="#0f172a"/><text x="240" y="145">0.3</text>
-    <rect x="320" y="130" width="70" height="40" fill="#e2e8f0" stroke="#0f172a"/><text x="355" y="155">0.2</text>
+<svg viewBox="0 0 480 432" role="img" aria-label="짐작 두 개를 sampling으로 검증하는 네 단계. 첫째 단계에서 draft가 the와 mat을 차례로 sampling하고, 각 토큰을 뽑은 확률 q(the) 0.6과 q(mat) 0.6을 보관한다. 둘째 단계에서 target이 on, the, mat을 한 번에 입력해 forward 한 번으로 p(the) 0.8과 p(mat) 0.3을 얻는다. 셋째 단계에서 수락 확률을 구하면 the는 min(1, 0.8/0.6)으로 1이고 mat은 0.3/0.6으로 0.5다. 넷째 단계에서 앞에서부터 판정해 the는 수락되고 mat은 거부된다. 다섯째 단계는 거부된 둘째 자리에서 다시 뽑는 계산이다. 토큰 mat, rug, floor, bed에 대해 target의 p는 0.3, 0.4, 0.2, 0.1이고 draft의 q는 0.6, 0.2, 0.1, 0.1이다. max(0, p − q)는 0, 0.2, 0.1, 0이고, 합 0.3으로 나눈 확률은 0, 0.67, 0.33, 0이다. 이 확률로 뽑아 rug가 나온다.">
+  <defs><marker id="ss-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/></marker></defs>
+  <g font-size="12" fill="#64748b" text-anchor="middle"><text x="255" y="18">첫째 짐작</text><text x="395" y="18">둘째 짐작</text></g>
+  <g stroke="#e2e8f0"><line x1="16" y1="90" x2="464" y2="90"/><line x1="16" y1="156" x2="464" y2="156"/><line x1="16" y1="204" x2="464" y2="204"/></g>
+  <g font-size="13" fill="#0f172a">
+    <text x="16" y="50">① Draft가 sampling</text>
+    <text x="16" y="116">② Target의 forward 한 번</text>
+    <text x="16" y="184">③ 수락 확률 min(1, p/q)</text>
+    <text x="16" y="234">④ 앞에서부터 판정</text>
   </g>
-  <g font-size="13" fill="#0f172a" text-anchor="middle"><text x="125" y="188">A</text><text x="240" y="188">B</text><text x="355" y="188">C</text></g>
-  <line x1="203" y1="82" x2="163" y2="96" stroke="#0f172a" stroke-width="1.5" marker-end="url(#ar-arrow)"/>
-  <text x="182" y="38" font-size="12" fill="#64748b" text-anchor="middle">거부되면 A에서 다시 뽑는다</text>
   <g font-size="12" fill="#64748b">
-    <rect x="16" y="210" width="20" height="14" fill="#e2e8f0" stroke="#0f172a"/><text x="42" y="222">수락: min(p, q)</text>
-    <rect x="150" y="210" width="20" height="14" fill="none" stroke="#94a3b8" stroke-dasharray="4 3"/><text x="176" y="222">거부: q가 넘치는 부분</text>
-    <rect x="320" y="210" width="20" height="14" fill="#f8fafc" stroke="#0f172a"/><text x="346" y="222">p가 남는 부분</text>
+    <text x="16" y="68">뽑은 분포 q를 보관</text>
+    <text x="16" y="134">위치마다 분포 p를 얻음</text>
   </g>
+  <g text-anchor="middle" font-size="13" fill="#0f172a">
+    <rect x="215" y="30" width="80" height="30" fill="#e2e8f0" stroke="#0f172a"/><text x="255" y="50">the</text>
+    <rect x="355" y="30" width="80" height="30" fill="#e2e8f0" stroke="#0f172a"/><text x="395" y="50">mat</text>
+    <rect x="215" y="98" width="220" height="30" fill="#f8fafc" stroke="#0f172a"/><text x="325" y="118">on, the, mat을 한 번에 입력</text>
+    <text x="255" y="184">min(1, 0.8/0.6) = 1</text><text x="395" y="184">0.3/0.6 = 0.5</text>
+    <rect x="215" y="214" width="80" height="30" fill="#e2e8f0" stroke="#0f172a"/><text x="255" y="234">수락</text>
+    <rect x="355" y="214" width="80" height="30" fill="none" stroke="#94a3b8" stroke-dasharray="4 3"/><text x="395" y="234">거부</text>
+  </g>
+  <line x1="295" y1="45" x2="353" y2="45" stroke="#0f172a" stroke-width="1.5" marker-end="url(#ss-arrow)"/>
+  <g text-anchor="middle" font-size="12" fill="#64748b">
+    <text x="255" y="78">q(the) = 0.6</text><text x="395" y="78">q(mat) = 0.6</text>
+    <text x="255" y="146">p(the) = 0.8</text><text x="395" y="146">p(mat) = 0.3</text>
+    <text x="395" y="262">⑤에서 다시 뽑음</text>
+  </g>
+  <line x1="16" y1="276" x2="464" y2="276" stroke="#e2e8f0"/>
+  <text x="16" y="300" font-size="13" fill="#0f172a">⑤ 거부된 자리에서 다시 뽑기</text>
+  <g font-size="12" fill="#64748b">
+    <text x="16" y="326">target의 p</text><text x="16" y="348">draft의 q</text><text x="16" y="370">max(0, p − q)</text><text x="16" y="398">합 0.3으로 나눈 확률</text>
+  </g>
+  <line x1="215" y1="380" x2="455" y2="380" stroke="#94a3b8"/>
+  <rect x="277" y="384" width="56" height="22" fill="#e2e8f0" stroke="#0f172a"/>
+  <g text-anchor="middle" font-size="13" fill="#0f172a">
+    <text x="245" y="300">mat</text><text x="305" y="300">rug</text><text x="365" y="300">floor</text><text x="425" y="300">bed</text>
+    <text x="245" y="326">0.3</text><text x="305" y="326">0.4</text><text x="365" y="326">0.2</text><text x="425" y="326">0.1</text>
+    <text x="245" y="348">0.6</text><text x="305" y="348">0.2</text><text x="365" y="348">0.1</text><text x="425" y="348">0.1</text>
+    <text x="245" y="370">0</text><text x="305" y="370">0.2</text><text x="365" y="370">0.1</text><text x="425" y="370">0</text>
+    <text x="245" y="400">0</text><text x="305" y="400">0.67</text><text x="365" y="400">0.33</text><text x="425" y="400">0</text>
+  </g>
+  <text x="305" y="424" font-size="12" fill="#64748b" text-anchor="middle">rug가 뽑힘</text>
 </svg>
-<figcaption>앞의 예시($p=(0.5,0.3,0.2)$, $q=(0.2,0.6,0.2)$)의 수락 규칙. 수락되는 부분에 $p$가 남는 부분을 더하면 $p$, 점선 부분을 더하면 $q$다.</figcaption>
+<figcaption>짐작 두 개를 sampling으로 검증하는 순서. `the`는 target이 더 높은 확률을 주므로 항상 수락된다. `mat`은 확률 0.5의 판정에서 거부되었다. 거부된 자리에서는 토큰마다 $\max(0,\,p-q)$를 구해 합이 1이 되게 나눈 확률로 다시 뽑는다.</figcaption>
 </figure>
 
-<Details summary="수락 규칙이 target 분포를 보존하는 이유">
-수락으로 $x$가 나올 확률은 $q(x)\min(1,p(x)/q(x))=\min(p(x),q(x))$다.
-$\sum_y p(y)=1$이므로 거부될 확률 $1-\sum_y\min(p(y),q(y))$는 $p'$의 분모 $\sum_y\max(0,p(y)-q(y))$와 같다.
-그래서 거부 확률에 $p'(x)$를 곱하면 분모가 지워져, 거부 뒤 $x$가 나올 몫은 $\max(0,p(x)-q(x))$다.
-둘을 더하면 $p(x)$다.
-</Details>
-
-이 예에서 전체 수락 확률 0.7은 $\sum_x\min(p(x),q(x))=0.2+0.3+0.2$와 같다.
-이 값을 수락률(acceptance rate)이라 하고, 여러 문맥에 걸친 수락률의 평균을 $\alpha$로 쓴다.
-두 분포가 비슷할수록 수락률은 1에 가깝다.[^leviathan]
-Greedy 검증은 $p$와 $q$가 모두 argmax에 확률 1을 둔 특수한 경우다.
-
-짐작이 여러 개일 때도 이 규칙을 앞 위치부터 차례로 적용한다.
-위치마다 비교하는 $p$와 $q$는 모두 같은 prefix, 곧 확정된 문맥과 그 앞의 짐작들에 조건화한 분포다.
-the cat sat on 예시라면 `mat`을 판정할 때 두 분포 모두 "the cat sat on the"를 문맥으로 쓴다.
-처음으로 거부된 위치에서 $p'$로 토큰 하나를 새로 뽑고, 그 뒤의 짐작은 모두 버린다.
-뒤의 짐작들은 거부된 토큰을 문맥으로 삼아 만든 것이기 때문이다.
-짐작 $\gamma$개가 모두 수락되면 target이 마지막 위치에서 이미 계산한 분포에서 토큰 하나를 더 뽑는다.[^leviathan]
-같은 예시를 sampling으로 검증할 때 `the`가 수락되고 `mat`이 거부되었다면, 둘째 위치의 $p'$에서 새 토큰을 뽑고 `.`는 버린다.
-그래서 sampling에서도 forward 한 번이 내는 토큰은 최소 1개, 최대 $\gamma+1$개다.
-
-이처럼 출력 분포가 target과 정확히 같은 방식을 **lossless** speculative decoding이라 한다.
-수락 기준을 완화해 수락률을 높이는 대신 출력 분포가 target과 달라지는 방식은 **lossy**다.
+짐작이 수락될 확률을 수락률(acceptance rate)이라 하고, 여러 문맥에 걸친 평균을 $\alpha$로 쓴다.
+두 분포가 비슷할수록 1에 가깝다.[^leviathan]
 
 ### 1-4. 기대 속도 향상
 
@@ -163,8 +150,8 @@ $\alpha$가 1이면 짐작이 모두 수락되어 $\gamma+1$개가 된다.
 Target을 한 번 돌리는 시간을 1, draft를 한 번 돌리는 시간을 $c$라 하면, 짐작 $\gamma$개를 만들고 검증하는 한 번의 비용은 $\gamma c+1$이다.
 출력이 충분히 길 때 전체 시간의 개선 배수는 얻는 토큰 수의 기댓값을 이 비용으로 나눈 $(1-\alpha^{\gamma+1})/\bigl((1-\alpha)(\gamma c+1)\bigr)$이다.
 $\alpha=0.7$, $\gamma=4$, $c=0.05$라면 $2.77/1.2\approx2.3$배다.
-이 식은 target이 $\gamma+1$개 위치를 계산하는 데 위치 하나와 같은 시간이 든다는 가정에 기댄다.[^leviathan]
-앞의 하한 계산에서는 weight와 기존 KV cache를 검증 위치들이 재사용한다고 두었기 때문에 이 가정이 성립했다.
+이 식은 target이 토큰 $\gamma+1$개를 처리하는 데 토큰 하나와 같은 시간이 든다는 가정에 기댄다.[^leviathan]
+앞의 하한 계산에서는 한 번 읽은 weight와 기존 KV cache를 검증하는 토큰들이 함께 쓴다고 두었기 때문에 이 가정이 성립했다.
 실제 구현에서는 재사용 정도와 추가 비용에 따라 검증 시간이 더 길어질 수 있다.
 
 ## 2. Draft를 만드는 방법
@@ -198,7 +185,8 @@ Medusa는 이 나무 전체를 forward 한 번으로 검증하려고 **tree atte
 Greedy 검증이라면 target의 선택과 일치하는 가장 긴 경로를 받아들인다.
 Sampling에서는 후보가 여러 개라 앞의 수락 규칙을 그대로 쓸 수 없고, EAGLE처럼 여러 후보용으로 확장한 규칙을 써야 target 분포가 보존된다.[^eagle]
 Medusa는 분포를 지키는 규칙이 temperature가 높을수록 수락이 줄어 불리하고, 실제로는 분포를 정확히 맞출 필요가 대개 없다고 보아 typical acceptance를 제안했다.
-Target이 충분히 그럴듯하다고 보는 후보면 받아들이는 완화된 규칙으로, 수락률은 높지만 target 분포를 보존하지 않는 lossy 방식이다.[^medusa]
+Target이 충분히 그럴듯하다고 보는 후보면 받아들이는 완화된 규칙으로, 수락률은 높지만 target 분포를 보존하지 않는다.[^medusa]
+이렇게 출력이 target 혼자 생성한 것과 달라지는 방식을 **lossy**, 지금까지의 greedy 검증과 수락 규칙처럼 같게 유지하는 방식을 **lossless** speculative decoding이라 한다.
 
 ### 2-3. EAGLE
 
@@ -306,17 +294,17 @@ EAGLE 계열의 draft와 DeepSeek-V3의 MTP 모듈은 모양이 비슷하다.
 
 ### 4-1. 이득이 줄어드는 조건
 
-앞에서 구한 개선 배수는 target이 $\gamma+1$개 위치를 위치 하나와 같은 시간에 계산한다는 가정에 기댔다.
-이 가정은 decode가 memory-bound이고 검증 위치들이 읽은 weight와 기존 KV cache를 재사용할 때 근사적으로 성립한다.
+앞에서 구한 개선 배수는 target이 토큰 $\gamma+1$개를 토큰 하나와 같은 시간에 처리한다는 가정에 기댔다.
+이 가정은 decode가 memory-bound이고 검증하는 토큰들이 한 번 읽은 weight와 기존 KV cache를 함께 쓸 때 근사적으로 성립한다.
 Continuous batching 서버는 요청이 몰리면 batch를 키우고, 그만큼 선형층의 intensity가 오른다.
-Batch의 요청 수를 $b$라 하면, speculative decoding은 요청마다 위치를 $\gamma+1$개로 늘리므로 한 스텝의 토큰 수가 $b(\gamma+1)$개가 된다.
+Batch의 요청 수를 $b$라 하면, speculative decoding은 요청마다 입력 토큰을 $\gamma+1$개로 늘리므로 한 스텝의 토큰 수가 $b(\gamma+1)$개가 된다.
 같은 스텝에 chunked prefill의 조각이 들어 있으면 그 토큰도 여기에 더해진다.
 Batch가 커서 이 값이 약 295개를 넘으면 선형층의 intensity가 ridge point를 넘어 compute-bound가 되고,
 그때부터는 수락되지 않을 짐작을 검증하는 계산이 실제 시간을 잡아먹는다.
 
 <Callout type="example">
 Roofline의 이상적인 어림으로 Llama 3.1 8B를 H100에서 돌린다고 하자.
-$\gamma=4$로 요청마다 위치 5개를 검증하고, draft의 비용은 무시한다.
+$\gamma=4$로 요청마다 토큰 5개를 검증하고, draft의 비용은 무시한다.
 스텝 시간은 선형층과 attention의 하한을 따로 구해 더했다.
 먼저 문맥 2,048에서 batch 1과 192를 비교하고, 이어서 batch 192에서 문맥 길이를 바꿔 본다.
 
@@ -327,7 +315,7 @@ $\gamma=4$로 요청마다 위치 5개를 검증하고, draft의 비용은 무�
 | 256 | 192 | 6.7 ms | 17.5 ms | 1.06 | 0.74 |
 
 개선 배수는 forward 한 번에 얻는 토큰 수의 기댓값에 두 스텝 시간의 비(일반/speculative)를 곱한 값이고, 1보다 작으면 일반 decode보다 느리다는 뜻이다.
-Batch 192에서는 한 스텝에 $192\times5=960$개 위치를 계산하므로 선형층이 compute-bound가 되어 약 15.6 ms가 걸린다.
+Batch 192에서는 한 스텝에 토큰 $192\times5=960$개를 처리하므로 선형층이 compute-bound가 되어 약 15.6 ms가 걸린다.
 문맥 2,048토큰의 speculative 스텝 31.0 ms는 여기에 KV cache 읽기 15.4 ms를 더한 값이다.
 문맥이 길면 KV cache 읽기가 스텝의 큰 몫이라 이득이 남지만, 문맥이 256토큰이면 선형층 계산이 스텝을 거의 다 차지해 수락률 0.5에서는 오히려 느려진다.
 </Callout>
