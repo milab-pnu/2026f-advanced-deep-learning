@@ -137,82 +137,140 @@ vLLM은 physical 블록마다 그 블록을 가리키는 시퀀스 수(reference
 ### 3-1. 반복되는 prefix
 
 앞에서 본 공유는 한 요청 안에서 갈라진 시퀀스끼리의 이야기였다.
-vLLM 원논문도 서비스 제공자가 미리 지정한 prefix는 여러 요청이 공유하게 했다.[^vllm]
-그러나 **서로 다른 요청**은 서버에 미리 등록하지 않은 prefix도 흔히 공유한다.
-예를 들어 클라이언트는 요청마다 같은 시스템 프롬프트와 few-shot 예시를 앞에 붙여 보낸다.
-대화가 이어질 때마다 이전 대화를 다시 보내고, agent는 도구 결과를 받을 때마다 지금까지의 문맥을 다시 넣는다.[^sglang]
-Causal attention에서 어떤 위치의 key·value는 그 위치까지의 토큰에만 달려 있으므로,
-같은 모델과 같은 LoRA(low-rank adaptation) adapter를 쓰고 prefix가 같으면, 그 부분의 KV cache도 같다.
-이때 prefix가 같다는 것은 같은 토큰이 같은 위치와 입력 조건으로 처리된다는 뜻이다.
-멀티모달 입력이라면 같은 텍스트 토큰이라도 이미지가 다르면 그 부분의 표현이 달라질 수 있으므로 이미지도 구분해야 한다.[^vllm-apc]
-
-<Callout type="example">
-2,048토큰짜리 시스템 프롬프트를 모든 요청 앞에 붙이는 서비스를 생각하자.
-Llama 3.1 8B에서 이 프롬프트의 prefill 연산량은 선형층과 attention을 합쳐 약 34 TFLOPs(tera floating-point operations)다.
-이를 H100 SXM의 BF16 최대 연산 성능 989 TFLOP/s로 나누면 약 34 ms, 최대 성능의 절반으로 나누면 약 69 ms다.
-연산량부터 근사치이므로, 두 시간도 실측이나 엄밀한 하한이 아니라 규모를 짐작하는 값이다.
-이 프롬프트의 KV cache는 $2{,}048\times131{,}072\ \text{bytes}\approx268\ \text{MB}$다.
-각 요청에서 이 시스템 프롬프트 뒤에 요청별 내용이 이어진다고 하자.
-시스템 프롬프트를 한 번만 계산해 두고 재사용하면 그 부분의 prefill을 건너뛰어 TTFT(time to first token)가 짧아지고,
-동시 요청마다 268 MB씩 따로 두던 KV cache도 한 벌로 줄어들 수 있다.
-</Callout>
-
+그런데 **서로 다른 요청**도 앞부분이 같은 경우가 많다.
+서비스 제공자는 모든 사용자의 요청 앞에 같은 시스템 프롬프트를 붙인다.
+사용자 쪽에서는 대화가 한 턴 이어질 때마다 이전 대화 전체가 다시 프롬프트로 들어간다.[^sglang]
+Causal attention에서 어떤 위치의 key·value는 그 위치까지의 토큰에만 달려 있으므로, 같은 모델에서 prefix가 같으면 그 부분의 KV cache도 같다.
 이렇게 이미 계산한 prefix의 KV cache를 다른 요청에서 찾아 쓰는 것이 **prefix caching**이다.
 
-Prefix는 토큰 단위로 맨 앞부터 같아야 재사용된다.
-매번 달라지는 시각을 프롬프트 맨 앞에 넣으면 그 뒤의 긴 시스템 지시문이 같아도 첫 블록부터 달라진다.
-문장이 같아 보여도 chat template이나 tokenizer가 바뀌면 토큰열이 달라진다.
-그래서 공유해도 되는 고정 지시문은 앞에, 요청마다 달라지는 내용은 뒤에 둔다.
+<figure class="lecture-figure">
+<svg viewBox="0 0 480 196" role="img" aria-label="요청 세 개의 프롬프트를 가로 막대로 나란히 그린 그림. 첫째 줄 'A의 첫 턴'은 시스템 프롬프트와 A 질문 1로 이루어지고 둘 다 새로 계산한다. 둘째 줄 'A의 둘째 턴'은 시스템 프롬프트, A 질문 1, A 응답 1, A 질문 2로 이루어지고, 앞의 세 칸은 재사용하며 A 질문 2만 새로 계산한다. 셋째 줄 'B의 첫 턴'은 시스템 프롬프트와 B 질문 1로 이루어지고, 시스템 프롬프트는 재사용하며 B 질문 1만 새로 계산한다. 시스템 프롬프트 칸 위에는 '서비스 제공자가 정함', 나머지 칸 위에는 '사용자의 대화'라고 적혀 있다.">
+  <g font-size="13" fill="#64748b" text-anchor="middle"><text x="155" y="20">서비스 제공자가 정함</text><text x="335" y="20">사용자의 대화</text></g>
+  <g stroke="#94a3b8" fill="none"><path d="M97,34 v-6 h116 v6"/><path d="M217,34 v-6 h236 v6"/></g>
+  <g font-size="13" fill="#0f172a" text-anchor="end"><text x="88" y="60">A의 첫 턴</text><text x="88" y="100">A의 둘째 턴</text><text x="88" y="140">B의 첫 턴</text></g>
+  <g font-size="13" fill="#0f172a" text-anchor="middle">
+    <rect x="95" y="40" width="120" height="30" fill="#f8fafc" stroke="#94a3b8"/><text x="155" y="60">시스템 프롬프트</text>
+    <rect x="215" y="40" width="80" height="30" fill="#f8fafc" stroke="#94a3b8"/><text x="255" y="60">A 질문 1</text>
+    <rect x="95" y="80" width="120" height="30" fill="#e2e8f0" stroke="#0f172a"/><text x="155" y="100">시스템 프롬프트</text>
+    <rect x="215" y="80" width="80" height="30" fill="#e2e8f0" stroke="#0f172a"/><text x="255" y="100">A 질문 1</text>
+    <rect x="295" y="80" width="80" height="30" fill="#e2e8f0" stroke="#0f172a"/><text x="335" y="100">A 응답 1</text>
+    <rect x="375" y="80" width="80" height="30" fill="#f8fafc" stroke="#94a3b8"/><text x="415" y="100">A 질문 2</text>
+    <rect x="95" y="120" width="120" height="30" fill="#e2e8f0" stroke="#0f172a"/><text x="155" y="140">시스템 프롬프트</text>
+    <rect x="215" y="120" width="80" height="30" fill="#f8fafc" stroke="#94a3b8"/><text x="255" y="140">B 질문 1</text>
+  </g>
+  <g font-size="13" fill="#64748b">
+    <rect x="95" y="170" width="22" height="14" fill="#e2e8f0" stroke="#0f172a"/><text x="123" y="182">앞 요청의 KV cache를 재사용</text>
+    <rect x="315" y="170" width="22" height="14" fill="#f8fafc" stroke="#94a3b8"/><text x="343" y="182">새로 계산</text>
+  </g>
+</svg>
+<figcaption>요청 사이에 겹치는 prefix.</figcaption>
+</figure>
 
-Prefix cache 적중률(hit rate)이 높을수록 prefill 계산이 줄어 TTFT가 짧아지고 batch를 더 키울 수 있어 처리량도 오를 수 있지만,
-출력이 길어 decode가 시간을 지배하는 작업에서는 전체 지연과 처리량의 개선이 작다.[^sglang]
+재사용한 부분은 prefill을 건너뛰므로 TTFT(time to first token)가 짧아지고, 동시에 실행되는 요청들은 그 부분의 KV cache를 한 벌만 둔다.
+다만 출력이 길어 decode가 시간을 지배하는 작업에서는 전체 지연과 처리량의 개선이 작다.
+Prefix는 토큰 단위로 맨 앞부터 같아야 재사용된다.
+매번 달라지는 시각을 프롬프트 맨 앞에 넣으면 그 뒤의 긴 시스템 프롬프트가 같아도 처음부터 달라진다.
+그래서 고정된 내용은 앞에, 요청마다 달라지는 내용은 뒤에 둔다.
 Cache를 찾는 방법에 따라 두 가지 설계가 있다.
 
 ### 3-2. Hash 기반 prefix caching
 
-vLLM의 automatic prefix caching은 블록 단위로 찾는다.[^vllm-apc]
-블록마다 hash를 계산하는데, 그 블록의 토큰만이 아니라 **바로 앞 블록(부모 블록)의 hash**를 함께 넣는다.
-블록 크기가 4라면 둘째 블록의 hash는 첫 블록의 hash와 토큰 5–8로, 셋째 블록의 hash는 둘째 블록의 hash와 토큰 9–12로 만든다.
-그래서 hash가 충돌하지 않는다면 같은 hash는 그 블록까지의 prefix 전체가 같다는 뜻이 된다.
-토큰이 같아도 LoRA adapter가 다르거나 사용자끼리 cache를 분리해야 하면 KV cache를 함께 쓸 수 없으므로, 이런 부가 정보도 hash에 넣는다.
-새 요청이 오면 첫 블록부터 hash를 계산해 이미 있는 블록을 찾고, 처음으로 없는 블록부터 prefill한다.
+vLLM의 automatic prefix caching은 PagedAttention의 블록 공유를 서로 다른 요청 사이로 넓힌 것이다.[^vllm-apc]
+그러려면 새 요청의 프롬프트와 앞부분이 같은 블록이 이미 GPU에 있는지를 빠르게 찾아야 한다.
+vLLM은 꽉 찬 physical 블록마다 hash를 붙이고, hash로 physical 블록을 찾는 표를 둔다.
+새 요청이 오면 프롬프트를 블록 크기로 잘라 logical 블록을 만들고, 첫 블록부터 hash를 계산해 표에서 찾는다.
+표에 있으면 block table이 그 physical 블록을 가리키게 해 공유하고, 처음으로 없는 블록부터는 새 physical 블록을 받아 prefill한다.
 
-다른 요청이 재사용할 cache에는 꽉 찬 블록만 등록된다.
-vLLM 문서의 예처럼 블록 크기가 4일 때 프롬프트 14토큰 가운데 앞 10토큰이 이전 요청과 같다면,
-앞의 두 블록(8토큰)만 재사용된다.
-셋째 블록은 4칸 가운데 2칸만 같기 때문이다.[^vllm-apc]
+블록의 hash는 그 블록의 토큰만이 아니라 **바로 앞 블록의 hash**도 함께 넣어 만든다.
+한 블록의 KV cache는 그 블록의 토큰뿐 아니라 앞의 토큰 전체에 달려 있기 때문이다.
+그래서 hash가 충돌하지 않는다면, hash가 같다는 것은 그 블록까지의 prefix 전체가 같다는 뜻이다.
+예를 들어 블록 크기가 4이고, 프롬프트 14토큰 가운데 앞 10토큰이 이전 요청과 같다고 하자.
 
-요청이 끝나 어느 요청도 가리키지 않게 된 블록(reference count 0)은 빈 블록 목록의 뒤에 붙지만,
-내용은 다른 용도로 덮어쓸 때까지 cache에 남는다.
-새 요청이 같은 prefix를 찾으면 목록에서 다시 꺼내 쓴다.
-새 블록이 필요하면 목록 맨 앞의 블록을 꺼내 내용을 덮어쓰므로, 기본적으로 가장 오래 쓰이지 않은 cache가 먼저 사라진다(LRU, least recently used).[^vllm-apc]
+<figure class="lecture-figure">
+<svg viewBox="0 0 480 172" role="img" aria-label="블록 크기가 4일 때 14토큰 프롬프트의 hash 조회를 그린 그림. 위 줄에는 블록 네 개가 있다. 토큰 1–4, 토큰 5–8, 토큰 9–12, 그리고 두 칸만 찬 토큰 13–14다. 가운데 줄에는 블록마다 hash가 있다. h1은 토큰 1–4로, h2는 h1과 토큰 5–8로, h3은 h2와 토큰 9–12로 만들고, 화살표가 h1에서 h2로, h2에서 h3으로 이어진다. 넷째 블록은 꽉 차지 않아 hash가 없다. 아래 줄은 조회 결과로, h1과 h2는 cache에 있어 재사용하고, h3은 토큰 11–12가 달라 cache에 없으므로 여기부터 prefill한다.">
+  <defs><marker id="hc-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/></marker></defs>
+  <g font-size="13" fill="#0f172a" text-anchor="middle">
+    <rect x="12" y="14" width="104" height="30" fill="#e2e8f0" stroke="#0f172a"/><text x="64" y="34">토큰 1–4</text>
+    <rect x="130" y="14" width="104" height="30" fill="#e2e8f0" stroke="#0f172a"/><text x="182" y="34">토큰 5–8</text>
+    <rect x="248" y="14" width="104" height="30" fill="#f8fafc" stroke="#94a3b8"/><text x="300" y="34">토큰 9–12</text>
+    <rect x="366" y="14" width="52" height="30" fill="#f8fafc" stroke="#94a3b8"/><rect x="418" y="14" width="52" height="30" fill="none" stroke="#94a3b8" stroke-dasharray="4 3"/><text x="392" y="34">13–14</text>
+  </g>
+  <g font-size="12" fill="#0f172a" text-anchor="middle">
+    <rect x="12" y="74" width="104" height="30" fill="#f8fafc" stroke="#94a3b8"/><text x="64" y="94">h1 = H(1–4)</text>
+    <rect x="130" y="74" width="104" height="30" fill="#f8fafc" stroke="#94a3b8"/><text x="182" y="94">h2 = H(h1, 5–8)</text>
+    <rect x="248" y="74" width="104" height="30" fill="#f8fafc" stroke="#94a3b8"/><text x="300" y="94">h3 = H(h2, 9–12)</text>
+    <rect x="366" y="74" width="104" height="30" fill="none" stroke="#94a3b8" stroke-dasharray="4 3"/><text x="418" y="94" fill="#64748b">hash 없음</text>
+  </g>
+  <g stroke="#0f172a" stroke-width="1.5" fill="none">
+    <line x1="64" y1="44" x2="64" y2="72" marker-end="url(#hc-arrow)"/><line x1="182" y1="44" x2="182" y2="72" marker-end="url(#hc-arrow)"/><line x1="300" y1="44" x2="300" y2="72" marker-end="url(#hc-arrow)"/>
+    <line x1="116" y1="89" x2="128" y2="89" marker-end="url(#hc-arrow)"/><line x1="234" y1="89" x2="246" y2="89" marker-end="url(#hc-arrow)"/>
+  </g>
+  <g stroke="#94a3b8"><line x1="64" y1="104" x2="64" y2="122"/><line x1="182" y1="104" x2="182" y2="122"/><line x1="300" y1="104" x2="300" y2="122"/></g>
+  <g font-size="13" text-anchor="middle">
+    <text x="64" y="138" fill="#0f172a">cache에 있음</text><text x="64" y="158" fill="#64748b">재사용</text>
+    <text x="182" y="138" fill="#0f172a">cache에 있음</text><text x="182" y="158" fill="#64748b">재사용</text>
+    <text x="300" y="138" fill="#0f172a">cache에 없음</text><text x="300" y="158" fill="#64748b">여기부터 prefill</text>
+    <text x="418" y="138" fill="#64748b">꽉 차지 않음</text>
+  </g>
+</svg>
+<figcaption>블록 크기 4, 14토큰 프롬프트의 hash 조회. 각 hash는 앞 블록의 hash를 이어받는다.</figcaption>
+</figure>
+
+앞의 두 블록은 hash가 표에 있어 재사용한다.
+셋째 블록은 토큰 11–12가 달라 hash가 달라지므로 여기부터 prefill한다.
+넷째 블록처럼 꽉 차지 않은 블록은 hash가 없어 표에 등록되지 않는다.
+그래서 일치하는 10토큰 가운데 블록 경계까지인 8토큰만 재사용된다.[^vllm-apc]
+이때 logical 블록은 요청마다 따로 있지만, 가리키는 physical 블록은 하나다.
 
 ### 3-3. RadixAttention
 
 SGLang의 RadixAttention은 cache를 **radix tree**로 관리한다.[^sglang]
-Tree에서 node는 가지가 갈라지거나 끝나는 지점이고, edge는 node를 잇는 가지다.
-한 edge는 연속된 토큰열과 그 토큰들의 KV cache를 가지며, 맨 위 node인 root에서 어떤 node까지의 경로를 이으면 하나의 prefix가 된다.
-새 요청이 오면 tree에서 가장 길게 일치하는 경로를 찾아 그 KV cache를 재사용하고,
-나머지 부분을 계산한 뒤 tree에 가지로 붙인다.
-SGLang 원논문 구현에서는 page(vLLM의 블록에 해당하는 단위)의 크기가 토큰 하나라서,
-vLLM과 달리 블록 경계와 상관없이 일치하는 토큰까지 재사용한다.[^sglang]
+먼저 **prefix tree**(trie)는 여러 토큰열을 저장할 때, 앞부분이 같은 토큰열들이 맨 위의 root에서 같은 길을 따라 내려오다 달라지는 지점에서 갈라지게 만든 tree다.
+그래서 공통 prefix는 한 번만 저장된다.
+Radix tree는 갈라지지 않고 이어지는 구간을 가지(edge) 하나로 묶은 prefix tree다.
+글자를 단위로 team, test, toast 세 단어를 넣으면 두 tree는 다음과 같다.
+
+<figure class="lecture-figure">
+<svg viewBox="0 0 480 244" role="img" aria-label="team, test, toast 세 단어를 담은 두 tree. 왼쪽 prefix tree는 edge마다 글자 하나를 가진다. Root에서 t로 내려온 뒤 e와 o로 갈라지고, e 아래에서 a와 s로 다시 갈라져 a, m을 따라가면 team, s, t를 따라가면 test가 된다. o 아래로는 a, s, t가 한 줄로 이어져 toast가 된다. 오른쪽 radix tree는 갈라지지 않는 구간을 edge 하나로 묶는다. Root에서 t로 내려온 뒤 e와 oast로 갈라지고, e 아래에서 am과 st로 갈라진다. Node 수는 prefix tree가 열한 개, radix tree가 여섯 개다.">
+  <g font-size="15" font-weight="bold" fill="#0f172a" text-anchor="middle"><text x="115" y="20">Prefix tree</text><text x="355" y="20">Radix tree</text></g>
+  <line x1="235" y1="32" x2="235" y2="236" stroke="#94a3b8" stroke-dasharray="4 3"/>
+  <g stroke="#0f172a" stroke-width="1.5" fill="none">
+    <line x1="120" y1="44" x2="120" y2="78"/><line x1="120" y1="78" x2="80" y2="112"/><line x1="120" y1="78" x2="170" y2="112"/>
+    <line x1="80" y1="112" x2="50" y2="146"/><line x1="80" y1="112" x2="110" y2="146"/><line x1="50" y1="146" x2="50" y2="180"/><line x1="110" y1="146" x2="110" y2="180"/>
+    <line x1="170" y1="112" x2="170" y2="214"/>
+    <line x1="360" y1="44" x2="360" y2="90"/><line x1="360" y1="90" x2="310" y2="146"/><line x1="360" y1="90" x2="420" y2="146"/>
+    <line x1="310" y1="146" x2="270" y2="202"/><line x1="310" y1="146" x2="350" y2="202"/>
+  </g>
+  <g fill="#0f172a">
+    <circle cx="120" cy="44" r="5"/><circle cx="120" cy="78" r="5"/><circle cx="80" cy="112" r="5"/><circle cx="170" cy="112" r="5"/><circle cx="50" cy="146" r="5"/><circle cx="110" cy="146" r="5"/><circle cx="50" cy="180" r="5"/><circle cx="110" cy="180" r="5"/><circle cx="170" cy="146" r="5"/><circle cx="170" cy="180" r="5"/><circle cx="170" cy="214" r="5"/>
+    <circle cx="360" cy="44" r="5"/><circle cx="360" cy="90" r="5"/><circle cx="310" cy="146" r="5"/><circle cx="420" cy="146" r="5"/><circle cx="270" cy="202" r="5"/><circle cx="350" cy="202" r="5"/>
+  </g>
+  <g font-size="14" font-weight="bold" fill="#0f172a" text-anchor="middle">
+    <text x="131" y="66">t</text><text x="89" y="93">e</text><text x="156" y="93">o</text><text x="54" y="128">a</text><text x="106" y="128">s</text><text x="62" y="168">m</text><text x="121" y="168">t</text><text x="181" y="134">a</text><text x="181" y="168">s</text><text x="181" y="202">t</text>
+    <text x="371" y="72">t</text><text x="324" y="114">e</text><text x="412" y="114">oast</text><text x="273" y="172">am</text><text x="346" y="172">st</text>
+  </g>
+  <g font-size="13" fill="#64748b" text-anchor="middle">
+    <text x="50" y="200">team</text><text x="110" y="200">test</text><text x="170" y="234">toast</text>
+    <text x="270" y="222">team</text><text x="350" y="222">test</text><text x="420" y="166">toast</text>
+  </g>
+</svg>
+<figcaption>같은 세 단어를 담은 prefix tree와 radix tree. Prefix tree는 edge마다 글자 하나를 두고, radix tree는 갈라지지 않는 구간(am, st, oast)을 edge 하나로 묶는다.</figcaption>
+</figure>
+
+RadixAttention에서는 edge 하나가 연속된 토큰열과 그 KV cache를 가지며, root에서 어떤 node까지의 경로가 하나의 prefix다.
+SGLang도 KV cache를 page 단위로 흩어 두므로, tree에는 KV cache 자체가 아니라 각 토큰의 KV cache가 놓인 page의 번호를 적어 둔다.[^sglang-radix]
+
+<Figure src={radixSteps.src} alt="RadixAttention 예시의 (4)와 (5) 두 단계가 나란히 있다. (4)에서는 맨 위 root 아래 'You are a helpful assistant.' 가지 끝의 파란 node에서 가지가 둘로 갈라진다. 왼쪽 가지는 'User: Hello! Assistant: Hi!' 뒤의 회색 node에서 'User: Solve this question... Assistant: Sure! ...'를 거쳐 node c로 이어진다. 오른쪽 가지는 'User: What can you do? Assistant: I can ...' 뒤의 초록 node d다. (5)에서는 시스템 프롬프트 node와 d 자리의 node가 파랗고, 그 아래 'User: Write a story ... Assistant: Sure! ...' 뒤에 초록 node가 새로 붙는다. 왼쪽 가지의 c 자리는 주황 점선의 X node로 바뀌고 'evicted'라고 적혀 있다." caption="RadixAttention 예시. 초록은 새로 추가된 node, 파랑은 이번 요청이 재사용한 node, 주황 점선은 지워진 node다. 두 대화가 공통 prefix인 시스템 프롬프트를 node 하나로 공유한다." source="LMSYS Org (2024), SGLang·RadixAttention 블로그" wide />
+
+SGLang 원논문 구현에서는 page(vLLM의 블록에 해당하는 단위)의 크기가 토큰 하나라서, 블록 경계와 상관없이 일치하는 토큰까지 재사용한다.[^sglang]
 현재 SGLang은 page를 여러 토큰으로 키울 수도 있고, 그때는 page 경계까지만 재사용한다.[^sglang-radix]
+메모리가 모자라면 실행 중인 요청이 쓰지 않는 leaf(자식이 없는 끝 node) 가운데 **가장 오래 쓰이지 않은 것**부터 지운다.
+Leaf부터 지우므로 여러 요청이 공유하는 위쪽 node는 남아 계속 재사용된다.[^sglang]
+위의 그림에서 둘째 대화의 다음 턴이 d까지의 경로를 재사용하고 새 턴만 붙이는데, 메모리가 모자라 오래 쓰이지 않은 leaf c가 지워진다.
 
-메모리가 모자라면 자식 node가 없는 끝 node인 leaf 가운데 **가장 오래 쓰이지 않은 것**부터 지운다.
-Leaf부터 지우면 여러 요청이 공유하는 조상 node는 남아 계속 재사용된다.
-실행 중인 요청이 쓰고 있는 node는 reference count가 0이 아니어서 지우지 않는다.
-vLLM과 마찬가지로 cache와 실행 중인 요청이 같은 메모리 공간을 나누어 쓰므로,
-cache를 위한 공간을 따로 떼어 둘 필요가 없다.[^sglang]
-
-<Figure src={radixSteps.src} alt="RadixAttention 예시의 (4)와 (5) 두 단계가 나란히 있다. (4)에서는 맨 위 root 아래 'You are a helpful assistant.' 가지 끝의 파란 node에서 가지가 둘로 갈라진다. 왼쪽 가지는 'User: Hello! Assistant: Hi!' 뒤의 회색 node에서 'User: Solve this question... Assistant: Sure! ...'를 거쳐 node c로 이어진다. 오른쪽 가지는 'User: What can you do? Assistant: I can ...' 뒤의 초록 node d다. (5)에서는 시스템 프롬프트 node와 d 자리의 node가 파랗고, 그 아래 'User: Write a story ... Assistant: Sure! ...' 뒤에 초록 node가 새로 붙는다. 왼쪽 가지의 c 자리는 주황 점선의 X node로 바뀌고 'evicted'라고 적혀 있다." caption="RadixAttention 예시의 (4)–(5)단계. 초록은 새로 추가된 node, 파랑은 이번 요청이 재사용한 node, 주황 점선은 지워진 node다. 두 대화가 공통 prefix인 시스템 프롬프트를 node 하나로 공유한다." source="LMSYS Org (2024), SGLang·RadixAttention 블로그, Figure 4 · © 2023 LMSYS Org, MIT License · (4)–(5)단계만 잘라냄" wide />
-
-그림의 (4) 직전 tree에는 'Hello!'로 시작한 대화 하나가 한 가지로 들어 있었다.
-(4)에서 새 대화 'What can you do?'가 오면 시스템 프롬프트까지만 기존 가지와 같으므로, 그 지점에서 node를 나누어 가지가 갈라지고 새 node d가 붙는다.
-(5)에서는 둘째 대화의 다음 턴이 d까지의 경로를 재사용하고 새 턴만 붙이는데, 메모리가 모자라 오래 쓰이지 않은 leaf c가 지워진다.
-
-두 설계는 prefix를 찾는 자료구조가 다르지만, 같은 조건에서는 같은 prefix를 찾는다.
-vLLM의 hash는 부모 블록의 hash를 이어 받아 앞의 토큰 전체를 반영하므로, page 크기가 같고 같은 블록이 cache에 남아 있다면 hash 조회도 tree 탐색과 같은 prefix를 찾는다.
-다만 실제 두 시스템은 page 크기, 무엇을 먼저 내보내는지, 요청을 어떤 순서로 처리하는지(scheduling)도 서로 달라서, 적중률 차이를 자료구조 하나로 설명하기는 어렵다.
+Hash 조회와 tree 탐색은 자료구조가 다를 뿐, page 크기가 같고 같은 cache가 남아 있다면 같은 prefix를 찾는다.
+실제 두 시스템의 적중률 차이는 자료구조가 아니라 요청을 처리하는 순서(scheduling)에서 나타난다.
+같은 prefix를 가진 요청을 이어서 처리(cache-aware scheduling)할수록 그 사이에 cache가 지워질 일이 줄어 적중률이 오른다.[^sglang]
 
 ## 4. 길이에 비례하는 cache 크기
 
@@ -295,10 +353,11 @@ Qin 등의 Mooncake는 GPU 서버들의 CPU 메모리와 SSD를 묶어 하나의
 Moonshot AI가 Kimi 서비스에 쓰는 서빙 플랫폼이다.[^mooncake]
 
 <Callout type="example">
-앞의 2,048토큰 prefix, 곧 268 MB의 KV cache를 CPU 메모리에서 PCIe(peripheral component interconnect express)로 가져온다고 하자.
+2,048토큰짜리 시스템 프롬프트의 KV cache는 Llama 3.1 8B에서 $2{,}048\times131\ \text{KB}\approx268\ \text{MB}$다.
+이를 CPU 메모리에서 PCIe(peripheral component interconnect express)로 가져온다고 하자.
 H100의 PCIe Gen 5 대역폭 128 GB/s는 양방향을 합한 값이라 CPU에서 GPU로 가는 한 방향은 64 GB/s다.[^hopper]
 이를 모두 쓴다면 약 4.2 ms, 그 절반만 쓴다고 해도 약 8.4 ms다.
-같은 부분을 다시 prefill하는 시간은 앞에서 어림한 대로 약 34 ms다.
+같은 부분을 다시 prefill하면, 연산량 약 34 TFLOPs(tera floating-point operations)를 H100 SXM의 BF16 최대 연산 성능 989 TFLOP/s로 나눈 어림으로 약 34 ms가 걸린다.
 이 단순한 비교에서는 가져오는 쪽이 빠르지만, 실제 비교에는 cache 조회와 전송의 부가 비용과 prefill의 실제 연산 속도가 들어간다.
 다만 원격 저장소처럼 대역폭이 낮은 곳에서 가져온다면,
 문맥이 짧거나 모델이 작아 prefill 자체가 빠를 때는 가져오는 쪽이 재계산보다 느릴 수도 있다.[^lmcache]
