@@ -13,10 +13,10 @@ Weight를 지우거나 더 작은 모델을 만들어 **파라미터의 수 자�
 절약한 GPU(graphics processing unit) 메모리는 KV(key-value) cache에 쓸 수 있다.
 **다만 이 이득은 남은 weight를 GPU kernel이 효율적으로 처리할 수 있을 때에만 생긴다.**
 
-파라미터 수를 줄이는 방법은 크게 세 갈래다.[^survey]
+파라미터 수를 줄이는 대표적인 방법은 pruning과 low-rank factorization이다.[^survey]
 Pruning은 학습된 모델에서 덜 중요한 weight나 모델의 일부를 지운다.
-Distillation은 흔히 큰 teacher의 출력을 학습 신호로 삼아 작은 student를 학습한다.
 Low-rank factorization은 weight 행렬을 작은 행렬 두 개의 곱으로 바꾼다.
+큰 모델(teacher)의 출력을 학습 신호로 삼아 작은 모델(student)을 학습하는 distillation도 대표적인 방법이지만, 이 노트에서는 줄인 모델의 품질을 되살리는 수단으로만 다룬다.
 **어느 방법이든 모델의 출력을 얼마나 유지하는지와 실제 하드웨어에서 얼마나 빨라지는지를 함께 보아야 한다.**
 
 ## 1. Pruning의 출발
@@ -319,8 +319,8 @@ Gromov 등은 입력과 출력이 가장 비슷한 연속된 층들을 지운 �
 Xia 등의 Sheared-LLaMA는 Llama 2 7B를 구조적으로 줄인 뒤 이 방식으로 학습을 이어 갔다.
 줄인 모델은 크기가 비슷한 모델을 처음부터 학습하는 데 든 연산량의 아주 작은 일부만 쓰고도 그에 가까운 품질에 도달했다.[^sheared]
 
-회복 학습의 목표를 데이터의 다음 토큰 대신 teacher의 분포로 바꿀 수도 있다.
-곧 distillation을 쓸 수 있다.
+회복 학습의 목표를 데이터의 다음 토큰 대신 teacher가 낸 다음 토큰 분포로 바꿀 수도 있다.
+곧 줄이기 전의 모델을 teacher로 삼아 distillation으로 회복한다.
 NVIDIA의 Minitron은 pruning과 distillation 회복을 하나의 절차로 묶었다.
 목표 크기를 정하면 중요도가 낮은 구조 단위부터 잘라 내고, 그렇게 만든 후보 구조 몇 개를 짧게 회복 학습해 비교한다.
 고른 모델은 원래 모델을 teacher로 삼아 distillation으로 품질을 되살린다.[^minitron]
