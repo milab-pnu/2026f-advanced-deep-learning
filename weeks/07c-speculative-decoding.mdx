@@ -32,7 +32,8 @@ Speculative decoding은 그 자리를 짐작으로 채운다.
 먼저 draft가 다음 토큰 $\gamma$개를 짐작한다.
 가장 단순한 draft는 target보다 훨씬 작은 모델로, 토큰을 하나씩 $\gamma$번 생성한다.
 Target은 앞 문맥을 KV cache에 두고, 아직 cache에 없는 직전 확정 토큰과 짐작 $\gamma$개만 함께 입력해 forward 한 번으로 각 위치의 다음 토큰 분포 $\gamma+1$개를 모두 구한다.
-그 분포로 짐작이 맞았는지 검증하고, 맞은 데까지 받아들인다. 맞지 않는 위치의 경우, target이 고른 토큰을 선택한다.[^leviathan][^chen]
+그 분포로 짐작이 맞았는지 검증하고, 맞은 데까지 받아들인다.
+맞지 않는 위치의 경우, target이 고른 토큰을 선택한다.[^leviathan][^chen]
 
 <Figure src="https://arxiv.org/html/2211.17192v2/figure1.png" alt="문장이 생성되는 아홉 차례의 speculative decoding. 각 줄은 한 번의 검증을 나타낸다. 이미 확정된 토큰은 검정, draft가 제안해 수락된 토큰은 초록, 거부된 토큰은 빨강, target이 대신 고른 토큰은 파랑이다. 각 줄의 결과가 다음 줄의 확정 문맥으로 이어진다." caption="Speculative decoding의 실제 생성 예. 한 줄이 target의 검증 한 번이다. 초록은 수락한 draft, 빨강은 거부한 draft, 파랑은 그 자리에 target이 고른 토큰이다." source="Leviathan et al. (2023), Figure 1 · CC BY 4.0" wide />
 
@@ -172,18 +173,19 @@ $\alpha=0.7$, $\gamma=4$, $c=0.05$라면 $2.77/1.2\approx2.3$배다.
 Timor 등은 어휘가 달라도 target의 분포를 보존하는 방법을 제안해, 추가 학습 없이 기성 모델을 draft로 쓸 수 있게 했다.[^timor]
 서빙할 때는 두 모델의 weight와 KV cache를 함께 GPU(graphics processing unit)에 올리고, 실행 순서를 맞춰야 한다.
 
-그래서 별도 모델 없이 target 자신이 짐작하게 하는 **self-speculative decoding**(self-drafting)이 나왔다.[^survey]
-방법은 두 갈래다.
+그래서 별도 모델을 따로 올리고 맞추는 부담을 없애려고, target 자신이 짐작하게 하는 **self-speculative decoding**(self-drafting)이 나왔다.[^survey]
+대표적인 방법은 두 갈래다.
 하나는 target의 층 일부만 돌려 짐작하는 것이고, 다른 하나는 target에 작은 head나 모듈을 붙여 짐작하게 하는 것이다.
 
-### 2-2. 층 일부로 짐작: LayerSkip
+### 2-2. 층 일부로 만드는 짐작
 
-Target의 층을 다 돌리지 않으면 조금 덜 정확한 예측을 더 빨리 얻는다.
+Target의 층을 다 돌리지 않으면 마지막 층의 예측과 조금 덜 일치하는 예측을 더 빨리 얻는다.
 이 예측을 draft로 쓰고, 층을 모두 돌린 결과로 검증한다.
 Zhang 등은 짐작할 때 중간 층 일부를 건너뛰고, 검증은 원래 모델 전체로 forward 한 번에 한다.[^draftverify]
-모델을 추가로 학습하지 않고 메모리도 더 쓰지 않는다.
+모델을 추가로 학습하지 않고 메모리도 더 쓰지 않지만, 검증 forward는 짐작에 쓴 층까지 모든 층을 다시 계산한다.[^layerskip]
 
-Elhoushi 등의 LayerSkip은 앞쪽 층까지만 돌리고 일찍 빠져나와(early exit), 그 층의 hidden state를 LM(language model) head에 바로 넣어 짐작한다.[^layerskip]
+Elhoushi 등의 LayerSkip은 짐작에 쓴 계산을 검증에서 이어 쓴다.
+앞쪽 층까지만 돌리고 일찍 빠져나와(early exit), 그 층의 hidden state를 LM(language model) head에 바로 넣어 짐작한다.[^layerskip]
 검증은 나머지 층이 맡는다.
 앞쪽 층의 계산 결과는 짐작할 때 이미 구해 두었으므로, 검증에서는 그 결과를 이어받아 뒤쪽 층만 계산한다.
 
@@ -215,28 +217,78 @@ Elhoushi 등의 LayerSkip은 앞쪽 층까지만 돌리고 일찍 빠져나와(e
 그래서 LayerSkip은 target의 학습 방법을 바꾼다.
 뒤쪽 층일수록 높은 확률로 빼고 학습하는 layer dropout으로 뒤쪽 층에 덜 기대게 하고,
 모든 층의 출력을 같은 LM head에 넣어 다음 토큰을 맞히게 하는 early exit loss를 더한다.
-별도 head나 모듈 없이 앞쪽 층의 예측이 정확해지지만, target을 이 방식으로 학습해야 한다는 조건이 붙는다.
+별도 head나 모듈 없이 앞쪽 층의 예측이 마지막 층의 예측에 가까워지지만, target을 이 방식으로 학습해야 한다는 조건이 붙는다.
 
-### 2-3. 병렬 head: Medusa
+### 2-3. Medusa의 병렬 head
 
-Cai 등의 Medusa는 target의 마지막 hidden state 위에 작은 decoding head를 여러 개 붙인다.[^medusa]
-기존 LM head는 바로 다음 토큰을 예측하므로, 추가한 head 1은 그다음 토큰을, head 2는 그 뒤 토큰을 맡는다.
-Head는 검증 forward가 낸 hidden state를 그대로 받으므로, 짐작을 만들려고 target을 따로 돌릴 필요가 없다.
+다른 갈래는 target에 작은 head나 모듈을 붙인다.
+Cai 등의 Medusa는 학습을 마친 target은 그대로 두고, 마지막 층의 hidden state 위에 작은 decoding head를 여러 개 붙인다.[^medusa]
+Head 하나는 residual connection을 둔 feed-forward 층 하나와, 어휘 분포를 내는 출력층으로 이루어진다.
+위치 $t$에서 기존 LM head가 $t+1$번째 토큰을 예측하므로, 추가한 head $k$는 $t+k+1$번째 토큰을 맡는다.
+Head들은 같은 hidden state를 받아 서로 다른 미래 위치를 동시에 예측하므로, 짐작 여러 개가 한 번에 나온다.
+기본 방식은 target을 고정한 채 head만, 각자 맡은 위치의 정답 토큰을 맞히도록 학습한다.
 
-Head마다 후보를 여러 개 두면 짐작은 한 줄이 아니라 나무가 된다.
-기존 LM head가 고른 다음 토큰 뒤에 head 1의 상위 2개와 head 2의 상위 3개를 조합해 이으면 후보 경로가 6개다.
+짐작을 만들려고 target을 따로 돌릴 필요도 없다.
+검증 forward(처음에는 prefill)가 끝나면 마지막으로 수락된 위치의 hidden state가 이미 나와 있으므로, 이를 LM head와 head들에 넣어 다음 짐작을 만든다.
+LM head가 고른 토큰은 target 자신의 선택이라 확정되지만, 아직 입력된 적이 없으므로 짐작들과 함께 다음 검증 forward에 들어간다.
+
+<figure class="lecture-figure">
+<svg viewBox="0 0 480 216" role="img" aria-label="Medusa의 생성 루프. 왼쪽 target의 검증 forward가 마지막으로 수락된 위치의 hidden state를 낸다. 이 hidden state가 기존 LM head와 추가한 head 1, head 2에 함께 들어간다. LM head는 확정될 다음 토큰 the 하나를, head 1은 그다음 자리의 상위 2개 mat과 rug를, head 2는 그 뒤 자리의 상위 3개 마침표, and, on을 낸다. 이 토큰들이 오른쪽의 후보 나무로 모이고, 후보 나무는 아래쪽 화살표를 따라 다음 검증 forward의 입력으로 돌아간다.">
+  <defs><marker id="md-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/></marker></defs>
+  <g text-anchor="middle">
+    <rect x="16" y="56" width="96" height="72" fill="#f8fafc" stroke="#0f172a"/><text x="64" y="88" font-size="14" font-weight="bold" fill="#0f172a">target</text><text x="64" y="106" font-size="12" fill="#64748b">검증 forward</text>
+    <rect x="160" y="28" width="90" height="32" fill="#f8fafc" stroke="#0f172a"/><text x="205" y="49" font-size="13" fill="#0f172a">LM head</text>
+    <rect x="160" y="76" width="90" height="32" fill="#e2e8f0" stroke="#0f172a"/><text x="205" y="97" font-size="13" fill="#0f172a">head 1</text>
+    <rect x="160" y="124" width="90" height="32" fill="#e2e8f0" stroke="#0f172a"/><text x="205" y="145" font-size="13" fill="#0f172a">head 2</text>
+    <rect x="370" y="56" width="94" height="72" fill="#f8fafc" stroke="#0f172a"/><text x="417" y="88" font-size="13" font-weight="bold" fill="#0f172a">후보 나무</text><text x="417" y="106" font-size="12" fill="#64748b">경로 6개</text>
+  </g>
+  <g font-size="13" fill="#0f172a">
+    <text x="266" y="49">the</text><text x="266" y="97">mat · rug</text><text x="266" y="145">. · and · on</text>
+  </g>
+  <g font-size="11" fill="#64748b">
+    <text x="294" y="49">확정</text><text x="266" y="114">상위 2개</text><text x="266" y="162">상위 3개</text>
+  </g>
+  <g stroke="#0f172a" stroke-width="1.5" fill="none">
+    <line x1="112" y1="92" x2="132" y2="92"/><line x1="132" y1="44" x2="132" y2="140"/><line x1="132" y1="44" x2="158" y2="44" marker-end="url(#md-arrow)"/><line x1="132" y1="92" x2="158" y2="92" marker-end="url(#md-arrow)"/><line x1="132" y1="140" x2="158" y2="140" marker-end="url(#md-arrow)"/>
+    <line x1="328" y1="44" x2="368" y2="78" marker-end="url(#md-arrow)"/><line x1="340" y1="92" x2="368" y2="92" marker-end="url(#md-arrow)"/><line x1="346" y1="140" x2="368" y2="106" marker-end="url(#md-arrow)"/>
+    <path d="M417,128 L417,186 L64,186 L64,130" marker-end="url(#md-arrow)"/>
+  </g>
+  <text x="242" y="206" font-size="12" fill="#64748b" text-anchor="middle">다음 검증 forward에 함께 입력</text>
+  <text x="64" y="46" font-size="11" fill="#64748b" text-anchor="middle">수락된 위치의 hidden state</text>
+</svg>
+<figcaption>Medusa의 생성 루프. 검증 forward에서 마지막으로 수락된 위치의 hidden state를 LM head와 추가한 head들에 함께 넣는다. 기존 head(흰 상자)는 확정될 다음 토큰을, 추가한 head(회색 상자)는 그 뒤 자리의 후보를 내고, 이들을 이은 나무가 다음 검증 forward에 들어간다.</figcaption>
+</figure>
+
+Head의 1순위만 이어 쓰면 하나만 틀려도 그 뒤가 모두 버려진다.
+그래서 head마다 상위 몇 개를 후보로 두어, 한 차례에 얻는 토큰 수의 기댓값을 늘린다.
+Head들은 서로의 선택을 모른 채 예측하므로, head 2의 후보는 head 1의 어느 후보 뒤에나 똑같이 붙는다.
+LM head가 고른 토큰 뒤에 head 1의 상위 2개와 head 2의 상위 3개를 이으면 후보 경로 6개짜리 나무가 된다.
+실제로는 모든 조합 대신, head별 후보가 맞을 확률을 미리 재어 가능성이 큰 노드만 남긴 고정된 나무를 쓴다.
+
 Medusa는 이 나무 전체를 forward 한 번으로 검증하려고 **tree attention**을 쓴다.
-각 후보 토큰이 확정된 문맥과 자기 자신, 나무에서의 조상만 볼 수 있도록 attention mask를 만들고 위치 인덱스도 나무에서의 깊이에 맞추어, batch를 늘리지 않고 여러 경로를 한 번에 계산한다.
+나무의 토큰들을 한 줄로 이어 입력하되, 각 토큰이 확정된 문맥과 자기 자신, 나무에서의 조상만 보도록 attention mask를 만든다.
+위치 인덱스는 줄에서의 순번이 아니라 나무에서의 깊이로 준다.
+같은 깊이의 형제 후보(`mat`과 `rug`)는 문장에서 같은 자리이기 때문이다.
+그러면 경로마다 batch를 늘리지 않고도 여러 경로를 한 번에 계산한다.
 
-<Figure src="https://arxiv.org/html/2401.10774v3/tree_attention.png" alt="Medusa의 Figure 2. 왼쪽은 후보 나무다. Root에서 head 1의 후보 두 개(It, I)가 나오고, 각각에서 head 2의 후보 세 개(is, 따옴표, the)가 이어져 후보 경로가 모두 6개다. 오른쪽은 8×8 attention mask로, 행은 query, 열은 key다. 각 후보 토큰은 자기 자신과 나무에서의 조상에만 체크 표시가 있어, 예를 들어 It 아래의 is는 It과 자기 자신만 본다." caption="Tree attention. Head 1의 상위 2개와 head 2의 상위 3개로 만든 후보 6개 경로를 한 번에 검증한다. Mask는 각 토큰이 자기 자신과 나무에서의 조상만 보게 한다. 실제 생성에서는 root 자리에 기존 LM head가 고른 다음 토큰이 온다." source="Cai et al. (2024), Figure 2 · CC BY 4.0" wide />
+<Figure src="https://arxiv.org/html/2401.10774v3/tree_attention.png" alt="Medusa의 tree attention 그림. 왼쪽은 후보 나무다. Root에서 head 1의 후보 두 개(It, I)가 나오고, 각각에서 head 2의 후보 세 개(is, 따옴표, the)가 이어져 후보 경로가 모두 6개다. 오른쪽은 8×8 attention mask로, 행은 query, 열은 key다. 각 후보 토큰은 자기 자신과 나무에서의 조상에만 체크 표시가 있어, 예를 들어 It 아래의 is는 It과 자기 자신만 본다." caption="Tree attention. Head 1의 상위 2개와 head 2의 상위 3개로 만든 후보 6개 경로를 한 번에 검증한다. Mask가 8×8인 것은 head 1의 후보 2개와, 그 각각 뒤에 붙은 head 2의 후보 3개(모두 6개)를 한 줄로 이어 넣었기 때문이고, 각 토큰은 자기 자신과 나무에서의 조상만 본다. 실제 생성에서는 root 자리에 기존 LM head가 고른 다음 토큰이 온다." source="Cai et al. (2024), Figure 2 · CC BY 4.0" wide />
 
-Greedy 검증이라면 target의 선택과 일치하는 가장 긴 경로를 받아들인다.
-Sampling에서는 후보가 여러 개라 앞의 수락 규칙을 그대로 쓸 수 없고, EAGLE이 쓰는 multi-round speculative sampling처럼 후보마다 수락 규칙을 차례로 적용하는 확장된 규칙을 써야 target 분포가 보존된다.[^eagle]
-Medusa는 분포를 지키는 규칙이 temperature가 높을수록 수락이 줄어 불리하고, 실제로는 분포를 정확히 맞출 필요가 대개 없다고 보아 typical acceptance를 제안했다.
-Target이 충분히 그럴듯하다고 보는 후보면 받아들이는 완화된 규칙으로, 수락률은 높지만 target 분포를 보존하지 않는다.[^medusa]
-이렇게 출력이 target 혼자 생성한 것과 달라지는 방식을 **lossy**, 지금까지의 greedy 검증과 수락 규칙처럼 같게 유지하는 방식을 **lossless** speculative decoding이라 한다.
+Greedy 검증이라면 모든 후보 경로를 앞에서부터 target의 선택과 비교해, 가장 길게 일치한 앞부분을 받아들인다.
+그 자리에서 target이 고른 토큰 하나를 더 얻는 것은 짐작이 한 줄일 때와 같고, 이 토큰이 다음 나무의 root가 된다.
 
-### 2-4. 순차 draft: EAGLE
+Sampling에서는 후보가 여러 개라 앞의 수락 규칙을 그대로 쓸 수 없다.
+형제 후보를 하나씩 수락 규칙에 넣되, 거부되면 바로 다시 뽑지 않고 $\max(0,\,p-q)$로 고친 분포를 새 target 분포로 삼아 다음 형제를 판정한다.
+형제가 모두 거부되면 그때 이 분포에서 새로 뽑는다.
+이렇게 넓힌 규칙을 쓰면 후보가 여러 개여도 target 분포가 보존된다.[^eagle]
+다만 이 규칙은 각 후보가 $q$에서 뽑혔다고 전제한다.
+Medusa처럼 상위 몇 개를 골라 만든 후보는 그 토큰에 확률 1을 준 $q$로 보아야 하므로, 확률 $p(x)$로 받아들이고 거부되면 $p$에서 그 토큰을 빼고 다시 정규화한 뒤 다음 형제로 넘어간다.
+그런데 Medusa의 저자들은 분포를 지키는 규칙이 temperature가 높을수록 효율이 떨어진다는 구현 결과를 들고, 실제 응용에서는 분포를 정확히 맞출 필요가 대개 없다고 보아 **typical acceptance**를 제안했다.[^medusa]
+Target이 후보에 준 확률이 문턱보다 크면 받아들이는데, 이 문턱은 그 자리에서 target 분포의 엔트로피가 클수록 낮아진다.
+Target이 한 토큰을 확신할 때는 확률이 높은 토큰만, 여러 이어짐이 그럴듯할 때는 확률이 더 낮은 토큰도 받아들이는 셈이다.
+수락률은 높지만 target 분포를 보존하지는 않는다.
+이렇게 출력의 분포가 target 혼자 생성할 때와 달라지는 방식을 **손실 있는(lossy)** speculative decoding, greedy 검증이나 앞의 수락 규칙처럼 그 분포를 그대로 지키는 방식을 **손실 없는(lossless)** speculative decoding이라 한다.
+
+### 2-4. EAGLE의 순차 draft
 
 Medusa의 head들은 같은 hidden state 하나에서 서로 다른 미래 위치를 각자 예측한다.
 Head 2는 head 1이 무엇을 골랐는지 모른 채 그다음 토큰을 맞혀야 하므로, 멀리 갈수록 맞히기 어렵다.
@@ -247,12 +299,13 @@ Feature의 수열이 토큰의 수열보다 규칙적이어서, feature 수준�
 같은 feature에서도 sampling에 따라 다른 토큰이 뽑힐 수 있고, 뽑힌 토큰에 따라 그다음 feature도 달라진다.
 그래서 EAGLE은 feature와 함께 이미 뽑힌 토큰도 입력해 그 갈래를 정해 준다.
 지금까지의 feature와 방금 뽑은 토큰을 받아 다음 feature를 예측하고, 이를 target의 LM head에 넣어 그다음 토큰을 뽑는다.
-Embedding과 LM head는 target의 것을 그대로 쓰고, FC(fully connected) 층과 decoder 층 하나만 학습한다.[^eagle]
+첫 칸은 검증 forward가 낸 target의 feature로 시작하고, 둘째 칸부터는 draft가 예측한 feature를 다시 입력한다.
+칸마다 상위 몇 개를 뽑으면 Medusa처럼 후보 나무가 되고, 이를 tree attention으로 한 번에 검증한다.
+Embedding과 LM head는 target의 것을 그대로 쓰고, feature와 토큰 embedding을 이어 붙여 차원을 맞추는 FC(fully connected) 층과 Transformer decoder 층 하나만 학습한다.[^eagle]
 
-<Figure src="https://raw.githubusercontent.com/SafeAILab/EAGLE/cb7e0841fe0c206c6ed74a197ad5e2a1f13f5a2b/figs/fig1.png" alt="EAGLE의 drafting 과정. 왼쪽 Original LLM은 입력 How, can을 Embedding과 Transformer Layers에 통과시켜 feature f_how, f_can을 만들고, LM Head와 Sampling으로 can과 I를 낸다. 가운데 FeatExtrapolator는 Forward 1에서 (f_how, e_can)과 (f_can, e_I)를 One Auto-regression Head에 넣어 f_I를 예측하고, 고정된 LM Head와 여러 번의 sampling으로 make와 help를 뽑는다. Forward 2는 (f_I, e_make)와 (f_I, e_help)에서 f_make, f_help를 예측해 a/our, with/you를 뽑고, Forward 3은 f_help와 e_with, e_you에서 f_with, f_you를 예측해 the/your, to/feel을 뽑는다. Embedding과 LM Head에는 고정을 뜻하는 눈송이 표시가 있다. 오른쪽은 이렇게 만든 후보 나무로, Query 'How can' 아래에 원래 LLM이 뽑은 I가 있고, 그 아래로 make, help, 다시 a, our, with, you, 그 아래로 the, your, to, feel이 이어진다." caption="EAGLE의 drafting. 그림의 FeatExtrapolator는 EAGLE의 draft 모델을 가리키고, 그 안의 One Auto-regression Head가 학습하는 FC 층과 decoder 층에 해당한다. Draft는 feature f_how, f_can과 토큰 can, I를 받아 다음 feature f_I를 예측하고, 이를 target의 LM head에 넣어 다음 토큰 후보 make와 help를 뽑는다. 이 과정을 forward 세 번 이어 가면 오른쪽 같은 후보 나무가 된다." source="SafeAI Lab, EAGLE GitHub repo · © 2025 SafeAI Lab (SAIL), Apache-2.0 · 방법은 Li et al. (2024)" wide />
+<Figure src="https://raw.githubusercontent.com/SafeAILab/EAGLE/cb7e0841fe0c206c6ed74a197ad5e2a1f13f5a2b/figs/fig1.png" alt="EAGLE의 drafting 과정. 왼쪽 Original LLM(large language model)은 입력 How, can을 Embedding과 Transformer Layers에 통과시켜 feature f_how, f_can을 만들고, LM Head와 Sampling으로 can과 I를 낸다. 가운데 FeatExtrapolator는 Forward 1에서 (f_how, e_can)과 (f_can, e_I)를 One Auto-regression Head에 넣어 f_I를 예측하고, 고정된 LM Head와 여러 번의 sampling으로 make와 help를 뽑는다. Forward 2는 (f_I, e_make)와 (f_I, e_help)에서 f_make, f_help를 예측해 a/our, with/you를 뽑고, Forward 3은 f_help와 e_with, e_you에서 f_with, f_you를 예측해 the/your, to/feel을 뽑는다. Embedding과 LM Head에는 고정을 뜻하는 눈송이 표시가 있다. 오른쪽은 이렇게 만든 후보 나무로, Query 'How can' 아래에 원래 LLM이 뽑은 I가 있고, 그 아래로 make, help, 다시 a, our, with, you, 그 아래로 the, your, to, feel이 이어진다." caption="EAGLE의 drafting. 그림의 FeatExtrapolator는 EAGLE의 draft 모델을 가리키고, 그 안의 One Auto-regression Head가 학습하는 FC 층과 decoder 층에 해당한다. Draft는 feature f_how, f_can과 토큰 can, I를 받아 다음 feature f_I를 예측하고, 이를 target의 LM head에 넣어 다음 토큰 후보 make와 help를 뽑는다. 이 과정을 forward 세 번 이어 가면 오른쪽 같은 후보 나무가 된다." source="SafeAI Lab, EAGLE GitHub repo · © 2025 SafeAI Lab (SAIL), Apache-2.0 · 방법은 Li et al. (2024)" wide />
 
-EAGLE은 feature를 이용해 순차적으로 짐작한다는 점에서 Medusa의 병렬 head와 다르다.
-그 뒤 연구들은 짐작할 후보를 고르는 방식과 draft를 학습하는 방식을 발전시켰다.
+그 뒤 연구들은 후보 나무를 고르는 방식과 draft의 학습 방식을 발전시켰고, draft를 차례로 돌리는 시간을 없애는 병렬 drafting도 나왔다.
 
 <Details summary="EAGLE의 후속 발전과 병렬 drafting">
 EAGLE도 후보를 나무로 펼쳐 한 번에 검증하지만 나무 모양은 모든 문맥에서 같았고,
@@ -263,43 +316,45 @@ Draft가 높은 확률을 준 후보일수록 실제로도 잘 수락된다는 �
 그런데 EAGLE은 학습 데이터를 늘려도 이득이 크게 늘지 않았고, EAGLE-3의 저자들은 그 원인을 feature를 맞히게 하는 제약에서 찾았다.
 그래서 EAGLE-3는 draft가 **예측하는 대상**을 feature에서 다시 토큰으로 바꾸었다.
 대신 draft의 **입력**으로는 target의 마지막 층만이 아니라 낮은 층·중간 층·높은 층의 feature를 합쳐 쓴다.
-둘째 짐작부터는 draft가 앞 단계에서 낸 중간 벡터를 target의 feature 대신 다시 입력으로 쓰므로, 학습 때 본 입력과 실제 생성 때의 입력이 달라질 수 있다.
+그런데 draft가 더 이상 feature를 맞히도록 학습하지 않으므로, 둘째 짐작부터 다시 넣는 draft의 중간 벡터는 학습 때 입력으로 본 target의 feature와 성질이 달라질 수 있다.
 EAGLE-3는 학습 중에도 이런 여러 단계의 생성을 흉내 내어 이 차이를 줄이는데, 이를 training-time test라 한다.
 이렇게 하자 실험한 데이터 규모에서는 학습 데이터를 늘릴수록 가속 성능이 올랐다.[^eagle3]
 
 EAGLE 계열은 짐작의 깊이 방향으로 draft의 forward를 차례로 돌리므로, 짐작이 길수록 drafting 시간도 늘어난다.
 이 순차 단계를 없애려고 짐작 블록 전체를 forward 한 번에 내는 병렬 drafting이 나왔다.
 Block diffusion은 빈칸(mask)으로 둔 블록의 여러 위치를 함께 예측해 채우며, 이 denoising을 몇 단계에 걸쳐 반복하기도 하는 생성 방식이다.
-DFlash는 target의 feature를 조건으로 받는 가벼운 block diffusion 모델을 draft로 써서,
-draft 블록 전체를 forward 한 번으로 만든다.[^dflash]
+Chen, Liang, Liu의 DFlash는 target의 feature를 조건으로 받는 가벼운 block diffusion 모델을 draft로 써서,
+짐작 블록 전체를 forward 한 번으로 만든다.[^dflash]
 
 그런데 병렬 drafting은 블록 안의 각 위치가 다른 위치에서 실제로 어떤 토큰이 뽑혔는지 모른 채 예측하므로, 블록 뒤쪽으로 갈수록 수락률이 빠르게 떨어진다.
-긴 블록을 모두 검증하면 거부될 가능성이 큰 토큰에 batch의 자리를 쓰게 되어, 동시 요청이 많은 서빙에서는 처리량도 떨어진다.
+긴 블록을 모두 검증하면 거부될 가능성이 큰 토큰에 batch의 자리를 쓰게 되어, 동시 요청이 많은 서빙에서는 처리량(throughput)도 떨어진다.
 Cheng 등의 DSpark는 이 두 문제를 함께 다룬다.[^dspark]
 병렬 backbone에 가벼운 순차 모듈을 붙여 블록 안 토큰 사이의 의존성을 넣고(semi-autoregressive),
 짐작이 앞에서부터 어디까지 수락될지를 추정해 요청마다 검증할 길이를 서버의 부하에 맞춰 정한다.
-DeepSeek-V4의 서빙 시스템에 적용했을 때, 처리량이 같은 조건에서 기존에 쓰던 MTP 방식보다 사용자당 생성 속도가 모델에 따라 57%에서 85%까지 빨라졌다고 보고했다.
+DeepSeek-V4의 서빙 시스템에 적용했을 때, 처리량이 같은 조건에서 기존에 쓰던 draft보다 사용자당 생성 속도가 모델에 따라 57%에서 85%까지 빨라졌다고 보고했다.
 vLLM도 DFlash와 DSpark를 비롯한 병렬 drafting 방식을 지원한다.[^vllm-parallel]
 </Details>
 
-### 2-5. 함께 학습하는 병렬 head: MTP
+### 2-5. Multi-token prediction
 
 Medusa의 head와 EAGLE의 draft는 pre-training을 마친 target에 나중에 붙여 추가로 학습해야 한다.
-Pre-training 단계에서부터 다음 토큰 여러 개를 예측하도록 함께 학습하면 이 단계가 필요 없다.
+Pre-training 단계에서부터 다음 토큰 여러 개를 예측하도록 함께 학습하면, draft가 target과 함께 만들어진다.
 Gloeckle 등은 이를 inference 가속보다 먼저 학습 효율의 문제로 제안했다.[^gloeckle]
 정답 문맥을 넣고 바로 다음 토큰만 맞히는 학습은 가까운 패턴에 기대기 쉽고, 뒤의 여러 토큰을 좌우하는 어려운 선택에는 신호가 약하다는 것이다.
-질문의 최종 답이나 코드의 특정 한 줄은 뒤 내용을 좌우하는 선택이고, 동의어나 변수 이름 고르기는 뒤에 영향이 적은 선택이다.
+질문의 최종 답이나 코드의 특정 한 줄은 뒤 내용을 좌우하는 선택이고, 동의어 고르기처럼 표현만 바꾸는 선택은 뒤에 영향이 적다.
 위치마다 뒤의 토큰 여러 개를 함께 맞히게 하면, 뒤 내용을 좌우하는 선택에 손실이 더 많이 걸린다.
 이 방식을 <strong>multi-token prediction(MTP)</strong>이라 한다.
 여러 head가 함께 쓰는 Transformer 본체(trunk) 위에 Transformer 층으로 된 독립 head $n$개를 두고, 각 head의 출력을 어휘 분포로 바꾸는 LM head는 모든 head가 공유한다.
-위치 $t$에서 head $i$는 $t+i$번째 정답 토큰을 예측하고, 그 예측의 cross-entropy 손실 $n$개를 더해 trunk와 head를 함께 학습한다.
+위치 $t$에서 head $i$는 $t+i$번째 정답 토큰을 예측한다.
+Medusa와 달리 바로 다음 토큰도 head 1이 맡는다.
+이 $n$개 예측의 cross-entropy 손실을 더해 본체와 head를 함께 학습한다.
 
-<Figure src={mtpArchitecture.src} alt="Gloeckle 등의 Figure 1 위 패널. 아래의 입력 토큰 1–4가 Shared라 적힌 공유 trunk를 지나고, 각 위치에서 줄기가 네 갈래로 나뉘어 겹쳐 놓인 Head 1–4로 들어간다. 맨 위 4-token targets에는 위치마다 다음 토큰 네 개가 놓여, 예를 들어 입력 1 위에는 토큰 2, 3, 4, 5가 있다. Head 1이 맡은 바로 다음 토큰은 연한 노란색, head 2–4가 맡은 그 뒤 토큰들은 분홍색이고, 분홍색은 추론 때 버리거나 속도를 최대 3배 높이는 데 쓴다는 범례가 붙어 있다." caption="Multi-token prediction의 구조. 공유 trunk의 출력을 head 4개가 함께 받아, 위치마다 다음 토큰 네 개를 하나씩 맡아 예측한다. 분홍색으로 표시된 head 2–4의 예측은 추론 때 버리거나 self-speculative decoding의 draft로 쓴다." source="Gloeckle et al. (2024), Figure 1 · CC BY 4.0 · 위 패널만 잘라냄" />
+<Figure src={mtpArchitecture.src} alt="Gloeckle 등의 MTP 구조 그림 위 패널. 아래의 입력 토큰 1–4가 Shared라 적힌 공유 본체(trunk)를 지나고, 각 위치에서 줄기가 네 갈래로 나뉘어 겹쳐 놓인 Head 1–4로 들어간다. 맨 위 4-token targets에는 위치마다 다음 토큰 네 개가 놓여, 예를 들어 입력 1 위에는 토큰 2, 3, 4, 5가 있다. Head 1이 맡은 바로 다음 토큰은 연한 노란색, head 2–4가 맡은 그 뒤 토큰들은 분홍색이고, 분홍색은 추론 때 버리거나 속도를 최대 3배 높이는 데 쓴다는 범례가 붙어 있다." caption="Multi-token prediction의 구조. 공유 본체의 출력을 head 4개가 함께 받아, 위치마다 다음 토큰 네 개를 하나씩 맡아 예측한다. 분홍색으로 표시된 head 2–4의 예측은 추론 때 버리거나 self-speculative decoding의 draft로 쓴다." source="Gloeckle et al. (2024), Figure 1 · CC BY 4.0 · 위 패널만 잘라냄" />
 
 코드로 학습한 실험에서 이 목표는 작은 모델에서는 기준보다 나빴지만 큰 모델에서는 더 좋았다.[^gloeckle]
 생성할 때는 추가 head를 버리고 일반 모델처럼 쓸 수도 있고, 추가 head를 draft로 써서 self-speculative decoding을 할 수도 있다.
 
-### 2-6. 함께 학습하는 순차 모듈: DeepSeek-V3
+### 2-6. DeepSeek-V3의 순차 MTP 모듈
 
 DeepSeek-V3는 2024년 말 공개된 MoE(mixture of experts) 모델로, MTP를 조금 다르게 구현했다.[^dsv3]
 Gloeckle 등의 head들은 Medusa의 head처럼 같은 hidden state에서 서로 다른 미래 토큰을 독립적으로 예측한다.
@@ -331,10 +386,12 @@ Embedding과 LM head는 본체와 공유한다.
 </figure>
 
 실제 학습에서는 MTP 모듈을 하나만 두어, 본체가 예측하는 다음 토큰에 더해 그다음 토큰 하나를 예측했다.
-생성할 때는 MTP 모듈을 버려도 본체가 그대로 동작하고, 남겨 두면 speculative decoding의 draft가 된다.
+생성할 때 MTP 모듈을 남겨 두면 speculative decoding의 draft가 된다.
 그렇게 썼을 때 MTP 모듈이 짐작한 토큰은 여러 주제에서 85~90%가 수락되었고,
 초당 생성 토큰 수는 1.8배가 되었다.[^dsv3]
-이후 MiMo와 GLM-4.5 등도 MTP 층을 두어 inference 가속에 쓰며,[^mimo][^glm45]
+짐작이 하나뿐이라 $\gamma=1$이므로, 앞의 식으로도 한 차례에 $1+\alpha\approx1.85$~$1.9$개를 얻는다.
+이후 MiMo와 GLM-4.5 등도 MTP 층을 두어 inference 가속에 쓴다.[^mimo][^glm45]
+MiMo는 더 길게 짐작하려고, pre-training 뒤 MTP 층을 복제해 새 MTP 층 두 개를 따로 학습했다.[^mimo]
 vLLM도 MTP 층을 draft로 쓰는 방식을 제공한다.[^vllm-spec]
 
 Target에 head나 모듈을 붙이는 네 방법은 두 가지 기준으로 나뉜다.
@@ -346,26 +403,27 @@ Target에 head나 모듈을 붙이는 네 방법은 두 가지 기준으로 나�
 | **병렬** | Medusa | Gloeckle 등의 MTP |
 | **순차** | EAGLE | DeepSeek-V3의 MTP 모듈 |
 
-Medusa의 병렬 head는 앞 토큰을 모른 채 뒤 토큰을 맞혀야 해 정확도가 낮았고, EAGLE이 이를 순차 예측으로 풀었다.
-DeepSeek-V3도 예측의 인과 관계를 유지한다는 원리가 EAGLE과 비슷하다고 밝혔지만, 병렬 head와 직접 비교한 결과는 보고하지 않았다.[^dsv3]
 EAGLE의 draft와 DeepSeek-V3의 MTP 모듈은 둘 다 target의 표현과 앞 토큰의 embedding을 합쳐 Transformer 층 하나로 한 칸 뒤를 예측한다.
 
-## 3. Batch 크기와 이득
+## 3. Batch 크기와 개선 배수
 
-### 3-1. 이득이 줄어드는 조건
+### 3-1. 개선 배수가 줄어드는 조건
 
 앞에서 구한 개선 배수는 target이 토큰 $\gamma+1$개를 토큰 하나와 같은 시간에 처리한다는 가정에 기댔다.
 이 가정은 decode가 memory-bound이고 검증하는 토큰들이 한 번 읽은 weight와 기존 KV cache를 함께 쓸 때 근사적으로 성립한다.
-Continuous batching 서버는 요청이 몰리면 batch를 키우고, 그만큼 선형층의 intensity가 오른다.
+Continuous batching 서버는 요청이 몰리면 batch를 키우고, 그만큼 선형층의 arithmetic intensity(연산 집약도)가 오른다.
 Batch의 요청 수를 $b$라 하면, speculative decoding은 요청마다 입력 토큰을 $\gamma+1$개로 늘리므로 한 스텝의 토큰 수가 $b(\gamma+1)$개가 된다.
-같은 스텝에 chunked prefill의 조각이 들어 있으면 그 토큰도 여기에 더해진다.
-Batch가 커서 이 값이 약 295개를 넘으면 선형층의 intensity가 ridge point를 넘어 compute-bound가 되고,
+Medusa나 EAGLE처럼 후보 나무를 검증하면 요청마다 나무의 노드 수만큼 토큰이 들어가므로, 이 값은 더 빨리 커진다.
+Chunked prefill로 스텝마다 토큰 예산을 두는 서버에서는 검증 토큰이 예산을 먼저 차지해, 같은 스텝에 넣을 prefill 조각이 그만큼 줄어든다.
+Batch가 커서 이 값이 수백 개를 넘으면 선형층의 intensity가 ridge point를 넘어 compute-bound가 되고,
 그때부터는 수락되지 않을 짐작을 검증하는 계산이 실제 시간을 잡아먹는다.
+이것은 이상적인 roofline의 경계이고, 실제 시스템에서는 draft 시간과 커널 효율, 검증의 부가 비용이 더해져 그보다 훨씬 작은 batch에서 이득이 사라지기도 한다.
 
 <Callout type="example">
-Roofline의 이상적인 어림으로 Llama 3.1 8B를 H100에서 돌린다고 하자.
+Roofline의 이상적인 어림으로 Llama 3.1 8B를 BF16(bfloat16)으로 H100 SXM에서 돌린다고 하자(HBM(high-bandwidth memory) 대역폭 3.35 TB/s, 최대 연산 성능 989 TFLOP/s).
 $\gamma=4$로 요청마다 토큰 5개를 검증하고, draft에 드는 시간은 무시한다($c=0$).
-스텝 시간은 선형층과 attention의 하한을 따로 구해 더했다.
+스텝 시간은 선형층과 attention의 하한을 따로 구해 더했고, activation의 읽기·쓰기는 무시했다.
+그러면 선형층의 intensity가 한 스텝의 토큰 수와 같아지므로, 토큰이 ridge point와 같은 약 295개를 넘으면 선형층이 compute-bound가 된다(activation까지 세면 약 350개).
 먼저 문맥 2,048에서 batch 1과 192를 비교하고, 이어서 batch 192에서 문맥 길이를 바꿔 본다.
 
 | 문맥 | batch | 일반 decode 스텝 | speculative 스텝 | 개선 배수 ($\alpha=0.7$) | 개선 배수 ($\alpha=0.5$) |
@@ -375,29 +433,39 @@ $\gamma=4$로 요청마다 토큰 5개를 검증하고, draft에 드는 시간�
 | 256 | 192 | 6.7 ms | 17.5 ms | 1.06 | 0.74 |
 
 개선 배수는 한 차례에 얻는 토큰 수의 기댓값에 두 스텝 시간의 비(일반/speculative)를 곱한 값이고, 1보다 작으면 일반 decode보다 느리다는 뜻이다.
-Batch 192에서는 한 스텝에 토큰 $192\times5=960$개를 처리하므로 선형층이 compute-bound가 되어 약 15.6 ms가 걸린다.
+일반 decode 스텝은 weight 읽기 4.8 ms에 KV cache 읽기(batch 192에서 문맥 2,048이면 15.4 ms, 256이면 1.9 ms)를 더한 값이다.
+Batch 192에서 speculative 스텝은 토큰 $192\times5=960$개를 처리하므로 선형층이 compute-bound가 되어, 토큰당 약 16 GFLOPs를 989 TFLOP/s로 계산하는 약 15.6 ms가 걸린다.
 문맥 2,048토큰의 speculative 스텝 31.0 ms는 여기에 KV cache 읽기 15.4 ms를 더한 값이다.
 문맥이 길면 KV cache 읽기가 스텝의 큰 몫이라 이득이 남지만, 문맥이 256토큰이면 선형층 계산이 스텝을 거의 다 차지해 수락률 0.5에서는 오히려 느려진다.
 </Callout>
 
-측정 결과도 같은 방향이다.
+측정에서는 이 어림보다 이른 batch에서 이득이 줄었다.
 EAGLE은 Llama 2 70B Chat에서 batch를 조금만 키워도 속도 향상이 줄었다.[^eagle]
-EAGLE-3 논문이 실은 SGLang 팀의 측정에서도 EAGLE은 batch가 커지자 처리량(throughput)을 오히려 낮췄지만, EAGLE-3는 그보다 큰 batch에서도 이득을 유지했다.[^eagle3]
+EAGLE-3 논문에 실린 SGLang 팀의 측정(Llama 3.1 8B, H100)에서 EAGLE은 batch 24에서 이미 처리량을 오히려 낮췄지만, EAGLE-3는 그보다 큰 batch에서도 이득을 유지했다.[^eagle3]
 
 예시의 2,048토큰 행이 보여 주듯 긴 문맥에서는 이득이 덜 줄어든다.
 Sadhukhan 등의 MagicDec은 KV cache의 일부만 남긴 target 자신을 draft로 쓰는 설정을 분석해, 문맥이 짧으면 batch가 커질수록 이득이 줄지만 어느 길이를 넘으면 오히려 커진다고 예측했다.[^magicdec]
-문맥이 길면 target의 스텝은 요청마다 긴 KV cache를 읽느라 길어지지만, KV cache가 짧은 draft의 스텝은 그만큼 길어지지 않아 draft에 드는 시간의 비중이 작아지기 때문이다.
-이 경계는 모델, 하드웨어, draft 방식에 따라 달라진다.
+문맥이 길면 검증과 일반 decode가 똑같이 긴 KV cache 읽기에 시간을 쓰므로 검증 스텝이 일반 decode 스텝과 비슷하게 유지된다.
+그리고 KV cache를 일부만 읽는 draft는 batch가 커져도 스텝이 target만큼 길어지지 않으므로, 한 차례의 시간에서 draft가 차지하는 비중이 작아진다.
 
-### 3-2. 서빙에서의 선택
+MoE 모델에서는 경계가 또 달라진다.
+Batch가 작을 때는 검증 토큰들이 서로 다른 expert를 불러 읽는 weight가 늘어나므로, 토큰을 더 넣어도 시간이 거의 늘지 않는다는 가정이 깨진다.
+Batch가 중간 정도라 한 스텝에서 이미 모든 expert가 불릴 때는 검증 토큰이 weight를 더 읽게 하지 않는다.
+게다가 expert마다 받는 토큰이 batch 전체보다 훨씬 적어, expert의 선형층은 dense 모델보다 더 큰 batch까지 memory-bound로 남는다.
+Huang 등은 이런 batch에서 MoE가 dense 모델보다 speculative decoding의 이득을 더 크게 보고, 희소한 MoE일수록 이득을 보는 batch 범위가 넓어진다고 보고했다.[^moesd]
+이처럼 경계는 모델, 하드웨어, 문맥 길이, draft 방식에 따라 달라진다.
+
+### 3-2. 부하에 맞춘 조절
 
 그래서 서빙에서는 부하에 맞춰 speculative decoding의 사용 여부와 짐작하는 토큰 수 $\gamma$를 조절하는 방법이 나왔다.
 Liu 등의 TurboSpec은 speculative decoding을 단순히 덧붙이면 서빙 성능이 오히려 나빠질 수 있다고 지적하고,
 실제로 출력에 남는 토큰의 처리율을 추정해 $\gamma$를 실행 중에 바꾸는 제어 방식을 제안했다.[^turbospec]
-vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-bound 상황에서 토큰 사이의 지연을 줄이는 기능으로 설명한다.[^vllm-spec]
-토큰이 여러 개씩 묶여 나오므로, 줄어드는 것은 토큰당 지연인 TPOT(time per output token)다.
+vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-bound 상황에서 ITL(inter-token latency)을 줄이는 기능으로 설명한다.[^vllm-spec]
+다만 토큰이 여러 개씩 묶여 한 출력으로 도착하므로, 이웃한 두 출력의 간격인 ITL은 짐작과 검증을 합친 한 차례의 시간만큼 걸린다.
+줄어드는 것은 첫 토큰 뒤 출력 토큰 사이의 평균 간격인 TPOT(time per output token)다.
 
-정리하면 speculative decoding은 memory-bound인 decode 스텝에 토큰을 더 넣어도 시간이 거의 늘지 않는다는 점을 써서 짐작 여러 개를 한 번에 검증하는 방법이라, batch가 커져 스텝이 compute-bound가 되면 이득이 줄어든다.
+정리하면 speculative decoding의 이득은 memory-bound인 decode 스텝에 토큰을 더 넣어도 시간이 거의 늘지 않는다는 데서 나온다.
+그래서 batch가 커져 선형층이 compute-bound가 되면 검증 스텝이 길어지고, KV cache 읽기의 몫이 작은 짧은 문맥일수록 이득이 크게 줄어든다.
 
 이 노트의 speculative decoding 원논문·Medusa·MTP 논문 그림은 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), EAGLE 저장소 그림은 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)에 따른다.
 
@@ -430,6 +498,8 @@ vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-boun
 [^mimo]: LLM-Core Xiaomi. (2025). MiMo: Unlocking the Reasoning Potential of Language Model -- From Pretraining to Posttraining. [arXiv:2505.07608](https://arxiv.org/abs/2505.07608).
 
 [^glm45]: GLM-4.5 Team. (2025). GLM-4.5: Agentic, Reasoning, and Coding (ARC) Foundation Models. [arXiv:2508.06471](https://arxiv.org/abs/2508.06471).
+
+[^moesd]: Huang, Z., Zhu, L., Zhan, Z., Hu, T., et al. (2025). MoESD: Unveil Speculative Decoding's Potential for Accelerating Sparse MoE. *NeurIPS 2025*. [arXiv:2505.19645](https://arxiv.org/abs/2505.19645).
 
 [^magicdec]: Sadhukhan, R., Chen, J., Chen, Z., et al. (2025). MagicDec: Breaking the Latency-Throughput Tradeoff for Long Context Generation with Speculative Decoding. *ICLR 2025*. [arXiv:2408.11049](https://arxiv.org/abs/2408.11049).
 
