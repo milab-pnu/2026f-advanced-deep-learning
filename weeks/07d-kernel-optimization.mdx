@@ -274,6 +274,20 @@ vLLM V1의 기본 설정은 모델을 attention을 경계로 여러 구간으로
 이때 attention backend가 지원하면 요청마다 query 길이가 같은 decode batch는 전체를 그래프 하나로 기록하고,
 나머지는 attention 사이의 구간만 그래프로 기록한다.[^vllm-cg]
 
+## 6. Inference engine
+
+지금까지 본 기법들을 한 프로그램 안에서 맞물려 돌리는 것이 **inference engine**이다.
+vLLM과 SGLang이 대표적인 공개 엔진이고, 요청 하나가 엔진 안에서 거치는 길은 대체로 같다.
+
+1. <strong>API(application programming interface) 서버</strong>가 요청을 받아 프롬프트를 토큰으로 바꾸고, 생성된 토큰을 다시 텍스트로 되돌려 스트리밍한다.
+2. **Scheduler**가 대기열의 요청 가운데 이번 스텝에 넣을 것과 각 요청에서 처리할 토큰 수를 정하고, 블록이 모자라면 실행 중인 요청을 선점한다.
+3. **KV cache manager**가 요청에 블록을 배정·해제하고, 일치하는 prefix의 블록을 찾아 재사용한다.
+4. **Model runner**가 batch의 입력 텐서를 준비하고 attention·선형층 kernel을 실행하며, 지원하는 설정에서는 CUDA graph로 여러 kernel의 실행을 묶는다.
+5. **Sampler**가 각 요청의 logits로 다음 토큰을 고른다.
+
+Scheduler의 결정은 "요청마다 이번 스텝에 처리할 토큰 수"라는 하나의 표에 담긴다.
+새 요청의 prefill 조각도 기존 요청의 decode 한 토큰도 같은 형식이라, chunked prefill도 별도 단계 없이 처리된다.[^vllm-v1]
+
 [^survey]: Pan, J., & Li, G. (2025). A Survey of LLM Inference Systems. [arXiv:2506.21901](https://arxiv.org/abs/2506.21901).
 
 [^mbu]: Agarwal, M., Qureshi, A., Sardana, N., Li, L., Quevedo, J., & Khudia, D. (2023). LLM Inference Performance Engineering: Best Practices. *Databricks Blog*. [databricks.com](https://www.databricks.com/blog/llm-inference-performance-engineering-best-practices).
@@ -308,3 +322,4 @@ vLLM V1의 기본 설정은 모델을 attention을 경계로 여러 구간으로
 
 [^vllm-cg]: vLLM Project. (2026). CUDA Graphs. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/cuda_graphs/); [capture 크기 설정 소스](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/config/vllm.py).
 
+[^vllm-v1]: vLLM Team. (2025). vLLM V1: A Major Upgrade to vLLM's Core Architecture. *vLLM Blog*. [vllm.ai](https://vllm.ai/blog/2025-01-27-v1-alpha-release).
