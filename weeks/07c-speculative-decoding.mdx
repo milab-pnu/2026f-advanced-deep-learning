@@ -355,6 +355,16 @@ vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-boun
 
 <Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.31.0/docs/assets/benchmarking/latency-metrics-speculative-decoding-light.svg" alt="'Latency with token bundling' 시간축 그림. 요청을 0 ms에 보내고, Output 1로 토큰 T1이 100 ms에, Output 2로 T2, T3, T4가 묶여 140 ms에, Output 3으로 T5가 180 ms에 도착한다. 0–100 ms가 TTFT 100 ms이고, 출력 사이 간격은 두 번 모두 ITL 40 ms다. 100–180 ms가 80 ms의 생성 구간이다. 아래 왼쪽 상자는 Mean ITL = (40 ms + 40 ms) ÷ 2 = 40 ms, 오른쪽 상자는 TPOT = (180 − 100) ms ÷ (5 − 1) = 20 ms/token이다." caption="토큰이 묶여 도착할 때의 ITL과 TPOT. 토큰 다섯 개가 출력 세 번에 나뉘어 도착하면 ITL은 관측된 간격 두 개의 평균인 40 ms이지만, TPOT는 첫 토큰 뒤 80 ms를 토큰 네 개로 나눈 20 ms다." source="vLLM Project (v0.31.0), Benchmark CLI 문서 · Apache-2.0" wide />
 
+## 5. 생성 없는 판단
+
+Speculative decoding은 decode 스텝 수를 줄인다.
+답이 정해진 선택지 가운데 하나라면 decode를 아예 건너뛸 수도 있다.
+LLM(large language model) judge의 채점, 문의 분류, 유해성 검사처럼 선택지에서 하나를 고르는 판단은, prefill이 끝난 시점에 이미 계산된 다음 토큰 분포에서 레이블 토큰의 확률을 읽으면 된다.
+예를 들어 H100 SXM에서 Llama 3.1 8B에 1,000토큰 프롬프트를 넣으면 prefill이 약 16 ms이고, decode 스텝 하나가 약 4.8 ms다.
+이유 200토큰과 8토큰짜리 답을 생성하면 약 $16+207\times4.8\approx1{,}010$ ms가 들지만, 분포에서 바로 읽으면 약 16 ms로 끝난다.
+레이블의 확률은 그 판단을 얼마나 믿을지 정하는 점수로도 쓸 수 있고, 이런 판단만 하도록 따로 학습한 모델을 decision model이라 부른다.[^jev-blog]
+다만 계산이나 여러 단계 추론이 필요한 판단은 이유를 먼저 생성하는 쪽이 나을 수 있다.
+
 이 노트의 speculative decoding 원논문·Medusa·MTP 논문 그림은 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), EAGLE 저장소와 vLLM 문서 그림은 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)에 따른다.
 
 [^survey]: Xia, H., Yang, Z., Dong, Q., et al. (2024). Unlocking Efficiency in Large Language Model Inference: A Comprehensive Survey of Speculative Decoding. *Findings of ACL 2024*, 7655–7671. [arXiv:2401.07851v3](https://arxiv.org/abs/2401.07851v3).
@@ -388,3 +398,5 @@ vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-boun
 [^magicdec]: Sadhukhan, R., Chen, J., Chen, Z., et al. (2025). MagicDec: Breaking the Latency-Throughput Tradeoff for Long Context Generation with Speculative Decoding. *ICLR 2025*. [arXiv:2408.11049](https://arxiv.org/abs/2408.11049).
 
 [^turbospec]: Liu, X., Park, J., Hu, L., Kwon, W., et al. (2025). TurboSpec: Closed-loop Speculation Control System for Optimizing LLM Serving Goodput. [arXiv:2406.14066v3](https://arxiv.org/abs/2406.14066v3).
+
+[^jev-blog]: Almeida, D. (2026). Introducing System One Models & Jev. *TypeSafe AI Blog*. [typesafe.ai](https://typesafe.ai/blog/introducing-system-one-models-and-jev).
