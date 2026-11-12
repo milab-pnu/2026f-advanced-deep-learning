@@ -14,9 +14,8 @@ Inference 최적화 기법은 대개 요청 하나를 받은 뒤 그 요청을 �
 먼저 요청마다 어느 모델에 보낼지 정하는 **routing**과 **cascade**를 본다.[^survey]
 여기서 routing은 서로 다른 모델 가운데 하나를 고르는 일로, 토큰을 expert에 나누는 MoE(mixture of experts)의 routing이나 요청을 서버 복제본에 나누는 routing과는 다르다.
 이어서 답이 정해진 선택지 가운데 하나일 때 생성하지 않고 판단을 얻는 방법을 본다.
-기존 LLM(large language model)의 다음 토큰 확률을 읽는 방법에서 출발해,
-그 확률이 실제 정답률과 맞는 정도인 calibration과 확률에 섞인 편향을 짚고,
-판단만 하도록 따로 학습한 **decision model**의 입출력, 구조, 학습, 독립 평가로 이어 간다.
+기존 LLM(large language model)의 다음 토큰 확률을 읽는 방법과 그 확률이 실제 정답률과 맞는 정도인 calibration을 짚고,
+판단만 하도록 따로 학습한 **decision model**로 이어 간다.
 
 ## 1. 모델 사이의 routing
 
@@ -90,14 +89,17 @@ Cascade에서 큰 모델로 넘어간 요청은 작은 모델이 답을 다 생�
 금 시세 방향을 뉴스 제목으로 맞히는 HEADLINES 데이터에서, 예산을 6.5달러로 정한 사례의 FrugalGPT는 GPT-J, J1-L, GPT-4 순서의 cascade를 골랐다.
 GPT-J의 답은 점수가 0.96을 넘을 때만 받아들이고, 아니면 J1-L을 부른다.
 J1-L의 답은 점수가 0.37을 넘으면 받아들이고, 아니면 GPT-4를 부른다.
-논문은 채점기의 점수를 두 클래스 확률의 최댓값으로 설명하지만, 원논문 예시에 나온 점수 0.13과 0.44는 그 설명과 맞지 않아 점수 계산 방식은 확정하기 어렵다.
-또 원논문의 같은 사례에서 그림의 문턱값 표기는 본문의 0.96, 0.37과 다르므로 여기서는 본문에 적힌 값을 따랐다.
 GPT-J의 답에는 높은 점수 기준을 적용하고, J1-L 다음에는 비싼 GPT-4만 남으므로 J1-L의 답은 더 낮은 기준으로 받아들이는 셈이다.
 같은 데이터에서 예산을 바꿔 가며 얻은 별도의 비교에서는, GPT-4 단독과 같은 정확도를 내는 데 든 비용이 33.1달러에서 0.6달러로 98.3% 줄었다.
 이 0.6달러는 방금 설명한 6.5달러 예산 사례의 비용이 아니다.
 다른 네 데이터의 절감률은 52.3%에서 75.4%로, 데이터마다 크게 달랐다.
 
-채점기의 비용과 품질은 맞바꾸는 관계다.
+<Details summary="원논문 표기의 불일치">
+논문은 채점기의 점수를 두 클래스 확률의 최댓값으로 설명하지만, 원논문 예시에 나온 점수 0.13과 0.44는 그 설명과 맞지 않아 점수 계산 방식은 확정하기 어렵다.
+또 원논문의 같은 사례에서 그림의 문턱값 표기는 본문의 0.96, 0.37과 다르므로 여기서는 본문에 적힌 값을 따랐다.
+</Details>
+
+채점기는 싸면서도 답의 품질을 잘 가려내야 하는데, 두 조건은 서로 부딪친다.
 채점기는 아끼는 비용보다 충분히 싸야 하지만,[^survey]
 FrugalGPT에서 채점기를 DistilBERT(67M 파라미터)에서 11M 파라미터의 ALBERT로 줄이자 cascade 전체의 정확도가 떨어졌다.[^frugalgpt]
 
@@ -110,7 +112,8 @@ $\alpha$를 높이면 작은 모델로 가는 요청이 늘어 비용이 줄지�
 학습 데이터는 사람들이 두 모델의 답을 비교해 고른 Chatbot Arena의 선호 기록이다.
 예를 들어 BERT 분류기 router는 요청을 BERT로 읽어 맨 앞 분류 토큰 위치의 표현을 얻고, 거기에 선형층과 sigmoid를 붙여 이 확률을 낸다.
 선호 기록에서 큰 모델이 이긴 요청과 진 요청을 정답으로 삼아 모델 전체를 미세조정한다.
-GSM8K에서는 여기에 GPT-4를 LLM judge로 써서 붙인 선호 판정을 더하자, BERT 분류기와 Llama 3 8B 기반 분류기로 만든 router가 무작위 routing보다 나아졌다.
+GSM8K에서는 GPT-4를 LLM judge로 써서 얻은 선호 판정을 학습 데이터에 더했다.
+그러자 BERT 분류기와 Llama 3 8B 기반 분류기로 만든 router가 무작위 routing보다 나아졌다.
 MMLU에서는 judge 대신 해당 task의 정답을 활용한 선호 데이터를 추가했다.
 GPT-4와 Mixtral 8x7B 사이에서 routing했을 때, MT Bench에서 GPT-4 점수의 95%를 내는 데 무작위 routing보다 GPT-4 호출을 3.66배 적게 썼다.
 MMLU에서는 GPT-4 점수의 92%를 내는 데 1.41배, GSM8K에서는 87%를 내는 데 1.49배 적게 썼다.
@@ -154,7 +157,7 @@ FrugalGPT는 학습 데이터에서 순서와 문턱값을 함께 골랐고, Hyb
 
 지금까지 본 채점기와 router는 정답이나 선호 데이터로 학습했다.
 별도 검증기를 학습하기 어렵거나 판단할 것이 자주 바뀌면, 프롬프트를 바꿔 LLM에게 묻는 편이 쉽다.
-**AutoMix**는 작은 모델이 답한 뒤 같은 작은 모델에게 질문의 주어진 문맥에 그 답이 맞는지 few-shot 프롬프트로 여러 번 묻고, 맞다고 한 비율을 점수로 쓴다.[^automix]
+**AutoMix**는 작은 모델이 답한 뒤, 같은 모델에게 주어진 문맥에 비추어 그 답이 맞는지 few-shot 프롬프트로 여러 번 묻고, 맞다고 한 비율을 점수로 쓴다.[^automix]
 학습한 채점기가 필요 없는 대신, 검증에 작은 모델을 여러 번 더 돌려야 하고, 맞다고 한 비율은 잡음이 많다.
 AutoMix는 이 잡음 때문에 점수를 그대로 문턱값과 비교하는 방법에 더해,
 점수와 실제 정답 여부의 관계를 별도의 정답 데이터에서 추정해 넘길지 정하는 규칙도 제안했다.
@@ -179,8 +182,8 @@ LLM에게 판단을 맡기는 흔한 방법은 답을 글로 쓰게 하고 그 �
 
 <Callout type="example">
 Llama 3.1 8B를 BF16(bfloat16)으로 H100 SXM에서 요청 하나만 처리한다고 하고, 사양상 최대 속도로 이상적인 시간을 어림하자.
-1,000토큰 프롬프트의 prefill은 토큰당 약 16 GFLOPs(giga floating-point operations)인 선형층 연산량 약 16 TFLOPs를 최대 연산 성능 989 TFLOP/s로 나눈 약 16 ms이고,
-decode 스텝 하나는 weight 16 GB를 메모리 대역폭 3.35 TB/s로 읽는 약 4.8 ms가 걸린다.
+1,000토큰 프롬프트의 prefill은 토큰당 약 16 GFLOPs(giga floating-point operations)인 선형층 연산량 약 16 TFLOPs를 최대 연산 성능 989 TFLOP/s로 나눈 약 16 ms이고,[^h100]
+decode 스텝 하나는 weight 16 GB를 메모리 대역폭 3.35 TB/s로 읽는 약 4.8 ms가 걸린다.[^h100-bandwidth]
 답이 8토큰짜리 JSON이면 첫 토큰은 prefill에서 나오고 decode 7스텝이 이어져 약 $16+7\times4.8\approx50$ ms가 든다.
 이유를 200토큰 먼저 쓰게 하면 약 $16+207\times4.8\approx1{,}010$ ms로 늘어난다.
 반면 prefill이 끝난 시점에 이미 계산된 다음 토큰 분포에서 답을 바로 읽을 수 있다면 약 16 ms로 끝난다.
@@ -277,8 +280,8 @@ Chat 모델은 대개 post-training을 거친 모델이므로, 레이블 확률�
 모든 logit을 하나의 temperature $T$로 나눈 뒤 softmax하는 방법으로, $T$는 정답 데이터에서 negative log-likelihood가 가장 작아지도록 고른다.[^guo]
 $T>1$이면 분포가 평평해져 가장 큰 확률이 낮아지므로 과신을 줄일 수 있다.
 다만 이미 낮게 잡힌 확률을 더 낮추면 calibration이 나빠질 수도 있다.
-모든 logit을 같은 양수로 나누므로 가장 큰 선택지, 곧 정확도는 바뀌지 않는다.
-Kadavath 등은 RLHF(reinforcement learning from human feedback)를 거친 모델의 확률이 $T=2.5$ 하나로 크게 나아졌다고 보고했다.[^kadavath]
+모든 logit을 같은 양수로 나누므로 확률이 가장 높은 선택지는 바뀌지 않고, 정확도도 그대로다.
+Kadavath 등은 RLHF(reinforcement learning from human feedback)를 거친 모델의 calibration이 $T=2.5$ 하나로 크게 나아졌다고 보고했다.[^kadavath]
 맞춘 데이터와 별도의 평가 데이터에서도 개선되는지 확인해야 한다.
 다만 temperature scaling은 선택지의 순위를 바꾸지 않으므로, 확률이 내용과 상관없는 쪽으로 쏠려 틀린 답은 고치지 못한다.
 
@@ -315,7 +318,8 @@ llama-30B는 A를 34.6%, D를 15.8% 골랐고, gpt-3.5-turbo는 C를 32.3% 골�
   정답이 고르게 나뉘어도 모델의 평균 점수가 반드시 같지는 않으므로, 이 가정은 근사다.
   선택지 순서를 고정해 두면 그 순서에서의 위치 편향과 선택지 편향이 함께 사전 분포에 담긴다.
 
-뒤의 셋은 선택지별 사전 점수를 이용하고 둘은 이름에 calibration이 들어가지만, 확률을 정답률에 맞추는 방법이 아니라 편향을 덜어 내는 방법이다.
+PriDe, contextual calibration, batch calibration은 선택지별 사전 점수로 편향을 덜어 낸다.
+뒤의 둘은 이름에 calibration이 들어가지만, 확률을 정답률에 맞추는 방법이 아니라 편향을 덜어 내는 방법이다.
 
 ### 2-5. 편향 보정의 결합
 
@@ -392,7 +396,8 @@ Softmax가 비선형이므로 확률을 평균하면 $b_j$가 이렇게 정확�
 레이블 확률을 그대로 읽으면 정확도가 0.747, ECE가 0.240이었고, 선택지 순서를 뒤집었을 때 답이 바뀌는 비율은 0.230이었다.
 두 편향 보정을 더하면 각각 0.803, 0.184, 0.073이 되었다.
 이 개선은 대부분 선택지 순서를 돌리는 데서 나왔고, 그것만으로도 0.800, 0.189, 0.077이었다.
-Logit이 내용과 자리의 합이라는 가정은 근사이고, 목록을 뒤집으면 이웃한 선택지도 달라지므로, 돌려 평균한 뒤에도 뒤집으면 답이 바뀔 수 있다.
+Logit이 내용과 자리의 합이라는 가정은 근사다.
+목록을 뒤집으면 이웃한 선택지도 달라지므로, 순서를 돌려 평균한 결과도 목록을 뒤집으면 달라질 수 있다.
 ECE 0.184는 여전히 작지 않은 값이다.
 이 방법의 성능은 바탕 모델과 task에 따라 달라진다.
 저자들은 한 선택지가 대부분인 데이터에서는 평균 분포가 균등하다는 전제가 깨져 사전 분포로 나누는 보정이 오히려 정확도를 떨어뜨릴 수 있다고 밝힌다.
@@ -406,12 +411,12 @@ ECE 0.184는 여전히 작지 않은 값이다.
 레이블 확률을 읽는 방법은 글을 생성하도록 학습한 모델에서 판단을 빌려 오는 셈이라, 편향을 보정해도 문제가 남는다.
 AnyJev처럼 순서를 돌려 위치 편향을 덜어 내려면 prefill을 선택지 수만큼 해야 한다.
 보정한 확률의 calibration이 충분하다고 보장할 수 없고, 선택지 수는 한 토큰짜리 레이블 수에 묶인다.
-Temperature scaling은 정답이 있는 데이터로 $T$를 맞춘다.
-같은 $T$를 여러 task에 쓸 수는 있지만, 질문이나 선택지가 달라져도 보정이 유지되는지 검증해야 하므로 요청마다 새로운 판단에 적용하기는 어렵다.
+Temperature scaling의 $T$는 정답이 있는 데이터에서 고른다.
+같은 $T$를 여러 task에 쓸 수는 있지만, 질문이나 선택지가 달라져도 보정이 유지되는지는 그때마다 검증해야 한다.
 그래서 판단을 학습 목표로 삼아 따로 학습한 모델이 decision model이다.
 
-Decision model은 판단의 근거가 될 입력(state)과 질문, 선택지를 받아, 글 대신 다음 세 가지 형태의 답을 돌려준다.
-2026년 9월에 공개된 Jev가 이 형태를 쓰고,[^jev-blog]
+Decision model은 판단의 근거가 될 입력(state)과 질문, 선택지를 받아, 글 대신 선택지별 확률이나 점수를 돌려준다.
+2026년 9월에 공개된 Jev는 답을 다음 세 가지 형태로 주고,[^jev-blog]
 OpenAI도 2026년 10월에 같은 세 형태로 답하는 Decisions API를 내놓았다.[^openai-decisions]
 
 - **Choice**: 선택지 가운데 하나와 선택지별 확률.
@@ -453,8 +458,6 @@ s_i=\frac{(W_Q z)^\top(W_K h_i)}{\sqrt{d}},\qquad p_i=\frac{e^{s_i}}{\sum_{j=1}^
 $$
 
 $d$는 $W_Q$, $W_K$가 바꾼 벡터의 차원으로 strands-decider의 단일 head에서는 256이고, head의 파라미터는 약 100만 개다.
-공개 v1 모델은 head와 본체의 LoRA(low-rank adaptation)를 함께 학습하는 과정을 세 번 실행한다.
-세 번의 LoRA 갱신은 층마다 평균해 하나로 합치고, 세 head가 낸 각 선택지의 점수는 평균한다.[^strands-results]
 
 <Callout type="example">
 계산을 쉽게 보려고 head의 차원 $d=1$이고 투영된 답 자리 값이 1이라고 하자.
@@ -502,13 +505,13 @@ Cloudflare의 Clef도 Qwen 모델의 weight를 고정하고 판단용 head와 lo
 
 ### 3-3. 학습 데이터와 목표
 
-Head를 붙이는 것보다 어려운 부분은 학습 데이터다.
-하나의 task가 아니라 사용자가 요청마다 정하는 질문과 선택지에 답해야 하므로, 다양한 판단 문제와 그 답이 많이 필요하다.
+Decision model은 하나의 task가 아니라 사용자가 요청마다 정하는 질문과 선택지에 답해야 하므로, 다양한 판단 문제와 그 답이 많이 필요하다.
 공개된 모델들은 답을 정답 레이블이 있는 데이터, 더 큰 teacher 모델, 또는 자기 자신의 느린 추론에서 얻는다.
 
 **정답 데이터와 teacher.**
 공개된 strands-decider v1은 Qwen3.5-2B-Base를 바탕으로, 공개 데이터셋과 새로 만든 규칙 적용·코드 문제 등에서 모은 246,678개의 판단 문제로 학습했다.[^strands-results]
 정답 레이블에 대한 cross-entropy에 더해, gemma-4-31B-it이 정답을 맞힌 문제에서는 그 확률 분포도 목표로 삼았다.[^strands-results]
+Head와 본체의 LoRA(low-rank adaptation)를 함께 학습하는 과정을 세 번 실행한 뒤, 세 번의 LoRA 갱신은 층마다 평균해 하나로 합치고, 세 head가 낸 각 선택지의 점수는 평균한다.[^strands-results]
 선택지 순서는 예제마다, epoch마다 새로 섞고 정답 번호도 따라 바꾼다(단계에 순서가 있는 Score 문제는 순서를 뒤집기만 한다).[^strands-arch]
 섞지 않으면 모델이 선택지의 위치와 정답 사이의 우연한 상관관계를 이용할 수 있기 때문이다.
 Clef도 필드 순서, 프롬프트, 스키마를 바꿔 가며 만든 합성 데이터로 학습했다.[^clef]
@@ -517,9 +520,9 @@ Clef도 필드 순서, 프롬프트, 스키마를 바꿔 가며 만든 합성 �
 Kahneman은 사람의 사고를 설명하면서 직관적으로 답을 내는 빠른 System 1과, 단계를 밟아 의식적으로 따지는 느린 System 2를 구분했다.[^kahneman]
 이 두 시스템은 사고의 양상을 설명하기 위한 비유이며, 뇌 속에 분리된 두 장치가 있다는 뜻은 아니다.
 Yu 등은 이 구분을 빌려, 느린 추론의 결과를 빠른 답으로 옮기는 방법을 여러 추론 기법에 걸쳐 실험했다(Distilling System 2 into System 1).[^s2s1]
-Chain-of-thought처럼 중간 추론을 생성해 계산을 더 쓰는 방법(System 2)을 정답이 없는 입력에 적용해 최종 답만 남기고,
-여러 번 샘플링한 답의 다수결이나 선택지 순서를 바꿔도 답이 같은지로 믿을 만한 답만 걸러,
-모델이 중간 추론 없이 그 답을 바로 내도록(System 1) fine-tuning한다.
+먼저 chain-of-thought처럼 중간 추론을 생성해 계산을 더 쓰는 방법(System 2)을 정답이 없는 입력에 적용하고 최종 답만 남긴다.
+여러 번 샘플링한 답의 다수결이나, 선택지 순서를 바꿔도 답이 같은지를 보고 믿을 만한 답만 거른다.
+그런 다음 모델이 중간 추론 없이 그 답을 바로 내도록(System 1) fine-tuning한다.
 여러 추론 기법이 이렇게 옮겨졌지만, Llama 2 70B Chat을 사용한 GSM8K 수학 문제 실험에서는 한 답을 생성해 평가했을 때 zero-shot chain-of-thought를 증류한 모델의 정확도가 7.13%에 그쳐 원래 zero-shot chain-of-thought로 푼 52.77%에 크게 못 미쳤다.
 Tacit은 이 방식을 판단에 적용했다.[^tacit]
 바탕 모델이 스스로 판단 문제를 만들고, reasoning을 켠 채 풀어 답을 얻은 뒤, 그 답을 forward 한 번에 내도록 학습했으며, 사람이 붙인 정답이나 다른 모델은 쓰지 않았다.
@@ -532,7 +535,7 @@ Cross-entropy도 확률의 크기에 벌점을 매기지만 확신하고 틀린 
 Clef는 확률의 calibration을 다듬으려고 Brier loss를 더했다고 밝힌다.
 또한 순서가 있는 척도에서 이웃한 답에 부분 점수를 주고 기준 모델과의 차이에 penalty를 두는 강화학습도 보조 목표로 썼다고 설명한다.[^clef]
 
-공개된 재료를 모으면 decision model을 만드는 방법이 그려진다.
+공개된 사례를 종합하면 decision model을 만드는 한 가지 방법은 이렇다.
 공개 LLM에 pointer head 같은 판단 head를 붙이고,
 정답 데이터, teacher, 자기 추론에서 얻은 판단 문제를 선택지 순서를 섞어 가며 학습하고,
 cross-entropy에 Brier loss 같은 항을 더해 calibration을 함께 맞춘다.
@@ -578,11 +581,13 @@ Jev의 구조는 알 수 없지만, causal attention으로 선택지를 읽는 �
 | 지연에 민감하거나 출력이 길다 | Router | 두 모델의 실력 차, 문턱값별 비용과 품질 |
 | 계산이나 여러 단계 추론이 필요한 판단 | 이유 생성 방식과 비교 | 판단 품질, 형식 오류율, 판단 하나의 지연 |
 | 정해진 선택지 분류를 공개 모델로 대량 처리 | 레이블 확률과 편향 보정 | ECE, 선택지 순서를 바꿨을 때 답이 바뀌는 비율 |
-| 선택지가 많다(공개 decision model), 또는 모델 운영을 맡기고 싶다(Jev 같은 API) | Decision model | 같은 지표와 입력을 고쳤을 때의 답 변화를 자기 데이터에서 |
+| 선택지 수가 한 토큰짜리 레이블로 감당할 범위를 넘는다 | Pointer head를 쓰는 decision model | 자기 데이터에서 정확도와 ECE, 입력을 고쳤을 때 답이 바뀌는 비율 |
+| 모델 운영을 맡기고 싶다 | Jev 같은 decision model API | 위 지표에 더해 호출 비용과 지연 |
 
-두 질문은 한 곳에서 만난다.
-레이블 확률이나 decision model이 내는 확률은 답의 정확성이나 큰 모델의 우위를 묻는 판단에 적용하면 cascade의 채점기 점수 $g$나 router의 확률 $P$로 활용할 수 있고,
-calibration이 확인된 확률이라면 "0.8 이상이면 받아들인다"처럼 확률의 뜻으로 문턱값을 정할 수 있다.
+생성 없이 얻은 판단 점수는 routing에도 쓸 수 있다.
+LLM이나 decision model에 작은 모델의 답이 맞는지 물어 얻은 확률은 cascade의 채점기 점수 $g$로 쓸 수 있다.
+큰 모델의 답이 더 나을지 물어 얻은 확률은 router의 확률 $P$로 쓸 수 있다.
+Calibration이 확인된 확률이라면 "0.8 이상이면 받아들인다"처럼 확률의 뜻으로 문턱값을 정할 수 있다.
 다만 그 문턱값이 비용과 품질의 목표에 맞는지는 큰 모델의 성능과 호출 비용까지 포함해 따로 평가해야 한다.
 
 <Callout type="example">
@@ -606,6 +611,10 @@ Router가 한 요청을 두 모델 중 하나에 보내기 전에, 작은 모델
 [^hybrid]: Ding, D., Mallick, A., Wang, C., et al. (2024). Hybrid LLM: Cost-Efficient and Quality-Aware Query Routing. *ICLR 2024*. [arXiv:2404.14618](https://arxiv.org/abs/2404.14618).
 
 [^automix]: Aggarwal, P., Madaan, A., Anand, A., et al. (2024). AutoMix: Automatically Mixing Language Models. *NeurIPS 2024*. [arXiv:2310.12963](https://arxiv.org/abs/2310.12963).
+
+[^h100]: NVIDIA. (2023). NVIDIA H100 Tensor Core GPU Architecture (V1.04). *NVIDIA Whitepaper*. [resources.nvidia.com](https://resources.nvidia.com/en-us-hopper-architecture/nvidia-h100-tensor-c).
+
+[^h100-bandwidth]: NVIDIA. NVIDIA H100 Tensor Core GPU. *NVIDIA product specifications*. [nvidia.com](https://www.nvidia.com/en-us/data-center/h100/); [H100 SXM·PCIe 데이터시트](https://i.dell.com/sites/csdocuments/App-Merchandizing_Documents/en/us/h100-gpu.pdf).
 
 [^speak-freely]: Tam, Z. R., Wu, C.-K., Tsai, Y.-L., et al. (2024). Let Me Speak Freely? A Study on the Impact of Format Restrictions on Performance of Large Language Models. *EMNLP 2024 Industry Track*. [arXiv:2408.02442](https://arxiv.org/abs/2408.02442).
 
