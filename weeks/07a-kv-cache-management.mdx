@@ -61,57 +61,64 @@ A, C가 끝남:   [· · · ·][B B B][· · ·]
 
 요청마다 큰 연속 공간을 미리 잡는 대신, 필요할 때마다 작은 조각을 받을 수는 없을까?
 실마리는 운영체제의 **paging**에서 얻을 수 있다.
-실행 중인 프로그램인 프로세스는 메모리를 읽고 쓸 때 가상 주소를 사용한다.
+실행 중인 프로그램인 프로세스는 **메모리를 읽고 쓸 때 가상 주소를 사용**한다.
 운영체제는 프로세스가 보는 가상 주소 공간을 일정한 크기의 **page**로, 실제 메모리는 같은 크기의 **frame**으로 나눈다.
 가상 주소가 연속된 두 page라도 실제 메모리에서는 떨어진 frame에 놓을 수 있다.
 어떤 page가 어느 frame에 있는지는 프로세스의 **page table**에 기록한다.[^os-paging]
 
-Kwon 등은 이 아이디어를 KV cache 관리에 적용해 vLLM을 만들었다.
-vLLM은 KV cache를 고정 크기 **블록**으로 나누어 GPU 메모리 곳곳에 둔다.
-이렇게 흩어진 블록 위에서 attention을 계산하는 방식이 PagedAttention이다.
-운영체제는 byte 주소를 page table로 변환하지만, vLLM은 요청의 토큰 순서에 따른 logical 블록을 GPU 메모리의 physical 블록에 연결하는 **block table**을 관리한다.
-PagedAttention kernel(GPU에서 attention 연산을 실행하는 프로그램)은 block table을 보고 필요한 블록을 직접 찾아 attention을 계산한다.
-운영체제의 paging은 CPU(central processing unit) 하드웨어가 주소 변환을 돕지만, vLLM의 블록 조회는 attention kernel이 소프트웨어로 한다.
-원논문의 비유대로 블록은 page, 토큰은 byte, 요청은 프로세스에 해당한다.[^vllm]
+<figure class="lecture-figure">
+<svg viewBox="0 0 480 248" role="img" aria-label="Paging의 예. 왼쪽은 프로세스 A의 가상 주소 공간으로 page 0부터 3까지 네 page가 위에서 아래로 이어져 있다. 가운데 page table은 page 0을 frame 5에, page 1을 frame 1에, page 2를 frame 6에, page 3을 frame 3에 대응시킨다. 오른쪽 실제 메모리에는 frame 0부터 7까지가 있고, A의 page들은 frame 5, 1, 6, 3에 흩어져 있다. Frame 0과 4는 다른 프로세스가 쓰고, frame 2와 7은 비어 있다. 화살표가 서로 엇갈리며 page table의 각 행에서 해당 frame으로 이어진다.">
+  <defs><marker id="pg-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/></marker></defs>
+  <g font-size="15" font-weight="bold" fill="#0f172a" text-anchor="middle"><text x="75" y="26">가상 주소 공간</text><text x="240" y="26">page table</text><text x="405" y="26">실제 메모리의 frame</text></g>
+  <g font-size="14" text-anchor="middle">
+    <rect x="25" y="44" width="100" height="34" fill="#e2e8f0" stroke="#94a3b8"/><text x="75" y="66" fill="#0f172a">page 0</text>
+    <rect x="190" y="44" width="100" height="34" fill="#f8fafc" stroke="#94a3b8"/><text x="240" y="66" font-size="13" fill="#0f172a">0 → frame 5</text>
+    <rect x="25" y="82" width="100" height="34" fill="#e2e8f0" stroke="#94a3b8"/><text x="75" y="104" fill="#0f172a">page 1</text>
+    <rect x="190" y="82" width="100" height="34" fill="#f8fafc" stroke="#94a3b8"/><text x="240" y="104" font-size="13" fill="#0f172a">1 → frame 1</text>
+    <rect x="25" y="120" width="100" height="34" fill="#e2e8f0" stroke="#94a3b8"/><text x="75" y="142" fill="#0f172a">page 2</text>
+    <rect x="190" y="120" width="100" height="34" fill="#f8fafc" stroke="#94a3b8"/><text x="240" y="142" font-size="13" fill="#0f172a">2 → frame 6</text>
+    <rect x="25" y="158" width="100" height="34" fill="#e2e8f0" stroke="#94a3b8"/><text x="75" y="180" fill="#0f172a">page 3</text>
+    <rect x="190" y="158" width="100" height="34" fill="#f8fafc" stroke="#94a3b8"/><text x="240" y="180" font-size="13" fill="#0f172a">3 → frame 3</text>
+  </g>
+  <g stroke="#94a3b8"><line x1="125" y1="61" x2="190" y2="61"/><line x1="125" y1="99" x2="190" y2="99"/><line x1="125" y1="137" x2="190" y2="137"/><line x1="125" y1="175" x2="190" y2="175"/></g>
+  <g font-size="13" text-anchor="middle">
+    <rect x="350" y="40" width="110" height="22" fill="#f8fafc" stroke="#94a3b8"/><text x="405" y="56" fill="#64748b">0 · 다른 프로세스</text>
+    <rect x="350" y="64" width="110" height="22" fill="#e2e8f0" stroke="#0f172a"/><text x="405" y="80" fill="#0f172a">1 · A의 page 1</text>
+    <rect x="350" y="88" width="110" height="22" fill="none" stroke="#94a3b8" stroke-dasharray="4 3"/><text x="405" y="104" fill="#64748b">2 · 비어 있음</text>
+    <rect x="350" y="112" width="110" height="22" fill="#e2e8f0" stroke="#0f172a"/><text x="405" y="128" fill="#0f172a">3 · A의 page 3</text>
+    <rect x="350" y="136" width="110" height="22" fill="#f8fafc" stroke="#94a3b8"/><text x="405" y="152" fill="#64748b">4 · 다른 프로세스</text>
+    <rect x="350" y="160" width="110" height="22" fill="#e2e8f0" stroke="#0f172a"/><text x="405" y="176" fill="#0f172a">5 · A의 page 0</text>
+    <rect x="350" y="184" width="110" height="22" fill="#e2e8f0" stroke="#0f172a"/><text x="405" y="200" fill="#0f172a">6 · A의 page 2</text>
+    <rect x="350" y="208" width="110" height="22" fill="none" stroke="#94a3b8" stroke-dasharray="4 3"/><text x="405" y="224" fill="#64748b">7 · 비어 있음</text>
+  </g>
+  <g stroke="#0f172a" stroke-width="1.5" fill="none"><line x1="290" y1="61" x2="347" y2="171" marker-end="url(#pg-arrow)"/><line x1="290" y1="99" x2="347" y2="75" marker-end="url(#pg-arrow)"/><line x1="290" y1="137" x2="347" y2="195" marker-end="url(#pg-arrow)"/><line x1="290" y1="175" x2="347" y2="123" marker-end="url(#pg-arrow)"/></g>
+</svg>
+<figcaption>프로세스 A가 보는 page 0–3은 이어져 있지만, 실제 메모리에서는 page table이 가리키는 frame 5, 1, 6, 3에 흩어져 있다. 빈 frame이 어디에 있든 새 page를 둘 수 있다.</figcaption>
+</figure>
+
+Kwon 등은 이 아이디어를 KV cache에 옮겨 vLLM을 만들었다.[^vllm]
+vLLM은 KV cache 공간을 고정 크기의 **블록**으로 나눈다.
+요청이 토큰 순서대로 보는 블록이 **logical 블록**, GPU 메모리에 실제로 놓인 블록이 **physical 블록**이고, 둘을 잇는 표가 **block table**이다.
+운영체제에 대응하면 logical 블록은 page, physical 블록은 frame, block table은 page table, 요청은 프로세스에 해당한다.
+요청은 마지막 블록이 다 찰 때마다 빈 physical 블록을 하나씩 받고, 끝나면 모두 돌려준다.
+이렇게 흩어진 블록 위에서 block table을 보며 attention을 계산하는 방식이 PagedAttention이다.
+**빈 블록은 어디에 있든 쓸 수 있으므로 external fragmentation이 사라지고, reserved와 internal fragmentation도 요청마다 마지막 블록의 빈칸으로 줄어든다.**
 
 <Figure src="https://arxiv.org/html/2309.06180v1/logical-and-physical-block-table.svg" alt="요청 A의 프롬프트는 'Four score and seven years ago our', 출력은 'fathers', 'brought' 순이다. 왼쪽의 logical KV block은 블록마다 토큰 4칸이며 block 0에 Four score and seven, block 1에 years ago our fathers, block 2에 brought가 들어 있다. 가운데 block table은 logical block 0을 physical block 7에, block 1을 physical block 1에, block 2를 physical block 3에 대응시키고, 블록마다 채워진 칸 수(4, 3에서 4로, 1)를 기록한다. 오른쪽의 physical KV block은 GPU 메모리에서 7, 1, 3번 블록에 흩어져 있다. 동그라미 숫자 1, 2, 3은 prefill, 첫 decode, 둘째 decode 단계를 뜻한다." caption="Logical 블록과 physical 블록을 잇는 block table(블록 하나는 4토큰). 요청은 연속된 logical 블록을 보지만 실제 블록은 GPU 메모리 어디에나 놓일 수 있다. 동그라미 숫자는 각 칸과 block table 항목이 쓰인 단계로, 1은 prefill, 2는 첫 decode, 3은 둘째 decode다." source="Kwon et al. (2023), Figure 6 · CC BY 4.0" wide />
 
-요청마다 logical 블록이 순서대로 이어지고,
-block table은 logical 블록마다 그 내용을 담은 physical 블록 번호와 채워진 칸 수를 기록한다.
-새 토큰을 모델에 입력해 key·value를 계산하면 마지막 블록의 빈칸에 쓰고, 블록이 다 차면 그때 빈 physical 블록 하나를 새로 받는다.
-방금 출력한 토큰의 key·value는 그 토큰을 다음 forward에 입력할 때 비로소 저장된다.
-요청이 끝나면 블록을 모두 돌려준다.
-그림의 요청 A에서 prefill은 프롬프트 7토큰의 key·value를 physical 블록 7에 4칸, physical 블록 1에 3칸 쓴다.
-첫 decode에서 'fathers'의 key·value는 블록 1의 남은 한 칸에 들어가고,
-둘째 decode의 'brought'는 블록 1이 다 찼으므로 새로 받은 physical 블록 3에 들어간다.
-이렇게 하면 최대 길이만큼 미리 잡을 필요가 없고, 블록 크기가 모두 같아 external fragmentation도 사라진다.
-Reserved와 internal fragmentation은 마지막 블록의 빈칸으로 줄어, 낭비가 요청당 블록 하나 안으로 묶인다.[^vllm]
-원논문 실험에서 KV cache 공간 가운데 실제 토큰의 key·value가 차지한 비율도 앞의 Orca 예약 방식보다 크게 올라, 공간의 대부분을 실제 토큰이 채웠다.
-대신 생성 도중 빈 블록이 바닥날 수 있고, 그때는 실행 중인 요청 일부를 멈춰 블록을 회수한다(선점, preemption).
-
 <Callout type="example">
-vLLM 원논문의 실험에서는 기본 블록 크기를 16토큰으로 두었다.[^vllm]
-Llama 3.1 8B에서 블록 하나는 $16\times131\ \text{KB}\approx2.1\ \text{MB}$다.
-앞의 요청이 300토큰까지 자라면 블록 19개(304칸)를 쓰고, 마지막 블록의 빈칸 4개,
-약 0.5 MB만 낭비한다.
-연속 할당이 잡던 약 1.07 GB 대신 약 40 MB만 쓴다.
+최대 길이가 8,192토큰인 요청이 프롬프트 100토큰을 받아 200토큰을 생성하고 끝난다고 하자.
+연속 할당은 처음부터 8,192칸, 약 1.07 GB를 잡지만 실제로 쓰는 칸은 300칸이다.
+vLLM 원논문처럼 블록을 16토큰으로 두면, Llama 3.1 8B에서 블록 하나는 $16\times131\ \text{KB}\approx2.1\ \text{MB}$다.[^vllm]
+이 요청은 블록 19개(304칸), 약 40 MB만 쓰고, 낭비는 마지막 블록의 빈칸 4개, 약 0.5 MB다.
+공간만 따지면 KV cache 53.5 GB에 담을 수 있는 이런 요청도 49개에서 1,300개 이상으로 늘어난다.
 </Callout>
-
-블록이 너무 작으면 kernel이 KV cache를 읽고 처리할 때 GPU의 병렬성을 충분히 쓰지 못할 수 있고,
-너무 크면 마지막 블록의 빈칸이 커진다.[^vllm]
-
-이 방식에는 대가도 있다.
-한 요청의 key·value가 메모리에 흩어져 있으므로,
-attention kernel이 block table을 보며 블록을 찾아 읽어야 한다.
-Block table을 읽어 블록 위치를 찾고, 블록 경계와 요청마다 다른 시퀀스 길이를 처리하는 일이 더해지므로,
-attention kernel의 지연은 연속 메모리를 쓰는 NVIDIA의 inference 라이브러리 FasterTransformer보다 길었다.[^vllm]
-그래도 이 비용은 attention 연산에만 붙고, 원논문 실험에서는 같은 메모리에 batch를 더 크게 담는 이점이 더 커서 end-to-end 처리량은 vLLM이 앞섰다.
 
 ### 2-2. 블록 공유와 copy-on-write
 
 블록 단위 관리는 공유도 쉽게 만든다.
-같은 프롬프트에서 응답을 여러 개 뽑는 parallel sampling이나,
-점수가 높은 후보 시퀀스 몇 개를 유지하며 토큰을 하나씩 늘려 가는 beam search에서는 여러 시퀀스가 같은 prefix를 가진다.
+같은 프롬프트에서 응답을 여러 개 뽑는 parallel sampling (e.g., GRPO)를 생각해보면,
+여러 시퀀스가 같은 prefix를 가진다.
 연속 할당에서는 시퀀스마다 그 prefix의 KV cache를 복사해 두어야 했지만,
 block table에서는 여러 시퀀스의 logical 블록이 같은 physical 블록을 가리키게 하면 된다.
 vLLM은 physical 블록마다 그 블록을 가리키는 시퀀스 수(reference count)를 두고,
@@ -123,8 +130,7 @@ vLLM은 physical 블록마다 그 블록을 가리키는 시퀀스 수(reference
 그림에서 A1은 첫 출력 토큰 'fathers'를 원래 블록이 아닌 복사본(블록 3)에 쓴다.
 그 뒤 A2는 count가 1이 된 블록 1에 복사 없이 'mothers'를 쓴다.
 꽉 찬 블록 7에는 쓰기가 일어나지 않으므로 두 sample이 끝까지 공유한다.
-
-공유하는 prefix가 길거나 여러 시퀀스가 같은 블록을 쓸수록 아끼는 블록이 많아지고, 그 비율은 생성 길이와 시퀀스가 어디서 갈라지는지에도 달려 있다.
+공유하는 prefix가 길거나 여러 시퀀스가 같은 블록을 쓸수록 아끼는 블록이 많아진다.
 
 ## 3. Prefix 재사용
 
