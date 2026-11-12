@@ -17,7 +17,6 @@ Speculative decoding은 값싼 방법으로 다음 토큰들을 먼저 추측하
 큰 모델이 그 추측을 한 번에 검증하게 해서 이 문제를 푼다.
 
 Xia 등의 서베이는 이 방식을 추측을 만드는 drafting과 추측을 받아들일지 정하는 검증으로 나누어 정리했다.[^survey]
-이 노트는 검증 규칙에서 출발해 draft를 만드는 방법, 미래 토큰 여러 개의 예측을 학습 목표로 삼는 multi-token prediction, batch가 커질 때의 이득을 차례로 본다.
 
 ## 1. Draft와 검증
 
@@ -26,9 +25,10 @@ Xia 등의 서베이는 이 방식을 추측을 만드는 drafting과 추측을 
 앞에서 말한 남는 연산 능력을 수치로 보자.
 H100 SXM에서 요청 하나를 decode할 때 Llama 3.1 8B의 선형층은 intensity가 약 1이라 ridge point 295의 한참 왼쪽에 있다.
 문맥이 2,048토큰이라면 weight 16 GB와 KV(key-value) cache 약 0.27 GB를 최대 대역폭 3.35 TB/s로 읽는 시간의 하한이 약 4.9 ms다.
-반면 연산량은 선형층 16 GFLOPs(giga floating-point operations)와 attention 1 GFLOPs, 모두 약 17 GFLOPs라, 최대 연산 성능 989 TFLOP/s(TFLOP/s는 초당 $10^{12}$번의 부동소수점 연산)로 계산한 하한은 0.02 ms다.
+반면 연산량은 선형층 16 GFLOPs(giga floating-point operations)와 attention 1 GFLOPs를 합쳐 약 17 GFLOPs다.
+최대 연산 성능 989 TFLOP/s(TFLOP/s는 초당 $10^{12}$번의 부동소수점 연산)로 계산한 하한은 0.02 ms다.
 선형층 연산량은 전체 파라미터 수로 어림하고 데이터는 이상적으로 재사용한다고 가정한다.
-이하의 하한은 이 단순한 모형의 추정치이며 실제 지연의 엄밀한 하한은 아니다.
+아래의 하한은 모두 이 단순한 모형에서 나온 추정치이고, 실제 지연의 엄밀한 하한은 아니다.
 같은 forward에 위치 5개를 넣어도 weight와 기존 KV cache를 각각 한 번만 읽어 다섯 위치에서 재사용한다고 하자.
 연산 시간은 약 0.09 ms로 늘지만, 이 이상적인 모형의 스텝 시간은 여전히 약 4.9 ms다.
 **이 하한 모형에서는 위치 1개를 처리하든 5개를 처리하든 걸리는 시간이 거의 같다.**
@@ -96,15 +96,15 @@ Draft가 target보다 어떤 토큰을 더 자주 뽑는다면, 그 초과분만
 그래서 draft가 $q$에서 토큰 $x$를 뽑았다면, target은 그 토큰을 확률 $\min(1,\,p(x)/q(x))$로 받아들인다.
 $q(x)\le p(x)$이면 항상 받고,
 $q(x)>p(x)$이면 $p(x)/q(x)$의 확률로만 받는다.
-거부되면 그 자리의 토큰을, 어휘의 각 토큰 $y$에 대해 정의한 다음 분포에서 새로 뽑는다.[^leviathan]
+거부되면 그 자리의 토큰을 다음 분포에서 새로 뽑는다($y$는 어휘의 각 토큰이다).[^leviathan]
 
 $$
 p'(y)=\frac{\max\bigl(0,\,p(y)-q(y)\bigr)}{\sum_{y'}\max\bigl(0,\,p(y')-q(y')\bigr)}
 $$
 
-Draft가 덜 뽑아 주는 토큰, 곧 $p$가 $q$보다 큰 부분만 남긴 분포다.
+Draft가 target보다 낮은 확률을 준 토큰, 곧 $p$가 $q$보다 큰 부분만 남긴 분포다.
 두 분포가 완전히 같으면 분모가 0이지만, 그때는 추측이 항상 수락되므로 이 분포에서 뽑을 일이 없다.
-이렇게 하면 수락으로 얻는 몫과 거부 뒤 새로 뽑는 몫을 더한 결과가 정확히 $p$가 된다.
+이렇게 하면 토큰 $x$가 수락되어 나올 확률과 거부 뒤 새로 뽑혀 나올 확률을 더한 값이 정확히 $p(x)$가 된다.
 
 <Details summary="수락 규칙이 target 분포를 보존하는 이유">
 수락으로 $x$가 나올 확률은 $q(x)\min(1,p(x)/q(x))=\min(p(x),q(x))$다.
@@ -139,8 +139,8 @@ Greedy 검증은 $p$와 $q$가 모두 argmax에 확률 1을 둔 특수한 경우
 앞의 예를 sampling으로 검증할 때 `the`가 수락되고 `mat`이 거부되었다면, 둘째 위치의 $p'$에서 새 토큰을 뽑고 `.`는 버린다.
 그래서 sampling에서도 forward 한 번이 내는 토큰은 최소 1개, 최대 $\gamma+1$개다.
 
-이 분포 보존은 수학적으로는 정확하지만,
-vLLM 문서는 실제 서빙에서의 보장이 하드웨어 수치 정밀도의 범위 안에서라고 밝힌다.[^vllm-spec]
+수학적으로는 분포가 정확히 보존되지만,
+vLLM 문서는 실제 서빙에서는 하드웨어의 수치 정밀도 범위 안에서만 보장된다고 밝힌다.[^vllm-spec]
 Batch 구성이 바뀌면 부동소수점 계산 순서가 달라지고,
 그 작은 수치 차이로 다른 토큰이 선택되면 이후 생성 결과가 달라질 수 있다.
 
@@ -208,14 +208,13 @@ position index도 나무의 깊이에 맞춰 준다.
 
 <Figure src="https://arxiv.org/html/2401.10774v3/tree_attention.png" alt="Medusa의 Figure 2. 왼쪽은 후보 나무다. Root에서 head 1의 후보 두 개(It, I)가 나오고, 각각에서 head 2의 후보 세 개(is, 따옴표, the)가 이어져 후보 경로가 모두 6개다. 오른쪽은 8×8 attention mask로, 행은 query, 열은 key다. 각 후보 토큰은 자기 자신과 나무에서의 조상에만 체크 표시가 있어, 예를 들어 It 아래의 is는 It과 자기 자신만 본다." caption="Tree attention. Head 1의 상위 2개와 head 2의 상위 3개로 만든 후보 6개 경로를 한 번에 검증한다. Mask는 각 토큰이 자기 자신과 나무에서의 조상만 보게 한다." source="Cai et al. (2024), Figure 2 · CC BY 4.0" wide />
 
-MT-bench에서 Vicuna-7B를 batch 1로 돌려 Hugging Face 기본 구현과 비교하면,
-target을 고정하고 head만 학습하는 Medusa-1은 2.18배,
-target과 head를 함께 학습하는 Medusa-2는 2.83배 빨라졌다.
-MT-bench 카테고리별로는 Medusa-2가 최대 3.62배였다.[^medusa]
+Medusa에는 target을 고정하고 head만 학습하는 Medusa-1과, target과 head를 함께 학습하는 Medusa-2가 있다.
 Medusa-1은 target이 그대로이므로 분포를 보존하는 수락 규칙으로 검증하면 출력 분포도 그대로이고,
 Medusa-2는 target 자체가 함께 바뀐다.
 Medusa는 sampling 온도가 높을 때 수락률이 떨어지는 문제를 줄이려고 typical acceptance도 제안했다.
 Target이 충분히 그럴듯하다고 보는 후보면 받아들이는 완화된 규칙으로, 수락률은 높지만 앞의 수락 규칙처럼 target 분포를 정확히 보존하지는 않는다.
+MT-bench에서 Vicuna-7B를 batch 1로 돌려 Hugging Face 기본 구현과 비교하면 Medusa-1은 2.18배, Medusa-2는 2.83배 빨라졌다.
+MT-bench 카테고리별로는 Medusa-2가 최대 3.62배였다.[^medusa]
 
 ### 2-3. EAGLE
 
@@ -234,6 +233,7 @@ $t_3$을 입력에 더해 만든 $\hat f_3$은 $t_1,t_2,t_3$까지 처리했을 
 다음 단계에서는 이 예측 feature와 새로 뽑은 $t_4$를 함께 이용해 $\hat f_4$를 예측한다.
 Embedding과 LM head는 target의 것을 그대로 쓰고 FC(fully connected) 층과 decoder 층 하나만 학습하므로,
 추가로 학습하는 파라미터는 7B target에서 0.24B, 70B target에서 0.99B다.
+학습할 때는 예측한 feature가 target의 실제 feature에 가까워지게 하는 회귀 손실과, 예측한 feature를 LM head에 넣어 얻은 토큰 분포가 target의 분포와 비슷해지게 하는 cross-entropy 손실을 함께 쓴다.
 Llama 2 70B Chat에서는 2.7–3.5배 빨라졌다.[^eagle]
 
 <Figure src="https://raw.githubusercontent.com/SafeAILab/EAGLE/cb7e0841fe0c206c6ed74a197ad5e2a1f13f5a2b/figs/fig1.png" alt="EAGLE의 drafting 과정. 왼쪽 Original LLM은 입력 How, can을 Embedding과 Transformer Layers에 통과시켜 feature f_how, f_can을 만들고, LM Head와 Sampling으로 can과 I를 낸다. 가운데 FeatExtrapolator는 Forward 1에서 (f_how, e_can)과 (f_can, e_I)를 One Auto-regression Head에 넣어 f_I를 예측하고, 고정된 LM Head와 여러 번의 sampling으로 make와 help를 뽑는다. Forward 2는 (f_I, e_make)와 (f_I, e_help)에서 f_make, f_help를 예측해 a/our, with/you를 뽑고, Forward 3은 f_help와 e_with, e_you에서 f_with, f_you를 예측해 the/your, to/feel을 뽑는다. Embedding과 LM Head에는 고정을 뜻하는 눈송이 표시가 있다. 오른쪽은 이렇게 만든 후보 나무로, Query 'How can' 아래에 원래 LLM이 뽑은 I가 있고, 그 아래로 make, help, 다시 a, our, with, you, 그 아래로 the, your, to, feel이 이어진다." caption="EAGLE의 drafting. 그림의 FeatExtrapolator는 EAGLE draft 모델의 예전 이름이고, 그 안의 One Auto-regression Head가 학습하는 FC 층과 decoder 층에 해당한다. 본문 예시와 맞추면 f_how와 f_can이 f₁과 f₂, 토큰 can과 I가 t₂와 t₃이다. Draft는 이들로 f₃의 예측값 f̂₃에 해당하는 f_I를 만들고, target의 LM head에 넣어 t₄ 후보 make와 help를 뽑는다. 이 과정을 forward 세 번 이어 가면 오른쪽 같은 후보 나무가 된다." source="SafeAI Lab, EAGLE GitHub repo · © 2025 SafeAI Lab (SAIL), Apache-2.0 · 방법은 Li et al. (2024)" wide />
@@ -288,20 +288,20 @@ Elhoushi 등의 LayerSkip은 중간이 아니라 앞쪽 $E$개 층만으로 draf
 Llama 2 7B를 LayerSkip으로 이어서 학습(continual pretraining)한 뒤 self-speculative decoding을 적용하면,
 LayerSkip 없이 같은 분량을 이어서 학습한 모델의 일반 decode보다 CNN/DM 요약에서 1.86배, HumanEval 코딩에서 1.83배 빨랐다.[^layerskip]
 이 속도 비교는 서로 다르게 학습한 두 모델 사이의 비교다.
-한편 self-speculation의 출력이 그대로라는 기준은 LayerSkip으로 다시 학습한 모델의 일반 decode이므로, 비교 대상 모델과 품질이 같다는 보장은 없다.
+Self-speculation이 보존하는 것은 LayerSkip으로 다시 학습한 모델의 일반 decode 결과이므로, 속도를 비교한 상대 모델과 품질까지 같다는 뜻은 아니다.
 
 <Figure src="https://arxiv.org/html/2404.16710v4/self_speculative_decoding.svg" alt="LayerSkip 논문의 Figure 7. 위 왼쪽 Autoregressive Decoding은 4층 모델이 토큰 T1–T4를 입력받아 모든 층을 계산해 T5를 내며, 토큰마다 L개 층을 계산한다. 위 오른쪽 Speculative Decoding은 2층짜리 별도 draft 모델이 T1–T3에서 T4를 추측하고, 4층 main 모델이 T1–T4를 prefill처럼 한 번에 검증해 T5를 낸다. 아래 Self Speculation Decoding의 왼쪽 Draft는 같은 모델의 Layer 1–2만 계산하고 Layer 3–4는 비워 둔 채 LM head로 T4를 낸다. 오른쪽 Verify는 Layer 1–2에서 draft가 계산해 둔 상태를 연한 초록(cached)으로 다시 쓰고 T4 위치만 진한 초록으로 새로 계산하며, Layer 3–4는 네 위치 모두 새로 계산해 T5를 낸다. 범례는 진한 초록이 계산, 흰색이 건너뜀, 연한 초록이 cache다." caption="아래 Self Speculation Decoding이 LayerSkip이다. Draft는 앞쪽 층(그림에서는 Layer 1–2)만 계산하고 나머지 층을 건너뛰어 LM head로 토큰을 낸다. Verify는 기존 위치에서 draft가 계산해 둔 앞쪽 층의 상태를 다시 쓰고, 새 후보 T4의 앞쪽 층과 모든 위치의 뒤쪽 층은 계산한다. 위 오른쪽의 기본 speculative decoding과 달리 draft용 모델이 따로 없다." source="Elhoushi et al. (2024), Figure 7 · CC BY 4.0" wide />
 
 ### 2-5. n-gram draft
 
 학습된 draft 없이도 추측을 만들 수 있다.
-요약, 문서 기반 질의응답, 코드 수정처럼 출력이 입력의 문장을 많이 다시 쓰는 task에서는,
+요약, 문서 기반 질의응답, 코드 수정처럼 입력의 표현이 출력에도 그대로 자주 나오는 task에서는,
 지금까지 생성한 마지막 몇 토큰과 같은 n-gram(연속된 토큰 $n$개)을 프롬프트에서 찾아 그 뒤의 토큰들을 추측으로 쓰면 된다.
 예를 들어 생성한 끝부분이 `the cat`이고 프롬프트에 `the cat sat on`이 있다면 `sat on`을 추측으로 쓴다.
 Saxena의 prompt lookup decoding이 이 방식이며,
 vLLM에서도 n-gram 방식으로 제공한다.[^pld][^vllm-spec]
 서베이 저자들이 만든 벤치마크 Spec-Bench에서 Vicuna-7B를 RTX 3090 한 대, FP16, batch 1, greedy로 쟀을 때,
-이 방식은 입력과 출력이 많이 겹치는 요약에서 약 2.4배를 냈다.[^survey]
+이 방식은 입력과 출력이 많이 겹치는 요약에서 일반 greedy decoding보다 약 2.4배 빨랐다.[^survey]
 
 Fu 등의 lookahead decoding은 프롬프트 대신 모델 자신이 만든 후보에서 n-gram을 모은다.[^lookahead]
 후보를 만드는 계산과 검증을 같은 forward에 넣어 보조 draft 모델 없이 추측을 만든다.
@@ -368,8 +368,8 @@ EAGLE 계열의 draft와 DeepSeek-V3의 MTP 모듈은 모양이 비슷하다.
 둘 다 target의 표현과 다음 토큰의 embedding을 받아 작은 Transformer 층으로 한 칸 뒤를 예측하고,
 embedding과 LM head를 target과 공유한다.
 차이는 학습 시점과 목표에 있다.
-EAGLE은 speculative decoding을 위해 다 만든 target을 고정하고 draft만 따로 학습한다.
-DeepSeek-V3의 MTP는 학습 성능을 높이려고 pre-training 동안 본체와 함께 학습한다.[^dsv3]
+EAGLE은 학습을 마친 target을 고정하고, speculative decoding에 쓸 draft만 따로 학습한다.
+DeepSeek-V3의 MTP는 모델의 성능을 높이려고 pre-training 동안 본체와 함께 학습한다.[^dsv3]
 그래서 별도 draft 학습 없이 그 모듈을 draft로 쓸 수 있다.
 </Callout>
 
@@ -383,7 +383,9 @@ DeepSeek-V3의 MTP는 학습 성능을 높이려고 pre-training 동안 본체�
 Memory-bound라는 사실만으로는 충분하지 않다.
 검증 위치마다 같은 KV cache를 다시 읽거나 kernel의 추가 비용이 크면 계산 능력이 남아도 검증 스텝은 길어질 수 있다.
 Continuous batching 서버는 요청이 몰리면 batch를 키우고, 그만큼 선형층의 intensity가 오른다.
-Speculative decoding은 요청마다 위치를 $\gamma+1$개로 늘리므로 batch의 요청 수를 $b$라 하면 한 스텝의 토큰 수가 $b(\gamma+1)$개가 된다(나무로 추측하면 $\gamma+1$ 자리에 나무의 노드 수(뿌리인 직전 확정 토큰 포함)가 들어간다).
+Batch의 요청 수를 $b$라 하자.
+Speculative decoding은 요청마다 위치를 $\gamma+1$개로 늘리므로 한 스텝의 토큰 수가 $b(\gamma+1)$개가 된다.
+나무로 추측하면 $\gamma+1$ 자리에 나무의 노드 수가 들어가고, 뿌리인 직전 확정 토큰도 여기에 센다.
 Batch가 크면 이 값이 ridge point를 넘어 선형층이 compute-bound가 되고,
 그때부터는 수락되지 않을 추측을 검증하는 계산이 실제 시간을 잡아먹는다.
 
@@ -408,7 +410,7 @@ Batch 192에서는 한 스텝에 $192\times5=960$개 위치를 계산하므로 �
 문맥이 256토큰이면 이 계산이 스텝을 거의 다 차지해 스텝이 2.6배 길어지고,
 수락률이 0.5라면 한 번에 얻는 토큰이 1.94개뿐이라 2.6배 늘어난 시간을 메우지 못해 오히려 느려진다.
 문맥이 2,048토큰이면 이 하한 모델에서는 검증 위치들이 KV cache 읽기를 재사용한다고 가정하므로 KV cache를 읽는 15.4 ms가 그대로이고, 스텝이 1.5배만 길어져
-batch 192에서도 이득이 남는다.
+batch 192에서도 이득이 남는다(선형층 15.6 ms와 KV cache 읽기 15.4 ms를 더해 31.0 ms).
 Draft 비용까지 더하면 개선 배수는 이보다 낮아진다.
 </Callout>
 
@@ -423,7 +425,7 @@ vLLM 팀은 H100 4대에서 Llama 3 70B를 돌려, 요약 데이터(CNN/DailyMai
 Sadhukhan 등의 MagicDec은 KV cache 읽기가 스텝을 지배하는 긴 문맥에서는 batch가 커도 target이 $\gamma+1$개 위치를 검증하는 시간이 위치 하나를 처리하는 시간과 거의 같다는 점을 짚었다.
 A100 8대에서 Llama 3.1 8B를 $\gamma=3$으로 두고, draft로 target 자신을 쓰되 KV cache만 512토큰으로 줄인 self-speculation 설정의 이론 분석에서는,
 문맥이 약 4,000토큰보다 짧으면 batch가 커질수록 이득이 줄지만 그보다 길면 오히려 커진다고 예측했다.[^magicdec]
-문맥이 길면 target의 스텝은 batch가 커질수록 요청마다 긴 KV cache를 읽느라 길어지지만 draft는 그만큼 길어지지 않아, draft 비용의 몫이 작아지기 때문이다.
+문맥이 길면 target의 스텝은 batch가 커질수록 요청마다 긴 KV cache를 읽느라 길어지지만, KV cache를 줄인 draft는 그만큼 길어지지 않아 전체 시간에서 draft가 차지하는 비중이 작아지기 때문이다.
 이 경계는 모델, 하드웨어, draft 방식에 따라 달라진다.
 
 ### 4-2. 서빙에서의 선택
