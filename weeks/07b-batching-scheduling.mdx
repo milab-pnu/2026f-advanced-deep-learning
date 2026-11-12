@@ -8,8 +8,7 @@ Roofline 분석은 batch 크기와 모든 요청의 문맥 길이(2,048토큰)�
 실제 요청은 서로 다른 시각에 도착하고 입력 길이도 출력 길이도 제각각이라,
 batch의 구성과 문맥 길이가 스텝마다 바뀐다.
 이런 요청들을 어떤 단위로 묶고(batching), 어떤 순서(scheduling)로 실행할 것인가?
-새 요청의 prefill이 진행 중인 decode를 늦추지 않게 하려면 어떻게 하고,
-GPU(graphics processing unit) 한 대로 모자라면 여러 GPU에 어떻게 나누어 둘 것인가?
+새 요청의 prefill이 진행 중인 decode를 늦추지 않게 하려면 어떻게 할 것인가?
 이러한 질문들에 답한다.[^survey]
 
 ## 1. Continuous batching
@@ -55,7 +54,7 @@ vLLM과 SGLang을 비롯한 주요 서빙 엔진은 continuous batching을 기�
 ### 2-1. 실행 순서
 
 Continuous batching에서는 스텝마다 batch에 넣을 요청을 새로 고른다.
-GPU가 감당할 수 있는 것보다 많은 요청이 오면 일부는 기다려야 한다.
+GPU(graphics processing unit)가 감당할 수 있는 것보다 많은 요청이 오면 일부는 기다려야 한다.
 이때 **어떤 요청을 먼저 batch에 넣을지 정하는 일이 inter-request scheduling**이다.[^survey]
 가장 흔한 기본값은 도착 순서대로 처리하는 FCFS(first come first served)다.
 도착 순서를 지킨다는 점에서는 공정하다.
@@ -149,21 +148,14 @@ Sarathi-Serve는 스텝마다 처리할 토큰 수의 상한, 곧 토큰 예산�
 
 ### 3-3. Prefill과 decode의 분리
 
-Chunked prefill도 간섭을 없애지는 못한다.
-DistServe는 두 가지를 지적했다.[^distserve]
-첫째, 조각으로 잘라도 decode와 prefill이 같은 GPU의 같은 스텝을 함께 쓰므로 서로를 느리게 한다.
-ITL을 고르게 지키려고 조각을 작게 잡을수록 새 요청의 TTFT가 길어진다.
-조각마다 앞 조각들의 KV cache를 다시 읽어야 하는 비용도 붙는다.
-둘째, 두 단계가 같은 GPU에 있으면 GPU 수와 병렬화 방식도 같아야 한다.
-곧 TP(tensor parallelism)와 PP(pipeline parallelism)의 크기를 두 단계가 함께 써야 한다.
-그런데 두 단계는 지켜야 할 지표도 병목도 다르다.
-DistServe는 prefill의 목표를 TTFT로, decode의 목표를 TPOT(time per output token)로 잡았다.
-Compute-bound인 prefill과 batch를 크게 모아야 하는 memory-bound인 decode는 알맞은 GPU 수와 TP·PP 크기도 서로 달랐다.[^distserve]
+Chunked prefill도 간섭을 없애지는 못한다.[^distserve]
+조각으로 잘라도 decode와 prefill이 같은 GPU의 같은 스텝을 함께 쓰므로, ITL을 지키려고 조각을 작게 잡을수록 새 요청의 TTFT가 길어진다.
+또 두 단계는 병목이 다르다.
+Prefill은 compute-bound이고, decode는 batch를 크게 모아야 하는 memory-bound다.
+같은 GPU에 두면 GPU 수와 병렬화 방식을 두 단계가 함께 써야 해서, 각 단계에 맞게 고를 수 없다.
 
 DistServe의 해법은 prefill과 decode를 **다른 GPU에서** 실행하는 분리(disaggregation)다.
-Prefill GPU가 프롬프트를 처리해 첫 토큰을 만들고, decode GPU가 그 요청의 KV cache를 prefill GPU에서 가져온다.
-Decode GPU는 그 KV cache로 이어지는 토큰을 하나씩 생성한다.
-두 단계가 서로를 방해하지 않고, 각 단계에 맞는 GPU 수와 TP·PP 크기를 따로 고를 수 있다.
+Prefill GPU가 프롬프트를 처리해 첫 토큰을 만들고, decode GPU가 그 요청의 KV cache를 가져와 이어지는 토큰을 생성한다.
 
 <figure class="lecture-figure">
 <svg viewBox="0 0 480 124" role="img" aria-label="Prefill과 decode의 분리. 왼쪽에서 프롬프트가 prefill GPU로 들어간다. Prefill GPU는 프롬프트를 처리해 첫 토큰을 만들고, 그 KV cache를 오른쪽의 decode GPU로 보낸다. Decode GPU는 나머지 토큰을 생성해 내보낸다. Prefill GPU 아래에는 compute-bound와 TTFT, decode GPU 아래에는 memory-bound와 TPOT이라고 적혀 있다.">
@@ -179,69 +171,26 @@ Decode GPU는 그 KV cache로 이어지는 토큰을 하나씩 생성한다.
 <figcaption>Prefill과 decode의 분리. 두 단계가 다른 GPU에서 돌고, 그 사이에 KV cache가 한 번 옮겨진다.</figcaption>
 </figure>
 
-DistServe는 정해진 비율 이상의 요청이 TTFT와 TPOT 목표를 모두 지키는 최대 요청률을 GPU 수로 나눈 goodput으로 시스템을 비교했다.
-OPT 모델로 실험해, 챗봇 workload에서는 DeepSpeed-MII보다 goodput이 여러 배까지 높았고,
-요약 workload에서는 vLLM이 지킬 수 있는 SLO보다 훨씬 엄격한 SLO도 지켰다고 보고했다.[^distserve]
-
-같은 시기 Patel 등의 Splitwise도 두 단계를 다른 기계로 나누었다.[^splitwise]
-Decode가 memory-bound인 범위에서는 연산 능력보다 메모리 용량과 대역폭이 중요하므로, decode를 더 싸고 전력을 덜 쓰는 GPU에 맡길 수 있다는 점에 주목했다.
-실제 서비스의 요청 기록을 넣은 cluster simulator 비교에서, SLO를 지키면서 같은 비용과 전력으로 처리량이 크게 높았다.[^splitwise]
+두 단계가 서로를 방해하지 않으므로, 새 요청의 TTFT와 decode 쪽 지표인 TPOT(time per output token)를 따로 맞출 수 있다.
+Patel 등의 Splitwise는 여기에 하드웨어 비용을 더해 보았다.[^splitwise]
+Decode가 memory-bound인 범위에서는 연산 능력보다 메모리 용량과 대역폭이 중요하므로, decode를 더 싸고 전력을 덜 쓰는 GPU에 맡길 수 있다.
 
 분리의 대가는 KV cache의 전송이다.
 64층이고 모델 차원이 9,216인 OPT-66B에서 512토큰 요청 하나의 KV cache는 $2\times64\times9{,}216\times2\times512$ bytes(key·value 2개 × 층 × 차원 × bytes × 토큰), 약 1.2 GB다.[^distserve]
 H100 서버에서 노드 안 NVLink를 한 방향 약 450 GB/s, 노드 밖 연결을 한 방향 50 GB/s로 가정하면, 이 양을 옮기는 시간의 하한은 각각 약 2.7 ms와 약 24 ms다.
-필요한 대역폭은 요청률에 비례해, 초당 10건을 옮기려면 초당 약 12 GB, 곧 약 97 Gbps가 필요하다.
-대역폭이 이보다 모자라면 전송이 밀려 지연이 늘어난다.
+그래서 노드 사이 대역폭이 부족하면 짝이 되는 prefill GPU와 decode GPU를 한 노드에 두어, KV cache가 노드 안의 NVLink로만 오가게 한다.[^distserve]
 
-노드 사이 대역폭이 부족하면 DistServe는 같은 층 묶음(stage)을 맡은 prefill GPU와 decode GPU를 한 노드에 두어, KV cache가 노드 안의 NVLink로만 오가게 한다.
-DistServe의 실험에서 모든 요청의 전송 시간을 더한 값은 전체 요청 지연의 합 가운데 아주 작은 부분이었다.[^distserve]
-Splitwise는 prefill이 층 하나를 끝낼 때마다 그 층의 KV cache를 비동기로 보내 계산과 전송을 겹쳤다.[^splitwise]
-
-분리 구조는 KV cache offloading과도 결합된다.
-Mooncake는 prefill과 decode를 다른 cluster로 나누고, 재사용할 KV cache를 분산 KV cache pool에서 prefill 인스턴스로 불러온다.[^mooncake]
-
-<Callout type="note">
-분리하면 TTFT와 ITL, 그리고 단계별 자원을 따로 조정할 수 있다.
-이것이 처리량 이득으로 이어지는지는 구성과 workload에 달려 있다.
-vLLM 문서는 자체 disaggregated prefill이 처리량을 높이지는 않으며,
-TTFT와 ITL을 따로 조정하고 ITL의 꼬리를 줄이는 데 목적이 있다고 밝힌다.
-분리하지 않고 chunked prefill의 조각 크기를 잘 골라도 지연을 조정할 수 있지만,
-실제로는 그 크기를 찾기 어렵다는 점도 함께 적는다.[^vllm-disagg]
-</Callout>
-
-## 4. 여러 GPU 서빙
-
-분리에서도 각 단계는 GPU 여러 대를 쓸 수 있고, 큰 모델은 애초에 GPU 한 대에 들어가지 않는다.
-학습의 병렬화 방식을 서빙에 옮기면 달라지는 점이 있다.
-
-DP(data parallelism)로 모델의 복제본(replica)을 여러 개 띄우면, 학습과 달리 gradient를 맞출 일이 없어 복제본 사이에 통신이 없다.
-요청이 고르게 나뉘면 처리량은 이상적으로 GPU 수에 비례해 늘지만, 요청 하나의 실행 시간은 그대로이고 모델이 GPU 한 대에 들어가야 한다.
-
-TP로 나눌 때 attention은 KV head 단위로 나눈다.
-Llama 3.1 8B(query head 32개, KV head 8개)를 TP=2로 나누면 GPU마다 query head 16개와 그 head들이 함께 쓰는 KV head 4개를 맡고,
-TP 크기가 KV head 수보다 크면 같은 KV head를 여러 GPU에 복제해야 한다.
-Weight와 KV head가 고르게 나뉜다고 단순화하면 GPU마다 읽는 weight와 KV cache가 모두 TP 크기에 반비례해 줄어,
-memory-bound인 decode 스텝은 통신을 빼면 그만큼 빨라지고 weight가 줄어든 자리에 KV cache를 더 담는다.
-대가는 층마다 일어나는 all-reduce 통신이라, TP는 대개 NVLink로 연결된 한 노드 안에서 쓴다.
-
-<Callout type="example">
-Llama 3.1 8B를 H100 두 대로 서빙한다고 하자.
-복제본 두 개라면 GPU마다 사용 예산 73.6 GB에서 weight 16.1 GB와 실행 공간 약 4 GB를 뺀 약 53.5 GB가 KV cache에 남고, 문맥 2,048토큰인 요청 하나의 decode 스텝 하한은 GPU 한 대일 때와 같은 약 4.9 ms다.
-TP=2라면 GPU마다 weight가 8 GB만 차지해 KV cache에 약 61.6 GB가 남고,
-GPU마다 읽는 weight와 KV cache가 절반이라 통신을 빼면 스텝 하한이 약 2.4 ms로 준다.
-이 하한만 보면 TP=2가 KV cache를 더 많이 담고 스텝도 더 짧다.
-대신 복제본 구성에는 층마다 일어나는 all-reduce 통신이 없으므로, 실제 비교에서는 통신 비용까지 따져야 한다.
-</Callout>
-
-PP로 나누면 요청 하나는 모든 stage를 차례로 지나야 하므로 요청 하나의 지연은 줄지 않는다.
-대신 통신이 stage 경계에서만 일어나 느린 연결에서도 쓸 수 있다.
-vLLM 문서는 모델이 GPU 한 대에 들어가지 않을 때, 한 노드에 들어가면 TP를, 여러 노드에 걸쳐야 하면 노드 안의 TP와 노드 사이의 PP를 함께 쓰라고 권한다.
-NVLink가 없는 GPU에서는 통신 부담이 적은 PP가 TP보다 처리량에 나을 수 있다고도 적는다.[^vllm-parallel]
+모델이 GPU 한 대에 들어가지 않으면 분리와 상관없이 여러 GPU에 나누어야 한다.
+TP(tensor parallelism)는 모든 층을 GPU 수만큼 쪼개어 여러 GPU가 동시에 계산한다.
+GPU마다 weight를 나누어 동시에 읽으므로 memory-bound인 decode 스텝이 빨라진다.
+대신 층마다 결과를 합치는 통신이 필요하다.
+PP(pipeline parallelism)는 층을 앞뒤 구간으로 잘라 GPU마다 한 구간씩 맡긴다.
+통신은 구간이 바뀔 때 한 번뿐이지만, 구간을 차례로 지나므로 스텝은 빨라지지 않는다.
+그래서 TP는 통신이 빠른 한 노드 안에서, PP는 노드 사이에서 주로 쓴다.
+모델이 GPU 한 대에 들어간다면 복제본을 여러 개 띄우는 것이 가장 단순하다.[^vllm-parallel]
 
 정리하면 이 노트의 방법들은 compute-bound인 prefill과 memory-bound인 decode를 다루는 방식이 다르다.
-Continuous batching과 chunked prefill은 둘을 한 GPU의 같은 스텝에 섞어 남는 자원을 채우고, 분리는 둘을 다른 GPU로 나누어 서로의 지연을 끊는다.
-
-이 노트의 Team Olmo 그림은 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), DistServe 논문 그림은 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)에 따른다.
+Selective batching과 chunked prefill은 둘을 한 GPU의 같은 스텝에 섞어 남는 자원을 채우고, 분리는 둘을 다른 GPU로 나누어 서로의 지연을 끊는다.
 
 [^survey]: Zhen, R., Li, J., Ji, Y., et al. (2025). Taming the Titans: A Survey of Efficient LLM Inference Serving. *Proceedings of the 18th International Natural Language Generation Conference (INLG 2025)*, 522–541. [arXiv:2504.19720](https://arxiv.org/abs/2504.19720).
 
@@ -256,10 +205,6 @@ Continuous batching과 chunked prefill은 둘을 한 GPU의 같은 스텝에 섞
 [^vllm-opt]: vLLM Project. (2026). Optimization and Tuning. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/configuration/optimization/).
 
 [^splitwise]: Patel, P., Choukse, E., Zhang, C., Shah, A., Goiri, Í., Maleki, S., & Bianchini, R. (2024). Splitwise: Efficient Generative LLM Inference Using Phase Splitting. *ISCA 2024*. [arXiv:2311.18677](https://arxiv.org/abs/2311.18677).
-
-[^mooncake]: Qin, R., Li, Z., He, W., et al. (2025). Mooncake: Trading More Storage for Less Computation — A KVCache-centric Architecture for Serving LLM Chatbot. *FAST 2025*, 155–170. [USENIX](https://www.usenix.org/conference/fast25/presentation/qin).
-
-[^vllm-disagg]: vLLM Project. (2026). Disaggregated Prefilling (experimental). *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/features/disagg_prefill/).
 
 [^sglang]: Zheng, L., Yin, L., Xie, Z., et al. (2024). SGLang: Efficient Execution of Structured Language Model Programs. *NeurIPS 2024*. [arXiv:2312.07104](https://arxiv.org/abs/2312.07104).
 
