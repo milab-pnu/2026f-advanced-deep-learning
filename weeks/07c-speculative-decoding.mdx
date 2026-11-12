@@ -168,8 +168,7 @@ Chen 등도 Chinchilla 70B에 4B draft를 붙여 비슷한 수준의 속도 향�
 앞의 기본 방식에서는 draft와 target이 같은 tokenizer를 써야 하고,
 수락률 $\alpha$가 높으려면 draft의 분포가 target과 비슷해야 하므로 target을 바꿀 때마다 맞는 draft를 찾거나 새로 학습해야 한다.
 서빙할 때는 두 모델의 weight와 KV cache를 함께 GPU(graphics processing unit)에 올리고, 실행 순서를 맞춰야 한다.
-그래서 별도 모델 없이 target 자신이 추측하게 하는 **self-speculative decoding**(self-drafting)과,
-학습 없이 문맥에서 추측을 가져오는 방법이 갈라져 나왔다.[^survey]
+그래서 별도 모델 없이 target 자신이 추측하게 하는 **self-speculative decoding**(self-drafting)이 나왔다.[^survey]
 
 ### 2-2. Medusa
 
@@ -245,49 +244,6 @@ draft 블록 전체를 forward 한 번으로 만든다.[^dflash]
 vLLM도 DFlash를 비롯한 병렬 drafting 방식을 지원한다.[^vllm-parallel]
 </Details>
 
-### 2-4. 층을 건너뛴 draft
-
-Medusa와 EAGLE은 target에 작은 모듈을 붙여 draft를 만든다.
-모듈을 붙이지 않고 target의 층 일부만 계산해서 draft를 만들 수도 있다.
-층을 건너뛰고 낸 토큰은 그대로 쓰기에는 품질이 불안하지만, 어차피 전체 모델이 검증하므로 추측으로는 쓸 만하다.
-Target이 자기 일부로 추측하고 자기 전체로 검증하므로, 이것도 self-speculative decoding의 한 갈래다.
-
-Zhang 등의 Draft & Verify는 추가 학습 없이, target의 중간 attention 층과 FFN 층 일부를 건너뛴 경로로 draft를 만든다.[^draftverify]
-어떤 층을 건너뛸지는 검증된 토큰 하나당 평균 시간이 가장 짧아지도록 모델마다 한 번 미리 찾아 둔다.
-논문의 요약 실험에서 Llama 2 13B에 대해 찾은 설정은 attention 층을 절반 넘게, FFN 층은 그보다 적게 건너뛰었다.
-별도 draft 모델의 weight를 둘 필요가 없고,
-greedy decoding으로 잰 요약 실험에서 일반 decode보다 빨랐으며, 속도 향상은 Llama 2 13B보다 70B에서 더 컸다.[^draftverify]
-
-Elhoushi 등의 LayerSkip은 중간이 아니라 앞쪽 $E$개 층만으로 draft를 만든다.[^layerskip]
-보통의 모델은 앞쪽 층의 hidden state를 LM head에 바로 넣으면 좋은 예측이 나오지 않으므로, 학습을 바꾼다.
-깊은 층일수록 높은 비율로 건너뛰어 모델이 뒤쪽 층에 덜 기대게 하는 layer dropout과,
-모든 층의 출력을 같은 LM head에 넣어 다음 토큰을 맞히게 하는 early exit loss를 함께 쓴다.
-실험에서는 모든 층에 매번 손실을 계산하면 학습이 느려지므로, 스텝마다 손실을 줄 층을 바꾸어 가며 학습했다.
-검증할 때는 draft가 이미 계산한 앞쪽 $E$개 층의 결과와 KV cache를 다시 쓴다.
-마지막 추측 토큰만 앞쪽 층을 새로 통과시키고, 그다음 모든 검증 위치를 나머지 층에 통과시킨다.
-중간 층을 건너뛰는 Draft & Verify는 draft와 검증이 계산하는 층이 달라 이렇게 다시 쓸 수 없다.
-Llama 2 7B를 LayerSkip으로 이어서 학습(continual pretraining)한 뒤 self-speculative decoding을 적용하면,
-LayerSkip 없이 학습한 기준 모델의 일반 decode보다 요약과 코딩 task 모두에서 빨랐다.[^layerskip]
-이 속도 비교는 서로 다르게 학습한 두 모델 사이의 비교다.
-Self-speculative decoding이 보존하는 것은 LayerSkip으로 다시 학습한 모델의 일반 decode 결과이므로, 속도를 비교한 상대 모델과 품질까지 같다는 뜻은 아니다.
-
-<Figure src="https://arxiv.org/html/2404.16710v4/self_speculative_decoding.svg" alt="LayerSkip 논문의 Figure 7. 위 왼쪽 Autoregressive Decoding은 4층 모델이 토큰 T1–T4를 입력받아 모든 층을 계산해 T5를 내며, 토큰마다 L개 층을 계산한다. 위 오른쪽 Speculative Decoding은 2층짜리 별도 draft 모델이 T1–T3에서 T4를 추측하고, 4층 main 모델이 T1–T4를 prefill처럼 한 번에 검증해 T5를 낸다. 아래 Self Speculation Decoding의 왼쪽 Draft는 같은 모델의 Layer 1–2만 계산하고 Layer 3–4는 비워 둔 채 LM head로 T4를 낸다. 오른쪽 Verify는 Layer 1–2에서 draft가 계산해 둔 상태를 연한 초록(cached)으로 다시 쓰고 T4 위치만 진한 초록으로 새로 계산하며, Layer 3–4는 네 위치 모두 새로 계산해 T5를 낸다. 범례는 진한 초록이 계산, 흰색이 건너뜀, 연한 초록이 cache다." caption="아래 Self Speculation Decoding이 LayerSkip이다. Draft는 앞쪽 층(그림에서는 Layer 1–2)만 계산하고 나머지 층을 건너뛰어 LM head로 토큰을 낸다. Verify는 기존 위치에서 draft가 계산해 둔 앞쪽 층의 상태를 다시 쓰고, 새 후보 T4의 앞쪽 층과 모든 위치의 뒤쪽 층은 계산한다. 위 오른쪽의 기본 speculative decoding과 달리 draft용 모델이 따로 없다." source="Elhoushi et al. (2024), Figure 7 · CC BY 4.0" wide />
-
-### 2-5. n-gram draft
-
-학습된 draft 없이도 추측을 만들 수 있다.
-요약, 문서 기반 질의응답, 코드 수정처럼 입력의 표현이 출력에도 그대로 자주 나오는 task에서는,
-지금까지 생성한 마지막 몇 토큰과 같은 n-gram(연속된 토큰 $n$개)을 프롬프트에서 찾아 그 뒤의 토큰들을 추측으로 쓰면 된다.
-예를 들어 생성한 끝부분이 `the cat`이고 프롬프트에 `the cat sat on`이 있다면 `sat on`을 추측으로 쓴다.
-Saxena의 prompt lookup decoding이 이 방식이며,
-vLLM에서도 n-gram 방식으로 제공한다.[^pld][^vllm-spec]
-서베이 저자들이 만든 벤치마크 Spec-Bench에서
-이 방식은 입력과 출력이 많이 겹치는 요약에서 일반 greedy decoding보다 뚜렷하게 빨랐다.[^survey]
-
-Fu 등의 lookahead decoding은 프롬프트 대신 모델 자신이 만든 후보에서 n-gram을 모은다.[^lookahead]
-미래 위치 여러 개에 임시 토큰을 넣어 한 번에 예측하고 그 예측으로 임시 토큰을 고치기를 반복하며, 이 과정에서 나온 토큰 묶음을 추측으로 쓴다.
-임시 토큰을 고치는 계산과 추측의 검증을 같은 forward에 넣으므로 보조 draft 모델이 필요 없다.
-
 ## 3. Multi-token prediction
 
 ### 3-1. 학습 목표로서의 multi-token prediction
@@ -346,20 +302,12 @@ DeepSeek-V3의 MTP는 모델의 성능을 높이려고 pre-training 동안 본�
 
 ### 4-1. 이득이 줄어드는 조건
 
-앞에서 구한 개선 배수는 추측마다 확률 $\alpha$로 수락된다는 가정과 함께, target이 $\gamma+1$개 위치를 위치 하나와 같은 시간에 계산한다는 가정에 기댔다.
-이제 둘째 가정이 batch 크기에 따라 어떻게 무너지는지 보자.
-이 가정은 decode가 memory-bound이고 검증 위치들이 읽은 weight와 기존 KV cache를 충분히 재사용할 때 근사적으로 성립한다.
-Memory-bound라는 사실만으로는 충분하지 않다.
-검증 위치마다 같은 KV cache를 다시 읽거나 kernel의 추가 비용이 크면 계산 능력이 남아도 검증 스텝은 길어질 수 있다.
+앞에서 구한 개선 배수는 target이 $\gamma+1$개 위치를 위치 하나와 같은 시간에 계산한다는 가정에 기댔다.
+이 가정은 decode가 memory-bound이고 검증 위치들이 읽은 weight와 기존 KV cache를 재사용할 때 근사적으로 성립한다.
 Continuous batching 서버는 요청이 몰리면 batch를 키우고, 그만큼 선형층의 intensity가 오른다.
-Batch의 요청 수를 $b$라 하자.
-Speculative decoding은 요청마다 위치를 $\gamma+1$개로 늘리므로 한 스텝의 토큰 수가 $b(\gamma+1)$개가 된다.
-나무로 추측하면 $\gamma+1$ 자리에 나무의 노드 수가 들어가고, root인 직전 확정 토큰도 여기에 센다.
+Batch의 요청 수를 $b$라 하면, speculative decoding은 요청마다 위치를 $\gamma+1$개로 늘리므로 한 스텝의 토큰 수가 $b(\gamma+1)$개가 된다.
 Batch가 크면 이 값이 ridge point를 넘어 선형층이 compute-bound가 되고,
 그때부터는 수락되지 않을 추측을 검증하는 계산이 실제 시간을 잡아먹는다.
-
-MoE 모델에서는 위치를 늘려도 읽는 weight는 그대로라는 가정이 약해진다.
-검증 위치가 늘면 위치마다 고르는 expert가 달라 활성 expert 수와 읽어야 하는 weight bytes가 함께 늘 수 있기 때문이다.[^moesd]
 
 <Callout type="example">
 같은 하한 모형으로 Llama 3.1 8B를 H100에서 돌린다고 하자.
@@ -374,29 +322,20 @@ $\gamma=4$로 요청마다 위치 5개를 검증하고, draft의 비용은 무�
 | 256 | 192 | 6.7 ms | 17.5 ms | 1.06 | 0.74 |
 
 개선 배수는 forward 한 번에 얻는 토큰 수의 기댓값에 두 스텝 시간의 비(일반/speculative)를 곱한 값이고, 1보다 작으면 일반 decode보다 느리다는 뜻이다.
-예를 들어 $\alpha=0.7$이면 토큰 수의 기댓값이 2.77개이므로, 둘째 행의 개선 배수는 $2.77\times20.2/31.0\approx1.81$배다.
-일반 decode는 batch 192에서도 선형층이 memory-bound라 weight 읽기 4.8 ms가 들고, 여기에 KV cache 읽기(문맥 2,048에서 15.4 ms, 256에서 1.9 ms)가 더해진다.
+일반 decode는 batch 192에서도 선형층이 memory-bound라 weight 읽기 4.8 ms에 KV cache 읽기(문맥 2,048에서 15.4 ms, 256에서 1.9 ms)가 더해진다.
 Speculative decoding은 batch 192에서 한 스텝에 $192\times5=960$개 위치를 계산하므로 선형층이 compute-bound가 되어 약 15.6 ms가 걸린다(파라미터 8.03B 기준).
-문맥이 2,048토큰이면 이 하한 모형에서는 검증 위치들이 KV cache 읽기를 재사용한다고 가정하므로 KV cache를 읽는 15.4 ms가 그대로이고, 스텝이 1.5배만 길어져
-batch 192에서도 이득이 남는다(선형층 15.6 ms와 KV cache 읽기 15.4 ms를 더해 31.0 ms).
-문맥이 256토큰이면 선형층 계산이 스텝을 거의 다 차지해 스텝이 2.6배 길어지고,
-수락률이 0.5라면 한 번에 얻는 토큰이 1.94개뿐이라 2.6배 늘어난 시간을 메우지 못해 오히려 느려진다.
+문맥이 2,048토큰이면 KV cache 읽기 15.4 ms가 그대로라 스텝이 1.5배만 길어져 이득이 남는다.
+문맥이 256토큰이면 선형층 계산이 스텝을 거의 다 차지해 스텝이 2.6배 길어지고, 수락률이 0.5라면 오히려 느려진다.
 Draft 비용까지 더하면 개선 배수는 이보다 낮아진다.
 </Callout>
 
 측정 결과도 같은 방향이다.
 EAGLE은 Llama 2 70B Chat에서 batch를 조금만 키워도 속도 향상이 줄었다.[^eagle]
-EAGLE-3 논문이 SGLang 팀의 측정으로 실은 결과도 비슷하다.
-EAGLE은 batch가 커지자 처리량(throughput)을 오히려 낮췄지만, EAGLE-3는 그보다 큰 batch에서도 이득을 유지했다.[^eagle3]
-vLLM 팀은 요약 데이터에서 요청률이 낮을 때 n-gram 방식으로 큰 속도 향상을 얻었지만,
-같은 데이터에서 요청률이 높을 때는 오히려 느려졌다고 보고했다.[^vllm-blog]
+EAGLE-3 논문이 실은 SGLang 팀의 측정에서도 EAGLE은 batch가 커지자 처리량(throughput)을 오히려 낮췄지만, EAGLE-3는 그보다 큰 batch에서도 이득을 유지했다.[^eagle3]
 
 예시의 2,048토큰 행이 보여 주듯 긴 문맥에서는 이득이 덜 줄어든다.
-Sadhukhan 등의 MagicDec은 KV cache 읽기가 스텝을 지배하는 긴 문맥에서는 batch가 커도 target이 $\gamma+1$개 위치를 검증하는 시간이 위치 하나를 처리하는 시간과 거의 같다는 점을 짚었다.
-Draft로 target 자신을 쓰되 KV cache의 일부만 남겨 짧게 유지하는 self-speculative decoding 설정의 이론 분석에서는,
-문맥이 짧으면 batch가 커질수록 이득이 줄지만 어느 길이를 넘으면 오히려 커진다고 예측했다.[^magicdec]
-문맥이 길면 target의 스텝은 batch가 커질수록 요청마다 긴 KV cache를 읽느라 길어진다.
-KV cache가 짧은 draft의 스텝은 그만큼 길어지지 않아, 전체 시간에서 draft가 차지하는 비중이 작아진다.
+Sadhukhan 등의 MagicDec은 KV cache의 일부만 남긴 target 자신을 draft로 쓰는 설정을 분석해, 문맥이 짧으면 batch가 커질수록 이득이 줄지만 어느 길이를 넘으면 오히려 커진다고 예측했다.[^magicdec]
+문맥이 길면 target의 스텝은 요청마다 긴 KV cache를 읽느라 길어지지만, KV cache가 짧은 draft의 스텝은 그만큼 길어지지 않아 draft 비용의 비중이 작아지기 때문이다.
 이 경계는 모델, 하드웨어, draft 방식에 따라 달라진다.
 
 ### 4-2. 서빙에서의 선택
@@ -414,7 +353,7 @@ vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-boun
 
 <Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.31.0/docs/assets/benchmarking/latency-metrics-speculative-decoding-light.svg" alt="'Latency with token bundling' 시간축 그림. 요청을 0 ms에 보내고, Output 1로 토큰 T1이 100 ms에, Output 2로 T2, T3, T4가 묶여 140 ms에, Output 3으로 T5가 180 ms에 도착한다. 0–100 ms가 TTFT 100 ms이고, 출력 사이 간격은 두 번 모두 ITL 40 ms다. 100–180 ms가 80 ms의 생성 구간이다. 아래 왼쪽 상자는 Mean ITL = (40 ms + 40 ms) ÷ 2 = 40 ms, 오른쪽 상자는 TPOT = (180 − 100) ms ÷ (5 − 1) = 20 ms/token이다." caption="토큰이 묶여 도착할 때의 ITL과 TPOT. 토큰 다섯 개가 출력 세 번에 나뉘어 도착하면 ITL은 관측된 간격 두 개의 평균인 40 ms이지만, TPOT는 첫 토큰 뒤 80 ms를 토큰 네 개로 나눈 20 ms다." source="vLLM Project (v0.31.0), Benchmark CLI 문서 · Apache-2.0" wide />
 
-이 노트의 speculative decoding 원논문·Medusa·LayerSkip·MTP 논문 그림은 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), EAGLE 저장소와 vLLM 문서 그림은 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)에 따른다.
+이 노트의 speculative decoding 원논문·Medusa·MTP 논문 그림은 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), EAGLE 저장소와 vLLM 문서 그림은 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)에 따른다.
 
 [^survey]: Xia, H., Yang, Z., Dong, Q., et al. (2024). Unlocking Efficiency in Large Language Model Inference: A Comprehensive Survey of Speculative Decoding. *Findings of ACL 2024*, 7655–7671. [arXiv:2401.07851v3](https://arxiv.org/abs/2401.07851v3).
 
@@ -434,15 +373,7 @@ vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-boun
 
 [^vllm-parallel]: Marques, A., Flynn, M., Zhao, H., Chitty Venkata, K. T., & Ukachi, C. (2026). Parallel All the Way Down: Beyond Single-Token Generation with Speculative Decoding. *vLLM Blog*. [vllm.ai](https://vllm.ai/blog/2026-07-28-speculators-parallel-drafting).
 
-[^draftverify]: Zhang, J., Wang, J., Li, H., Shou, L., Chen, K., Chen, G., & Mehrotra, S. (2024). Draft & Verify: Lossless Large Language Model Acceleration via Self-Speculative Decoding. *ACL 2024*. [arXiv:2309.08168](https://arxiv.org/abs/2309.08168).
-
-[^layerskip]: Elhoushi, M., Shrivastava, A., Liskovich, D., et al. (2024). LayerSkip: Enabling Early Exit Inference and Self-Speculative Decoding. *ACL 2024*. [arXiv:2404.16710](https://arxiv.org/abs/2404.16710).
-
-[^pld]: Saxena, A. (2023). Prompt Lookup Decoding. *GitHub*. [github.com](https://github.com/apoorvumang/prompt-lookup-decoding).
-
 [^vllm-spec]: vLLM Project. (2026). Speculative Decoding. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/features/speculative_decoding/).
-
-[^lookahead]: Fu, Y., Bailis, P., Stoica, I., & Zhang, H. (2024). Break the Sequential Dependency of LLM Inference Using Lookahead Decoding. *ICML 2024*. [arXiv:2402.02057](https://arxiv.org/abs/2402.02057).
 
 [^gloeckle]: Gloeckle, F., Youbi Idrissi, B., Rozière, B., Lopez-Paz, D., & Synnaeve, G. (2024). Better & Faster Large Language Models via Multi-token Prediction. *ICML 2024*. [arXiv:2404.19737](https://arxiv.org/abs/2404.19737).
 
@@ -451,10 +382,6 @@ vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-boun
 [^mimo]: LLM-Core Xiaomi. (2025). MiMo: Unlocking the Reasoning Potential of Language Model -- From Pretraining to Posttraining. [arXiv:2505.07608](https://arxiv.org/abs/2505.07608).
 
 [^glm45]: GLM-4.5 Team. (2025). GLM-4.5: Agentic, Reasoning, and Coding (ARC) Foundation Models. [arXiv:2508.06471](https://arxiv.org/abs/2508.06471).
-
-[^moesd]: Huang, Z., Zhu, L., Zhan, Z., et al. (2025). MoESD: Unveil Speculative Decoding's Potential for Accelerating Sparse MoE. *NeurIPS 2025*. [arXiv:2505.19645](https://arxiv.org/abs/2505.19645).
-
-[^vllm-blog]: vLLM Team. (2024). How Speculative Decoding Boosts vLLM Performance by up to 2.8x. *vLLM Blog*. [vllm.ai](https://vllm.ai/blog/2024-10-17-spec-decode).
 
 [^magicdec]: Sadhukhan, R., Chen, J., Chen, Z., et al. (2025). MagicDec: Breaking the Latency-Throughput Tradeoff for Long Context Generation with Speculative Decoding. *ICLR 2025*. [arXiv:2408.11049](https://arxiv.org/abs/2408.11049).
 

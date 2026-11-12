@@ -24,7 +24,6 @@ Jiang 등의 서베이처럼 서빙 단계에서 KV cache를 다루는 방법을
 다룰 문제는 세 가지다.
 공간을 미리 잡아 두면 낭비가 생기고, 같은 prefix를 요청마다 다시 계산해 저장하면 중복이 생기며,
 낭비와 중복을 없애도 full attention 층의 KV cache는 문맥 길이에 비례해 커진다.
-끝으로 sliding window처럼 저장하는 상태가 다른 층이 full attention 층과 섞인 hybrid 모델에서는 이 관리가 어떻게 달라지는지 본다.
 
 ## 1. 연속 공간 할당의 낭비
 
@@ -105,10 +104,7 @@ Llama 3.1 8B에서 블록 하나는 $16\times131\ \text{KB}\approx2.1\ \text{MB}
 </Callout>
 
 블록이 너무 작으면 kernel이 KV cache를 읽고 처리할 때 GPU의 병렬성을 충분히 쓰지 못할 수 있고,
-너무 크면 마지막 블록의 빈칸이 커진다.
-실험에서도 알맞은 블록 크기는 요청 길이에 따라 달랐다.
-요청마다 전체 지연을 출력 토큰 수로 나눈 값으로 비교하면, ChatGPT 대화를 모은 ShareGPT의 입출력 길이로 만든 요청에서는 중간 크기의 블록에서 넓은 범위에 걸쳐 이 값이 가장 낮았다.
-반면 지시 데이터 Alpaca처럼 시퀀스가 짧으면 블록이 커질 때 성능이 크게 떨어졌다.[^vllm]
+너무 크면 마지막 블록의 빈칸이 커진다.[^vllm]
 
 이 방식에는 대가도 있다.
 한 요청의 key·value가 메모리에 흩어져 있으므로,
@@ -135,11 +131,6 @@ vLLM은 physical 블록마다 그 블록을 가리키는 시퀀스 수(reference
 꽉 찬 블록 7에는 쓰기가 일어나지 않으므로 두 sample이 끝까지 공유한다.
 
 공유하는 prefix가 길거나 여러 시퀀스가 같은 블록을 쓸수록 아끼는 블록이 많아지고, 그 비율은 생성 길이와 시퀀스가 어디서 갈라지는지에도 달려 있다.
-Alpaca를 처리한 실험에서 parallel sampling이 아낀 메모리는 작았고,
-가지끼리 더 많이 공유하는 beam search는 훨씬 많은 메모리를 아꼈다.[^vllm]
-프롬프트가 더 긴 ShareGPT에서는 두 경우 모두 절감이 더 컸다.
-
-블록 단위 관리와 공유를 함께 쓴 vLLM은 원논문 실험에서 같은 수준의 지연을 유지하면서 기존 시스템(FasterTransformer, Orca)보다 몇 배 높은 요청률을 감당했다.[^vllm]
 
 ## 3. Prefix 재사용
 
@@ -221,11 +212,6 @@ cache를 위한 공간을 따로 떼어 둘 필요가 없다.[^sglang]
 (4)에서 새 대화 'What can you do?'가 오면 시스템 프롬프트까지만 기존 가지와 같으므로, 그 지점에서 node를 나누어 가지가 갈라지고 새 node d가 붙는다.
 (5)에서는 둘째 대화의 다음 턴이 d까지의 경로를 재사용하고 새 턴만 붙이는데, 메모리가 모자라 오래 쓰이지 않은 leaf c가 지워진다.
 
-SGLang 원논문은 few-shot·agent·다중 턴 대화 같은 벤치마크에서 cache 적중률이 task에 따라 차이는 있지만 대체로 높았다고 보고했다.
-처리량은 여러 번의 언어 모델 호출로 이루어진 프로그램을 충분히 큰 batch에서 초당 몇 개 처리하는지로 쟀는데,
-이 벤치마크에서 SGLang 전체 시스템의 처리량은 Guidance·vLLM·LMQL보다 많게는 여러 배 높았다.
-이 향상에는 RadixAttention의 cache 재사용뿐 아니라, 프로그램 안의 여러 호출을 병렬로 실행하고 출력 형식을 제한하는 constrained decoding을 빠르게 처리한 효과도 섞여 있다.[^sglang]
-
 두 설계는 prefix를 찾는 자료구조가 다르지만, 같은 조건에서는 같은 prefix를 찾는다.
 vLLM의 hash는 부모 블록의 hash를 이어 받아 앞의 토큰 전체를 반영하므로, page 크기가 같고 같은 블록이 cache에 남아 있다면 hash 조회도 tree 탐색과 같은 prefix를 찾는다.
 다만 실제 두 시스템은 page 크기, 무엇을 먼저 내보내는지, 요청을 어떤 순서로 처리하는지(scheduling)도 서로 달라서, 적중률 차이를 자료구조 하나로 설명하기는 어렵다.
@@ -269,9 +255,6 @@ Cache가 정해 둔 크기(KV cache 예산)를 넘으면 최근 토큰을 보호
 Llama 3.1 8B 같은 GQA 모델이라면 KV head를 함께 쓰는 query head들의 점수를 모아야 하는데, 원논문은 이 경우를 실험하지 않았다.
 예산을 모든 토큰을 남기는 full cache보다 훨씬 작게 잡아 heavy hitter와 최근 토큰에 반씩 나누어도,
 H2O는 요약 같은 task에서 full cache와 비슷한 성능을 냈다.
-
-저자들은 H2O를 offloading inference 엔진 FlexGen 위에 구현했다.
-줄어든 cache만큼 batch를 몇 배로 키울 수 있었고, 처리량도 H2O를 쓰지 않은 FlexGen보다 뚜렷이 높았다.
 
 점수를 세지 않고 위치만으로 남길 토큰을 정할 수도 있다.
 Xiao 등의 StreamingLLM은 처음 몇 토큰(보통 4개)과 최근 토큰의 key·value만 남긴다.[^streamingllm]
@@ -320,11 +303,8 @@ Pooling 뒤에는 4번의 높은 점수가 양옆으로 퍼져, 4번을 가운�
 </Callout>
 
 SnapKV 저자들은 매우 긴 문맥을 지원하는 모델에서 프롬프트 KV cache를 입력보다 훨씬 짧은 고정 길이로 압축했다.
-긴 입력에서 토큰당 decode 지연이 몇 배 줄었고,
-메모리가 모자라기 전까지 받을 수 있는 입력 길이도 여러 배 늘었다.[^snapkv]
-LongBench의 긴 입력 데이터셋들에서 잰 품질도 압축하지 않은 모델과 대체로 비슷했다.
-다만 하락이 큰 경우도 있었다.
-예를 들어 예산을 가장 작게 잡았을 때 GovReport 요약 점수는 압축하지 않았을 때보다 크게 낮았다.
+긴 입력에서 토큰당 decode 지연이 줄고 메모리가 모자라기 전까지 받을 수 있는 입력 길이가 늘었으며, LongBench에서 잰 품질은 압축하지 않은 모델과 대체로 비슷했다.[^snapkv]
+다만 예산을 가장 작게 잡았을 때 GovReport 요약 점수는 크게 낮아졌다.
 
 어떤 토큰을 고르든, eviction은 지운 토큰의 정보를 그대로 버린다.
 Query 하나의 attention 출력은 토큰 $k$의 value $V_k$를 attention weight $A_k$로 가중해 더한 $o=\sum_k A_kV_k$이므로,
@@ -338,8 +318,6 @@ Zhang 등의 CaM(cache merging)은 지울 토큰의 value를 버리지 않고 �
 $A_i$가 0.05였다면 지운 항은 0.3뿐인데 1.2를 더하게 된다.
 이렇게 지울 토큰의 attention이 최근 토큰들의 평균보다 훨씬 작으면 원래 기여보다 큰 값을 보충하게 되므로, CaM은 그럴수록 합칠 확률을 낮춘다.
 CaM은 지울 토큰을 고르는 방법이 아니라 H2O 같은 기존 eviction 위에 얹는 방법이다.
-KV cache의 작은 일부만 남기는 설정에서 H2O에 CaM을 더하면,
-OpenBookQA와 COPA의 zero-shot 정확도가 H2O만 쓸 때보다 올랐다.[^cam]
 
 <Callout type="warning">
 실행 중인 요청의 eviction과 merging은 손실이 있는 압축이다.
@@ -382,66 +360,9 @@ Prefix는 한 번 가져오면 되지만,
 H100 SXM의 HBM(3.35 TB/s)에서 읽으면 약 1.3 ms다.
 그래서 지연이 중요한 서빙에서 offloading은 주로 지금 attention에 쓰지 않는 cache, 곧 재사용을 기다리는 prefix에 쓴다.
 선점으로 멈춘 요청의 블록을 CPU 메모리로 옮겨 둘 수도 있다.
-지연보다 처리량이 중요한 일괄 처리에서는 앞의 FlexGen처럼 실행 중인 요청의 KV cache까지 GPU 밖에 두기도 한다.
+지연보다 처리량이 중요한 일괄 처리에서는 offloading inference 엔진 FlexGen처럼 실행 중인 요청의 KV cache까지 GPU 밖에 두기도 한다.
 
-## 5. Hybrid 모델의 cache
-
-### 5-1. 층마다 다른 상태
-
-지금까지는 모든 층이 full attention이어서, 토큰이 하나 늘면 모든 층에 key·value가 한 칸씩 쌓이는 모델을 가정했다.
-Sliding window attention 층에서는 각 토큰이 자신을 포함한 최근 $W$개 토큰에만 attention하므로, $W$개보다 오래된 토큰의 key·value는 그 층에서 다시 읽히지 않는다.
-Linear attention 층과 Mamba 같은 SSM(state space model) 층은 과거 key·value를 모두 두는 대신,
-RNN(recurrent neural network)의 hidden state처럼 토큰마다 고정 크기의 상태 하나를 갱신하고 출력은 그 상태에서 읽는다.
-이 상태의 크기는 문맥 길이와 무관하지만, 과거를 압축해 덮어쓰므로 지금 상태만으로는 이전 시점의 상태를 다시 꺼낼 수 없다.
-Hybrid 모델은 이런 층을 full attention 층과 섞어 쌓아, 문맥 길이에 비례하는 KV cache를 모델 구조에서 줄인다.
-
-| 층 종류 | 실행 중에 요청마다 두는 상태 | 크기 | 공간을 돌려줄 수 있는 때 |
-|---|---|---|---|
-| Full attention | 모든 과거 토큰의 key·value | 문맥 길이에 비례 | 요청이 끝날 때 |
-| Sliding window | 최근 $W$개 토큰의 key·value | $W$에서 멈춤 | Window 밖으로 밀려난 블록은 바로 |
-| Linear attention·SSM | 고정 크기의 상태 하나 | 문맥 길이와 무관 | 요청이 끝날 때 |
-
-표는 토큰 단위로 본 크기다.
-실제 블록 할당에서는 window가 블록 경계에 걸쳐 남는 칸이 생길 수 있다.
-
-Gemma 3처럼 sliding window 층 다섯 개마다 full attention 층 하나를 두고 window를 $W=1{,}024$토큰으로 잡은 모델이라면,
-32,768토큰 문맥에서 sliding window 층 하나의 KV cache는 full attention 층 하나의 32분의 1이다.[^gemma3]
-Sliding window 층 52개와 full attention 층 10개를 둔 Gemma 3 27B라면,[^vllm-hybrid]
-같은 32,768토큰 문맥에서 full attention 층 하나를 1로, sliding window 층 하나를 1/32로 세어 62개 층의 전체 KV cache는 모든 층을 full attention처럼 쌓을 때의 $(10+52/32)/62\approx0.19$, 약 19%로 어림된다.
-층마다 같은 크기의 블록을 같은 속도로 쌓는다고 가정한 KV cache 관리자는 이 차이를 살리지 못한다.
-
-### 5-2. 층 group
-
-vLLM의 hybrid KV cache 관리자는 같은 종류의 층을 같은 수씩 묶어 group을 만들고,
-모든 group이 같은 byte 수의 블록을 한 메모리 pool에서 받아 쓰게 한다.[^vllm-hybrid]
-Group의 블록 하나는 같은 토큰 구간에 대해 그 group의 모든 층의 key·value를 담는다.
-그래서 층 하나가 그 구간에 쓰는 byte 수가 층 종류마다 같다면, group마다 층 수가 같아야 블록 크기도 같아진다.
-블록 크기가 같으므로 sliding window group이 window 밖으로 밀려난 블록을 돌려주면, 그 블록을 full attention group이나 다른 요청이 곧바로 받아 쓸 수 있다.
-
-<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.31.0/docs/assets/design/hybrid_kv_cache_manager/basic_grouping_example.png" alt="표의 열은 토큰 구간 0-15, 16-31, 32-47, 48-63, 64-79, 80-95, 96-111이다. 첫 행 'block id of group 0 (full.0 - full.9)'에는 구간마다 블록 0부터 6까지가 차례로 들어 있다. 둘째 행 'block id of group 1 (sw.0 - sw.9)'은 앞의 다섯 구간이 '/'이고 80-95에 블록 7, 96-111에 블록 8이 있다. 셋째 행 'block id of group 2 (sw.10 - sw.19)'도 앞의 다섯 구간이 '/'이고 80-95에 블록 9, 96-111에 블록 10이 있다." caption="Full attention 층 10개와 sliding window 층 20개(W=32)를 10층씩 group 세 개로 묶고 블록 하나에 16토큰을 담은 예. 112토큰 요청에서 full attention group은 모든 구간에 블록을 받고, 두 sliding window group은 최근 32토큰이 걸친 마지막 두 구간에만 받는다('/'는 블록이 필요 없는 구간). 세 group은 한 pool에서 번호가 겹치지 않는 블록을 나누어 받는다." source="vLLM Project (v0.31.0), Hybrid KV Cache Manager 설계 문서 · Apache-2.0" wide />
-
-앞의 Gemma 3 27B라면 group 하나를 10층으로 잡아 full attention group 하나와 sliding window group 여섯 개를 만들고,
-sliding window 층 52개로 다 채우지 못한 8자리는 빈 층으로 둔다.
-
-### 5-3. Prefix 재사용의 조건
-
-Prefix caching의 조건도 층 종류마다 달라진다.
-Full attention 층은 prefix의 모든 블록이 cache에 있어야 하지만,
-sliding window 층은 prefix의 마지막 $W-1$개 토큰을 담은 블록만 있으면 된다.[^vllm-hybrid]
-Window $W$에는 지금 계산할 토큰 자신도 들어가기 때문이다.
-그보다 앞 토큰은 이 층에서 다시 읽히지 않으므로, 그 블록이 이미 지워졌어도 재사용에 지장이 없다.
-
-<Figure src="https://raw.githubusercontent.com/vllm-project/vllm/v0.31.0/docs/assets/design/hybrid_kv_cache_manager/sw_attn.png" alt="0부터 14까지 번호가 붙은 칸 15개가 한 줄로 놓여 있고, 2·3·4·5번, 8·9번, 11·12·13번 칸이 파랗게 칠해져 있다. 0·1번, 6·7번, 10번, 14번은 흰 칸이다." caption="Sliding window 층(W=4)의 prefix 재사용. 15토큰 프롬프트를 블록 하나가 1토큰인 칸으로 그렸고, 파란 칸만 cache에 남아 있다. 재사용할 길이 바로 앞의 W−1=3토큰만 있으면 되므로 2–4번으로 5토큰, 3–5번으로 6토큰, 11–13번으로 14토큰을 재사용할 수 있고, 가장 긴 14토큰을 택하면 14번만 새로 계산한다. Full attention 층이라면 0번부터 빠짐없이 이어진 부분만 재사용하므로, 0–1번이 빠진 이 상태에서는 하나도 재사용하지 못한다." source="vLLM Project (v0.31.0), Hybrid KV Cache Manager 설계 문서 · Apache-2.0" wide />
-
-Linear attention·SSM 층은 사정이 더 까다롭다.
-나중 시점의 상태로는 중간 시점의 상태를 되돌려 얻을 수 없으므로,
-재사용하려면 공유 prefix의 끝까지 처리한 시점의 상태가 따로 저장돼 있어야 한다.
-vLLM v0.31.0에서 hybrid Mamba 모델의 prefix caching은 기본적으로 블록 크기의 배수인 토큰 위치에서만 Mamba 상태를 저장하므로, 재사용도 그 위치에서만 이어 갈 수 있다.[^vllm-mamba]
-
-여러 층 종류의 조건을 동시에 만족하는 가장 긴 prefix만 재사용할 수 있으므로,
-같은 프롬프트라도 hybrid 모델에서 재사용되는 prefix는 full attention 모델보다 짧아질 수 있다.
-
-이 노트의 Kwon 등 논문 그림은 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), vLLM 문서 그림은 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0), LMSYS 블로그 그림은 블로그 저장소의 MIT 라이선스(<a href={lmsysLicense}>전문</a>)에 따른다.
+이 노트의 Kwon 등 논문 그림은 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), LMSYS 블로그 그림은 블로그 저장소의 MIT 라이선스(<a href={lmsysLicense}>전문</a>)에 따른다.
 
 [^survey]: Jiang, J., Yang, P., Zhang, R., & Liu, F. (2026). Towards Efficient Large Language Model Serving: A Survey on System-Aware KV Cache Optimization. *Findings of ACL 2026*, 38450–38476. [arXiv:2607.08057](https://arxiv.org/abs/2607.08057).
 
@@ -455,13 +376,7 @@ vLLM v0.31.0에서 hybrid Mamba 모델의 prefix caching은 기본적으로 블�
 
 [^sglang-radix]: SGLang Team. (2026). radix_cache.py. *GitHub*. [github.com](https://github.com/sgl-project/sglang/blob/010776e94f31a94106fdeeb723fcdd951cb6c4ee/python/sglang/srt/mem_cache/radix_cache.py).
 
-[^gemma3]: Gemma Team. (2025). Gemma 3 Technical Report. [arXiv:2503.19786](https://arxiv.org/abs/2503.19786).
-
 [^vllm-metrics]: vLLM Project. (2026). Production Metrics. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/usage/metrics/).
-
-[^vllm-mamba]: vLLM Project. (2026). Automatic Prefix Caching: Hybrid Mamba models. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/features/automatic_prefix_caching/#hybrid-mamba-models).
-
-[^vllm-hybrid]: vLLM Project. (2026). Hybrid KV Cache Manager. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/hybrid_kv_cache_manager/).
 
 [^h2o]: Zhang, Z., Sheng, Y., Zhou, T., et al. (2023). H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. *NeurIPS 2023*. [arXiv:2306.14048](https://arxiv.org/abs/2306.14048).
 

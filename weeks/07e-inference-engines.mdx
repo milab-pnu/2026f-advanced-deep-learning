@@ -56,8 +56,6 @@ v0.31.0에서는 호환되지 않는 설정이 아니면 기본으로 켠다.[^v
 
 ## 2. vLLM
 
-### 2-1. V1 구조
-
 vLLM은 PagedAttention 논문과 함께 공개된 엔진이다.
 2025년의 V1 구조 개편은 코드 단순화, 최적화 통합과 함께 **CPU overhead를 거의 없애는 것**을 주요 목표로 삼았다.[^vllm-v1]
 
@@ -78,33 +76,7 @@ V1의 주요 설계는 다음과 같다.[^vllm-v1][^vllm-arch]
 - **Persistent batch.** 이어지는 두 스텝의 batch는 요청 몇 개가 들어오거나 끝나는 것 말고는 거의 같다.
   그래서 block table처럼 큰 입력 텐서를 스텝마다 새로 만들지 않고, 이전 스텝의 텐서를 그대로 둔 채 바뀐 부분만 고쳐 CPU 시간을 줄인다.[^vllm-mrv2]
 
-### 2-2. 주요 설정
-
-vLLM의 주요 설정 인자는 batching, KV cache, 병렬화, 양자화 같은 기법의 동작을 조절한다.[^vllm-args][^vllm-opt]
-
-| 인자 | 기본값 | 무엇을 정하나 |
-|---|---|---|
-| `--gpu-memory-utilization` | 0.92 | 엔진의 GPU 메모리 예산 비율. Weight, activation과 실행용 메모리 등을 뺀 나머지로 KV cache 크기를 정함 |
-| `--max-num-seqs` | GPU에 따라 다름 | 동시에 실행할 요청 수의 상한 |
-| `--max-num-batched-tokens` | GPU와 사용 방식에 따라 다름 | 스텝당 토큰 예산. 작게 잡으면 ITL(inter-token latency)을, 크게 잡으면 TTFT(time to first token)와 처리량을 개선할 수 있음 |
-| `--enable-prefix-caching` | 지원하는 모델에서 켜짐 | Prefix 재사용 |
-| `--tensor-parallel-size` | 1 | TP(tensor parallelism)로 나눌 GPU 수 |
-| `--kv-cache-dtype` | auto | KV cache의 정밀도(`fp8` 등) |
-| `--quantization` | 모델 설정을 따름 | 양자화 방식(weight, 방식에 따라 activation도) |
-| `--speculative-config` | 없음 | Draft 방식(EAGLE, n-gram, MTP(multi-token prediction) 등)과 추측 길이 |
-| `--enforce-eager` | False | `torch.compile`과 CUDA graph를 끄고 실행 |
-
-`--max-num-seqs`와 `--max-num-batched-tokens`의 기본값은 GPU와 사용 방식에 따라 달라지므로,
-실험 결과를 보고할 때는 기본값에 기대지 말고 실제 값을 함께 적는다.
-
-vLLM은 서버 내부 지표를 모니터링 도구 Prometheus가 수집할 수 있는 형식으로 내보내므로, 설정을 바꾸기 전후의 지표를 비교해 효과를 확인한다.[^vllm-metrics]
-KV cache 사용률은 `vllm:kv_cache_usage_perc`, 실행·대기 요청 수는 `vllm:num_requests_running`과 `vllm:num_requests_waiting`이다.
-Prefix cache 적중률은 토큰 수를 세는 `vllm:prefix_cache_hits`를 `vllm:prefix_cache_queries`로 나누어 구한다.
-두 값은 누적 counter(Prometheus에서는 이름 끝에 `_total`이 붙는다)이므로 같은 측정 구간의 증가분끼리 나눈다.
-
 ## 3. SGLang
-
-### 3-1. 설계
 
 SGLang은 LLM(large language model)을 여러 번 부르는 프로그램,
 곧 생성·분기·도구 호출이 섞인 구조화된 생성을 빠르게 실행하려는 목표에서 출발했다.[^sglang]
@@ -121,51 +93,9 @@ SGLang 팀은 그룹마다 긴 공통 prefix를 공유하는 요청들로 worklo
 이 측정에서 이 방식은 v0.3보다 cache 적중률을 크게 높였고, 그에 따라 처리량도 늘었다.[^sglang-v04]
 실제 이득은 요청의 공통 부분과 부하에 따라 달라진다.
 
-### 3-2. 설정과 튜닝
+## 4. 성능 측정
 
-SGLang에도 vLLM의 주요 인자에 대응하는 설정이 있다.[^sglang-args]
-
-| 정하는 것 | vLLM | SGLang |
-|---|---|---|
-| GPU 메모리 예산 | `--gpu-memory-utilization` | `--mem-fraction-static` |
-| 동시 요청 수의 상한 | `--max-num-seqs` | `--max-running-requests` |
-| 한 스텝에 처리할 토큰 수 | `--max-num-batched-tokens` | `--chunked-prefill-size` |
-
-대응하는 인자라도 정의가 꼭 같지는 않다.
-`--chunked-prefill-size`는 prefill 조각의 크기이고 vLLM의 `--max-num-batched-tokens`는 decode 토큰까지 포함한 스텝당 예산이라,
-두 엔진에 같은 숫자를 넣어도 같은 조건이 되지는 않는다.
-
-SGLang에서 요청의 실행 순서는 `--schedule-policy`로 정한다.
-기본값은 도착한 순서대로인 `fcfs`(first come, first served)이고,
-`lpm`(longest prefix match)을 고르면 cache와 일치하는 prefix가 긴 요청부터 처리한다.
-SGLang 논문의 cache-aware scheduling이 이 정책이다.
-다만 대기 요청이 128개를 넘으면 정렬 비용을 아끼려고 `fcfs`로 돌아간다.[^sglang-policy]
-
-지연(latency) 목표 없이 모아 둔 요청을 한꺼번에 처리하는 경우를 offline batch inference라 한다.
-SGLang의 튜닝 문서는 이 경우 처리량을 높이려면 batch를 크게 만드는 것이 가장 중요하다고 요약한다.[^sglang-tune]
-작은 batch에서는 weight 읽기가 병목이라는 roofline 분석과 같은 결론이다.
-Batch가 커질수록 요청들의 KV cache가 메모리를 더 차지하므로, KV cache 사용률은 batch를 충분히 키웠는지 보는 단서가 된다.
-다만 사용률은 문맥 길이와 실행 중인 요청끼리 공유하는 prefix에도 달려 있으므로 대기 요청 수와 함께 본다.
-문서는 서버 로그의 KV cache 사용률이 0.9를 넘으면 메모리를 잘 쓰고 있다고 보고,
-대기 요청이 쌓였는데도 0.9 아래에 머물면 서버가 새 요청을 너무 보수적으로 받아들이는 것이라고 본다.
-이때는 `--schedule-conservativeness`를 낮춰 새 요청을 더 적극적으로 받게 한다.
-메모리가 모자라면 prefill에서는 조각 크기를, decode에서는 동시 요청 수를 줄이라고 권한다.
-
-## 4. 다른 엔진
-
-vLLM과 SGLang 말고도 목적이 다른 엔진이 여럿 있다.[^survey]
-NVIDIA의 TensorRT-LLM은 NVIDIA GPU에 맞춘 attention·행렬곱·MoE(mixture of experts) kernel과 prefill과 decode의 분리,
-대규모 expert parallelism, speculative decoding을 갖춘 라이브러리다.[^trtllm]
-llama.cpp는 의존성 없는 C/C++ 구현으로,
-개인용 컴퓨터와 다양한 하드웨어에서 양자화된 모델을 돌리는 데 널리 쓰인다.[^llamacpp]
-LMDeploy는 TurboMind라는 자체 엔진으로 압축과 서빙을 함께 제공한다.[^lmdeploy]
-한때 널리 쓰인 Hugging Face의 TGI(Text Generation Inference)는 현재 유지보수 모드이며,
-저장소 스스로 vLLM, SGLang, llama.cpp 등을 권한다.[^tgi]
-엔진을 고를 때는 지원하는 모델과 하드웨어, 필요한 기능(양자화 형식, speculative decoding, JSON 스키마 같은 정해진 형식을 따르는 출력)을 먼저 확인하고, 그 조건에서 직접 재 본다.
-
-## 5. 성능 측정
-
-### 5-1. 측정 조건
+### 4-1. 측정 조건
 
 엔진이나 설정을 비교할 때는 비교하려는 항목을 제외하고 결과에 영향을 주는 주요 조건을 맞춘다.
 모델과 그 버전, GPU의 종류와 수, weight와 KV cache의 정밀도, 입력과 출력 길이의 분포,
@@ -177,9 +107,9 @@ Prefix caching이 있는 엔진에서는 cache가 비어 있는 상태와 채워
 vLLM과 SGLang 모두 측정 사이에 prefix cache를 비우는 방법을 제공한다.[^sglang-bench]
 같은 데이터라도 도구마다 지표의 정의가 조금씩 다르므로,
 지표 이름보다 정의를 확인한다.
-예를 들어 NVIDIA의 측정 안내는 ITL을 TPOT(time per output token)와 같은 값으로 정의하지만, vLLM은 둘을 따로 보고해 토큰이 묶여 나오면 두 값이 달라진다.[^nvidia-bench][^vllm-bench]
+예를 들어 NVIDIA의 측정 안내는 ITL(inter-token latency)을 TPOT(time per output token)와 같은 값으로 정의하지만, vLLM은 둘을 따로 보고해 토큰이 묶여 나오면 두 값이 달라진다.[^nvidia-bench][^vllm-bench]
 
-### 5-2. 부하 방식
+### 4-2. 부하 방식
 
 서빙 성능은 숫자 하나가 아니라 **부하에 따른 곡선**이다.
 요청을 적게 보내면 지연은 짧고 처리량은 낮으며,
@@ -204,24 +134,19 @@ NVIDIA의 안내는 엔진의 용량을 잴 때 concurrency 방식을 권하고,
 
 Goodput을 잴 때도 정의를 구분한다.
 DistServe의 goodput은 요청 중 정해진 비율 이상이 SLO를 지키는 최대 요청률(GPU 한 대당)이지만,[^distserve]
-`vllm bench serve`의 `--goodput` 옵션은 주어진 부하 하나에서 TTFT와 TPOT 목표를 모두 지킨 요청 수를 측정 시간으로 나눈 값을 보고한다.[^vllm-bench-src]
+`vllm bench serve`의 `--goodput` 옵션은 주어진 부하 하나에서 TTFT(time to first token)와 TPOT 목표를 모두 지킨 요청 수를 측정 시간으로 나눈 값을 보고한다.[^vllm-bench-src]
 DistServe의 goodput을 얻으려면 요청률을 바꿔 가며 이 측정을 되풀이한다.
 이때 두 지표의 p90이 각각 목표 이내여도 전체 요청의 90%가 두 목표를 모두 지켰다는 뜻은 아니다.
 TTFT 목표를 넘긴 요청과 TPOT 목표를 넘긴 요청이 서로 다를 수 있으므로, 요청별로 두 조건을 함께 확인한다.
 
-### 5-3. 성능 곡선
+### 4-3. 성능 곡선
 
 Llama 3.1 8B를 같은 H100에서 BF16(bfloat16)과 FP8(8-bit floating point)으로 서빙해 비교한다고 하자.
 모델 정밀도 외의 설정과 요청 분포를 맞추고, 동시 요청 수를 바꾸어 가며 TPOT와 처리량을 잰다.
 
 <Details summary="BF16과 FP8 서버 측정 예시">
 <Callout type="example">
-기말 프로젝트에서 이 비교를 한다면, 서버를 두 번 띄우되 정밀도만 다르게 하고, 엔진 버전과 KV cache 정밀도, batch 관련 설정은 같게 둔다.
-앞선 측정의 prefix cache가 결과에 섞이지 않게 두 서버 모두 `--no-enable-prefix-caching`으로 prefix caching을 끈다.
-FP8 서버는 미리 FP8로 양자화한 checkpoint를 불러오거나(이때는 아래 `--model`도 그 이름으로 바꾼다),
-BF16 checkpoint를 불러오면서 `--quantization fp8_per_tensor`로 양자화하는 online 모드를 쓴다.
-이 online 모드는 마지막 `lm_head`를 제외한 선형층 weight를 FP8로 저장하고 실행할 때 activation도 FP8로 양자화한다.[^vllm-fp8w8a8]
-어느 방식인지와 엔진 버전, 설정을 결과와 함께 적는다.
+기말 프로젝트에서 이 비교를 한다면, 서버를 두 번 띄우되 정밀도만 다르게 하고 엔진 버전, KV cache 정밀도, batch 상한은 같게 둔다.
 vLLM 0.31.0에서 같은 H100 한 대로 차례로 잰다면, 먼저 BF16 서버를 다음처럼 띄운다(이 모델은 Hugging Face에서 접근 승인을 받아야 내려받을 수 있다).
 
 ```bash
@@ -230,19 +155,10 @@ vllm serve meta-llama/Llama-3.1-8B-Instruct \
   --max-num-seqs 256 --max-num-batched-tokens 8192
 ```
 
-서버가 준비되면 다른 터미널에서 뒤의 벤치마크 명령을 실행한다.
-측정이 끝나면 첫 서버를 종료하고, 같은 GPU에서 FP8 서버를 띄워 같은 측정을 반복한다.
-
-```bash
-vllm serve meta-llama/Llama-3.1-8B-Instruct \
-  --dtype bfloat16 --kv-cache-dtype auto --no-enable-prefix-caching \
-  --max-num-seqs 256 --max-num-batched-tokens 8192 \
-  --quantization fp8_per_tensor
-```
-
-이 설정의 `--kv-cache-dtype auto`는 모델 dtype을 따르므로 두 서버 모두 KV cache는 BF16이다.
-미리 양자화한 checkpoint를 쓸 때는 그 설정에 따라 달라질 수 있으니 서버 로그로 확인한다.
-두 batch 상한을 명시해 서버마다 기본값이 달라지는 일을 막고, 서버는 하나씩 띄워 GPU 자원을 서로 다투지 않게 한다.
+`--no-enable-prefix-caching`은 앞선 측정의 prefix cache가 결과에 섞이지 않게 하고, 두 batch 상한을 명시하면 서버마다 기본값이 달라지는 일을 막는다.
+`--kv-cache-dtype auto`는 모델 dtype을 따르므로 KV cache는 BF16이다.
+측정이 끝나면 첫 서버를 종료하고, 같은 명령에 `--quantization fp8_per_tensor`를 더해 FP8 서버를 띄운다.
+이 online 모드는 BF16 checkpoint를 불러오면서 마지막 `lm_head`를 제외한 선형층 weight를 FP8로 저장하고, 실행할 때 activation도 FP8로 양자화한다.[^vllm-fp8w8a8]
 두 서버에 각각 다음처럼 부하를 건다.
 
 ```bash
@@ -255,26 +171,19 @@ vllm bench serve --model meta-llama/Llama-3.1-8B-Instruct \
 ```
 
 `--ignore-eos`는 두 서버의 출력 길이를 맞추고, `--num-warmups`는 측정 전에 warmup 요청을 보낸다.
-`--goodput`의 목표값은 ms 단위로, 여기서는 TTFT 1초와 TPOT 50 ms다.
-`--request-rate`를 주지 않고 `--max-concurrency 64`만 주면 응답을 기다리는 요청이 최대 64개로 유지되는 concurrency 방식의 측정이 된다.[^vllm-bench-src]
-`e2el`은 요청 하나의 전체 지연(end-to-end latency)이고,
-`--save-result --save-detailed`는 실행 결과와 요청별 지연·오류를 JSON(JavaScript Object Notation) 파일에 저장한다.[^vllm-bench]
+`e2el`은 요청 하나의 전체 지연(end-to-end latency)이고, `--goodput`의 목표값은 ms 단위로 여기서는 TTFT 1초와 TPOT 50 ms다.
+`--request-rate` 없이 `--max-concurrency 64`만 주면 응답을 기다리는 요청이 최대 64개로 유지되는 concurrency 방식의 측정이 되고,[^vllm-bench-src]
+`--save-result --save-detailed`는 결과와 요청별 지연을 JSON(JavaScript Object Notation) 파일에 저장한다.[^vllm-bench]
+`--max-concurrency`를 1, 4, 16, 64, 256으로 바꿔 가며 반복하고, warmup 요청 수와 `--num-prompts`도 상한에 맞춰 늘린다.
 이 random 입력은 길이를 통제한 비교용이므로, prefix 재사용이나 draft 수락처럼 입력 내용에 좌우되는 효과는 대표 프롬프트로 따로 잰다.
-`--max-concurrency`를 1, 4, 16, 64, 256으로 바꿔 가며 반복한다.
-이때 warmup 요청 수와 `--num-prompts`도 상한에 맞춰 늘려, 측정 시간 대부분 동안 동시 요청 수가 상한 가까이 유지되게 한다.
-그 결과로 가로축에 사용자당 처리량(tokens/s/user), 곧 output token throughput을 설정한 동시 요청 수 상한으로 나눈 값을,
-세로축에 GPU 한 대의 output token throughput을 두어 두 정밀도의 곡선을 겹쳐 그린다.
-동시 요청 상한 64에서 초당 6,800토큰이 나왔다면 그 점은 (약 106, 6,800)이다(가상의 수치).
 </Callout>
 </Details>
 
 다음은 동시 요청 상한을 1, 4, 16, 64, 256으로 바꿔 가며 잰 곡선의 예다(설명을 위한 가상의 값).
-가로축의 사용자당 처리량은 전체 output token throughput을 동시 요청 수 상한으로 나눈 값이다.
-동시 요청 수가 상한 가까이 유지될 때 요청 하나가 받는 평균 속도를 근사하며, TTFT와 대기 시간도 들어 있어 1/TPOT와는 다르다.
-동시 요청을 늘리면 점이 왼쪽 위로 옮겨 간다.
-사용자당 속도는 낮아지고 GPU당 처리량은 높아지는 맞교환이다.
+가로축의 사용자당 처리량은 전체 output token throughput을 동시 요청 수 상한으로 나눈 값으로, 요청 하나가 받는 평균 속도를 근사한다.
+TTFT와 대기 시간도 들어 있어 1/TPOT와는 다르다.
+동시 요청을 늘리면 사용자당 속도는 낮아지고 GPU당 처리량은 높아져, 점이 왼쪽 위로 옮겨 간다.
 측정한 점 가운데 두 축 모두에서 자신보다 나은 다른 점이 없는 점들을 이은 선을 Pareto 경계라 한다.
-경계 위의 점들 사이에서는 한 축을 얻으려면 다른 축을 내주어야 한다.
 
 <figure>
 <svg viewBox="0 0 600 300" role="img" aria-label="동시 요청 수를 바꿔 가며 잰 BF16과 FP8 서버의 성능 곡선. 가로축은 사용자당 처리량(tokens/s/user) 0부터 250, 세로축은 GPU 한 대의 처리량(tokens/s) 0부터 12,000이다. 회색 BF16 곡선은 동시 요청 1에서 (150, 150), 4에서 (140, 560), 16에서 (119, 1,900), 64에서 (80, 5,100), 256에서 (35, 9,000)을 지난다. 진한 FP8 곡선은 1에서 (220, 220), 4에서 (205, 820), 16에서 (169, 2,700), 64에서 (106, 6,800), 256에서 (43, 11,000)을 지난다. 가로축 100 tokens/s/user에 세로 점선이 있고, 그 오른쪽에서 세로축이 가장 높은 점은 FP8의 동시 요청 64다. FP8 곡선이 Pareto 경계로 표시되어 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -317,15 +226,13 @@ vllm bench serve --model meta-llama/Llama-3.1-8B-Instruct \
 곡선에서 설정을 고를 때는 먼저 사용자당 최소 속도를 정해 기준선을 긋고, 그 조건을 만족하는 점 가운데 GPU당 처리량이 가장 높은 점을 택한다.
 사용자당 100 tokens/s 이상이 조건이라면 FP8의 동시 요청 64(약 106 tokens/s/user에 6,800 tokens/s)를 고르고, BF16으로는 동시 요청 16(약 119에 1,900)까지만 조건을 만족한다.
 
-vLLM은 이렇게 설정과 부하를 바꿔 가며 재는 일을 자동화하는 `vllm bench sweep`도 제공한다.
-서버 설정의 조합마다 측정을 돌리고, 부하 수준을 바꿔 지연과 처리량의 맞교환을 찾으며,
-위와 같은 정의의 사용자당 처리량과 GPU당 처리량으로 Pareto 곡선을 그린다.[^vllm-sweep]
-다만 Pareto 경계는 이번에 시험한 설정 가운데의 선택지를 보여 줄 뿐, 시험하지 않은 설정까지 포함한 최적을 보장하지는 않는다.
+vLLM의 `vllm bench sweep`은 설정과 부하를 바꿔 가며 재고 이런 Pareto 곡선을 그리는 일을 자동화한다.[^vllm-sweep]
+다만 Pareto 경계는 시험한 설정 가운데의 선택지를 보여 줄 뿐, 시험하지 않은 설정까지 포함한 최적을 보장하지는 않는다.
 
-### 5-4. 결과의 진단
+### 4-4. 결과의 진단
 
 BF16과 FP8의 비교를 roofline으로 보면, 동시 요청이 적고 weight 읽기가 주된 병목이라면 FP8이 TPOT를 줄일 것으로 기대할 수 있다.
-다만 BF16 checkpoint를 불러오며 서버가 직접 양자화하는 online 모드(`--quantization fp8_per_tensor`)는 forward마다 activation의 scale을 새로 구한다.
+다만 서버가 BF16 checkpoint를 불러오며 직접 양자화하는 online 모드는 forward마다 activation의 scale을 새로 구한다.
 vLLM의 FP8 문서도 이 비용 때문에 지연 개선이 제한된다고 적는다.[^vllm-fp8w8a8]
 동시 요청이 많아 행렬곱 연산이 병목이 되면 FP8 Tensor Core로 처리량이 높아질 수 있다.
 결과가 예측과 다르면 동시 요청 1의 TPOT로 MBU(model bandwidth utilization)를 계산해 대역폭 지붕에서 얼마나 떨어져 있는지 본다.
@@ -353,27 +260,9 @@ Profiler는 실행을 느리게 만들 수 있어, 지연과 처리량의 본 �
 
 [^vllm-arch]: vLLM Project. (2026). Architecture Overview. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/arch_overview/).
 
-[^vllm-args]: vLLM Project. (2026). Engine Arguments. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/configuration/engine_args/).
-
-[^vllm-opt]: vLLM Project. (2026). Optimization and Tuning. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/configuration/optimization/).
-
 [^sglang]: Zheng, L., Yin, L., Xie, Z., et al. (2024). SGLang: Efficient Execution of Structured Language Model Programs. *NeurIPS 2024*. [arXiv:2312.07104](https://arxiv.org/abs/2312.07104).
 
 [^sglang-v04]: The SGLang Team. (2024). SGLang v0.4: Zero-Overhead Batch Scheduler, Cache-Aware Load Balancer, Faster Structured Outputs. *LMSYS Blog*. [lmsys.org](https://lmsys.org/blog/2024-12-04-sglang-v0-4/).
-
-[^sglang-args]: SGLang Team. (2026). Server Arguments. *SGLang documentation v0.5.21*. [github.com](https://github.com/sgl-project/sglang/blob/v0.5.21/docs/docs/advanced_features/server_arguments.mdx).
-
-[^sglang-policy]: SGLang Team. (2026). schedule_policy.py. *SGLang v0.5.21*. [github.com](https://github.com/sgl-project/sglang/blob/v0.5.21/python/sglang/srt/managers/schedule_policy.py).
-
-[^sglang-tune]: SGLang Team. (2026). Hyperparameter Tuning. *SGLang documentation v0.5.21*. [github.com](https://github.com/sgl-project/sglang/blob/v0.5.21/docs/docs/advanced_features/hyperparameter_tuning.mdx).
-
-[^trtllm]: NVIDIA. (2026). TensorRT-LLM (v1.2.1). *GitHub*. [github.com](https://github.com/NVIDIA/TensorRT-LLM/tree/v1.2.1).
-
-[^llamacpp]: ggml-org. (2026). llama.cpp (v0.7.0). *GitHub*. [github.com](https://github.com/ggml-org/llama.cpp/tree/v0.7.0).
-
-[^lmdeploy]: InternLM. (2026). LMDeploy (v0.18.0). *GitHub*. [github.com](https://github.com/InternLM/lmdeploy/tree/v0.18.0).
-
-[^tgi]: Hugging Face. (2025). text-generation-inference (v3.3.7). *GitHub*. [github.com](https://github.com/huggingface/text-generation-inference/tree/v3.3.7).
 
 [^sglang-bench]: SGLang Team. (2026). Bench Serving Guide. *SGLang documentation v0.5.21*. [github.com](https://github.com/sgl-project/sglang/blob/v0.5.21/docs/docs/developer_guide/bench_serving.mdx).
 
@@ -386,8 +275,6 @@ Profiler는 실행을 느리게 만들 수 있어, 지연과 처리량의 본 �
 [^vllm-bench]: vLLM Project. (2026). vllm bench serve. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/cli/bench/serve/).
 
 [^vllm-bench-src]: vLLM Project. (2026). vllm.benchmarks.serve. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/api/vllm/benchmarks/serve/).
-
-[^vllm-metrics]: vLLM Project. (2026). Metrics. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/design/metrics/).
 
 [^vllm-profile]: vLLM Project. (2026). Profiling vLLM. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/contributing/profiling/).
 
