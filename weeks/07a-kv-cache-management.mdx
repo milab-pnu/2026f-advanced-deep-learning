@@ -61,9 +61,9 @@ KV cache 공간 53.5 GB를 요청마다 최대 길이만큼 나누어 주면 동
 ### 1-2. 측정된 낭비
 
 Kwon 등은 이 낭비를 서빙 실험에서 쟀다.
-연속 할당을 쓰는 서빙 시스템 Orca를 직접 구현해 보니, 모델의 최대 길이인 2,048토큰만큼 미리 잡으면 KV cache 공간의 평균 20.4%만 실제 토큰의 key·value를 담았다.
-출력 길이를 미리 안다고 가정하고 그 길이 이상인 가장 작은 2의 거듭제곱만큼 출력용 공간을 잡으면(Pow2) 26.8%였다.
-출력 길이만큼 정확히 잡는 이상적인 경우(Oracle)에도 38.2%였다.[^vllm]
+연속 할당을 쓰는 서빙 시스템 Orca를 직접 구현해 보니, 모델의 최대 길이만큼 미리 잡으면 KV cache 공간의 작은 일부만 실제 토큰의 key·value를 담았다.
+출력 길이를 미리 안다고 가정하고 그 길이 이상인 가장 작은 2의 거듭제곱만큼 출력용 공간을 잡아도(Pow2) 이 비율은 조금 오르는 데 그쳤다.
+출력 길이만큼 정확히 잡는 이상적인 경우(Oracle)에도 절반에 못 미쳤다.[^vllm]
 Oracle은 끝까지 쓰이지 않는 칸(internal fragmentation)은 없앤다.
 하지만 앞으로 생성할 토큰을 위해 잡아 둔 칸(reserved)은 생성되기 전까지 비어 있고, 요청 사이의 빈틈(external fragmentation)도 그대로 남는다.
 KV cache 공간이 batch 크기를 제한하는 상황에서는 이 낭비만큼 batch가 작아져 처리량이 깎인다.
@@ -137,14 +137,14 @@ Llama 3.1 8B에서 블록 하나는 $16\times131\ \text{KB}\approx2.1\ \text{MB}
 블록이 너무 작으면 GPU에서 연산을 실행하는 프로그램(kernel)이 KV cache를 읽고 처리할 때 GPU의 병렬성을 충분히 쓰지 못할 수 있고,
 너무 크면 마지막 블록의 빈칸이 커진다.
 실험에서도 알맞은 블록 크기는 요청 길이에 따라 달랐다.
-요청마다 전체 지연을 출력 토큰 수로 나눈 값으로 비교하면, ChatGPT 대화를 모은 ShareGPT의 입출력 길이로 만든 요청에서는 블록이 16–128토큰일 때 이 값이 가장 낮았다.
-반면 지시 데이터 Alpaca처럼 시퀀스가 짧으면 32토큰보다 큰 블록에서 성능이 크게 떨어졌다.[^vllm]
+요청마다 전체 지연을 출력 토큰 수로 나눈 값으로 비교하면, ChatGPT 대화를 모은 ShareGPT의 입출력 길이로 만든 요청에서는 중간 크기의 블록에서 넓은 범위에 걸쳐 이 값이 가장 낮았다.
+반면 지시 데이터 Alpaca처럼 시퀀스가 짧으면 블록이 커질 때 성능이 크게 떨어졌다.[^vllm]
 
 이 방식에는 대가도 있다.
 한 요청의 key·value가 메모리에 흩어져 있으므로,
 attention kernel이 block table을 보며 블록을 찾아 읽어야 한다.
 Block table을 읽어 블록 위치를 찾고, 블록 경계와 요청마다 다른 시퀀스 길이를 처리하는 일이 더해지므로,
-짧은 문맥(64–256토큰)에서 잰 attention kernel의 지연은 연속 메모리를 쓰는 NVIDIA의 inference 라이브러리 FasterTransformer보다 20–26% 길었다.[^vllm]
+attention kernel의 지연은 연속 메모리를 쓰는 NVIDIA의 inference 라이브러리 FasterTransformer보다 길었다.[^vllm]
 그래도 이 비용은 attention 연산에만 붙고, 원논문 실험에서는 같은 메모리에 batch를 더 크게 담는 이점이 더 커서 end-to-end 처리량은 vLLM이 앞섰다.
 
 ### 2-2. 블록 공유와 copy-on-write
@@ -165,12 +165,12 @@ vLLM은 physical 블록마다 그 블록을 가리키는 시퀀스 수(reference
 꽉 찬 블록 7에는 쓰기가 일어나지 않으므로 두 sample이 끝까지 공유한다.
 
 공유하는 prefix가 길거나 여러 시퀀스가 같은 블록을 쓸수록 아끼는 블록이 많아지고, 그 비율은 생성 길이와 시퀀스가 어디서 갈라지는지에도 달려 있다.
-OPT-13B로 Alpaca를 처리한 실험에서 parallel sampling은 6.1–9.8%,
-가지끼리 더 많이 공유하는 beam search는 37.6–55.2%의 메모리를 아꼈다.[^vllm]
-프롬프트가 더 긴 ShareGPT에서는 각각 16.2–30.5%, 44.3–66.3%로 더 컸다.
+Alpaca를 처리한 실험에서 parallel sampling이 아낀 메모리는 작았고,
+가지끼리 더 많이 공유하는 beam search는 훨씬 많은 메모리를 아꼈다.[^vllm]
+프롬프트가 더 긴 ShareGPT에서는 두 경우 모두 절감이 더 컸다.
 
-블록 단위 관리와 공유를 함께 쓴 vLLM은 원논문의 A100 실험(OPT·LLaMA)에서 같은 수준의 지연을 유지하면서 기존 시스템(FasterTransformer, Orca)보다 2–4배 높은 요청률을 감당했다.[^vllm]
-블록 단위 관리 덕분에 KV cache 공간 가운데 실제 토큰의 key·value가 차지한 비율도 앞의 세 가지 Orca 예약 방식의 20.4–38.2%에서 96.3%로 올랐다.
+블록 단위 관리와 공유를 함께 쓴 vLLM은 원논문 실험에서 같은 수준의 지연을 유지하면서 기존 시스템(FasterTransformer, Orca)보다 몇 배 높은 요청률을 감당했다.[^vllm]
+블록 단위 관리 덕분에 KV cache 공간 가운데 실제 토큰의 key·value가 차지한 비율도 앞의 세 가지 Orca 예약 방식보다 크게 올라, 공간의 대부분을 실제 토큰이 채웠다.
 
 ### 2-3. 블록 고갈과 선점
 
@@ -183,7 +183,7 @@ Recomputation은 블록을 버렸다가, 다시 실행할 때 프롬프트와 �
 Decode는 스텝마다 weight를 다시 읽지만, prefill은 한 번 읽은 weight를 여러 토큰에 쓴다.
 실험에서는 블록이 작을수록 CPU와 GPU 사이의 작은 전송이 많아져 swapping이 불리했고,
 블록이 크면 swapping이 유리했다.
-OPT-13B로 ShareGPT 요청을 처리한 실험에서 16–64토큰 블록은 두 방법의 end-to-end 성능이 비슷했다.[^vllm]
+그 사이의 중간 크기 블록에서는 두 방법의 end-to-end 성능이 비슷했다.[^vllm]
 
 ## 3. Prefix 재사용
 
@@ -273,9 +273,9 @@ cache를 위한 공간을 따로 떼어 둘 필요가 없다.[^sglang]
 그림은 [LMSYS 블로그의 원본](https://lmsys.org/blog/2024-01-17-sglang/)에서 (4)–(5)단계만 잘라 실었다.
 블로그 저장소의 MIT 라이선스(<a href={lmsysLicense}>전문</a>)를 따른다.
 
-SGLang 원논문은 few-shot·agent·다중 턴 대화 같은 벤치마크에서 cache 적중률이 50–99%였다고 보고했다.
+SGLang 원논문은 few-shot·agent·다중 턴 대화 같은 벤치마크에서 cache 적중률이 task에 따라 차이는 있지만 대체로 높았다고 보고했다.
 처리량은 여러 번의 언어 모델 호출로 이루어진 프로그램을 충분히 큰 batch에서 초당 몇 개 처리하는지로 쟀는데,
-A10G GPU 한 대로 Llama-7B를 돌린 이 벤치마크에서 SGLang 전체 시스템의 처리량은 Guidance·vLLM·LMQL보다 최대 6.4배 높았다.
+이 벤치마크에서 SGLang 전체 시스템의 처리량은 Guidance·vLLM·LMQL보다 많게는 여러 배 높았다.
 이 향상에는 RadixAttention의 cache 재사용뿐 아니라, 프로그램 안의 여러 호출을 병렬로 실행하고 제약 decoding을 빠르게 처리한 효과도 섞여 있다.[^sglang]
 
 두 설계는 prefix를 찾는 자료구조가 다르지만, 같은 조건에서는 같은 prefix를 찾는다.
@@ -306,7 +306,7 @@ Offloading은 GPU 밖의 용량을 빌려 GPU에 둘 크기를 줄이지만, 필
 이런 eviction은 생성 중에 모든 과거 토큰이 똑같이 중요하지는 않다는 관찰에서 출발한다.
 Zhang 등은 H2O(Heavy-Hitter Oracle)를 제안하며 두 가지를 관찰했다.[^h2o]
 첫째, query 하나가 주는 attention weight 가운데 상대적으로 큰 값은 소수다.
-OPT 모델의 attention 행렬에서 각 행의 최댓값의 1%보다 작은 값을 0으로 치면, 거의 모든 층에서 95% 넘는 값이 0이었다.
+OPT 모델의 attention 행렬에서 각 행의 최댓값에 비해 아주 작은 값을 0으로 치면, 거의 모든 층에서 대부분의 값이 0이었다.
 둘째, 여러 query가 준 attention을 토큰별로 모아도 소수의 토큰이 큰 점수를 받는다.
 Key 토큰마다 지금까지의 query들에게서 받은 attention weight를 모두 더해 누적 attention 점수를 만들면, 이 점수도 소수의 토큰에 크게 몰렸다.
 저자들은 이런 토큰을 heavy hitter라 불렀다.
@@ -319,12 +319,11 @@ Cache가 정해 둔 크기(KV cache 예산)를 넘으면 최근 토큰을 보호
 실험한 OPT처럼 head마다 key·value를 따로 두는 모델에서는 head마다 자기 attention 점수로 남길 토큰을 고른다.
 예산이 찬 뒤에는 스텝마다 새 토큰이 하나씩 늘므로 head마다 하나씩 지운다.
 Llama 3.1 8B 같은 GQA 모델이라면 KV head를 함께 쓰는 query head들의 점수를 모아야 하는데, 원논문은 이 경우를 실험하지 않았다.
-예산을 모든 토큰을 남기는 full cache의 20%로 잡아 heavy hitter와 최근 토큰에 반씩 나누어도,
-H2O는 LLaMA-13B의 XSUM 요약 같은 task에서 full cache와 비슷한 성능을 냈다.
+예산을 모든 토큰을 남기는 full cache보다 훨씬 작게 잡아 heavy hitter와 최근 토큰에 반씩 나누어도,
+H2O는 요약 같은 task에서 full cache와 비슷한 성능을 냈다.
 
-저자들은 H2O를 offloading inference 엔진 FlexGen 위에 구현해 T4 GPU에서 OPT-30B를 돌렸다.
-512토큰 프롬프트에 32토큰을 생성하는 설정에서 줄어든 cache만큼 batch를 144에서 728로 키울 수 있었다.
-생성 길이와 데이터를 바꾼 네 설정에서 처리량은 H2O를 쓰지 않은 FlexGen의 1.6–2.2배였다(보고된 처리량으로 계산).
+저자들은 H2O를 offloading inference 엔진 FlexGen 위에 구현했다.
+줄어든 cache만큼 batch를 몇 배로 키울 수 있었고, 처리량도 H2O를 쓰지 않은 FlexGen보다 뚜렷이 높았다.
 
 점수를 세지 않고 위치만으로 남길 토큰을 정할 수도 있다.
 Xiao 등의 StreamingLLM은 처음 몇 토큰(보통 4개)과 최근 토큰의 key·value만 남긴다.[^streamingllm]
@@ -374,12 +373,12 @@ Pooling 뒤에는 4번의 높은 점수가 양옆으로 퍼져, 4번을 가운�
 압축된 cache는 이 세 위치와 window의 두 토큰(9, 10번)을 합한 5토큰이다.
 </Callout>
 
-SnapKV 저자들은 100만 토큰 문맥을 지원하는 7B 모델 LWM-Text-Chat-1M을 A100 80 GB 한 대에서 batch 2로 돌리며 프롬프트 KV cache를 2,048토큰으로 압축했다.
-약 1만 6천 토큰 입력에서 토큰당 decode 지연이 약 3.6배 줄었고,
-메모리가 모자라기 전까지 받을 수 있는 입력은 약 1만 6천 토큰에서 약 13만 1천 토큰으로 늘었다.[^snapkv]
-LongBench의 긴 입력 데이터셋 16개에서 1,024–4,096토큰 예산으로 잰 품질도 압축하지 않은 모델과 대체로 비슷했다.
+SnapKV 저자들은 매우 긴 문맥을 지원하는 모델에서 프롬프트 KV cache를 입력보다 훨씬 짧은 고정 길이로 압축했다.
+긴 입력에서 토큰당 decode 지연이 몇 배 줄었고,
+메모리가 모자라기 전까지 받을 수 있는 입력 길이도 여러 배 늘었다.[^snapkv]
+LongBench의 긴 입력 데이터셋들에서 잰 품질도 압축하지 않은 모델과 대체로 비슷했다.
 다만 하락이 큰 경우도 있었다.
-예를 들어 LWM-Text-Chat-1M의 GovReport 요약 점수는 압축하지 않았을 때 27.97이었지만 1,024토큰 예산에서는 19.79였다.
+예를 들어 예산을 가장 작게 잡았을 때 GovReport 요약 점수는 압축하지 않았을 때보다 크게 낮았다.
 
 <Details summary="Head마다 다른 토큰을 남길 때의 블록 관리">
 이런 eviction은 앞의 블록 관리와 그대로 맞물리지는 않는다.
@@ -429,8 +428,8 @@ Query가 바뀌면 $A_i$와 $A_j$의 비도 바뀌는데, 앞으로의 attention
 그래서 지울 토큰의 누적 attention 점수가 최근 토큰들의 평균보다 작을수록 합칠 확률을 낮춘다.
 
 CaM은 지울 토큰을 고르는 방법이 아니라 기존 eviction 위에 얹는 방법이다.
-KV cache를 20%만 남긴 LLaMA-7B에서 H2O에 CaM을 더하면,
-zero-shot 정확도가 OpenBookQA에서 22.8에서 27.6으로, COPA에서 47.0에서 56.0으로 올랐다.[^cam]
+KV cache를 작은 일부만 남긴 모델에서 H2O에 CaM을 더하면,
+OpenBookQA와 COPA의 zero-shot 정확도가 H2O만 쓸 때보다 올랐다.[^cam]
 
 합치는 축을 토큰이 아니라 층으로 잡을 수도 있다.
 Liu 등의 MiniCache는 모델의 중간 이후 층에서 이웃한 두 층의 key·value가 비슷하다는 관찰에서 출발해,

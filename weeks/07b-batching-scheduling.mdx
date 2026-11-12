@@ -38,8 +38,8 @@ Orca를 제안한 Yu 등은 batch가 끝나야 결과를 돌려주던 당시 서
 
 RL(reinforcement learning) 학습에서 응답을 생성하는 rollout도 같은 문제를 겪는다.
 긴 풀이를 생성하는 RL에서는 응답 길이의 편차가 커서, 먼저 끝난 응답이 차지하던 자리가 가장 긴 응답이 끝날 때까지 비어 있다.
-Olmo 3 보고서는 RL 생성의 평균 길이가 14,628토큰이고 최대가 32K토큰이므로,
-static batching이었다면 생성에 쓸 수 있는 자리와 시간의 최대 54%가 빈 채로 남았을 것이라고 추산했다.[^olmo3]
+Olmo 3 보고서는 RL 생성의 평균 길이가 최대 길이보다 훨씬 짧으므로,
+static batching이었다면 생성에 쓸 수 있는 자리와 시간의 절반가량까지 빈 채로 남았을 것이라고 추산했다.[^olmo3]
 
 ### 1-2. Iteration-level scheduling
 
@@ -62,9 +62,9 @@ Weight를 공유하는 선형층은 묶을수록 arithmetic intensity가 오르�
 decode의 attention은 공유하지 않는 KV cache를 요청마다 따로 읽으면 batch를 키워도 이 비율이 거의 그대로다.
 공통 prefix의 KV를 여러 요청이 공유하고 kernel도 이를 함께 재사용한다면 데이터 이동량은 달라질 수 있다.
 
-Orca는 A100 16대에 GPT-3 175B 구성의 모델을 올리고 길이를 무작위로 뽑은 합성 요청을 흘려보냈다.
-토큰당 지연(지연을 생성 토큰 수로 나눈 값)의 중앙값을 같은 190 ms 수준으로 맞췄을 때,
-NVIDIA의 inference 라이브러리 FasterTransformer보다 처리량이 36.9배 높았다고 보고했다.[^orca]
+Orca는 큰 모델에 길이를 무작위로 뽑은 합성 요청을 흘려보냈다.
+토큰당 지연(지연을 생성 토큰 수로 나눈 값)의 중앙값을 같은 수준으로 맞췄을 때,
+NVIDIA의 inference 라이브러리 FasterTransformer보다 처리량이 훨씬 높았다고 보고했다.[^orca]
 이후 vLLM과 SGLang을 비롯한 주요 서빙 엔진은 iteration-level scheduling을 기본으로 쓴다.
 PagedAttention은 이렇게 요청이 수시로 들고 나며 길이가 늘어나는 batch에 KV cache를 필요한 만큼씩 내주고,
 prefix caching은 같은 prefix의 KV cache를 요청 사이에 재사용한다.
@@ -152,9 +152,8 @@ Agrawal 등의 해법은 긴 prefill을 잘게 나누는 것이었다.
 Decode만 하는 스텝은 memory-bound라 연산 능력을 충분히 쓰지 못한다.
 여기에 prefill 조각을 섞으면 조각의 계산이 남는 연산 능력을 쓰고, decode는 조각을 계산하려고 읽어 온 weight를 함께 쓴다.
 원논문은 이를 decode가 prefill 조각에 얹힌다(piggyback)고 표현했다.
-LLaMA-13B를 A6000에서 돌린 예에서는 1,021토큰 prefill 조각 하나에 decode 3개를 얹었다.
-Decode를 얹어 늘어난 시간을 decode 수 3으로 나누면 토큰당 1.2 ms였다.
-Decode만 하는 batch에서 토큰 하나에 드는 12.49 ms보다 약 10배 짧다.[^sarathi]
+원논문의 측정 예에서 prefill 조각 하나에 decode를 얹어 늘어난 시간을 decode 수로 나눈 값은,
+decode만 하는 batch에서 토큰 하나에 드는 시간보다 훨씬 짧았다.[^sarathi]
 
 후속 Sarathi-Serve는 이를 scheduler로 일반화했다.[^sarathi-serve]
 서빙 시스템은 TTFT나 ITL 같은 지연 지표에 서비스가 정해 둔 목표, 곧 SLO(service-level objective)를 지켜야 한다.
@@ -173,10 +172,9 @@ SLO가 있으면 처리량만으로는 시스템을 비교하기 어렵다.
 Sarathi-Serve는 이 값을 capacity라 부른다.
 DistServe는 TTFT와 TPOT(time per output token, 첫 토큰 이후 출력 토큰 하나를 만드는 평균 시간) 목표를 모두 지키는 요청이 정해진 비율 이상일 때의 최대 요청률을 goodput이라 부른다.
 Sarathi-Serve의 실험에서 SLO는 p99 토큰 간 지연에 둔 상한이다(원논문의 TBT(time between tokens)는 여기서 쓰는 ITL에 해당한다).
-또 지속 가능한 부하를 재려고 scheduling 대기 시간의 중앙값이 2초를 넘지 않는다는 조건도 두었다.
-Mistral-7B를 A100 한 대에서, Yi-34B를 A100 두 대에 나누어 돌렸을 때,
-Sarathi-Serve의 capacity는 vLLM보다 Mistral-7B에서 최대 2.6배, Yi-34B에서 최대 3.7배 높았다.[^sarathi-serve]
-이는 그 실험의 요청 분포와 당시 구현에서 얻은 비교값이다.
+또 지속 가능한 부하를 재려고 scheduling 대기 시간의 중앙값이 정해 둔 상한을 넘지 않는다는 조건도 두었다.
+크기가 다른 두 모델로 실험했을 때 Sarathi-Serve의 capacity는 두 모델 모두에서 vLLM보다 몇 배까지 높았다.[^sarathi-serve]
+이는 그 실험의 요청 분포와 당시 구현에서 얻은 비교 결과다.
 
 <Callout type="example">
 앞 예시의 8,192토큰 프롬프트를 스텝마다 토큰 예산 안에서 나누어 넣는다고 하자.
@@ -228,16 +226,16 @@ Prefill GPU가 프롬프트를 처리해 첫 토큰을 사용자에게 내보내
 Decode GPU는 그것을 받아 이어지는 토큰을 하나씩 생성한다.
 두 단계가 서로를 방해하지 않고, 각 단계에 맞는 GPU 수와 TP·PP 크기를 따로 고를 수 있다.
 
-DistServe는 goodput을 GPU 한 대당 값으로 재고, 요청의 90% 이상이 SLO를 지키면 SLO를 지킨 것으로 보았다.
-A100 GPU 32대에서 OPT 모델로 실험해, 챗봇 workload(ShareGPT)에서는 DeepSpeed-MII보다 goodput이 최대 7.4배 높았고,
-요약 workload(LongBench, OPT-66B)에서는 vLLM이 지킬 수 있는 SLO보다 12.6배 엄격한 SLO도 지켰다고 보고했다.[^distserve]
+DistServe는 goodput을 GPU 한 대당 값으로 쟀다.
+OPT 모델로 실험해, 챗봇 workload에서는 DeepSpeed-MII보다 goodput이 여러 배까지 높았고,
+요약 workload에서는 vLLM이 지킬 수 있는 SLO보다 훨씬 엄격한 SLO도 지켰다고 보고했다.[^distserve]
 
 같은 시기 Patel 등의 Splitwise도 두 단계를 다른 기계로 나누었다.[^splitwise]
 Splitwise는 하드웨어 비용에 주목했다.
 Decode가 memory-bound인 범위에서는 최신 GPU의 연산 능력보다 메모리 용량과 대역폭이 중요하므로,
 decode를 더 싸고 전력을 덜 쓰는 GPU에 맡길 수 있다는 것이다.
 Patel 등은 실측 profile로 만든 cluster simulator에 실제 서비스의 요청 기록을 넣어 비교했다.
-SLO를 지키는 조건에서, 두 단계를 나누지 않은 기존 설계와 같은 비용과 전력을 쓰면 처리량이 2.35배였고, 비용을 20% 낮추고도 최대 1.4배였다.[^splitwise]
+SLO를 지키는 조건에서, 두 단계를 나누지 않은 기존 설계와 같은 비용과 전력을 쓰면 처리량이 크게 높았고, 비용을 낮추고도 처리량이 더 높았다.[^splitwise]
 
 분리의 대가는 KV cache의 전송이다.
 OPT-66B는 64층이고 모델 차원은 9,216이다.
@@ -256,9 +254,9 @@ DistServe가 적은 약 90 Gbps는 같은 계산을 이진 단위(1.13 GiB)로 �
 DistServe는 같은 stage를 맡은 prefill GPU와 decode GPU를 한 노드에 둔다.
 예를 들어 앞 절반의 층을 맡은 prefill GPU와 decode GPU를 노드 1에, 뒤 절반을 맡은 쌍을 노드 2에 둔다.
 Stage마다 자기 층의 KV cache만 주고받으므로, KV cache는 노드 안의 NVLink로만 오간다.
-OPT-175B와 ShareGPT에서 모든 요청의 전송 시간을 더한 값은 전체 요청 지연의 합 가운데 0.1% 미만이었다.[^distserve]
+DistServe의 실험에서 모든 요청의 전송 시간을 더한 값은 전체 요청 지연의 합 가운데 아주 작은 부분이었다.[^distserve]
 Splitwise는 긴 프롬프트에서 prefill이 층 하나를 끝낼 때마다 그 층의 KV cache를 비동기로 보내 계산과 전송을 겹쳤다.
-기계 두 대에서 batching 없이 코딩 서비스의 실제 요청 기록(trace)을 돌렸을 때 전송이 늘린 지연은 전체의 0.8%였다.[^splitwise]
+코딩 서비스의 실제 요청 기록(trace)을 돌린 측정에서 전송이 늘린 지연은 전체의 아주 작은 부분이었다.[^splitwise]
 KV cache offloading을 쓰는 Mooncake는 prefill과 decode를 다른 cluster로 나누고 분산 KV cache pool을 더한 구조다.
 재사용할 KV cache는 pool에서 prefill 인스턴스로 불러오고, prefill이 만든 KV cache는 decode 인스턴스로 바로 흘려보낸다.[^mooncake]
 
@@ -347,11 +345,11 @@ Qwen3-30B-A3B처럼 층마다 expert 128개 가운데 8개를 고르는 모델�
 </Callout>
 
 Gupta 등의 Lynx는 실제 요청에서 batch 크기에 따라 MoE의 decode 지연이 어떻게 달라지는지 측정했다.[^lynx]
-저자들은 H200에서 ShareGPT 요청으로 Qwen3-30B-A3B의 p99 decode 지연을 쟀다.
+저자들은 Qwen3-30B-A3B의 p99 decode 지연을 쟀다.
 원논문은 batch 1의 지연을 Qwen3-4B dense 모델과 비슷하다고 설명한다.
-그림에 표시된 batch 2 이상의 구간에서는 Qwen3-4B보다 1.7–3배 느리고, batch가 커지면서 Qwen3-32B dense 모델에 가까워진다.
+그림에 표시된 batch 2 이상의 구간에서는 Qwen3-4B보다 뚜렷이 느리고, batch가 커지면서 Qwen3-32B dense 모델에 가까워진다.
 
-<Figure src="https://arxiv.org/html/2411.08982v3/qwen3_slo_region.svg" alt="가로축은 최대 batch 크기(1, 2, 4, 8, 16, 32, 64), 세로축은 p99 TPOT(ms)인 꺾은선 그래프. 진한 파란 아래쪽 삼각형 선(Qwen3-32B)은 약 21 ms에서 48 ms로, 초록 원 선(Qwen3-30B-A3B)은 약 6 ms에서 46 ms로, 연한 파란 위쪽 삼각형 선(Qwen3-4B)은 약 5 ms에서 20 ms로 오른다. 25 ms와 50 ms에 회색 가로 점선이 있다. 초록 선과 연한 파란 선 사이에 1.7×, 2.1×, 2.3×, 3.0×, 2.5×, 2.3×가 적혀 있다. 위쪽 상자에는 batch가 크면 MoE 성능이 큰 dense 모델에 수렴한다는 관찰이, 아래쪽 상자에는 MoE's perf promise가 적혀 있고 연한 파란 선을 가리킨다." caption="최대 batch 크기에 따른 p99 TPOT. 초록 원은 Qwen3-30B-A3B(MoE, 활성 3B), 연한 파란 위쪽 삼각형은 Qwen3-4B(dense), 진한 파란 아래쪽 삼각형은 Qwen3-32B(dense)다. 굵은 숫자(1.7×–3.0×)는 같은 batch에서 MoE의 지연이 4B 모델의 몇 배인지를 나타낸다." source="Gupta et al. (2026), Figure 1(b) · CC BY 4.0" wide />
+<Figure src="https://arxiv.org/html/2411.08982v3/qwen3_slo_region.svg" alt="가로축은 최대 batch 크기(1, 2, 4, 8, 16, 32, 64), 세로축은 p99 TPOT(ms)인 꺾은선 그래프. 진한 파란 아래쪽 삼각형 선(Qwen3-32B)은 약 21 ms에서 48 ms로, 초록 원 선(Qwen3-30B-A3B)은 약 6 ms에서 46 ms로, 연한 파란 위쪽 삼각형 선(Qwen3-4B)은 약 5 ms에서 20 ms로 오른다. 25 ms와 50 ms에 회색 가로 점선이 있다. 초록 선과 연한 파란 선 사이에 1.7×, 2.1×, 2.3×, 3.0×, 2.5×, 2.3×가 적혀 있다. 위쪽 상자에는 batch가 크면 MoE 성능이 큰 dense 모델에 수렴한다는 관찰이, 아래쪽 상자에는 MoE's perf promise가 적혀 있고 연한 파란 선을 가리킨다." caption="최대 batch 크기에 따른 p99 TPOT. 초록 원은 Qwen3-30B-A3B(MoE, 활성 3B), 연한 파란 위쪽 삼각형은 Qwen3-4B(dense), 진한 파란 아래쪽 삼각형은 Qwen3-32B(dense)다. 굵은 숫자는 같은 batch에서 MoE의 지연이 4B 모델의 몇 배인지를 나타낸다." source="Gupta et al. (2026), Figure 1(b) · CC BY 4.0" wide />
 
 Batch가 커지면 이처럼 토큰당 지연은 늘지만, 처리량은 사정이 다르다.
 Roofline으로 보면, 거의 모든 expert가 선택된 뒤에는 batch를 더 키워도 계산에 필요한 expert weight의 양은 거의 늘지 않고 토큰당 연산량은 작다.

@@ -1,23 +1,22 @@
 ---
-title: "Pruning, low-rank, distillation"
+title: "Pruning, distillation, low-rank factorization"
 week: 6
 order: 3
 ---
+
+import wandaScore from "./assets/week07-wanda.png";
 
 Weight를 지우거나 더 작은 모델을 만들어 **파라미터의 수 자체**를 줄이는 방법을 다룬다.
 남은 weight만 저장하고 계산하거나 처음부터 더 작은 모델을 쓰면, 읽어야 하는 weight의 양과 계산할 FLOPs(floating-point operations)가 줄어든다.
 그러면 weight를 읽는 시간이 병목인 decode에서는 memory access cost가, 연산이 병목인 prefill에서는 computational cost가 줄고,
 절약한 GPU(graphics processing unit) 메모리는 KV(key-value) cache에 쓸 수 있다.
-다만 이 이득은 남은 weight를 GPU kernel이 효율적으로 처리할 수 있을 때에만 생긴다.
+**다만 이 이득은 남은 weight를 GPU kernel이 효율적으로 처리할 수 있을 때에만 생긴다.**
 
 파라미터 수를 줄이는 방법은 크게 세 갈래다.[^survey]
 Pruning은 학습된 모델에서 덜 중요한 weight나 모델의 일부를 지운다.
 Distillation은 흔히 큰 teacher의 출력을 학습 신호로 삼아 작은 student를 학습한다.
 Low-rank factorization은 weight 행렬을 작은 행렬 두 개의 곱으로 바꾼다.
-어느 방법이든 모델의 출력을 얼마나 유지하는지와 실제 하드웨어에서 얼마나 빨라지는지를 함께 보아야 한다.
-
-모델을 줄이는 것과 별도로, 입력에 따라 일부 층을 건너뛰어 연산량을 달리하는 적응형 계산과, 같은 weight를 여러 층에서 다시 써 저장 공간을 줄이는 층 공유도 있다.
-저장할 weight와 실행할 연산을 각각 얼마나 줄이는지는 방법마다 다르다.
+**어느 방법이든 모델의 출력을 얼마나 유지하는지와 실제 하드웨어에서 얼마나 빨라지는지를 함께 보아야 한다.**
 
 ## 1. Pruning의 출발
 
@@ -45,42 +44,21 @@ $W$를 pruning한 결과를 $\hat{W}$라 하면, 같은 입력에 대한 출력�
 두 출력의 차이를 제곱해 더한 오차 $\lVert XW-X\hat{W}\rVert_F^2$가 작을수록, 이 입력에서 pruning의 영향이 작다.
 같은 sparsity라면 이 오차가 작은 $\hat{W}$가 더 좋은 선택이다.
 
-**SparseGPT**는 GPTQ와 마찬가지로 층 출력 오차의 Hessian을 이용한다.[^sparsegpt]
-GPTQ가 weight를 낮은 정밀도의 값으로 바꾸었다면, SparseGPT는 선택한 weight를 0으로 만든다.
-Hessian에는 입력 channel의 크기와 channel 사이의 관계가 담긴다.
-두 channel이 calibration 데이터에서 비슷하게 움직이면 한쪽 weight를 지운 영향을 다른 쪽 weight를 조절해 일부 되돌릴 수 있다.
-반대로 두 channel이 서로를 대신하지 못한다면 그런 보정이 어렵다.
+**SparseGPT**는 GPTQ와 같은 방식으로 pruning한다.[^sparsegpt]
+GPTQ는 weight를 차례로 양자화하면서, 그때 생긴 출력 오차를 남은 weight를 조절해 줄였다.
+SparseGPT는 양자화하는 대신 weight를 0으로 만들고, 그때 생긴 출력 오차를 남은 weight를 조절해 줄인다.
+다만 GPTQ는 모든 weight를 양자화하므로 대상을 고를 필요가 없지만, SparseGPT는 정해진 비율의 weight만 지우므로 **어느 weight를 지울지**부터 골라야 한다.
 
-<Callout type="example">
-입력이 $(1,1)$이고 한 출력에 연결된 weight가 $(2,1)$이면 출력은 $1\times2+1\times1=3$이다.
-두 번째 weight를 0으로 지우면 출력은 2가 되지만, 첫 번째 weight를 2에서 3으로 바꾸면 이 입력의 출력을 다시 3으로 맞출 수 있다.
-두 입력 channel이 늘 같은 값이라 한쪽이 다른 쪽을 대신할 수 있는 것이다.
-반대로 calibration 데이터가 $(1,0)$과 $(0,1)$ 두 입력뿐이라면, 두 번째 weight를 지웠을 때 사라지는 $(0,1)$의 출력 1을 첫 번째 weight로는 되돌릴 수 없다.
-첫 번째 weight는 $(0,1)$에서 0과 곱해지기 때문이다.
-어느 쪽이든 보정은 calibration 데이터에 맞춘 것이라, 다른 입력에서는 정확히 맞지 않을 수 있다.
-</Callout>
-
-지울 weight를 고르는 기준도 Hessian에서 나온다.
-SparseGPT는 weight를 지운 뒤 남은 weight로 보정했을 때 출력 오차가 얼마나 커질지를 추정한다.[^sparsegpt]
-따라서 크기가 작은 weight뿐 아니라 지운 영향을 다른 weight로 보정하기 쉬운 weight도 선택될 수 있다.
-
-<Details summary="Hessian과 pruning 점수">
-출력 오차를 weight로 두 번 미분한 Hessian $H$는 calibration 입력의 Gram 행렬 $X^\top X$에 비례한다.
-대각 원소는 각 입력 channel 값의 제곱합에, 대각 밖의 원소는 두 channel 값의 내적에 비례한다.
-평균을 빼지 않았으므로 통계적 상관계수와는 다르다.
-Weight $w_m$을 0으로 만든 뒤 남은 weight로 최선의 보정을 했을 때 증가하는 출력 오차는 $w_m^2/[H^{-1}]_{mm}$에 비례한다.
-실제로는 역행렬을 안정적으로 구하려고 Hessian의 대각에 작은 값을 더한다.
-</Details>
-
-SparseGPT는 weight 행렬을 여러 조각으로 나누어 차례로 처리한다.
-각 조각에서는 지웠을 때 출력 오차가 덜 늘어나는 weight를 골라 지우고, 남은 weight를 갱신해 그 오차를 줄인다.
-이 과정을 반복하면 재학습 없이도 출력 변화를 줄이면서 전체 weight를 pruning할 수 있다.
-OPT-175B의 weight를 절반 지웠을 때 WikiText-2 perplexity(낮을수록 좋은 다음 토큰 예측 지표)는 원래 모델의 8.35에서 SparseGPT 적용 후 8.21로 비슷했다.
-같은 비율을 크기만 보고 지운 magnitude pruning의 perplexity는 약 43,000이었다.[^sparsegpt]
+지울 weight는 보정한 뒤에도 남는 오차를 보고 고른다.
+SparseGPT는 weight마다, 그 weight를 지우고 남은 weight로 가능한 만큼 보정했을 때 남는 출력 오차를 점수로 계산한다.[^sparsegpt]
+그리고 점수가 낮은 weight부터 지운다.
+크기가 같은 weight라도, 지운 영향을 남은 weight로 되돌리기 쉬우면 먼저 지워진다.
+Magnitude pruning이 weight의 크기만 본다면, SparseGPT는 크기와 보정 가능성을 함께 본다.
+이 점수와 보정 값은 GPTQ에서처럼 층 출력 오차의 Hessian으로 계산한다.
 
 ### 1-3. Wanda
 
-**Wanda**는 남은 weight를 보정하지 않고, 지울 weight를 잘 고르는 것만으로 품질을 지키려 한다.[^wanda]
+**Wanda** (Weight and Activation)는 남은 weight를 보정하지 않고, 지울 weight를 잘 고르는 것만으로 품질을 지키려 한다.[^wanda]
 핵심은 weight의 크기뿐 아니라 **그 weight에 곱해지는 입력 activation의 크기**도 함께 고려하는 것이다.
 입력이 큰 channel에서는 작은 weight라도 출력에 큰 영향을 줄 수 있기 때문이다.
 
@@ -88,21 +66,16 @@ $W_{kj}$는 입력 channel $k$와 출력 channel $j$를 잇는 weight다.
 Wanda는 해당 weight의 절댓값과 입력 channel $k$의 activation 크기를 곱해 점수를 매긴다.
 Activation 크기는 calibration 데이터의 여러 토큰에 걸친 해당 channel 값을 각각 제곱해 더하고 제곱근을 씌운 L2 norm으로 잰다.
 출력 channel마다 그 출력에 연결된 weight의 점수를 비교해 낮은 것을 지우고, 남은 weight는 그대로 둔다.
-층 전체에서 한꺼번에 비교하는 대신 출력마다 따로 비교하므로, 모든 출력에서 같은 비율의 weight가 지워진다.
-50%를 지운 LLaMA-7B 실험에서 perplexity는 층 전체로 비교하면 7.95, 출력별로 비교하면 7.26이었다.[^wanda]
 
-[Wanda 논문의 그림](https://arxiv.org/html/2306.11695v3#S1.F1)은 magnitude pruning과 Wanda의 점수 계산을 비교한다.
-그림에서는 출력별 weight를 가로로 놓아 이 노트의 $W$를 전치한 방향으로 나타낸다.
+<Figure src={wandaScore.src} alt="Magnitude pruning과 Wanda의 비교. 왼쪽은 3행 4열 weight의 절댓값을 점수로 삼아 층 전체에서 작은 절반을 지운다. 오른쪽은 weight의 절댓값에 입력 channel의 activation 크기 1, 2, 8, 3을 곱한 값을 점수로 삼고, 행마다 점수가 낮은 두 개를 지운다." caption="Magnitude pruning과 Wanda의 점수 계산." source="Sun et al. (2024), Figure 1" wide />
 
-<Callout type="example">
-한 출력 channel로 들어가는 weight가 $(0.8,\,-0.1,\,0.3,\,0.05)$이고, 네 입력 channel의 activation 크기가 각각 $(0.5,\,10,\,1,\,9)$라고 하자.
-절반을 지운다면 magnitude pruning은 절댓값이 작은 $-0.1$과 $0.05$를 지운다.
-Wanda의 점수는 $(0.4,\,1.0,\,0.3,\,0.45)$이므로 점수가 낮은 $0.3$과 $0.8$을 지운다.
-$-0.1$과 $0.05$는 작지만 큰 activation에 곱해지므로 남기는 것이다.
-</Callout>
+LLaMA-7B의 weight를 절반 지운 실험에서 Wanda의 perplexity(낮을수록 좋은 다음 토큰 예측 지표)는 magnitude pruning보다 훨씬 낮았다.
+남은 weight를 보정하지 않고 단순한 점수만 썼는데도 SparseGPT와 거의 같은 수준이었다.[^wanda]
 
-LLaMA-7B의 weight를 50% 지웠을 때 WikiText-2 perplexity는 원래 모델 5.68, magnitude pruning 17.29, SparseGPT 7.22, Wanda 7.26이었다.
-이 실험에서 Wanda는 단순한 점수만으로 SparseGPT에 가까운 품질을 얻었다.[^wanda]
+SparseGPT와 Wanda는 모든 층을 같은 비율로 지운다.
+그런데 층마다 pruning에 민감한 정도가 다르므로, 층별로 비율을 달리 정할 수도 있다.
+Yin 등의 OWL(Outlier Weighed Layerwise sparsity)은 Wanda의 점수가 층 평균보다 훨씬 큰 weight가 많은 층일수록 덜 지운다.[^owl]
+전체 sparsity는 그대로 두고 층 사이의 배분만 바꾸는 것이며, sparsity가 높을 때 같은 비율로 지우는 것보다 품질이 좋았다.
 
 다만 이렇게 weight를 0으로 만들었다는 사실만으로 모델이 더 빠르게 실행되는 것은 아니다.
 남은 weight를 저장하고 계산하는 방식이 GPU에 맞아야 한다.
@@ -111,16 +84,13 @@ LLaMA-7B의 weight를 50% 지웠을 때 WikiText-2 perplexity는 원래 모델 5
 
 ### 2-1. Unstructured sparsity의 한계
 
-지금까지 본 방법처럼 위치와 상관없이 weight를 지우는 **unstructured pruning**에서는 0이 행렬 곳곳에 불규칙하게 흩어진다.
+지금까지의 예시는 모두 위치와 상관없이 weight를 지웠다.
+이런 **unstructured pruning**에서는 0이 행렬 곳곳에 불규칙하게 흩어진다.
 GPU의 dense 행렬곱 kernel은 그 0들을 그대로 곱하므로, weight의 절반을 지워도 행렬곱 시간은 줄지 않는다.
 0을 포함한 배열을 그대로 저장하면 저장할 원소 수도 그대로다.
 
 0을 건너뛰려면 위치 정보를 따로 저장하고 불규칙한 메모리 접근을 감당하는 특수한 kernel이 필요하다.
 GPU 메모리는 이어진 주소를 한꺼번에 읽을 때 최대 대역폭에 가까워지므로, 흩어진 원소를 골라 읽으면 읽는 양이 줄어도 그만큼 빨라지지 않는다.[^nvidia24]
-
-SparseGPT 논문에서는 sparsity 40–60%로 지운 OPT-2.7B를 CPU(central processing unit)용 희소 연산 엔진에서 실행했다.
-18개 CPU 코어로 토큰 400개의 batch 하나를 처리한 속도는 같은 엔진의 dense 모델보다 1.57–2.16배 빨랐지만,[^sparsegpt]
-GPU에서 같은 이득을 내기는 어렵다.
 
 <figure>
 <svg viewBox="0 0 600 190" role="img" aria-label="세 가지 pruning 패턴을 4행 8열의 weight 격자로 비교한다. 진한 칸은 남은 weight, 흰 칸은 지운 weight다. 왼쪽 unstructured는 위치와 상관없이 절반을 지워 진한 칸이 불규칙하게 흩어져 있다. 가운데 2:4 semi-structured는 각 행의 연속된 네 칸마다 정확히 두 칸만 남아 있고, 네 칸 묶음의 경계가 점선으로 표시되어 있다. 오른쪽 structured는 왼쪽 네 열만 남고 오른쪽 네 열이 통째로 지워져, 남은 부분이 더 작은 dense 행렬이 된다. 아래에는 각 패턴을 GPU에서 가속하는 방법이 적혀 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -233,47 +203,56 @@ GPU에서 같은 이득을 내기는 어렵다.
   <text x="300" y="176" font-size="13" text-anchor="middle" fill="#0f172a">GPU 가속: Sparse Tensor Core</text>
   <text x="492" y="176" font-size="13" text-anchor="middle" fill="#0f172a">GPU 가속: 일반 dense kernel</text>
 </svg>
-<figcaption>같은 비율을 지워도 남은 weight의 배치에 따라 GPU에서 얻는 속도가 다르다. 진한 칸이 남은 weight다. 각 출력에 연결된 입력 weight를 가로로 보이도록 이 노트의 $W$를 전치해 그렸다.</figcaption>
+<figcaption>같은 비율을 지워도 남은 weight의 배치에 따라 GPU에서 얻는 속도가 다르다. 진한 칸이 남은 weight다.</figcaption>
 </figure>
 
 ### 2-2. 2:4 semi-structured sparsity
 
-NVIDIA는 Ampere GPU부터 하드웨어가 직접 가속할 수 있는 sparsity 패턴을 정했다.
+Unstructured pruning은 품질을 지키기 쉽지만 GPU에서 빨라지지 않는다.
+반대로 channel을 통째로 지우면 GPU에는 잘 맞지만 품질을 지키기 어렵다.
+NVIDIA는 Ampere GPU부터 그 중간에 해당하는 패턴을 정하고, 하드웨어가 이를 직접 가속하게 했다.[^nvidia24]
 연속된 원소 4개마다 적어도 2개를 0으로 두는 **2:4 sparsity**다.
+묶음 안에서 어느 둘을 남길지는 자유롭게 고르되, 남기는 개수는 모든 묶음에서 같게 맞춘다.
+
 선형층 $XW$에서는 $W$의 열(출력 channel)마다 입력 channel을 차례로 네 개씩 묶는다.
 전체의 절반이 0이라고 해서 되는 것이 아니고, 묶음 하나하나가 이 조건을 만족해야 한다.
 예를 들어 $(0.1,0,0.8,0)$은 네 개 중 둘이 0이므로 조건을 만족하지만, $(0.1,0.3,0.8,0)$은 하나만 0이므로 만족하지 않는다.
 뒤의 묶음에 0이 더 많더라도 이 묶음의 부족한 0을 대신할 수 없다.
 
-Sparse Tensor Core는 네 원소마다 값 두 개와 각 값의 위치만 읽어,
-dense 행렬곱보다 최대 두 배의 연산 속도를 낸다.[^nvidia24]
-네 자리 중 하나를 가리키는 데는 값마다 2 bits(00, 01, 10, 11)가 든다.
-NVIDIA 아키텍처 백서는 H100 SXM의 16-bit 연산 성능을 dense로 989 TFLOP/s, 이 가속을 가정하면 1,979 TFLOP/s로 적는다.[^h100]
+**남기는 개수가 같으면 0이 아닌 값만 모아 다시 dense 행렬처럼 다룰 수 있다.**
+묶음마다 값 두 개와 그 위치만 저장하면, 크기가 절반인 행렬과 작은 위치 정보가 된다.
 
-2:4는 unstructured pruning보다 제약이 강해 품질 손실이 커질 수 있다.
+<Callout type="example">
+한 출력에 연결된 weight 여덟 개가 $(0.1,\,0,\,0.8,\,0,\,0,\,0.3,\,0,\,0.5)$라고 하자.
+앞의 네 개와 뒤의 네 개가 각각 2:4 조건을 만족한다.
+이를 값 $(0.1,\,0.8,\,0.3,\,0.5)$와 묶음 안의 위치 $(0,\,2,\,1,\,3)$으로 저장한다.
+</Callout>
+
+이 형식에는 세 가지 이점이 있다.[^nvidia24]
+첫째, 메모리를 이어서 읽을 수 있다.
+GPU는 weight를 큰 덩어리로 이어서 읽을 때 가장 빠르다.
+Unstructured에서는 구간마다 0의 수가 달라, 0이 아닌 값의 주소를 따로 적어 두고 하나씩 찾아가야 한다.
+2:4에서는 어느 묶음이든 값이 두 개이므로 몇 번째 묶음의 값이 어디에 있는지 계산으로 알 수 있고, 읽어 온 덩어리에는 필요한 값만 들어 있다.
+둘째, 위치 정보가 작다.
+네 자리 중 하나만 가리키면 되므로 값마다 2 bits(00, 01, 10, 11)면 된다.
+셋째, 곱셈 횟수가 절반으로 준다.
+Sparse Tensor Core는 위치 정보를 보고 입력에서 대응하는 원소만 골라 곱하므로, dense 행렬곱보다 최대 두 배의 연산 속도를 낸다.
+
+비율을 절반으로 정한 것은 품질 때문이다.
+Sparsity가 80%처럼 높으면 모델마다 학습 설정을 다시 맞춰야 품질을 지킬 수 있지만, 50%에서는 그런 조정 없이도 품질을 유지하기 쉽다.[^nvidia24]
+다만, 2:4 역시 unstructured pruning보다 제약이 강해 품질 손실이 커질 수 있다.
 중요한 weight가 한 묶음에 셋 몰려 있어도 둘만 남길 수 있기 때문이다.
-SparseGPT로 OPT-175B를 2:4로 지우면 perplexity가 8.35에서 8.74로 조금 늘었지만,
-OPT-2.7B에서는 12.47에서 17.18로 크게 늘었다.[^sparsegpt]
 
-이 제약 아래에서는 묶음마다 어떤 둘을 남길지 정하는 mask가 품질을 좌우한다.
-Mask는 각 위치의 weight를 남길지 0으로 만들지 표시한 것이다.
-One-shot 방법은 소량의 calibration 데이터로 추정한 중요도로 mask를 정하는데, 이 추정은 실제와 다를 수 있다.
-Fang 등의 MaskLLM은 mask를 학습으로 고른다.[^maskllm]
-Weight를 고정한 채, 네 개 묶음마다 가능한 2:4 mask 여섯 가지를 선택할 확률을 학습 데이터로 조정한다.
-Mask 하나를 고르는 이산적인 선택은 그대로는 미분할 수 없으므로, 학습할 때는 이 선택을 연속적인 값으로 근사해 확률을 조정한다.
-학습이 끝나면 각 묶음에서 확률이 가장 높은 mask를 고른다.
-2:4로 지운 Llama 2 7B의 WikiText-2 perplexity는 SparseGPT가 10.42, MaskLLM이 6.72였고, dense 모델은 5.12였다.
-다만 SparseGPT는 웹 텍스트 데이터셋 C4의 소량 데이터로 한 번에 지웠고, MaskLLM은 SparseGPT의 mask에서 출발해 약 51만 개 샘플로 mask를 2,000스텝 학습했다.
-이 학습에는 A100으로 1,280 GPU시간이 들었다.[^maskllm]
+SparseGPT와 Wanda는 unstructured뿐 아니라 2:4로도 지울 수 있다.
+점수는 그대로 두고 비교하는 범위만 바꾸어, 네 개 묶음마다 점수가 낮은 둘을 지운다.[^sparsegpt][^wanda]
+Wanda 논문은 이 패턴을 structured sparsity라고 부르지만, 이 노트에서는 channel이나 층을 통째로 지우는 structured pruning과 구분해 semi-structured라고 한다.
+SparseGPT 실험에서 2:4로 지운 모델은 같은 절반을 unstructured로 지운 모델보다 perplexity가 높았고, 그 차이는 작은 모델에서 더 컸다.[^sparsegpt]
 
 ### 2-3. 2:4의 측정 속도
 
 실제 속도 이득은 최대치인 두 배에 못 미친다.
-Wanda 논문은 A6000 GPU에서 NVIDIA의 행렬곱 라이브러리 CUTLASS의 kernel로 LLaMA-65B 선형층의 행렬곱만 떼어 batch 1로 모의 측정했다.
-2:4 행렬곱은 1.54–1.63배 빨랐지만,
-2:4 LLaMA-7B의 전체 지연은 312 ms에서 251 ms로 줄어 1.24배 빨라지는 데 그쳤다.[^wanda]
-MaskLLM 논문은 A6000·batch 1에서 NVIDIA의 서빙 라이브러리 TensorRT-LLM으로 처리량을 쟀다.
-2:4 모델의 처리량은 dense 모델에 비해 7B가 1.36–1.41배, 13B가 1.50–1.57배였다.[^maskllm]
+Wanda 논문이 선형층의 행렬곱만 떼어 잰 속도도,[^wanda]
+Fang 등이 서빙 라이브러리로 잰 2:4 모델의 처리량도 dense 모델의 두 배에 못 미쳤다.[^maskllm]
 
 까닭은 두 가지다.
 첫째, 행렬곱 외의 연산은 빨라지지 않는다.
@@ -282,8 +261,9 @@ MaskLLM 논문은 A6000·batch 1에서 NVIDIA의 서빙 라이브러리 TensorRT
 값 4개에 64 bits가 들던 것이 남은 값 2개(32 bits)와 위치(4 bits)를 합한 36 bits가 되기 때문이다.
 두 경우의 유효 메모리 대역폭이 같고 weight를 읽는 시간이 행렬곱 시간을 정한다고 가정하면, 빨라지는 상한은 64/36, 약 1.8배다.
 
-Checkpoint에 2:4 패턴이 있다는 것만으로 sparse kernel이 실행되지는 않는다.
-엔진과 GPU가 해당 형식을 지원하는지, 실행 기록에서 sparse 행렬곱 kernel이 실제로 선택되었는지 확인해야 한다.
+Weight가 2:4 패턴을 만족한다는 것만으로 빨라지지는 않는다.
+0이 들어 있는 행렬을 그대로 두면 GPU는 dense 행렬곱을 실행한다.
+Weight를 앞의 압축 형식(값 두 개 + 2bits 위치)으로 바꾸고 sparse 행렬곱(e.g., PyTorch의 경우, torch.sparse.to_sparse_semi_structured)을 호출해야 하며, 이 일은 사용자나 서빙 엔진이 맡는다.[^nvidia24]
 
 ## 3. Structured pruning
 
@@ -313,10 +293,7 @@ Embedding 차원 하나를 지울 때는 함께 지워야 하는 weight가 훨�
 
 Ma 등의 LLM-Pruner는 이런 의존 관계를 자동으로 찾아 묶고,
 묶음을 지웠을 때 loss가 얼마나 변할지를 gradient로 추정해 덜 중요한 묶음부터 지운다.
-그 뒤 작은 행렬만 덧붙여 학습하는 LoRA(low-rank adaptation)로 품질을 회복한다.
-LLaMA-7B의 파라미터 20%를 지우고 회복한 모델은 zero-shot(예시 없이 질문만 주는) 분류 task 일곱 개의 평균 정확도가 원래 모델의 94.97% 수준이었다.[^llmpruner]
-
-<Figure src="https://arxiv.org/html/2305.11627v3/main_v5.png" alt="LLM-Pruner의 세 가지 구조 묶음. 왼쪽 위는 FFN 중간 channel, 그 옆과 아래는 attention head, 오른쪽 절반은 embedding channel에 연결된 weight를 함께 지운다." caption="LLM-Pruner가 묶는 구조. 왼쪽 위 Group Type A는 FFN 중간 channel 하나로, gate·up 투영의 출력과 down 투영의 입력이 함께 지워진다. 그 옆과 아래의 Group Type B는 attention head, 오른쪽 절반의 Group Type C는 embedding channel이다." source="Ma et al. (2023), Figure 2 · CC BY 4.0" wide />
+그 뒤 작은 행렬만 덧붙여 학습하는 LoRA(low-rank adaptation)로 품질을 회복한다.[^llmpruner]
 
 ### 3-2. 깊이 pruning
 
@@ -326,12 +303,12 @@ Transformer의 각 층은 입력 $x$를 새 값으로 바꾸는 것이 아니라
 어떤 층의 $f(x)$가 $x$에 비해 작다면 그 층을 빼도 다음 층은 거의 같은 입력을 받는다.
 Men 등의 ShortGPT는 변화량의 크기 대신 층의 입력과 출력 hidden state 사이의 cosine 유사도를 기준으로 삼는다.
 입출력의 방향이 비슷한 층을 덜 중요한 후보로 보고 먼저 지운다.
-Llama 2 13B에서 파라미터의 24.6%를 줄였을 때, 선다형 벤치마크 11개의 평균 점수는 58.49에서 53.57로 내려가 원래 평균의 91.59%가 남았다.[^shortgpt]
+Llama 2 13B에서 이렇게 층의 상당 부분을 지워도 선다형 벤치마크의 평균 점수는 조금만 내려갔다.[^shortgpt]
 
 Gromov 등은 입력과 출력이 가장 비슷한 연속된 층들을 지운 뒤, 4-bit로 양자화한 모델에 LoRA를 붙이는 QLoRA(quantized LoRA)로 짧게 미세조정해 회복(healing)했다.
-회복 학습을 거친 Llama 2 70B에서는 층의 약 40%를 지울 때까지 MMLU(Massive Multitask Language Understanding)와 예·아니오 질의응답 벤치마크 BoolQ의 정확도가 크게 떨어지지 않다가, 40–50% 구간에서 급격히 무너졌다.[^gromov]
+회복 학습을 거친 Llama 2 70B에서는 층의 상당 부분을 지울 때까지 MMLU(Massive Multitask Language Understanding)와 예·아니오 질의응답 벤치마크 BoolQ의 정확도가 크게 떨어지지 않다가, 그보다 더 지우면 급격히 무너졌다.[^gromov]
 
-다만 ShortGPT 논문도 밝히듯, 회복 학습 없이 Llama 2 7B의 층 32개 가운데 9개를 지우면 수학 문제에 대한 답을 생성하는 GSM8K의 정확도가 15.69%에서 1.60%로 떨어졌다.[^shortgpt]
+다만 ShortGPT 논문도 밝히듯, 회복 학습 없이 Llama 2 7B의 층 일부를 지우면 수학 문제에 대한 답을 생성하는 GSM8K의 정확도는 대부분 사라졌다.[^shortgpt]
 선다형 문제의 정확도만으로 깊이 pruning의 품질을 판단하면 위험하다.
 
 ## 4. Distillation
@@ -362,8 +339,8 @@ Student A가 $(0.5,\,0.4,\,0.1)$, student B가 $(0.9,\,0.05,\,0.05)$를 주었�
 ### 4-2. Pruning 후 회복
 
 회복 학습의 가장 단순한 형태는 데이터의 다음 토큰을 목표로 사전학습을 이어 가는 것이다.
-Xia 등의 Sheared-LLaMA는 Llama 2 7B를 1.3B와 2.7B로 구조적으로 줄인 뒤 이 방식으로 50B 토큰을 더 학습했다.
-2.7B 모델은 크기가 비슷한 OpenLLaMA-3B-v2를 처음부터 학습하는 데 든 연산량의 약 3%를 썼을 때 이미 그에 가까운 품질에 도달했다.[^sheared]
+Xia 등의 Sheared-LLaMA는 Llama 2 7B를 구조적으로 줄인 뒤 이 방식으로 학습을 이어 갔다.
+줄인 모델은 크기가 비슷한 모델을 처음부터 학습하는 데 든 연산량의 아주 작은 일부만 쓰고도 그에 가까운 품질에 도달했다.[^sheared]
 이 비교에 원래 7B를 학습한 비용은 들어 있지 않다.
 
 회복 학습의 목표를 데이터의 다음 토큰 대신 teacher의 분포로 바꿀 수도 있다.
@@ -374,27 +351,19 @@ Attention head, FFN channel, embedding 차원의 중요도는 forward pass에서
 목표 크기를 정하면 head, FFN channel, embedding 차원 같은 종류마다 중요도가 낮은 것부터 잘라 내고, 그렇게 만든 후보 구조 몇 개를 짧게 회복 학습해 비교한다.
 고른 모델은 원래 모델을 teacher로 삼아 distillation으로 품질을 되살린다.[^minitron]
 
-Minitron은 Nemotron-4 15B에서 층 수 32는 그대로 두고 너비만 줄여 8B를 만들고, 이를 다시 줄여 4B를 만들었다.
-각 모델은 원래 모델의 사전학습에 사용한 토큰의 3% 미만으로 distillation 학습해 품질을 되살렸다.
-Minitron 8B의 회복 학습에 사용한 토큰 수는 처음부터 학습한 Nemotron-3 8B의 약 40분의 1이었는데,
-MMLU 점수는 63.8로 Nemotron-3 8B의 54.7보다 높았다.[^minitron]
+Minitron은 Nemotron-4 15B에서 층 수는 그대로 두고 너비만 줄여 8B를 만들고, 이를 다시 줄여 4B를 만들었다.
+각 모델은 원래 모델의 사전학습에 사용한 토큰의 아주 작은 일부만으로 distillation 학습해 품질을 되살렸다.
+Minitron 8B는 처음부터 학습한 Nemotron-3 8B보다 훨씬 적은 토큰으로 학습했는데도 MMLU 점수가 더 높았다.[^minitron]
 같은 논문에서 15B를 깊이로 줄인 모델과 너비로 줄인 모델을 비교하면, 회복 학습 뒤에는 너비를 줄인 쪽의 품질이 더 좋았다.
 다만 어느 구조가 좋은지는 모델과 줄이는 비율, 회복 학습에 따라 달라질 수 있다.
 
 토큰 수가 적다고 비용이 그만큼 줄어드는 것은 아니다.
 이미 학습된 큰 모델이 있어야 하고, distillation하는 동안 teacher도 실행해야 한다.
-
-<Details summary="세 모델을 만드는 연산량의 비교">
-논문은 15B·8B·4B 세 모델을 각각 같은 토큰 수로 처음부터 학습하는 경우와 15B에서 두 작은 모델을 만드는 경우를 비교해 연산량을 추정했다.
-두 작은 모델의 학습 토큰 수를 각각 40분의 1로 가정하면 후자의 연산량은 약 1.8분의 1이다.
-이 추정에는 teacher의 forward 비용이 포함되지 않았다.
-</Details>
+논문은 세 모델을 각각 처음부터 학습하는 것보다 큰 모델 하나에서 작은 두 모델을 만드는 쪽의 연산량이 적다고 추정했지만, 이 추정에 teacher의 forward 비용은 들어 있지 않다.[^minitron]
 
 후속 보고서는 같은 방법으로 Llama 3.1 8B에서 층을 절반으로 줄인 4B 모델과 너비를 줄인 4B 모델을 만들었다.[^minitron-practice]
-H100 한 대에서 TensorRT-LLM을 FP8(8-bit floating point)로 돌려 여러 입출력 길이에서 처리량을 쟀다.
-평균 처리량은 원래 8B보다 깊이를 줄인 모델이 2.7배, 너비를 줄인 모델이 1.8배 높았다.
-작은 모델에는 두 배 큰 batch를 주었으므로 이 배율에는 batch를 키운 이득도 섞여 있다.
-보고서 안에서 너비 모델의 배율은 1.8배와 1.7배 두 가지로 적혀 있다.
+처리량은 두 모델 모두 원래 8B보다 높았고, 깊이를 줄인 모델이 더 높았다.
+작은 모델에는 더 큰 batch를 주었으므로 이 차이에는 batch를 키운 이득도 섞여 있다.
 이 실험에서는 순서대로 계산할 층 수 자체를 줄인 깊이 쪽이 더 빨랐지만, 보고서는 전체 정확도에서 너비를 줄인 쪽이 더 낫다고 평가했다.
 
 Meta도 Llama 3.2 1B와 3B를 같은 경로로 만들었다.
@@ -408,17 +377,16 @@ Distillation은 지운 모델을 되살리는 데만 쓰이지 않는다.
 
 Google의 Gemma 2는 2B와 9B 모델을 이렇게 사전학습했다.[^gemma2]
 다음 토큰을 예측한다는 점은 그대로이고 목표 분포만 바뀐다.
-2B 모델을 500B 토큰으로 사전학습한 비교 실험에서, 데이터의 다음 토큰을 목표로 하면 세 벤치마크의 평균이 60.3, 7B teacher의 분포를 목표로 하면 67.7이었다.[^gemma2]
+2B 모델을 같은 토큰 수로 사전학습한 비교 실험에서, teacher의 분포를 목표로 한 쪽이 데이터의 다음 토큰을 목표로 한 쪽보다 벤치마크 평균이 높았다.[^gemma2]
 
 작은 모델을 얼마나 오래 학습할지도 정해야 한다.
-Gemma 2의 2B와 9B는 각각 2T와 8T 토큰으로 학습했다.[^gemma2]
 Chinchilla scaling law는 주어진 학습 연산량에서 loss가 가장 낮아지는 모델 크기와 학습 토큰 수의 배분(compute-optimal)을 예측한다.[^chinchilla]
-2T와 8T는 이 배분에서 같은 크기의 모델에 할당하는 토큰 수의 수십 배다.
+Gemma 2의 2B와 9B는 이 배분이 같은 크기의 모델에 할당하는 것보다 훨씬 많은 토큰으로 학습했다.[^gemma2]
 
 Compute-optimal 배분은 학습 연산량만 따진 것이다.
 같은 품질을 목표로 더 작은 모델을 더 많은 토큰으로 학습하면, 학습 비용은 늘지만 요청 하나를 처리하는 연산량은 큰 모델보다 줄어든다.
 Sardana 등은 학습 연산량에 배포 뒤의 inference 연산량을 더하고, 학습과 inference의 장치 활용률과 비용 차이도 반영해 이 손익을 계산했다.
-요청이 약 10억 건에 이르는 큰 수요에서는, compute-optimal보다 작은 모델을 더 오래 학습하는 편이 전체 비용에서 유리했다.[^sardana]
+요청 수가 매우 많은 큰 수요에서는, compute-optimal보다 작은 모델을 더 오래 학습하는 편이 전체 비용에서 유리했다.[^sardana]
 정확한 손익분기점은 요청 길이와 장치 비용 같은 조건에 따라 달라진다.
 
 큰 모델을 한 번 학습해 두고 거기서 여러 크기의 작은 모델을 pruning과 distillation으로 뽑아내면,
@@ -463,12 +431,12 @@ Rank 1만 남기는 일반 SVD는 큰 특이값 2를 보존해 $\hat W=\operator
 </Callout>
 
 이처럼 큰 activation에 곱해지는 weight는 작은 오차도 출력에서 크게 드러날 수 있다.
-Yuan 등의 실험에서는 일반 SVD로 LLaMA-7B의 파라미터를 5%만 줄여도 WikiText-2 perplexity가 5.68에서 약 2,800으로 늘었다.[^asvd]
+Yuan 등의 실험에서는 일반 SVD로 LLaMA-7B의 파라미터를 조금만 줄여도 perplexity가 모델을 쓸 수 없을 만큼 커졌다.[^asvd]
 
-### 5-2. Activation을 고려한 분해
+### 5-2. ASVD
 
 Wanda와 AWQ(activation-aware weight quantization)처럼, 분해할 때도 weight와 함께 **실제 입력 activation**을 고려할 수 있다.
-ASVD는 calibration 데이터에서 입력 channel별 activation의 크기를 살펴, 큰 activation이 들어오는 channel에 연결된 weight를 키운 뒤 분해한다.[^asvd]
+<strong>ASVD(activation-aware singular value decomposition)</strong>는 calibration 데이터에서 입력 channel별 activation의 크기를 살펴, 큰 activation이 들어오는 channel에 연결된 weight를 키운 뒤 분해한다.[^asvd]
 
 입력 channel $k$마다 배율 $s_k$를 정해 $W$의 $k$번째 행을 $s_k$배 하고 입력의 $k$번째 channel을 $s_k$로 나누면, 곱은 바뀌지 않는다.
 대각행렬 $S=\operatorname{diag}(s_1,\dots,s_K)$로 쓰면 $XW=(XS^{-1})(SW)$다.
@@ -483,12 +451,16 @@ SVD는 이렇게 키운 $SW$의 행을 더 중요하게 다루므로, 큰 activa
 앞의 예에서 출력 오차가 더 작았던 바로 그 근사다.
 
 또 ASVD는 층마다 압축에 얼마나 민감한지 살펴 분해 후의 rank를 다르게 정한다.
-LLaMA-7B의 파라미터를 5%, 10%, 15% 줄였을 때 perplexity는 각각 5.78, 6.09, 6.80이었다.[^asvd]
+같은 LLaMA-7B에 ASVD를 쓰면 파라미터를 조금 줄이는 범위에서는 perplexity가 원래 모델에 가깝게 유지되었고, 더 많이 줄일수록 커졌다.[^asvd]
 
 [ASVD 논문의 그림](https://arxiv.org/html/2312.05821v5#S3.F2)도 큰 activation이 들어오는 channel을 고려하면 출력 오차가 줄어드는 예를 보여 준다.
 논문은 곱을 $WX$로 표기하므로 이 노트의 $XW$와 행렬 방향이 반대다.
 
-SVD-LLM은 입력 channel의 크기뿐 아니라 **channel 사이의 관계**까지 고려한다.[^svdllm]
+### 5-3. SVD-LLM
+
+ASVD의 배율은 입력 channel마다 따로 정하므로, 두 channel이 함께 움직이는지는 반영하지 못한다.
+**SVD-LLM**은 입력 channel의 크기뿐 아니라 **channel 사이의 관계**까지 고려한다.[^svdllm]
+Wanda가 activation의 크기만 보고 SparseGPT가 channel 사이의 관계까지 본 것과 같은 차이다.
 두 입력 channel이 함께 움직인다면 한 channel의 오차가 다른 channel의 오차와 출력에서 서로 더해지거나 상쇄될 수 있다.
 그러면 각 channel의 크기만 따로 볼 때와 중요한 방향이 달라진다.
 SVD-LLM은 이 관계를 반영해 입력을 변환한 뒤 분해하므로, weight의 오차가 아니라 calibration 입력에 대한 층 출력의 오차가 작은 분해를 얻는다.
@@ -503,128 +475,11 @@ Calibration 데이터가 부족하면 행렬이 특이할 수 있어, 실제 계
 </Details>
 
 분해한 모델은 추가 학습으로 품질을 더 회복할 수도 있다.
-SVD-LLM 실험에서 Llama 2 7B의 파라미터를 20% 줄였을 때 WikiText-2 perplexity는 원래 모델 5.47, 일반 SVD 18,192, ASVD 10.10이었다.
-SVD-LLM은 입력 변환만 적용하면 8.50, 추가로 미세조정하면 7.73이었다.[^svdllm]
-원래 모델의 5.47이 MaskLLM 논문의 5.12와 다른 것은 평가에 쓴 문맥 길이가 다르기 때문이다.
+SVD-LLM 실험에서 Llama 2 7B의 파라미터를 더 큰 비율로 줄였을 때 perplexity는 일반 SVD, ASVD, SVD-LLM 순으로 낮았다.
+SVD-LLM에 미세조정을 더하면 더 낮아졌지만, 그래도 원래 모델보다는 높았다.[^svdllm]
 입력을 고려하면 품질 손실을 줄일 수 있지만, 압축 비율이 커질수록 원래 모델의 품질을 유지하기 어려워진다.
 
-## 6. 적응형 계산과 층 공유
-
-### 6-1. Early exit
-
-깊이 pruning은 층을 지워 모든 입력에 같은 작은 모델을 사용한다.
-반면 적응형 계산은 층을 유지하면서 토큰마다 수행하는 연산량을 다르게 정한다.
-“The United States of” 다음의 “America”처럼 쉬운 토큰은 앞쪽 몇 층만으로 맞힐 수 있지만,
-계산 결과처럼 어려운 토큰에는 모든 층이 필요할 수 있다.
-층을 건너뛴 토큰에는 깊이 pruning에서처럼 그 층의 변화량을 더하지 않은 hidden state가 남으므로, 계산은 그대로 이어 갈 수 있다.
-문제는 토큰마다 계산 경로가 달라진다는 점이다.
-이후 토큰에 필요한 과거 key·value가 빠질 수 있고, 여러 요청을 묶어 처리하면 계산을 줄인 이득도 작아진다.
-
-Schuster 등의 CALM(Confident Adaptive Language Modeling)은 decoder의 중간 층에서도 다음 토큰을 예측할 수 있게 학습하고,
-생성할 때는 층마다 지금까지의 hidden state로 예측이 얼마나 확실한지 잰다.[^calm]
-이 값(confidence)이 기준을 넘으면 남은 층을 건너뛰고 그 자리에서 토큰을 내는데, 이를 early exit라 한다.
-중간 층의 hidden state로 만든 다음 토큰 분포에서 가장 높은 두 확률의 차이 등을 confidence로 쓴다.
-예를 들어 현재 입력 토큰을 처리하다가 8개 층 중 4층에서 충분히 확신하면, 5–8층은 계산하지 않고 4층의 결과로 다음 토큰을 예측한다.
-
-이때 건너뛴 층에는 지금 입력한 토큰의 hidden state가 없어, 뒤 토큰이 그 층에서 이 토큰에 attention할 수 없다.
-다음 토큰을 5층까지 계산하려 해도, 5층에는 앞 토큰의 key·value가 없다.
-그래서 CALM은 건너뛴 층의 계산은 하지 않되, 멈춘 층의 hidden state를 그 층들에 그대로 넘겨 key·value만 만들어 cache에 채운다.
-이 값은 건너뛴 층을 실제로 계산해 얻은 key·value가 아니라 근사값이다.
-앞쪽 층의 예측도 전체 모델의 예측과 다를 수 있으므로, early exit는 속도를 얻는 대신 출력 품질을 일부 내준다.
-
-논문은 decoder가 8층인 T5의 요약·번역·질의응답 실험에서 전체 생성이 최대 약 3배 빨라진다고 추정했다.
-TPUv3에서 batch 1로 encoder와 decoder 전체의 생성 시간을 재고 그 값으로 계산한 추정치라, 최적화된 서빙 엔진의 실측 속도라고 볼 수는 없다.[^calm]
-
-빠진 key·value를 근사하는 대신 실제로 계산하는 방법도 있다.
-Bae 등의 FREE는 모델을 얕은 부분과 깊은 부분으로 나누고, 쉬운 토큰은 얕은 부분에서 예측한다.[^free]
-이때 hidden state를 보관해 두었다가, 이후 깊은 계산이 필요해지면 보관해 둔 앞 토큰들과 현재 토큰을 함께 깊은 부분에 넣어 빠진 key·value를 계산한다.
-이 토큰들은 이미 생성되어 있으므로, attention에서 뒤 토큰을 보지 않도록 막으면서 깊은 부분을 함께 계산할 수 있다.
-
-<Figure src="https://arxiv.org/html/2310.05424v1/concept_b.png" alt="FREE의 얕은 층과 깊은 층, 일찍 멈춘 토큰들을 깊은 층에서 함께 계산하는 과정." caption="FREE의 구조. 왼쪽에서 빨간 점선으로 묶인 세 위치, 곧 일찍 멈춘 앞의 두 토큰과 현재 토큰을 깊은 층에서 함께 계산한다. 오른쪽은 early exit의 기준을 정하는 과정이다." source="Bae et al. (2023), Figure 1(b) · CC BY 4.0" wide />
-
-이렇게 모아서 처리하면 weight를 읽는 비용을 여러 토큰이 나눌 수 있지만, 깊은 계산이 필요해지면 미뤘던 연산도 수행해야 한다.
-따라서 실제 이득은 연속으로 일찍 멈추는 토큰의 수와 GPU 병목 등에 따라 달라진다.
-
-### 6-2. SkipDecode
-
-토큰별 early exit의 이득은 여러 요청을 묶는 서빙에서는 얻기 어렵다.
-Del Corro 등은 SkipDecode를 제안하며 두 가지 문제를 짚었다.[^skipdecode]
-첫째, batch 안에서 일부 토큰이 일찍 멈춰도 가장 늦게 멈추는 토큰이 끝날 때까지 계산은 계속된다.
-남은 토큰이 하나뿐이어도 그 토큰이 지나는 층의 weight는 모두 읽어야 하므로, weight 읽기가 병목이라면 시간이 크게 줄지 않는다.
-둘째, 앞 토큰이 건너뛴 층을 뒤 토큰이 계산하려면 그 층에 앞 토큰의 key·value가 있어야 하므로, CALM처럼 이를 따로 채우는 계산이 든다.
-
-CALM은 위쪽 층을 건너뛰지만, SkipDecode는 맨 아래 warmup 층을 계산한 뒤 중간 층 일부를 건너뛰고 위쪽 층을 계산한다.
-건너뛸 층 수는 confidence로 정하지 않고, 생성 위치가 뒤로 갈수록 늘어나도록 미리 정해 둔다.
-그래서 뒤 토큰은 앞 토큰이 건너뛴 중간 층을 모두 건너뛰고, 그 위의 층을 더 건너뛰기도 한다.
-예를 들어 앞 토큰이 1층과 3–8층을 계산했다면, 뒤 토큰은 1층과 4–8층을 계산한다.
-이처럼 뒤 토큰은 앞 토큰도 계산한 층만 계산하므로, 필요한 key·value가 이미 cache에 있어 따로 채울 필요가 없다.
-또 같은 생성 위치의 토큰은 batch 전체가 같은 수의 층을 건너뛰므로 첫째 문제도 피한다.
-
-<Figure src="https://arxiv.org/html/2307.02628v1/figs/skipping.png" alt="SkipDecode의 층 경로. 가로는 생성 위치, 세로는 층이다. 모든 위치가 1층을 계산하고, 위치가 뒤로 갈수록 그 위의 건너뛰는 층이 늘어나고, 남은 위쪽 층을 계산한다. 맨 위와 아래 상자에 두 요청의 토큰이 함께 적혀 있다." caption="SkipDecode의 층 경로. 파란 칸은 계산하고 주황색 점선 칸은 건너뛰는 층이다. 위치가 뒤로 갈수록 건너뛰는 중간 층이 늘어나고, 한 batch의 두 요청이 같은 경로를 따른다." source="Del Corro et al. (2023), Figure 2(b) · CC BY 4.0" />
-
-그 대가로 토큰마다 깊이를 고른다는 장점은 사라진다.
-또 같은 batch의 요청들이 생성 위치마다 같은 경로를 따라야 하므로, 논문도 새 요청은 생성 위치가 남은 요청들과 같을 때만 batch에 합류할 수 있다고 밝힌다.[^skipdecode]
-중간에 끝난 요청의 자리에 새 요청을 즉시 넣는 continuous batching에는 그대로 적용하기 어렵다.
-
-### 6-3. Mixture-of-Depths
-
-Early exit는 한 번 멈춘 토큰이 남은 층을 모두 건너뛴다.
-한 층만 건너뛰고 다음 층에서 다시 계산하는 방법도 있다.
-Raposo 등의 <strong>Mixture-of-Depths(MoD)</strong>는 층마다 학습한 router로 계산할 토큰을 고른다.[^mod]
-Router는 각 토큰의 hidden state를 보고 그 층에서 계산할 필요가 얼마나 큰지 점수를 내는 작은 모듈이다.
-선택된 토큰은 attention과 FFN을 거치고, 나머지는 residual connection을 따라 그 층을 우회해 다음 층으로 간다.
-따라서 어떤 토큰은 중간 층을 건너뛴 뒤 더 깊은 층에서 다시 계산에 참여할 수 있다.
-
-<Figure src="https://arxiv.org/html/2404.02258v1/mod.png" alt="Mixture-of-Depths에서 router가 토큰을 층으로 보내거나 우회시키는 구조와 일반 Transformer, early exit의 경로 비교." caption="MoD의 토큰별 계산 경로. 보라색은 층을 계산하고 주황색은 건너뛰는 위치다. Early exit와 달리 중간에 건너뛴 토큰도 이후 층을 계산할 수 있다." source="Raposo et al. (2024), Figure 1 · CC BY 4.0" wide />
-
-학습할 때는 각 층이 처리할 토큰 수를 미리 정하고, router의 점수가 높은 토큰을 그 수만큼 고른다.
-예를 들어 토큰 4개 중 2개만 처리하도록 정하면, 층마다 점수가 높은 2개를 골라 계산하고 나머지 2개는 우회한다.
-그러면 선택되는 토큰은 달라져도 층이 처리할 데이터의 크기는 일정하다.
-
-이 방식은 한 시퀀스의 토큰 점수를 서로 비교하므로, 어떤 토큰의 선택 여부가 뒤 토큰의 점수에도 영향을 받는다.
-하지만 실제 생성에서는 뒤 토큰이 아직 없으므로 같은 비교를 할 수 없다.
-논문이 시험한 해법 가운데 하나는 작은 보조 predictor를 함께 학습하는 것이다.
-학습 중 각 토큰이 점수 상위에 들어 선택되었는지를 정답으로 삼아, predictor가 그 토큰의 hidden state만 보고 선택 여부를 맞히도록 학습한다.
-생성할 때는 predictor가 고른 토큰만 그 층을 계산한다.[^mod]
-
-MoD는 빠진 key·value를 채우지 않는다.
-층을 우회한 토큰은 그 층의 attention에 아예 참여하지 않으므로, 뒤 토큰도 그 층에서는 해당 토큰을 참조하지 못한다.
-
-### 6-4. Recursive Transformer
-
-층마다 다른 weight를 저장하는 부담은 같은 층 묶음을 반복해 줄일 수 있다.
-**Recursive Transformer**는 서로 다른 층을 계속 쌓는 대신, 같은 층 묶음을 여러 번 반복한다.[^recursive]
-4개 층을 3번 반복하면 입력은 총 12번 층을 통과하지만, 저장하는 층 weight는 4개 층의 것뿐이라 서로 다른 12개 층을 쌓을 때의 3분의 1이다.
-이렇게 memory usage는 줄지만, 반복할 때마다 같은 weight를 다시 읽고 계산하므로 토큰 하나를 생성할 때 읽는 weight의 양과 연산량은 그대로다.
-
-Relaxed Recursive Transformer는 공유한 weight에 반복 단계마다 작은 LoRA를 더해, 각 반복이 조금씩 다른 역할을 할 수 있게 한다.
-
-<Figure src="https://arxiv.org/html/2410.20672v3/overview_convert_removed.png" alt="일반 Transformer, 같은 층을 반복하는 Recursive Transformer, 반복마다 LoRA를 더한 Relaxed Recursive Transformer의 구조 비교." caption="왼쪽부터 일반 Transformer, 같은 층 묶음을 그대로 반복하는 Recursive Transformer, 반복 단계마다 LoRA(작은 모래시계 모양)를 더한 Relaxed Recursive Transformer다." source="Bae, Fisch, et al. (2025), Figure 1 · CC BY 4.0" wide />
-
-이 구조는 batching에도 유리할 수 있다.
-일반 Transformer에서는 층마다 weight가 달라, 새로 도착한 요청은 처리 중인 요청들이 모든 층을 마칠 때까지 기다려야 함께 묶일 수 있다.
-반면 반복 구조에서는 한 요청이 첫 번째 반복, 다른 요청이 두 번째 반복 중이어도 같은 층의 weight를 사용한다.
-그래서 서로 다른 반복 단계에 있는 요청들을 한 batch로 묶어, weight를 한 번 읽어 함께 처리할 수 있다.
-논문은 이를 **continuous depth-wise batching**이라 부른다.
-Early exit로 요청마다 반복 횟수가 달라지면, 일찍 끝난 요청의 빈 자리도 곧바로 다른 요청으로 채울 수 있다.
-다만 실제 이득을 따질 때는 반복마다 다른 LoRA와 KV cache를 처리하는 비용까지 고려해야 한다.
-
-### 6-5. Mixture-of-Recursions
-
-<strong>Mixture-of-Recursions(MoR)</strong>는 반복 구조에 적응형 계산을 결합한다.
-모델과 함께 학습한 router가 토큰마다 같은 층 묶음을 몇 번 통과할지 정한다.[^mor]
-예를 들어 통과 횟수가 최대 3회일 때, 한 토큰은 한 번만 통과하고 다른 토큰은 세 번 통과할 수 있다.
-MoD가 서로 다른 층 중 일부를 건너뛰는 것과 달리, MoR은 같은 층 묶음을 몇 번 반복할지 고른다.
-
-<Figure src="https://arxiv.org/html/2507.10524v3/overview_main3.png" alt="Mixture-of-Recursions에서 토큰마다 서로 다른 횟수로 층을 통과하는 모습. 일부 토큰은 일찍 멈추고 나머지는 더 깊이 계산한다." caption="토큰별 반복 횟수의 예. 가로는 토큰 위치, 세로는 모델의 층이다. 진한 칸은 계산하고 연한 칸은 건너뛰는 위치다. 맨 위와 아래의 층은 반복하는 부분 바깥에 있어 모든 토큰이 통과한다. 아래 문장의 색은 각 토큰이 반복한 횟수다." source="Bae, Kim, et al. (2025), Figure 1 오른쪽 패널 · CC BY 4.0" />
-
-여기서도 뒤 토큰이 더 많이 반복하면 앞 토큰의 key·value가 빠지는 문제가 생긴다.
-MoR은 반복을 계속하는 토큰만 그 반복 단계의 attention에 포함하는 방법과, 첫 번째 반복에서 만든 key·value를 이후 반복에서 공유하는 방법을 제안한다.
-예를 들어 앞 토큰은 한 번, 뒤 토큰은 두 번 반복한다면, 전자는 두 번째 반복에서 앞 토큰을 참조하지 않는다.
-후자는 앞 토큰의 첫 번째 반복에서 만든 key·value를 두 번째 반복에서도 참조한다.
-두 방식은 사용하는 문맥 정보와 cache 크기가 다르므로, 속도와 품질을 함께 살펴야 한다.
-
-이 노트의 논문 그림은 모두 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)에 따른다.
+Wanda의 그림을 제외한 이 노트의 논문 그림은 모두 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)에 따른다.
 
 [^survey]: Zhu, X., Li, J., Liu, Y., Ma, C., & Wang, W. (2024). A Survey on Model Compression for Large Language Models. *Transactions of the Association for Computational Linguistics*, 12, 1556–1577. [arXiv:2308.07633v4](https://arxiv.org/abs/2308.07633v4).
 
@@ -634,9 +489,9 @@ MoR은 반복을 계속하는 토큰만 그 반복 단계의 attention에 포함
 
 [^wanda]: Sun, M., Liu, Z., Bair, A., & Kolter, J. Z. (2024). A Simple and Effective Pruning Approach for Large Language Models. *ICLR 2024*. [arXiv:2306.11695](https://arxiv.org/abs/2306.11695).
 
-[^nvidia24]: Mishra, A., Albericio Latorre, J., Pool, J., et al. (2021). Accelerating Sparse Deep Neural Networks. [arXiv:2104.08378](https://arxiv.org/abs/2104.08378).
+[^owl]: Yin, L., Wu, Y., Zhang, Z., et al. (2024). Outlier Weighed Layerwise Sparsity (OWL): A Missing Secret Sauce for Pruning LLMs to High Sparsity. *ICML 2024*. [arXiv:2310.05175](https://arxiv.org/abs/2310.05175).
 
-[^h100]: NVIDIA. (2023). NVIDIA H100 Tensor Core GPU Architecture (V1.04). *NVIDIA Whitepaper*. [resources.nvidia.com](https://resources.nvidia.com/en-us-hopper-architecture/nvidia-h100-tensor-c).
+[^nvidia24]: Mishra, A., Albericio Latorre, J., Pool, J., et al. (2021). Accelerating Sparse Deep Neural Networks. [arXiv:2104.08378](https://arxiv.org/abs/2104.08378).
 
 [^maskllm]: Fang, G., Yin, H., Muralidharan, S., et al. (2024). MaskLLM: Learnable Semi-Structured Sparsity for Large Language Models. *NeurIPS 2024*. [arXiv:2409.17481](https://arxiv.org/abs/2409.17481).
 
@@ -659,18 +514,6 @@ MoR은 반복을 계속하는 토큰만 그 반복 단계의 attention에 포함
 [^minitron]: Muralidharan, S., Turuvekere Sreenivas, S., Joshi, R., et al. (2024). Compact Language Models via Pruning and Knowledge Distillation. *NeurIPS 2024*. [arXiv:2407.14679](https://arxiv.org/abs/2407.14679).
 
 [^minitron-practice]: Turuvekere Sreenivas, S., Muralidharan, S., Joshi, R., et al. (2024). LLM Pruning and Distillation in Practice: The Minitron Approach. [arXiv:2408.11796](https://arxiv.org/abs/2408.11796).
-
-[^calm]: Schuster, T., Fisch, A., Gupta, J., et al. (2022). Confident Adaptive Language Modeling. *NeurIPS 2022*. [arXiv:2207.07061](https://arxiv.org/abs/2207.07061).
-
-[^skipdecode]: Del Corro, L., Del Giorno, A., Agarwal, S., Yu, B., Awadallah, A., & Mukherjee, S. (2023). SkipDecode: Autoregressive Skip Decoding with Batching and Caching for Efficient LLM Inference. [arXiv:2307.02628](https://arxiv.org/abs/2307.02628).
-
-[^free]: Bae, S., Ko, J., Song, H., & Yun, S.-Y. (2023). Fast and Robust Early-Exiting Framework for Autoregressive Language Models with Synchronized Parallel Decoding. *EMNLP 2023*, 5910–5924. [ACL Anthology](https://aclanthology.org/2023.emnlp-main.362/).
-
-[^mod]: Raposo, D., Ritter, S., Richards, B., et al. (2024). Mixture-of-Depths: Dynamically allocating compute in transformer-based language models. [arXiv:2404.02258](https://arxiv.org/abs/2404.02258).
-
-[^recursive]: Bae, S., Fisch, A., Harutyunyan, H., et al. (2025). Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA. *ICLR 2025*. [arXiv:2410.20672](https://arxiv.org/abs/2410.20672).
-
-[^mor]: Bae, S., Kim, Y., Bayat, R., et al. (2025). Mixture-of-Recursions: Learning Dynamic Recursive Depths for Adaptive Token-Level Computation. *NeurIPS 2025*. [arXiv:2507.10524](https://arxiv.org/abs/2507.10524).
 
 [^gemma2]: Gemma Team. (2024). Gemma 2: Improving Open Language Models at a Practical Size. [arXiv:2408.00118](https://arxiv.org/abs/2408.00118).
 

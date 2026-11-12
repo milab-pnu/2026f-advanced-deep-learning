@@ -37,9 +37,9 @@ Model runner가 다섯 토큰을 한 번에 처리하면, sampler는 A의 마지
 
 ### 1-2. CPU overhead
 
-모델이 작으면 GPU(graphics processing unit) 실행은 decode 스텝당 수 ms에 끝나기도 한다(H100의 Llama 8B는 약 5 ms까지 짧아질 수 있다).[^vllm-v1]
+모델이 작으면 GPU(graphics processing unit) 실행은 decode 스텝 하나가 매우 짧은 시간에 끝나기도 한다.[^vllm-v1]
 그래서 kernel launch뿐 아니라 다음 스텝의 scheduling과 입력 텐서 준비 같은 CPU(central processing unit) 쪽 작업이 늦어져도 GPU에 빈 구간이 생긴다.
-SGLang 팀은 최적화하지 않은 엔진이 시간의 절반까지를 이런 CPU 작업에 쓸 수 있다고 보았다.[^sglang-v04]
+SGLang 팀은 최적화하지 않은 엔진이 시간의 상당 부분을 이런 CPU 작업에 쓸 수 있다고 보았다.[^sglang-v04]
 
 해법은 두 갈래로 나뉜다.
 하나는 CPU가 할 일을 줄이거나, 서로 다른 CPU 작업을 동시에 실행하는 것이다.
@@ -75,11 +75,11 @@ V1의 주요 설계는 다음과 같다.[^vllm-v1][^vllm-arch]
   speculative decoding으로 검증할 토큰 여러 개도 모두 같은 형식이다.
   그래서 chunked prefill도 별도 단계 없이 이 형식 안에서 처리된다.
 - **부담이 거의 없는 prefix caching.** Hash 기반 prefix caching을 다시 구현해,
-  vLLM 팀의 측정에서 cache 적중률이 0%여도 처리량(throughput) 감소가 1% 미만이었고, 그래서 기본으로 켰다.
+  vLLM 팀의 측정에서 cache가 전혀 적중하지 않아도 처리량(throughput)이 거의 줄지 않았고, 그래서 기본으로 켰다.
 - **Persistent batch.** 이어지는 두 스텝의 batch는 요청 몇 개가 들어오거나 끝나는 것 말고는 거의 같다.
   그래서 block table처럼 큰 입력 텐서를 스텝마다 새로 만들지 않고, 이전 스텝의 텐서를 그대로 둔 채 바뀐 부분만 고쳐 CPU 시간을 줄인다.[^vllm-mrv2]
 
-vLLM 팀은 V1의 처리량이 multi-step scheduling을 쓰지 않은 V0보다 최대 1.7배 높다고 보고했다.[^vllm-v1]
+vLLM 팀은 V1의 처리량이 multi-step scheduling을 쓰지 않은 V0보다 뚜렷하게 높다고 보고했다.[^vllm-v1]
 이 기능은 여러 decode 스텝을 한 번에 scheduling해 V0의 CPU 부담을 덜어 주므로, 켜면 V0와의 차이가 줄 수 있다.
 두 버전은 GPU kernel을 대부분 공유하며, vLLM 팀은 이 향상을 실행 경로 전체의 CPU overhead를 줄인 결과로 설명한다.
 
@@ -153,7 +153,7 @@ SGLang v0.4는 이를 위한 cache-aware routing을 cache-aware load balancer로
 이 load balancer는 각 인스턴스의 cache에 어떤 prefix가 있을지를 근사하는 radix tree를 따로 유지한다.
 Prefix가 많이 맞을 인스턴스를 고르되, 부하가 한쪽에 몰리지 않게 요청을 보낸다.
 SGLang 팀은 요청 수가 같은 그룹 여러 개로 workload를 만들어 그 효과를 쟀는데, 각 그룹의 요청들은 긴 공통 prefix를 공유했다.
-A100 80 GB 8대에서 Llama 3.1 8B를 서빙했을 때, 이 방식은 v0.3보다 cache 적중률을 3.8배 높여 처리량을 최대 1.9배 늘렸다.[^sglang-v04]
+이 측정에서 이 방식은 v0.3보다 cache 적중률을 크게 높였고, 그에 따라 처리량도 늘었다.[^sglang-v04]
 실제 이득은 요청의 공통 부분과 부하에 따라 달라진다.
 
 SGLang v0.4는 MLA(multi-head latent attention) 모델을 위한 data parallel attention도 도입했다.
