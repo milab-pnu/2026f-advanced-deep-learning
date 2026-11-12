@@ -7,6 +7,7 @@ order: 2
 import mtpArchitecture from "./assets/week07-mtp-gloeckle-architecture.png";
 
 Batching은 여러 요청을 한 스텝에 묶어 decode에서 놀던 연산 능력을 더 많이 쓰게 한다.
+Chunked prefill도 다른 요청의 프롬프트 조각을 decode 스텝에 얹어 같은 연산 능력을 쓴다.
 Roofline 분석으로 보면 선형층의 arithmetic intensity가 함께 처리하는 토큰 수에 따라 오르기 때문이다(토큰이 적을 때는 토큰 수와 거의 같다).
 그런데 요청이 적으면 묶을 것이 없다.
 요청 하나만 decode하는 스텝은 Llama 3.1 8B라면 BF16(bfloat16) weight 16 GB를 읽어 토큰 하나에만 쓴다.
@@ -306,6 +307,7 @@ DeepSeek-V3의 MTP는 모델의 성능을 높이려고 pre-training 동안 본�
 이 가정은 decode가 memory-bound이고 검증 위치들이 읽은 weight와 기존 KV cache를 재사용할 때 근사적으로 성립한다.
 Continuous batching 서버는 요청이 몰리면 batch를 키우고, 그만큼 선형층의 intensity가 오른다.
 Batch의 요청 수를 $b$라 하면, speculative decoding은 요청마다 위치를 $\gamma+1$개로 늘리므로 한 스텝의 토큰 수가 $b(\gamma+1)$개가 된다.
+같은 스텝에 chunked prefill의 조각이 들어 있으면 그 토큰도 여기에 더해진다.
 Batch가 크면 이 값이 ridge point를 넘어 선형층이 compute-bound가 되고,
 그때부터는 수락되지 않을 추측을 검증하는 계산이 실제 시간을 잡아먹는다.
 
