@@ -346,7 +346,7 @@ Feature의 수열이 토큰의 수열보다 규칙적이어서, feature 수준�
 칸마다 상위 몇 개를 뽑으면 Medusa처럼 후보 나무가 되고, 이를 tree attention으로 한 번에 검증한다.
 Embedding과 LM head는 target의 것을 그대로 쓰고, feature와 토큰 embedding을 이어 붙여 차원을 맞추는 FC(fully connected) 층과 Transformer decoder 층 하나만 학습한다.[^eagle]
 
-<Figure src="https://raw.githubusercontent.com/SafeAILab/EAGLE/cb7e0841fe0c206c6ed74a197ad5e2a1f13f5a2b/figs/fig1.png" alt="EAGLE의 drafting 과정. 왼쪽 Original LLM(large language model)은 입력 How, can을 Embedding과 Transformer Layers에 통과시켜 feature f_how, f_can을 만들고, LM Head와 Sampling으로 can과 I를 낸다. 가운데 FeatExtrapolator는 Forward 1에서 (f_how, e_can)과 (f_can, e_I)를 One Auto-regression Head에 넣어 f_I를 예측하고, 고정된 LM Head와 여러 번의 sampling으로 make와 help를 뽑는다. Forward 2는 (f_I, e_make)와 (f_I, e_help)에서 f_make, f_help를 예측해 a/our, with/you를 뽑고, Forward 3은 f_help와 e_with, e_you에서 f_with, f_you를 예측해 the/your, to/feel을 뽑는다. Embedding과 LM Head에는 고정을 뜻하는 눈송이 표시가 있다. 오른쪽은 이렇게 만든 후보 나무로, Query 'How can' 아래에 원래 LLM이 뽑은 I가 있고, 그 아래로 make, help, 다시 a, our, with, you, 그 아래로 the, your, to, feel이 이어진다." caption="EAGLE의 drafting. 그림의 FeatExtrapolator는 EAGLE의 draft 모델을 가리키고, 그 안의 One Auto-regression Head가 학습하는 FC 층과 decoder 층에 해당한다. Draft는 feature f_how, f_can과 토큰 can, I를 받아 다음 feature f_I를 예측하고, 이를 target의 LM head에 넣어 다음 토큰 후보 make와 help를 뽑는다. 이 과정을 forward 세 번 이어 가면 오른쪽 같은 후보 나무가 된다." source="SafeAI Lab, EAGLE GitHub repo · © 2025 SafeAI Lab (SAIL), Apache-2.0 · 방법은 Li et al. (2024)" wide />
+<Figure src="https://raw.githubusercontent.com/SafeAILab/EAGLE/cb7e0841fe0c206c6ed74a197ad5e2a1f13f5a2b/figs/fig1.png" alt="EAGLE의 drafting 과정. 왼쪽 Original LLM(large language model)은 입력 How, can을 Embedding과 Transformer Layers에 통과시켜 feature f_how, f_can을 만들고, LM Head와 Sampling으로 can과 I를 낸다. 가운데 FeatExtrapolator는 Forward 1에서 (f_how, e_can)과 (f_can, e_I)를 One Auto-regression Head에 넣어 f_I를 예측하고, 고정된 LM Head와 여러 번의 sampling으로 make와 help를 뽑는다. Forward 2는 (f_I, e_make)와 (f_I, e_help)에서 f_make, f_help를 예측해 a/our, with/you를 뽑고, Forward 3은 f_help와 e_with, e_you에서 f_with, f_you를 예측해 the/your, to/feel을 뽑는다. Embedding과 LM Head에는 고정을 뜻하는 눈송이 표시가 있다. 오른쪽은 이렇게 만든 후보 나무로, Query 'How can' 아래에 원래 LLM이 뽑은 I가 있고, 그 아래로 make, help, 다시 a, our, with, you, 그 아래로 the, your, to, feel이 이어진다." caption="EAGLE의 drafting. 그림의 FeatExtrapolator는 EAGLE의 draft 모델을 가리키고, 그 안의 One Auto-regression Head가 학습하는 FC 층과 decoder 층에 해당한다. 이 과정을 forward 세 번 이어 가면 오른쪽 같은 후보 나무가 된다." source="SafeAI Lab, EAGLE GitHub repo · © 2025 SafeAI Lab (SAIL), Apache-2.0" wide />
 
 그 뒤 연구들은 후보 나무를 고르는 방식과 draft의 학습 방식을 발전시켰고, draft를 차례로 돌리는 시간을 없애는 병렬 drafting도 나왔다.
 
@@ -383,19 +383,16 @@ vLLM도 DFlash와 DSpark를 비롯한 병렬 drafting 방식을 지원한다.[^v
 Medusa의 head와 EAGLE의 draft는 pre-training을 마친 target에 나중에 붙여 추가로 학습해야 한다.
 Pre-training 단계에서부터 다음 토큰 여러 개를 예측하도록 함께 학습하면, draft가 target과 함께 만들어진다.
 Gloeckle 등은 이를 inference 가속보다 먼저 학습 효율의 문제로 제안했다.[^gloeckle]
-정답 문맥을 넣고 바로 다음 토큰만 맞히는 학습은 가까운 패턴에 기대기 쉽고, 뒤의 여러 토큰을 좌우하는 어려운 선택에는 신호가 약하다는 것이다.
+정답 문맥을 넣고 바로 다음 토큰만 맞히는 학습은 가까운 패턴에 기대기 쉽고, **뒤의 여러 토큰을 좌우하는 어려운 선택에는 신호가 약하다는 것**이다.
 질문의 최종 답이나 코드의 특정 한 줄은 뒤 내용을 좌우하는 선택이고, 동의어 고르기처럼 표현만 바꾸는 선택은 뒤에 영향이 적다.
 위치마다 뒤의 토큰 여러 개를 함께 맞히게 하면, 뒤 내용을 좌우하는 선택에 손실이 더 많이 걸린다.
 이 방식을 <strong>multi-token prediction(MTP)</strong>이라 한다.
 여러 head가 함께 쓰는 Transformer 본체(trunk) 위에 Transformer 층으로 된 독립 head $n$개를 두고, 각 head의 출력을 어휘 분포로 바꾸는 LM head는 모든 head가 공유한다.
 위치 $t$에서 head $i$는 $t+i$번째 정답 토큰을 예측한다.
-Medusa와 달리 바로 다음 토큰도 head 1이 맡는다.
 이 $n$개 예측의 cross-entropy 손실을 더해 본체와 head를 함께 학습한다.
-
-<Figure src={mtpArchitecture.src} alt="Gloeckle 등의 MTP 구조 그림 위 패널. 아래의 입력 토큰 1–4가 Shared라 적힌 공유 본체(trunk)를 지나고, 각 위치에서 줄기가 네 갈래로 나뉘어 겹쳐 놓인 Head 1–4로 들어간다. 맨 위 4-token targets에는 위치마다 다음 토큰 네 개가 놓여, 예를 들어 입력 1 위에는 토큰 2, 3, 4, 5가 있다. Head 1이 맡은 바로 다음 토큰은 연한 노란색, head 2–4가 맡은 그 뒤 토큰들은 분홍색이고, 분홍색은 추론 때 버리거나 속도를 최대 3배 높이는 데 쓴다는 범례가 붙어 있다." caption="Multi-token prediction의 구조. 공유 본체의 출력을 head 4개가 함께 받아, 위치마다 다음 토큰 네 개를 하나씩 맡아 예측한다. 분홍색으로 표시된 head 2–4의 예측은 추론 때 버리거나 self-speculative decoding의 draft로 쓴다." source="Gloeckle et al. (2024), Figure 1 · CC BY 4.0 · 위 패널만 잘라냄" />
-
-코드로 학습한 실험에서 이 목표는 작은 모델에서는 기준보다 나빴지만 큰 모델에서는 더 좋았다.[^gloeckle]
 생성할 때는 추가 head를 버리고 일반 모델처럼 쓸 수도 있고, 추가 head를 draft로 써서 self-speculative decoding을 할 수도 있다.
+
+<Figure src={mtpArchitecture.src} alt="Gloeckle 등의 MTP 구조 그림 위 패널. 아래의 입력 토큰 1–4가 Shared라 적힌 공유 본체(trunk)를 지나고, 각 위치에서 줄기가 네 갈래로 나뉘어 겹쳐 놓인 Head 1–4로 들어간다. 맨 위 4-token targets에는 위치마다 다음 토큰 네 개가 놓여, 예를 들어 입력 1 위에는 토큰 2, 3, 4, 5가 있다. Head 1이 맡은 바로 다음 토큰은 연한 노란색, head 2–4가 맡은 그 뒤 토큰들은 분홍색이고, 분홍색은 추론 때 버리거나 속도를 최대 3배 높이는 데 쓴다는 범례가 붙어 있다." caption="Multi-token prediction의 구조. 공유 본체의 출력을 head 4개가 함께 받아, 위치마다 다음 토큰 네 개를 하나씩 맡아 예측한다. 분홍색으로 표시된 head 2–4의 예측은 추론 때 버리거나 self-speculative decoding의 draft로 쓴다." source="Gloeckle et al. (2024), Figure 1 · CC BY 4.0" />
 
 ### 2-6. DeepSeek-V3의 순차 MTP 모듈
 
