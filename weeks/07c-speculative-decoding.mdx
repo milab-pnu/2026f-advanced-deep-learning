@@ -448,6 +448,7 @@ Target에 head나 모듈을 붙이는 네 방법은 두 가지 기준으로 나�
 
 EAGLE의 draft와 DeepSeek-V3의 MTP 모듈은 둘 다 target의 표현과 앞 토큰의 embedding을 합쳐 Transformer 층 하나로 한 칸 뒤를 예측한다.
 
+{/*
 ## 3. Batch 크기와 개선 배수
 
 ### 3-1. 개선 배수가 줄어드는 조건
@@ -509,6 +510,7 @@ vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-boun
 
 정리하면 speculative decoding의 이득은 memory-bound인 decode 스텝에 토큰을 더 넣어도 시간이 거의 늘지 않는다는 데서 나온다.
 그래서 batch가 커져 선형층이 compute-bound가 되면 검증 스텝이 길어지고, KV cache 읽기의 몫이 작은 짧은 문맥일수록 이득이 크게 줄어든다.
+*/}
 
 [^survey]: Xia, H., Yang, Z., Dong, Q., et al. (2024). Unlocking Efficiency in Large Language Model Inference: A Comprehensive Survey of Speculative Decoding. *Findings of ACL 2024*, 7655–7671. [arXiv:2401.07851v3](https://arxiv.org/abs/2401.07851v3).
 
