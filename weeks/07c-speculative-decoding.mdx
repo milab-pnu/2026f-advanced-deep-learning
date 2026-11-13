@@ -286,7 +286,7 @@ LM head가 고른 토큰 뒤에 head 1의 상위 2개와 head 2의 상위 3개�
 Medusa는 이 나무 전체를 forward 한 번으로 검증하려고 **tree attention**을 쓴다.
 나무의 토큰들을 한 줄로 이어 입력하되, 각 토큰이 확정된 문맥과 자기 자신, 나무에서의 조상만 보도록 attention mask를 만든다.
 위치 인덱스는 줄에서의 순번이 아니라 나무에서의 깊이로 준다.
-같은 깊이의 형제 후보(`mat`과 `rug`)는 문장에서 같은 자리이기 때문이다.
+같은 부모 아래의 sibling 노드(`mat`과 `rug`)는 문장에서 같은 자리이기 때문이다.
 그러면 경로마다 batch를 늘리지 않고도 여러 경로를 한 번에 계산한다.
 
 <Figure src="https://arxiv.org/html/2401.10774v3/tree_attention.png" alt="Medusa의 tree attention 그림. 왼쪽은 후보 나무다. Root에서 head 1의 후보 두 개(It, I)가 나오고, 각각에서 head 2의 후보 세 개(is, 따옴표, the)가 이어져 후보 경로가 모두 6개다. 오른쪽은 8×8 attention mask로, 행은 query, 열은 key다. 각 후보 토큰은 자기 자신과 나무에서의 조상에만 체크 표시가 있어, 예를 들어 It 아래의 is는 It과 자기 자신만 본다." caption="Tree attention. Head 1의 상위 2개와 head 2의 상위 3개로 만든 후보 6개 경로를 한 번에 검증한다. Mask가 8×8인 것은 head 1의 후보 2개와, 그 각각 뒤에 붙은 head 2의 후보 3개(모두 6개)를 한 줄로 이어 넣었기 때문이고, 각 토큰은 자기 자신과 나무에서의 조상만 본다." source="Cai et al. (2024), Figure 2 · CC BY 4.0" wide />
@@ -294,15 +294,40 @@ Medusa는 이 나무 전체를 forward 한 번으로 검증하려고 **tree atte
 Greedy 검증이라면 모든 후보 경로를 앞에서부터 target의 선택과 비교해, 가장 길게 일치한 앞부분을 받아들인다.
 그 자리에서 target이 고른 토큰 하나를 더 얻는 것은 짐작이 한 줄일 때와 같고, 이 토큰이 다음 나무의 root가 된다.
 
-Sampling에서는 후보가 여러 개라 앞의 수락 규칙을 그대로 쓸 수 없다.
-형제 후보를 하나씩 수락 규칙에 넣되, 거부되면 바로 다시 뽑지 않고 $\max(0,\,p-q)$로 고친 분포를 새 target 분포로 삼아 다음 형제를 판정한다.
-형제가 모두 거부되면 그때 이 분포에서 새로 뽑는다.
+Sampling에서는 한 자리에 sibling 노드가 여럿이라 앞의 수락 규칙을 그대로 쓸 수 없다.
+첫 노드가 거부됐다고 바로 새로 뽑으면 나머지 sibling은 써 보지도 못한다.
+그래서 sibling을 하나씩 수락 규칙에 넣되, 거부되면 $\max(0,\,p-q)$로 고친 분포를 새 target 분포로 삼아 다음 sibling을 판정한다.
+Sibling이 모두 거부되면 그때 이 분포에서 새로 뽑는다.
 이렇게 넓힌 규칙을 쓰면 후보가 여러 개여도 target 분포가 보존된다.[^eagle]
-다만 이 규칙은 각 후보가 $q$에서 뽑혔다고 전제한다.
-Medusa처럼 상위 몇 개를 골라 만든 후보는 그 토큰에 확률 1을 준 $q$로 보아야 하므로, 확률 $p(x)$로 받아들이고 거부되면 $p$에서 그 토큰을 빼고 다시 정규화한 뒤 다음 형제로 넘어간다.
-그런데 Medusa의 저자들은 분포를 지키는 규칙이 temperature가 높을수록 효율이 떨어진다는 구현 결과를 들고, 실제 응용에서는 분포를 정확히 맞출 필요가 대개 없다고 보아 **typical acceptance**를 제안했다.[^medusa]
-Target이 후보에 준 확률이 문턱보다 크면 받아들이는데, 이 문턱은 그 자리에서 target 분포의 엔트로피가 클수록 낮아진다.
-Target이 한 토큰을 확신할 때는 확률이 높은 토큰만, 여러 이어짐이 그럴듯할 때는 확률이 더 낮은 토큰도 받아들이는 셈이다.
+
+이 규칙은 각 후보가 $q$에서 뽑혔다고 전제한다.
+Medusa의 후보는 뽑은 것이 아니라 head의 상위 몇 개를 고른 것이므로, 그 토큰에 확률 1을 준 $q$로 본다.
+그러면 수락 확률 $\min(1,\,p(x)/q(x))$는 $p(x)$가 되고, 거부된 뒤의 분포는 $p$에서 그 토큰을 빼고 합이 1이 되게 다시 나눈 것이 된다.
+앞의 나무에서 `the` 다음 자리를 정하는 계산을 보자.
+이 자리의 sibling은 head 1이 낸 `mat`과 `rug`이고, target이 `the` 위치에서 낸 $p$가 `mat` 0.3, `rug` 0.4, `floor` 0.2, `bed` 0.1이라고 하자.
+
+| 단계 | 판정 | 이 단계에서 정해지는 토큰의 확률 |
+| --- | --- | --- |
+| `mat` 판정 | 확률 0.3으로 수락 | `mat` 0.3 |
+| `rug` 판정 | `mat`을 뺀 분포에서 `rug`는 0.4/0.7 ≈ 0.57이고, 이 확률로 수락 | `rug` 0.7 × 0.57 = 0.4 |
+| 둘 다 거부 | 남은 `floor` 0.67, `bed` 0.33에서 새로 뽑음 | `floor` 0.2, `bed` 0.1 |
+
+네 토큰이 나올 확률이 모두 $p$와 같다.
+Target이 $p$에서 토큰 하나를 뽑고, 그 토큰이 후보 가운데 있으면 수락하는 것과 같은 일이다.
+수락될 확률은 두 sibling의 확률을 더한 0.7이다.
+`mat`이나 `rug`가 수락되면 그 아래에 달린 head 2의 후보를, 수락된 토큰의 위치에서 target이 낸 $p$로 같은 방식으로 판정한다.
+둘 다 거부되면 새로 뽑은 토큰에서 이번 차례가 끝난다.
+
+Temperature가 높아 $p$가 평평해지면 이 합이 작아지므로 수락이 드물어진다.
+Medusa의 저자들도 분포를 지키는 규칙이 temperature가 높을수록 효율이 떨어진다는 구현 결과를 들고, 실제 응용에서는 분포를 정확히 맞출 필요가 대개 없다고 보아 **typical acceptance**를 제안했다.[^medusa]
+Target이 후보에 준 확률 $p(x)$가 threshold보다 크면 받아들인다.
+문턱은 고정된 값이 아니라, 그 자리에서 target이 얼마나 확신하는지에 따라 달라진다.
+
+$$
+p(x) > \min\bigl(\epsilon,\ \delta\,e^{-H(p)}\bigr)
+$$
+
+$H(p)$는 그 자리 target 분포의 엔트로피(entropy)로, 확률이 한 토큰에 몰릴수록 작고 여러 토큰에 고르게 퍼질수록 크다.
 수락률은 높지만 target 분포를 보존하지는 않는다.
 이렇게 출력의 분포가 target 혼자 생성할 때와 달라지는 방식을 **손실 있는(lossy)** speculative decoding, greedy 검증이나 앞의 수락 규칙처럼 그 분포를 그대로 지키는 방식을 **손실 없는(lossless)** speculative decoding이라 한다.
 
@@ -484,8 +509,6 @@ vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-boun
 
 정리하면 speculative decoding의 이득은 memory-bound인 decode 스텝에 토큰을 더 넣어도 시간이 거의 늘지 않는다는 데서 나온다.
 그래서 batch가 커져 선형층이 compute-bound가 되면 검증 스텝이 길어지고, KV cache 읽기의 몫이 작은 짧은 문맥일수록 이득이 크게 줄어든다.
-
-이 노트의 speculative decoding 원논문·Medusa·MTP 논문 그림은 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), EAGLE 저장소 그림은 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)에 따른다.
 
 [^survey]: Xia, H., Yang, Z., Dong, Q., et al. (2024). Unlocking Efficiency in Large Language Model Inference: A Comprehensive Survey of Speculative Decoding. *Findings of ACL 2024*, 7655–7671. [arXiv:2401.07851v3](https://arxiv.org/abs/2401.07851v3).
 
