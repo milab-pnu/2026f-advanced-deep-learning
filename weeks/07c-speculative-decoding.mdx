@@ -340,7 +340,7 @@ Li 등의 EAGLE은 **draft도 한 칸씩 autoregressive하게 진행**하되,
 Feature의 수열이 토큰의 수열보다 규칙적이어서, feature 수준에서 autoregressive하게 예측한 뒤 토큰을 얻는 편이 결과가 좋았다는 관찰에서 출발했다.
 다만 feature만으로는 다음 feature가 정해지지 않는다.
 같은 feature에서도 sampling에 따라 다른 토큰이 뽑힐 수 있고, 뽑힌 토큰에 따라 그다음 feature도 달라진다.
-그래서 EAGLE은 feature와 함께 이미 뽑힌 토큰도 입력해 그 갈래를 정해 준다.
+그래서 EAGLE은 **feature와 함께 이미 뽑힌 토큰도 입력**해 그 갈래를 정해 준다.
 지금까지의 feature와 방금 뽑은 토큰을 받아 다음 feature를 예측하고, 이를 target의 LM head에 넣어 그다음 토큰을 뽑는다.
 첫 칸은 검증 forward가 낸 target의 feature로 시작하고, 둘째 칸부터는 draft가 예측한 feature를 다시 입력한다.
 칸마다 상위 몇 개를 뽑으면 Medusa처럼 후보 나무가 되고, 이를 tree attention으로 한 번에 검증한다.
