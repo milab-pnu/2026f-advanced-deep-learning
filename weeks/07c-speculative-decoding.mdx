@@ -386,7 +386,7 @@ Gloeckle 등은 이를 inference 가속보다 먼저 학습 효율의 문제로 
 정답 문맥을 넣고 바로 다음 토큰만 맞히는 학습은 가까운 패턴에 기대기 쉽고, **뒤의 여러 토큰을 좌우하는 어려운 선택에는 신호가 약하다는 것**이다.
 질문의 최종 답이나 코드의 특정 한 줄은 뒤 내용을 좌우하는 선택이고, 동의어 고르기처럼 표현만 바꾸는 선택은 뒤에 영향이 적다.
 위치마다 뒤의 토큰 여러 개를 함께 맞히게 하면, 뒤 내용을 좌우하는 선택에 손실이 더 많이 걸린다.
-이 방식을 <strong>multi-token prediction(MTP)</strong>이라 한다.
+이 방식을 <strong>multi-token prediction(MTP)</strong>이라 한다.<Sidenote>Medusa처럼 학습을 마친 모델에 나중에 붙인 head도 다음 토큰 여러 개를 예측하므로, 가속을 위한 MTP라고 부르기도 한다. 이와 구분해 pre-training에서부터 모델과 함께 학습한 MTP를 native MTP라 한다.</Sidenote>
 여러 head가 함께 쓰는 Transformer 본체(trunk) 위에 Transformer 층으로 된 독립 head $n$개를 두고, 각 head의 출력을 어휘 분포로 바꾸는 LM head는 모든 head가 공유한다.
 위치 $t$에서 head $i$는 $t+i$번째 정답 토큰을 예측한다.
 이 $n$개 예측의 cross-entropy 손실을 더해 본체와 head를 함께 학습한다.
@@ -399,51 +399,18 @@ Gloeckle 등은 이를 inference 가속보다 먼저 학습 효율의 문제로 
 DeepSeek-V3는 2024년 말 공개된 MoE(mixture of experts) 모델로, MTP를 조금 다르게 구현했다.[^dsv3]
 Gloeckle 등의 head들은 Medusa의 head처럼 같은 hidden state에서 서로 다른 미래 토큰을 독립적으로 예측한다.
 DeepSeek-V3는 EAGLE처럼 추가 토큰을 **순서대로** 예측해, 뒤 토큰을 예측할 때 앞 토큰 정보를 이어 받는다.
-본체 뒤에 작은 MTP 모듈을 이어 붙인다.
-위치 $t$에서 본체가 $t+1$번째 토큰을 예측하면, MTP 모듈은 그 위치의 본체 hidden state와 $t+1$번째 토큰의 embedding을 받아 Transformer 층 하나를 거쳐 $t+2$번째 토큰을 예측한다.
-학습 때는 이 입력 토큰이 정답 문장의 토큰이고, draft로 쓸 때는 본체가 방금 고른 토큰이다.
-Embedding과 LM head는 본체와 공유한다.
+Embedding부터 LM head까지 갖춘 원래 모델을 main model이라 하고, 그 뒤에 작은 MTP 모듈을 이어 붙여 이렇게 예측한다.
+위치 $t$에서 main model이 $t+1$번째 토큰을 예측하면, MTP 모듈은 main model의 마지막 층이 그 위치에서 낸 hidden state와 $t+1$번째 토큰의 embedding을 받아 Transformer 층 하나를 거쳐 $t+2$번째 토큰을 예측한다.
+두 입력은 각각 RMSNorm(root mean square normalization)으로 정규화해 이어 붙이고, linear projection으로 폭을 다시 맞춘 뒤 Transformer 층에 넣는다.
+학습 때는 이 입력 토큰이 정답 문장의 토큰이고, draft로 쓸 때는 main model이 방금 고른 토큰이다.
+Embedding과 LM head는 main model의 것을 함께 쓴다.
 
-<figure class="lecture-figure">
-<svg viewBox="0 0 480 190" role="img" aria-label="DeepSeek-V3의 MTP 모듈. 왼쪽의 본체가 위치 t의 hidden state를 낸다. 이 hidden state는 위쪽의 LM head로 들어가 t+1번째 토큰이 되고, 동시에 아래쪽의 MTP 모듈로도 들어간다. MTP 모듈은 본체의 hidden state와 t+1번째 토큰의 embedding을 함께 받아 Transformer 층 하나를 거치고, 본체와 공유하는 LM head를 지나 t+2번째 토큰을 낸다.">
-  <defs><marker id="mt-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/></marker></defs>
-  <g text-anchor="middle">
-    <rect x="16" y="62" width="110" height="52" fill="#e2e8f0" stroke="#0f172a"/><text x="71" y="84" font-size="14" font-weight="bold" fill="#0f172a">본체</text><text x="71" y="102" font-size="12" fill="#64748b">위치 t의 hidden state</text>
-    <rect x="188" y="26" width="84" height="34" fill="#f8fafc" stroke="#0f172a"/><text x="230" y="48" font-size="13" fill="#0f172a">LM head</text>
-    <rect x="188" y="110" width="120" height="46" fill="#f8fafc" stroke="#0f172a"/><text x="248" y="130" font-size="13" font-weight="bold" fill="#0f172a">MTP 모듈</text><text x="248" y="147" font-size="12" fill="#64748b">Transformer 층 하나</text>
-    <rect x="344" y="116" width="96" height="34" fill="#f8fafc" stroke="#0f172a"/><text x="392" y="138" font-size="13" fill="#0f172a">LM head(공유)</text>
-    <text x="366" y="48" font-size="13" fill="#0f172a">t+1번째 토큰</text>
-    <text x="392" y="182" font-size="13" fill="#0f172a">t+2번째 토큰</text>
-    <text x="372" y="88" font-size="12" fill="#64748b">embedding</text>
-  </g>
-  <g stroke="#0f172a" stroke-width="1.5" fill="none">
-    <line x1="126" y1="76" x2="186" y2="46" marker-end="url(#mt-arrow)"/><line x1="126" y1="100" x2="186" y2="128" marker-end="url(#mt-arrow)"/>
-    <line x1="272" y1="43" x2="318" y2="43" marker-end="url(#mt-arrow)"/><line x1="336" y1="56" x2="296" y2="108" marker-end="url(#mt-arrow)"/>
-    <line x1="308" y1="133" x2="342" y2="133" marker-end="url(#mt-arrow)"/><line x1="392" y1="150" x2="392" y2="166" marker-end="url(#mt-arrow)"/>
-  </g>
-</svg>
-<figcaption>DeepSeek-V3의 MTP 모듈을 draft로 쓸 때의 흐름. 본체의 hidden state와 본체가 방금 예측한 토큰의 embedding을 받아 그다음 토큰을 예측한다. 학습 때는 예측한 토큰 대신 정답 토큰이 들어간다.</figcaption>
-</figure>
+<Figure src="https://arxiv.org/html/2412.19437v2/nextn.svg" alt="DeepSeek-V3의 MTP 구현 그림. 점선 상자 세 개가 왼쪽부터 Main Model, MTP Module 1, MTP Module 2다. Main Model은 입력 토큰 t1–t4를 Embedding Layer, Transformer Block L개, Output Head에 차례로 통과시켜 다음 토큰 t2–t5를 맞히는 cross-entropy loss를 계산한다. MTP Module 1은 Main Model의 Output Head 직전 출력과 한 칸 뒤 입력 토큰 t2–t5의 embedding을 각각 RMSNorm에 통과시켜 이어 붙이고, Linear Projection과 Transformer Block 하나, Output Head를 지나 t3–t6을 맞힌다. MTP Module 2는 Module 1의 Transformer Block 출력과 t3–t6의 embedding을 같은 방식으로 받아 t4–t7을 맞힌다. Embedding Layer와 Output Head는 세 상자가 공유한다고 초록 점선으로 표시되어 있다." caption="DeepSeek-V3의 MTP 학습.그림에는 MTP 모듈이 둘 이상 그려져 있지만 DeepSeek-V3는 하나만 썼다." source="DeepSeek-AI (2024), Figure 3" wide />
 
-실제 학습에서는 MTP 모듈을 하나만 두어, 본체가 예측하는 다음 토큰에 더해 그다음 토큰 하나를 예측했다.
+DeepSeek-V3가 MTP를 넣은 주된 목적은 main model의 성능을 높이는 것이어서, 추론 때 MTP 모듈을 떼어 내도 main model은 그대로 동작한다.
+실제 학습에서는 MTP 모듈을 하나만 두어, main model이 예측하는 다음 토큰에 더해 그다음 토큰 하나를 예측했다.
 생성할 때 MTP 모듈을 남겨 두면 speculative decoding의 draft가 된다.
-그렇게 썼을 때 MTP 모듈이 짐작한 토큰은 여러 주제에서 85~90%가 수락되었고,
-초당 생성 토큰 수는 1.8배가 되었다.[^dsv3]
-짐작이 하나뿐이라 $\gamma=1$이므로, 앞의 식으로도 한 차례에 $1+\alpha\approx1.85$~$1.9$개를 얻는다.
-이후 MiMo와 GLM-4.5 등도 MTP 층을 두어 inference 가속에 쓴다.[^mimo][^glm45]
-MiMo는 더 길게 짐작하려고, pre-training 뒤 MTP 층을 복제해 새 MTP 층 두 개를 따로 학습했다.[^mimo]
-vLLM도 MTP 층을 draft로 쓰는 방식을 제공한다.[^vllm-spec]
-
-Target에 head나 모듈을 붙이는 네 방법은 두 가지 기준으로 나뉜다.
-하나는 짐작할 토큰들을 같은 hidden state에서 각자 예측하는지(병렬), 앞 토큰을 받아 한 칸씩 예측하는지(순차)다.
-다른 하나는 draft를 학습하는 시점이다.
-
-| | pre-training을 마친 target에 나중에 붙여 학습 | pre-training에서 target과 함께 학습 |
-|---|---|---|
-| **병렬** | Medusa | Gloeckle 등의 MTP |
-| **순차** | EAGLE | DeepSeek-V3의 MTP 모듈 |
-
-EAGLE의 draft와 DeepSeek-V3의 MTP 모듈은 둘 다 target의 표현과 앞 토큰의 embedding을 합쳐 Transformer 층 하나로 한 칸 뒤를 예측한다.
+그렇게 썼을 때 MTP 모듈이 짐작한 토큰은 여러 주제에서 85–90%가 수락되었다.
 
 {/*
 ## 3. Batch 크기와 개선 배수
@@ -507,6 +474,14 @@ vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-boun
 
 정리하면 speculative decoding의 이득은 memory-bound인 decode 스텝에 토큰을 더 넣어도 시간이 거의 늘지 않는다는 데서 나온다.
 그래서 batch가 커져 선형층이 compute-bound가 되면 검증 스텝이 길어지고, KV cache 읽기의 몫이 작은 짧은 문맥일수록 이득이 크게 줄어든다.
+
+[^vllm-spec]: vLLM Project. (2026). Speculative Decoding. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/features/speculative_decoding/).
+
+[^moesd]: Huang, Z., Zhu, L., Zhan, Z., Hu, T., et al. (2025). MoESD: Unveil Speculative Decoding's Potential for Accelerating Sparse MoE. *NeurIPS 2025*. [arXiv:2505.19645](https://arxiv.org/abs/2505.19645).
+
+[^magicdec]: Sadhukhan, R., Chen, J., Chen, Z., et al. (2025). MagicDec: Breaking the Latency-Throughput Tradeoff for Long Context Generation with Speculative Decoding. *ICLR 2025*. [arXiv:2408.11049](https://arxiv.org/abs/2408.11049).
+
+[^turbospec]: Liu, X., Park, J., Hu, L., Kwon, W., et al. (2025). TurboSpec: Closed-loop Speculation Control System for Optimizing LLM Serving Goodput. [arXiv:2406.14066v3](https://arxiv.org/abs/2406.14066v3).
 */}
 
 [^survey]: Xia, H., Yang, Z., Dong, Q., et al. (2024). Unlocking Efficiency in Large Language Model Inference: A Comprehensive Survey of Speculative Decoding. *Findings of ACL 2024*, 7655–7671. [arXiv:2401.07851v3](https://arxiv.org/abs/2401.07851v3).
@@ -529,21 +504,9 @@ vLLM 문서도 speculative decoding을 요청률이 중간 이하인 memory-boun
 
 [^vllm-parallel]: Marques, A., Flynn, M., Zhao, H., Chitty Venkata, K. T., & Ukachi, C. (2026). Parallel All the Way Down: Beyond Single-Token Generation with Speculative Decoding. *vLLM Blog*. [vllm.ai](https://vllm.ai/blog/2026-07-28-speculators-parallel-drafting).
 
-[^vllm-spec]: vLLM Project. (2026). Speculative Decoding. *vLLM documentation v0.31.0*. [docs.vllm.ai](https://docs.vllm.ai/en/v0.31.0/features/speculative_decoding/).
-
 [^gloeckle]: Gloeckle, F., Youbi Idrissi, B., Rozière, B., Lopez-Paz, D., & Synnaeve, G. (2024). Better & Faster Large Language Models via Multi-token Prediction. *ICML 2024*. [arXiv:2404.19737](https://arxiv.org/abs/2404.19737).
 
 [^dsv3]: DeepSeek-AI. (2024). DeepSeek-V3 Technical Report. [arXiv:2412.19437](https://arxiv.org/abs/2412.19437).
-
-[^mimo]: LLM-Core Xiaomi. (2025). MiMo: Unlocking the Reasoning Potential of Language Model -- From Pretraining to Posttraining. [arXiv:2505.07608](https://arxiv.org/abs/2505.07608).
-
-[^glm45]: GLM-4.5 Team. (2025). GLM-4.5: Agentic, Reasoning, and Coding (ARC) Foundation Models. [arXiv:2508.06471](https://arxiv.org/abs/2508.06471).
-
-[^moesd]: Huang, Z., Zhu, L., Zhan, Z., Hu, T., et al. (2025). MoESD: Unveil Speculative Decoding's Potential for Accelerating Sparse MoE. *NeurIPS 2025*. [arXiv:2505.19645](https://arxiv.org/abs/2505.19645).
-
-[^magicdec]: Sadhukhan, R., Chen, J., Chen, Z., et al. (2025). MagicDec: Breaking the Latency-Throughput Tradeoff for Long Context Generation with Speculative Decoding. *ICLR 2025*. [arXiv:2408.11049](https://arxiv.org/abs/2408.11049).
-
-[^turbospec]: Liu, X., Park, J., Hu, L., Kwon, W., et al. (2025). TurboSpec: Closed-loop Speculation Control System for Optimizing LLM Serving Goodput. [arXiv:2406.14066v3](https://arxiv.org/abs/2406.14066v3).
 
 [^timor]: Timor, N., Mamou, J., Korat, D., Berchansky, M., et al. (2025). Accelerating LLM Inference with Lossless Speculative Decoding Algorithms for Heterogeneous Vocabularies. *ICML 2025*. [arXiv:2502.05202](https://arxiv.org/abs/2502.05202).
 
