@@ -335,8 +335,8 @@ $H(p)$는 그 자리 target 분포의 엔트로피(entropy)로, 확률이 한 �
 
 Medusa의 head들은 같은 hidden state 하나에서 서로 다른 미래 위치를 각자 예측한다.
 Head 2는 head 1이 무엇을 골랐는지 모른 채 그다음 토큰을 맞혀야 하므로, 멀리 갈수록 맞히기 어렵다.
-Li 등의 EAGLE은 draft도 한 칸씩 autoregressive하게 진행하되,
-토큰이 아니라 target의 **LM head 직전 feature**, 곧 마지막 층이 내놓은 hidden state를 예측한다.[^eagle]
+Li 등의 EAGLE은 **draft도 한 칸씩 autoregressive하게 진행**하되,
+토큰이 아니라 target의 LM head 직전 feature, 곧 **마지막 층이 내놓은 hidden state를 예측**한다.[^eagle]
 Feature의 수열이 토큰의 수열보다 규칙적이어서, feature 수준에서 autoregressive하게 예측한 뒤 토큰을 얻는 편이 결과가 좋았다는 관찰에서 출발했다.
 다만 feature만으로는 다음 feature가 정해지지 않는다.
 같은 feature에서도 sampling에 따라 다른 토큰이 뽑힐 수 있고, 뽑힌 토큰에 따라 그다음 feature도 달라진다.
