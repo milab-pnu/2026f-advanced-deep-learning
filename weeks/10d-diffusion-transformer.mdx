@@ -5,8 +5,8 @@ order: 3
 ---
 
 Latent diffusion은 autoencoder가 압축한 이미지 표현인 latent 공간에서 noise를 추가하고 제거한다.
-Denoiser는 현재 noisy latent와 시간, 조건을 받아 생성에 필요한 예측을 만든다.
-이 denoiser를 꼭 U-Net으로 만들 필요는 없다.[^survey]
+Denoiser는 현재 noisy latent와 시간, 조건을 받아 생성에 필요한 예측을 만든다.[^survey]
+이 denoiser를 꼭 U-Net으로 만들 필요는 없다.
 Diffusion Transformer(DiT)는 latent를 patch token으로 바꾸고 Transformer로 처리한다.[^dit]
 DiT는 diffusion의 학습 방식과 반복 sampling은 그대로 두고, denoiser의 backbone만 Transformer로 바꾼다.
 
@@ -54,11 +54,11 @@ Token 수를 4배로 늘리면 그 행렬의 원소 수는 16배가 된다.
 다만 전체 모델의 계산량까지 16배가 되지는 않는다.
 선형 투영과 MLP(multi-layer perceptron, 각 token에 적용하는 신경망)에도 비용이 들기 때문이다.
 
-<Figure src="https://biechi.github.io/assets/img/blog/world-action-modeling/dit_paper_fig3.png" alt="왼쪽에는 noisy latent가 patchify, DiT block, 선형 변환을 거쳐 noise와 분산 예측으로 바뀌는 구조가 있다. 오른쪽에는 조건을 주입하는 adaLN-Zero, cross-attention, in-context block의 비교가 있다." caption="DiT의 전체 경로와 조건을 주입하는 세 가지 block. 왼쪽 아래의 timestep과 class label이 조건을 구성하며, 가운데 adaLN-Zero block에서는 조건이 각 residual 경로의 scale과 shift를 만든다." source="Peebles & Xie (2023), Figure 3 · CC BY 4.0" wide />
+<Figure src="https://biechi.github.io/assets/img/blog/world-action-modeling/dit_paper_fig3.png" alt="왼쪽에는 noisy latent가 patchify, DiT block, 선형 변환을 거쳐 noise와 분산 예측으로 바뀌는 구조가 있다. 오른쪽에는 조건을 주입하는 adaLN-Zero, cross-attention, in-context block의 비교가 있다." caption="DiT의 전체 경로와 조건을 주입하는 세 가지 block. 왼쪽 아래의 timestep과 class label이 조건을 구성하며, 왼쪽에서 두 번째인 adaLN-Zero block에서는 조건이 각 residual 경로의 scale과 shift를 만든다." source="Peebles & Xie (2023), Figure 3 · CC BY 4.0" wide />
 
 그림은 [DiT 원논문](https://arxiv.org/abs/2212.09748)의 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 조건으로 제공된다.
 오른쪽의 흐린 두 block은 원논문이 대안으로 비교한 방식이다.
-이어지는 설명은 가운데 adaLN-Zero block을 기준으로 한다.
+이어지는 설명은 선명하게 그려진 adaLN-Zero block을 기준으로 한다.
 
 ## 3. DiT block의 조건 주입
 
@@ -125,7 +125,8 @@ h'=h+g(c)\odot F\bigl(\operatorname{adaLN}(h,c)\bigr).
 $$
 
 $F$는 attention 또는 MLP이고 $g(c)$는 조건에서 만든 차원별 gate다.
-DiT는 초기화할 때 gate 출력을 0으로 만들어, 각 block이 처음에는 입력을 그대로 전달하게 한다.
+DiT의 공식 구현은 조건 처리층의 마지막 선형층을 0으로 초기화한다.
+그래서 처음에는 $\gamma(c)$, $\beta(c)$, $g(c)$가 모두 0이고, gate $g(c)$가 0이므로 각 block은 입력을 그대로 전달한다.
 학습이 진행되면 gate와 조건부 변환이 함께 학습된다.
 예를 들어 어떤 차원에서 입력이 2이고 $F$의 출력이 0.4라면 gate가 0일 때 출력은 2, gate가 0.5일 때 출력은 2.2다.
 Block의 gate가 0이면 그 block의 residual branch 내부로 전달되는 gradient는 처음에 0이다.
@@ -153,7 +154,8 @@ Gate와 정규화의 조건부 벡터는 모든 token에 같은 값으로 broadc
 ## 4. 출력을 latent로 되돌리기
 
 마지막 Transformer block의 출력은 여전히 $N$개의 벡터다.
-DiT는 각 벡터를 선형 변환해 해당 patch 위치의 출력 값으로 만들고, 이를 격자 순서대로 다시 이어 붙인다.
+DiT는 조건으로 scale과 shift를 정하는 layer normalization을 한 번 더 적용한다.
+그다음 각 벡터를 선형 변환해 해당 patch 위치의 출력 값으로 만들고, 이를 격자 순서대로 다시 이어 붙인다.
 이를 unpatchify라고 한다.
 앞의 $32\times32$, $p=2$ 예에서는 256개 출력 patch를 다시 $32\times32$ 격자로 조립한다.
 원논문 모델은 noise와 함께 분산도 예측하므로, 출력 채널 수가 입력과 같다고 가정하면 안 된다.

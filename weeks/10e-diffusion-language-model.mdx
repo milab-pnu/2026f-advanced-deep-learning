@@ -119,7 +119,7 @@ LLaDA는 시간에 따른 masking으로 학습 데이터를 손상시킨다.[^ll
 LLaDA의 목적함수에는 시간에 따른 가중치가 있고, 이 목적함수는 likelihood의 bound와 연결된다.
 그래서 고정된 mask 비율 하나를 쓰는 분류 문제와는 다르다.
 
-LLaDA는 한 설정에서 $t$를 0과 1 사이에서 균일하게 뽑고, 각 token을 독립적으로 확률 $t$로 mask한다.
+LLaDA는 pre-training에서 $t$를 0과 1 사이에서 균일하게 뽑고, 각 token을 독립적으로 확률 $t$로 mask한다.
 원래 sequence를 $x_0$, 손상된 sequence를 $x_t$, mask token을 $\mathrm{M}$이라 하면 손실은 다음과 같다.
 
 $$
@@ -204,7 +204,7 @@ LLaDA의 supervised fine-tuning(SFT)은 prompt를 보존한 채 응답 부분만
 iLLaDA는 LLaDA와 같은 masked diffusion 목표를 유지하면서 8B 양방향 Transformer를 처음부터 학습한 모델이다.[^illada]
 원논문은 pre-training에 12조 token을 사용했고, 약 250억 token의 instruction corpus로 12 epoch SFT했다고 보고한다.
 iLLaDA는 LLaDA의 multi-head attention 대신 grouped-query attention(GQA)을 쓰고, 입력 embedding과 출력 head의 weight를 공유한다.
-GQA는 cache 메모리를 줄여 주지만, 그 이점은 attention 상태를 재사용하는 cache 방식에서만 생긴다.
+GQA는 cache에 저장하는 key와 value의 메모리를 줄여 주지만, 이 절감은 attention 상태를 재사용하는 cache 방식에서만 생긴다.
 Diffusion에서는 단계마다 상태가 바뀌므로 cache를 어떻게 재사용할지 따로 정해야 한다.
 
 생성할 때 iLLaDA는 prompt 뒤에 일정 크기의 mask block을 붙인다.
@@ -221,11 +221,11 @@ Block 안의 token은 병렬로 예측할 수 있지만 block 사이와 denoisin
 모델이 네 위치의 후보를 한 번에 예측한 뒤, sampler가 자신 있는 위치부터 채우고 나머지를 다시 예측한다.
 첫 block이 `맑고 바람이 약합니다 .`처럼 채워졌는데 종료 token이 없다고 하자.
 그러면 모델은 이 block을 문맥으로 남기고 뒤에 새 mask block을 붙인다.
-다음 block의 복원이 끝났을 때 종료 token이 있으면, 모델은 그 위치까지만 출력한다.
+다음 block의 복원이 끝났을 때 종료 token이 있으면, 모델은 생성을 멈춘다.
 이것은 작동 순서를 보여 주는 가상 예시다.
 문장 조각이 실제 tokenizer에서 네 token이라는 뜻은 아니다.
 
-객관식 평가에서는 각 후보 답안을 전부 mask한 상태에서 시작한다.
+후보 답안마다 점수를 매겨 고르는 객관식 평가에서, iLLaDA는 각 후보 답안을 전부 mask한 상태에서 시작한다.
 매 단계에서 남은 위치 가운데, 모델이 후보 답안의 token에 가장 높은 확률을 준 위치를 하나 드러낸다.
 이 과정을 반복하며 드러낸 위치의 확률에 log를 취해 더한다.
 후보마다 이렇게 계산한 점수를 비교한다.
