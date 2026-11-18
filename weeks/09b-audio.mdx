@@ -63,7 +63,7 @@ Spectrogram은 그 가운데 크기만 그린 시간–주파수 표현이다.
 ### 1-3. Mel spectrogram과 MFCC
 
 사람의 귀는 낮은 주파수의 차이에는 민감하고 높은 주파수의 차이에는 둔하다.
-100 Hz와 200 Hz는 뚜렷이 다른 높이로 들리지만 7,000 Hz와 7,100 Hz는 구별하기 어렵다.
+같은 100 Hz 차이라도 100 Hz와 200 Hz는 크게 다른 높이로 들리지만, 7,000 Hz와 7,100 Hz는 거의 같은 높이로 들린다.
 Mel 척도는 이 지각에 맞춰 주파수 축을 다시 나눈 것으로, 주파수 $f$ Hz를 $m = 1127\ln(1 + f/700)$으로 옮긴다.
 이 변환은 낮은 주파수에서 거의 선형이고 높은 주파수에서 로그에 가깝다.
 그래서 Mel 척도는 낮은 주파수를 촘촘하게, 높은 주파수를 성기게 나눈다.
@@ -71,7 +71,7 @@ Mel spectrogram은 spectrogram의 bin들을 Mel 척도에서 같은 간격으로
 앞의 설정이라면 bin 201개가 80개 정도의 Mel 구간으로 줄어든다.
 여기에 로그를 취해 큰 값과 작은 값의 차이를 압축한 것이 log-Mel spectrogram이다.
 Whisper의 입력이 바로 이 설정이다.[^whisper]
-Whisper는 16 kHz 음성에서 25 ms 창과 10 ms 이동으로 계산한 80채널 log-Mel spectrogram을 받는다.
+원논문의 Whisper는 16 kHz 음성에서 25 ms 창과 10 ms 이동으로 계산한 80채널 log-Mel spectrogram을 받는다(후속 large-v3는 128채널).
 
 MFCC(mel-frequency cepstral coefficient)는 log-Mel spectrogram을 한 번 더 압축한다.[^mfcc]
 MFCC는 frame마다 Mel 구간들의 로그 값에 DCT(discrete cosine transform)를 적용하고, 앞쪽 계수 13개 정도만 남긴다.
@@ -97,7 +97,7 @@ MFCC는 frame마다 Mel 구간들의 로그 값에 DCT(discrete cosine transform
 | Log-Mel spectrogram | 234 × 80 | 위상, 높은 주파수의 세밀한 구분 | 신경망 audio encoder의 입력, 음성 합성의 중간 표현 |
 | MFCC | 234 × 13 | 위의 것에 더해 음높이 같은 세부 | 고전적인 음성 인식의 입력 |
 
-MFCC는 1980년에 제안된 뒤 음성 인식의 입력으로 오래 쓰였다.
+MFCC는 1980년 Davis와 Mermelstein의 비교 연구로 널리 쓰이기 시작해 음성 인식의 입력으로 오래 쓰였다.
 신경망은 상관된 고차원 입력을 직접 다룰 수 있으므로, 지금의 encoder는 대개 DCT에서 버리던 정보까지 담긴 log-Mel spectrogram을 그대로 받는다.
 더 나아가 어떤 encoder는 feature를 뽑는 단계까지 학습한다.
 wav2vec 2.0은 waveform을 convolution 일곱 층으로 직접 받아 약 20 ms마다 벡터 하나를 낸다.[^wav2vec2]
@@ -114,7 +114,7 @@ Encoder가 convolution이나 pooling으로 입력 길이를 줄이면 뒷단의 
 하지만 너무 많이 압축하면 짧은 사건의 위치나 발화의 세부가 사라질 수 있다.
 
 AST(Audio Spectrogram Transformer)는 spectrogram을 시간과 주파수 두 축에서 작은 patch로 나누고, 각 patch를 벡터로 투영한 뒤 위치 정보를 더해 Transformer encoder에 넣는다.[^ast]
-AST의 patch는 시간축의 frame 16개와 주파수축의 bin 16개로 이루어지고, 이웃한 patch끼리 서로 겹친다.
+AST의 patch는 시간축 frame 16개와 128개 Mel 구간 가운데 16개로 이루어지고, 이웃한 patch끼리 6칸씩 겹친다.
 AST는 분류용 token의 출력으로 녹음 전체의 label을 예측한다.
 
 <Figure src={astArchitecture.src} alt="AST 구조. 왼쪽 아래의 입력 spectrogram을 서로 겹치는 patch 여덟 개로 자르고, 각 patch를 선형 투영해 patch embedding을 만든 뒤 위치 embedding을 더한다. 맨 앞에 CLS embedding을 붙여 Transformer encoder에 넣고, 그 위치의 출력을 선형층에 넣어 결과를 낸다." caption="AST의 입력 구성. Spectrogram을 이미지처럼 patch로 잘라 ViT와 같은 방식으로 Transformer encoder에 넣는다." source="Gong et al. (2021), Figure 1 · YuanGongND/ast 저장소 · BSD-3-Clause · Copyright (c) 2021, Yuan Gong" />
@@ -199,7 +199,8 @@ AudioSet처럼 소리에 범주 label만 붙은 자료에서, 언어 모델이 l
 
 공유 공간은 분류와 검색 말고 생성의 조건으로도 쓰인다.
 텍스트로 소리를 만드는 AudioLDM은 학습할 때 CLAP의 audio embedding을 조건으로 주고, 생성할 때는 같은 공간에 있는 text embedding을 대신 넣는다.[^audioldm]
-AudioLDM은 두 embedding이 같은 공간에서 가깝다는 점에 기대어, 텍스트 설명이 붙지 않은 소리만으로 생성 모델을 학습했다.
+AudioLDM은 두 embedding이 같은 공간에서 가깝다는 점에 기대어, 생성 모델(latent diffusion model) 자체는 텍스트 설명이 붙지 않은 소리만으로 학습했다.
+다만 CLAP은 audio–텍스트 쌍으로 미리 학습한 것이다.
 
 CLAP이 내는 것은 녹음 전체를 요약한 벡터 하나다.
 소리를 시간 순서대로 받아쓰거나 열린 질문에 문장으로 답하려면 다른 출력과 학습 목표가 필요하다.
@@ -517,7 +518,7 @@ Token이 담는 정보가 적은 만큼, 생성한 token을 파형으로 되살�
 셋째는 입력과 출력의 표현을 다르게 두는 것이다.
 모델은 이해에 쓰는 입력을 encoder의 연속 feature로 받고, 출력만 discrete token으로 낸다.
 Liquid AI의 LFM3-Audio-2B는 텍스트와 audio를 입력받아 텍스트, 음성 또는 둘을 번갈아 배치한 출력을 만든다.[^lfm3-audio]
-음성 입력은 미래 입력을 보지 않는 인과적(causal) audio encoder와 projector를 거친 연속 벡터로 언어 모델에 들어간다.
+음성 입력은 미래 입력을 보지 않는 인과적(causal) audio encoder를 거쳐 연속 벡터로 언어 모델에 들어간다.
 음성을 출력할 때는 모델이 이산 audio token을 예측하고, LiquidCodec decoder가 이를 파형으로 바꾼다.
 LiquidCodec은 음성 80 ms를 12개 discrete token으로 표현한다.
 
@@ -529,7 +530,8 @@ Token-Voicebox가 이 token을 Mel spectrogram으로 바꾸고, vocoder UnivNet�
 학습은 세 단계로 진행한다.
 먼저 ASR·TTS 자료로 projector와 Voice Token LM을 맞춘다.
 그다음 음성 이해 자료를 포함해 전체 모델을 계속 학습하고, 마지막으로 음성 질의응답·감정·지시 이행 자료로 전체 모델을 SFT(supervised fine-tuning)한다.
-Kanana-o의 2026년 후속 개발에서는 tokenizer를 LM-SPT로 바꾸어 token rate를 초당 25개에서 12.5 frame으로 낮췄다.[^lmspt-kanana]
+Kanana-o의 2026년 후속 개발에서는 tokenizer를 LM-SPT로 바꾸어, Voice Token LM이 생성할 시간 위치를 초당 25개에서 12.5 frame으로 절반으로 줄였다.[^lmspt-kanana]
+대신 frame마다 semantic token 하나와 acoustic token 여러 개를 예측한다.
 또 decoder가 Mel spectrogram을 거치지 않고 파형을 바로 복원하게 했다.
 
 | 모델 | LLM이 받는 음성 입력 | LLM이 내는 음성 token | 파형 복원 |
