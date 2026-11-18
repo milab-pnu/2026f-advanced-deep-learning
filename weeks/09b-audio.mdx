@@ -145,7 +145,7 @@ Sample마다 65,536개 값에 softmax를 계산하기는 너무 크므로, WaveN
 
 - **연속 표현**: audio encoder가 짧은 구간마다 실수 벡터를 만들고, 작은 변환 모듈인 connector가 이를 LLM의 입력 차원에 맞춰 embedding 자리에 바로 넣는다.
   이 벡터는 어휘나 embedding table을 거치지 않는다.
-- **이산 token**: neural audio codec(waveform을 번호 sequence로 압축하는 encoder와 번호에서 waveform을 되살리는 decoder를 함께 학습한 모델)이 구간마다 codebook(학습된 대표 벡터의 목록)에서 가장 가까운 항목의 번호를 고른다.
+- **이산 token**: neural audio codec(waveform을 번호 sequence로 압축하는 encoder와 번호에서 waveform을 되살리는 decoder를 함께 학습한 모델)이 구간마다 codebook(학습되는 벡터들의 집합)에서 가장 가까운 항목의 번호를 고른다.
   이 번호를 어휘에 추가하면 audio도 텍스트처럼 ID sequence가 되고, LLM은 embedding table에서 각 ID의 벡터를 꺼낸다.
 
 <Callout type="example">
