@@ -130,7 +130,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 | 이미지 | autoencoder의 복원 학습에 사용 | 완성된 latent를 decoder로 변환 |
 
 생성 중 U-Net은 매 단계 현재 latent, 시간, 텍스트 조건을 입력받는다.
-Sampler가 이 예측으로 다음 latent를 만들고, 마지막 latent를 decoder가 pixel 공간의 이미지로 바꾼다.
+Sampler가 이 예측으로 다음 latent를 만들고, 마지막 latent를 decoder가 pixel 공간의 이미지로 바꾼다.<Sidenote>같은 구성은 audio 생성에도 쓰인다. AudioLDM은 Mel spectrogram을 VAE로 압축한 latent에서 diffusion을 수행하고, CLAP 표현을 조건으로 주며, 생성한 Mel spectrogram을 vocoder로 waveform으로 바꾼다.[^audioldm] AudioLDM의 공저자 [Xubo Liu](https://liuxubo717.github.io/)의 강연 슬라이드 [Diffusion Models in Audio Processing](https://liuxubo717.github.io/homepage_files/diffusions_for_audio.pdf)은 audio 표현에서 시작해 text-to-audio 생성, 음원 분리, audio tokenizer에 diffusion을 쓰는 방법을 정리한다.</Sidenote>
 Classifier-free guidance(CFG)를 쓰는 경우 조건부 예측과 조건을 제거한 예측을 결합해 sampler에 전달한다.
 두 예측의 차이에 guidance scale을 곱해 조건의 영향을 조절한다.
 결과 이미지는 prompt, 초기 noise, 학습된 모델, guidance scale과 sampler의 영향을 함께 받는다.
@@ -229,6 +229,7 @@ ControlNet처럼 edge나 pose를 공간 조건으로 제공하는 방법은 제�
 [^clip]: Radford, A., Kim, J. W., Hallacy, C., et al. (2021). Learning Transferable Visual Models From Natural Language Supervision. *ICML*. [논문](https://arxiv.org/abs/2103.00020).
 [^sd]: Rombach, R., & Esser, P. (2022). Stable Diffusion v1 Model Card. *Hugging Face*. [모델 카드](https://huggingface.co/CompVis/stable-diffusion-v1-4), [VAE 설정](https://huggingface.co/CompVis/stable-diffusion-v1-4/blob/main/vae/config.json).
 [^sd-decoding]: Hugging Face. (v0.35.1). Stable Diffusion pipeline. *Diffusers*. [구현](https://github.com/huggingface/diffusers/blob/v0.35.1/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py).
+[^audioldm]: Liu, H., Chen, Z., Yuan, Y., et al. (2023). AudioLDM: Text-to-Audio Generation with Latent Diffusion Models. *ICML*. [논문](https://arxiv.org/abs/2301.12503).
 [^sdedit]: Meng, C., He, Y., Song, Y., et al. (2022). SDEdit: Guided Image Synthesis and Editing with Stochastic Differential Equations. *ICLR*. [논문](https://arxiv.org/abs/2108.01073).
 [^instructpix]: Brooks, T., Holynski, A., & Efros, A. A. (2023). InstructPix2Pix: Learning to Follow Image Editing Instructions. *CVPR*. [논문](https://arxiv.org/abs/2211.09800).
 [^instructpix-implementation]: Hugging Face. (v0.35.1). InstructPix2Pix. *Diffusers documentation*. [문서](https://huggingface.co/docs/diffusers/v0.35.1/training/instructpix2pix).
