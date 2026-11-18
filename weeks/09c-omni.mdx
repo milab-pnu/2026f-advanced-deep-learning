@@ -5,70 +5,84 @@ order: 2
 ---
 
 영상에서 누군가 주전자 옆에 서 있고, 끓는 소리가 들린다고 하자.
-화면만 보면 물이 끓는지 확실하지 않을 수 있고, 소리만 들으면 무엇이 소리를 내는지 알기 어려울 수 있다.
-두 신호를 함께 보고 “주전자의 물이 끓고 있다”고 답하는 일은 이미지나 audio를 각각 설명하는 것보다 한 단계 더 나아간다.
+화면만 보면 물이 끓는지 확실하지 않을 수 있다.
+소리만 들으면 무엇이 소리를 내는지 알기 어렵다.
+모델이 두 신호를 함께 보고 “주전자의 물이 끓고 있다”고 답하려면, 이미지나 audio를 각각 설명할 때보다 한 단계를 더 가야 한다.
 영상과 소리가 같은 사건의 어느 순간에 해당하는지도 알아야 하기 때문이다.
 
-Omni-modal large language model(Omni-MLLM)은 여러 종류의 입력을 받아 함께 해석하고, 모델에 따라 여러 형태의 출력을 만들도록 설계한 모델이다.[^survey]
-Omni라는 이름이 지원 범위를 정해 주지는 않으므로, 모델마다 이미지·audio·비디오·텍스트 가운데 무엇을 입력으로 받고 텍스트·음성·이미지 중 무엇을 출력하는지 따로 확인해야 한다.
-이 노트는 서로 다른 입력을 LLM(large language model)에 연결하는 방법에서 출발해, 시간에 따라 결합된 영상과 소리를 다루고 음성으로 응답하는 구조까지 살펴본다.
+Omni-modal large language model(Omni-MLLM)은 여러 종류의 입력을 함께 해석하는 모델이다.[^survey]
+모델에 따라서는 텍스트 외의 형태로도 출력한다.
+다만 Omni라는 이름만으로는 지원 범위를 알 수 없다.
+모델마다 이미지·audio·비디오·텍스트 가운데 무엇을 입력으로 받고, 텍스트·음성·이미지 가운데 무엇을 출력하는지 따로 확인해야 한다.
+이 노트는 서로 다른 입력을 LLM(large language model)에 연결하는 방법에서 출발한다.
+이어서 시간에 따라 함께 흐르는 영상과 소리를 다루는 방법과, 음성으로 응답하는 구조를 살펴본다.
 
 ## 1. 여러 modality의 결합
 
 ### 1-1. 공통 표현 공간
 
-이미지와 텍스트를 맞추는 CLIP이나 audio와 텍스트를 맞추는 CLAP에서는 입력마다 encoder로 표현 벡터를 만들고, 대응하는 입력의 표현이 가까워지도록 학습한다.
-이 원리를 더 많은 modality로 확장할 때 모든 종류의 쌍을 직접 수집해야 한다면 데이터 요구량이 빠르게 늘어난다.
-Audio와 텍스트, audio와 깊이 영상, 깊이 영상과 텍스트 등 가능한 조합마다 대응 자료가 필요하기 때문이다.
+이미지와 텍스트를 맞추는 CLIP과 audio와 텍스트를 맞추는 CLAP은 입력마다 encoder로 표현 벡터를 만든다.
+그리고 서로 대응하는 입력의 표현이 가까워지도록 encoder를 학습한다.
+이 원리를 더 많은 modality로 넓히려면 modality 쌍마다 대응 자료가 필요하다.
+Audio–텍스트, audio–깊이 영상, 깊이 영상–텍스트처럼 조합마다 자료를 모아야 하므로, 필요한 데이터가 빠르게 늘어난다.
 
-ImageBind는 이미지를 공통 연결점으로 삼아 이 문제를 다룬다.[^imagebind]
-텍스트와 이미지를 연결한 표현 공간을 사용하고, audio·깊이·열영상·관성 측정 정보도 각각 대응 이미지와 가깝도록 학습한다.
-예를 들어 개 사진과 그 사진에 대응하는 짖는 소리의 표현이 가까워지고, 개 사진과 “개가 짖는다”라는 텍스트 표현도 가까워진다면, 직접 짝지어진 소리–텍스트를 보지 않았더라도 두 표현이 가까워질 가능성이 있다.
-이처럼 직접 학습하지 않은 조합에 나타나는 정렬을 논문은 emergent alignment라고 부른다.
+ImageBind는 이미지를 공통 연결점으로 삼아 이 문제를 푼다.[^imagebind]
+ImageBind는 이미지와 텍스트가 이미 정렬된 표현 공간에서 출발한다.
+그리고 audio·깊이·열영상·관성 측정 정보의 encoder를 각각 대응 이미지의 표현과 가까워지도록 학습한다.
+예를 들어 짖는 소리의 표현이 개 사진의 표현과 가까워지고, 개 사진의 표현이 “개가 짖는다”라는 텍스트 표현과 가깝다고 하자.
+그러면 모델이 짖는 소리와 그 텍스트의 쌍을 직접 보지 않았더라도, 두 표현이 가까워질 수 있다.
+ImageBind 원논문은 이처럼 직접 학습하지 않은 조합에서 나타나는 정렬을 emergent alignment라 부른다.
 
 <Callout type="warning">
 공통 공간은 각 표현의 **유사도를 비교할 수 있는 공간**이다.
-가까운 표현을 찾을 수 있을 뿐, 시간 관계를 추론하거나 문장으로 답하는 능력은 여기서 나오지 않는다.
-ImageBind는 공통 공간을 만들고, 생성형 모델은 그 표현을 입력으로 받아 답을 만든다.
+이 공간에서는 가까운 표현을 찾을 수 있을 뿐, 시간 관계를 추론하거나 문장으로 답할 수는 없다.
+ImageBind는 공통 공간을 만들 뿐이고, 답을 만드는 일은 그 표현을 입력으로 받는 생성형 모델이 맡는다.
 </Callout>
 
 ### 1-2. 표현 공간에서 LLM 입력으로
 
-생성형 모델은 표현을 비교하는 데서 더 나아가 사용자의 질문에 답해야 한다.
-이미지와 audio encoder가 만든 벡터가 LLM의 입력과 차원이 같아도, 그 자체로 LLM이 해당 벡터의 의미를 해석할 수 있는 것은 아니다.
-별도의 connector를 학습해 modality 표현을 LLM이 처리할 수 있는 입력 표현으로 바꾸고, 그 입력에 조건을 건 다음 token을 예측하도록 학습한다.
+생성형 모델은 표현을 비교하는 데서 그치지 않고 사용자의 질문에 답해야 한다.
+이미지 encoder와 audio encoder가 만든 벡터는 LLM의 입력과 차원이 같더라도, LLM이 그 의미를 바로 해석하지는 못한다.
+그래서 connector가 modality 표현을 LLM이 처리할 수 있는 입력 표현으로 바꾼다.
+그리고 모델은 이 입력을 조건으로 다음 token을 예측하도록 학습한다.
 
 초기 audio-visual 모델인 Video-LLaMA는 영상 frame과 audio에 서로 다른 경로를 둔다.[^videollama]
-영상 경로는 이미지 encoder로 frame마다 feature를 추출하고 시간 위치를 더한 후, 학습 가능한 query로 frame 정보를 모으는 Video Q-Former에 넣는다.
-Audio 경로는 짧게 나눈 소리를 ImageBind의 사전학습된 audio encoder로 표현하고, 각 구간에 시간 위치를 더한 뒤 Audio Q-Former에 넣는다.
-두 Q-Former는 BLIP-2의 Q-Former처럼 학습 가능한 query 벡터가 입력 feature에 cross-attention을 적용해 정해진 수의 표현을 뽑고, 그 출력이 선형 변환을 거쳐 LLM의 입력 차원에 맞춰진다.
-LLM은 두 입력을 텍스트 지시와 함께 받아 답변을 생성한다.
+영상 경로에서는 이미지 encoder가 frame마다 feature를 추출하고, 여기에 시간 위치를 더한다.
+그다음 Video Q-Former가 학습 가능한 query로 여러 frame의 정보를 모은다.
+Audio 경로에서는 ImageBind의 사전학습된 audio encoder가 짧게 나눈 소리 구간을 표현하고, 여기에 시간 위치를 더한다.
+그다음 Audio Q-Former가 이 구간들의 정보를 모은다.
+두 Q-Former는 BLIP-2의 Q-Former처럼, 학습 가능한 query 벡터로 입력 feature에 cross-attention을 적용해 정해진 수의 표현을 뽑는다.
+선형층이 이 출력을 LLM의 입력 차원에 맞추고, LLM은 두 입력을 텍스트 지시와 함께 받아 답을 생성한다.
 
 <Figure src="https://arxiv.org/html/2306.02858v4/video_llama_architecture_v7.png" alt="Video-LLaMA 구조. 왼쪽 vision-language branch에서는 고정된 visual encoder가 비디오 frame마다 feature를 내고, 시간 위치 embedding을 더한 뒤 Video Q-Former와 선형층을 거쳐 LLM으로 들어간다. 오른쪽 audio-language branch에서는 고정된 audio encoder가 소리 구간마다 feature를 내고, 시간 위치를 더한 뒤 Audio Q-Former와 선형층을 거친다. 맨 위의 LLM은 고정되어 있고 두 branch의 출력과 텍스트 지시를 받아 설명을 생성한다." caption="Video-LLaMA의 두 경로. 눈꽃 표시는 고정된 모델, 불꽃 표시는 학습하는 모듈이다. 영상과 audio가 각각 Q-Former로 요약되어 LLM에 들어가며, 두 경로는 LLM 안에서 처음 만난다." source="Zhang et al. (2023), Figure 1 · CC BY 4.0" />
 
-Audio 경로를 학습할 때는 audio–text 자료가 부족해 시각–텍스트 자료를 대신 사용했다.
-ImageBind의 공통 공간에서는 이미지와 audio의 표현이 가까우므로, 추론할 때 같은 연결부에 audio 표현을 넣어도 동작하리라 기대한 것이다.
-이 전이는 두 modality의 정렬에 기대므로 정렬이 어긋난 소리에서는 약하다.
-또 영상과 audio를 각각 고정 개수의 벡터로 요약해 넣으므로, 두 신호 사이의 세밀한 시간 관계는 LLM에 전달되기 어렵다.
+연구진은 audio 경로를 학습할 때 audio–텍스트 자료가 부족해 시각–텍스트 자료를 대신 썼다.
+ImageBind의 공통 공간에서는 이미지와 audio의 표현이 가깝다.
+그래서 연구진은 추론할 때 같은 연결부에 audio 표현을 넣어도 동작하리라 기대했다.
+이 전이는 두 modality의 정렬에 기대므로, 정렬이 어긋난 소리에서는 약하다.
+또 Video-LLaMA는 영상과 audio를 각각 고정 개수의 벡터로 요약해 넣는다.
+그래서 두 신호 사이의 세밀한 시간 관계는 LLM에 잘 전달되지 않는다.
 
 ### 1-3. 입력과 출력의 표현
 
 Video-LLaMA는 영상과 audio를 encoder의 연속 벡터로 LLM에 넣었다.
-LLM의 Transformer 층은 token ID가 아니라 embedding 벡터를 받는다.
-그래서 다른 modality도 encoder의 연속 벡터로 넣거나, codebook(학습된 대표 벡터의 목록)으로 만든 이산 ID를 어휘에 추가해 넣을 수 있다.
-Omni 모델은 이 선택을 modality마다 다르게 할 수 있고, 한 modality에 두 표현을 함께 쓰기도 한다.
-입력을 연속 표현으로 받으면 codebook 양자화에 따른 오차는 피할 수 있다.
-다만 encoder의 압축과 학습 목표에 따라 원본 정보가 일부 사라질 수 있다.
+LLM의 Transformer 층은 token ID가 아니라 embedding 벡터를 받으므로, 다른 modality를 넣는 방법은 두 가지다.
+하나는 encoder의 연속 벡터를 그대로 넣는 것이고, 다른 하나는 codebook(학습된 대표 벡터의 목록)으로 만든 이산 ID를 어휘에 추가해 넣는 것이다.
+Omni 모델은 modality마다 다른 방법을 고를 수 있고, 한 modality에 두 표현을 함께 쓰기도 한다.
+입력을 연속 표현으로 받으면 codebook 양자화에 따른 오차는 생기지 않는다.
+다만 encoder가 입력을 압축하는 정도와 학습 목표에 따라 원본 정보가 일부 사라질 수 있다.
 
 어려움은 출력에서 생긴다.
-LLM의 출력층은 어휘별 logit을 만들고 softmax로 token 확률을 계산한다.
-Decoding은 이 분포를 이용해 이산 token ID를 선택하므로, 이 출력층만으로 연속 벡터를 바로 내보내지는 않는다.
-이미지나 음성을 출력하려면 크게 두 길이 있다.
-첫째, 이미지·음성의 codebook ID를 어휘에 추가해 텍스트와 같은 방식으로 선택하고, 해당 decoder가 ID를 픽셀이나 파형으로 되돌린다.
-둘째, LLM이 만든 hidden state를 연속 조건으로 별도의 생성기에 넘기고, 생성기가 결과를 만든다.
-음성 출력은 마지막에 codec의 이산 token을 예측하고 decoder가 이를 파형으로 바꾸는 경우가 많다.
-이 token을 LLM의 어휘에 넣어 직접 고르기도 하고(첫째 길), Thinker–Talker 구조처럼 LLM의 hidden state를 받은 별도 음성 모델이 고르기도 한다(두 길의 결합).
-그래서 Omni 모델에서는 입력은 연속 표현으로 받고 음성 출력은 이산 token으로 내는 비대칭 구성이 자주 보인다.
+LLM의 출력층은 어휘별 logit을 만들고, softmax로 token 확률을 계산한다.
+Decoding은 이 분포에서 이산 token ID를 고르므로, LLM은 이 출력층만으로는 연속 벡터를 내보내지 못한다.
+그래서 이미지나 음성을 출력하는 길은 크게 둘이다.
+첫째, 이미지·음성의 codebook ID를 어휘에 추가한다.
+LLM은 텍스트와 같은 방식으로 이 ID를 고르고, 해당 decoder가 ID를 픽셀이나 파형으로 되돌린다.
+둘째, LLM이 만든 hidden state를 별도의 생성기에 연속 조건으로 넘긴다.
+그러면 생성기가 이미지나 음성을 만든다.
+음성 출력에서는 마지막 단계에서 codec의 이산 token을 예측하고, codec decoder가 이 token을 파형으로 바꾸는 경우가 많다.
+이 token은 LLM이 어휘에서 직접 고르기도 하고(첫째 길), Thinker–Talker 구조처럼 LLM의 hidden state를 받은 별도 음성 모델이 고르기도 한다(두 길의 결합).
+그래서 Omni 모델에서는 입력을 연속 표현으로 받고 음성 출력은 이산 token으로 내는 비대칭 구성이 자주 보인다.
 
 사진을 보여 주며 음성으로 질문하고 음성으로 답을 듣는 대화를 개념적으로 쓰면 다음과 같다.
 대괄호는 데이터의 종류를 나타낸 표시이며 개수는 가상의 값이다.
@@ -78,19 +92,21 @@ Decoding은 이 분포를 이용해 이산 token ID를 선택하므로, 이 출�
 출력: LLM 또는 별도 음성 생성기 → [음성 codec ID] … → codec decoder → 파형
 ```
 
-입력의 세 조각은 모두 같은 차원의 벡터라 한 sequence로 이어진다.
-출력에서는 예측 분포에서 ID를 선택하고, 별도 decoder가 그 ID를 파형으로 바꾼다.
+입력의 세 조각은 모두 같은 차원의 벡터이므로 한 sequence로 이어진다.
+출력에서는 LLM이나 별도 음성 생성기가 예측 분포에서 ID를 고르고, codec decoder가 그 ID를 파형으로 바꾼다.
 
 지원하는 입출력은 모델마다 다르다.
 카카오의 `Kanana-1.5-o-9.8B-instruct-2602` API(application programming interface) 문서에 명시된 입력은 텍스트·이미지·audio이고, 출력은 텍스트와 audio다.[^kanana-o-api]
 Google DeepMind의 Gemini 4 Argon 모델 카드는 텍스트·이미지·audio·비디오 입력과 텍스트 출력을 명시한다.[^gemini4argon]
-네이버의 HyperCLOVA X SEED 8B Omni는 텍스트·이미지·비디오·audio를 입력으로 받고 텍스트·이미지·음성을 출력하며, 비디오는 받기만 하고 생성하지는 않는다.[^naver-omni-card]
+네이버의 HyperCLOVA X SEED 8B Omni는 텍스트·이미지·비디오·audio를 입력으로 받고, 텍스트·이미지·음성을 출력한다.[^naver-omni-card]
+비디오는 입력으로만 받고 생성하지는 않는다.
 
 8B Omni는 한 modality에 두 표현을 함께 쓰는 예다.
-언어 모델에 연속적인 vision·audio encoder 표현과 이산 image·audio token을 함께 연결한다.[^naver-omni-report]
+이 모델은 vision·audio encoder의 연속 표현과 이산 image·audio token을 모두 언어 모델에 연결한다.[^naver-omni-report]
 연속 feature는 입력을 세밀하게 이해하는 데 쓰이고, 이산 token은 입력과 출력 양쪽에 쓰인다.
-생성된 이산 image token은 diffusion 기반 이미지 decoder의 조건이 되어 이미지를 만들고, 이산 audio token은 화자 정보와 함께 음성 decoder를 거쳐 waveform이 된다.
-하나의 언어 모델이 입력과 출력을 모두 맡아도, 그 앞뒤에는 modality마다 encoder와 tokenizer, decoder가 따로 붙는다.
+언어 모델이 이산 image token을 생성하면, diffusion 기반 이미지 decoder가 이 token을 조건으로 이미지를 만든다.
+언어 모델이 이산 audio token을 생성하면, 음성 decoder가 이 token과 화자 정보로 waveform을 만든다.
+이처럼 하나의 언어 모델이 입력과 출력을 모두 맡아도, 그 앞뒤에는 modality마다 encoder와 tokenizer, decoder가 따로 붙는다.
 
 <Figure src="https://arxiv.org/html/2601.01792v1/Overview_model_main.png" alt="HyperCLOVA X 8B Omni의 전체 구조. 가운데의 단일 언어 모델 아래쪽에 입력 경로가 있다. 이미지는 연속 표현을 내는 vision encoder와 이산 token을 내는 vision tokenizer를 모두 거치고, 음성도 연속 audio encoder와 이산 audio tokenizer를 모두 거친다. 위쪽에는 출력 경로가 있어, 생성된 vision token은 diffusion 기반 vision decoder로, audio token은 화자 embedding과 함께 audio decoder로 들어간다." caption="HyperCLOVA X 8B Omni의 입력과 출력. 아래쪽 입력에서는 vision과 audio 각각에 연속 encoder와 이산 tokenizer를 함께 쓰고, 위쪽 출력에서는 모델이 생성한 이산 token을 modality별 decoder가 이미지와 음성으로 바꾼다." source="NAVER Cloud HyperCLOVA X Team (2026), Figure 2 · CC BY 4.0" wide />
 
@@ -100,20 +116,21 @@ Video-LLaMA가 다루는 출력은 텍스트다.
 사용자가 설명을 읽는 대신 이미지나 소리 자체를 만들어 달라고 하면 앞에서 본 두 출력 경로 중 하나가 필요하다.
 NExT-GPT는 둘째 길을, AnyGPT는 첫째 길을 택한 대표 사례다.
 
-NExT-GPT는 사전학습된 입력 encoder(ImageBind)의 연속 표현을 LLM에 넣고, LLM 뒤에 이미지·audio·비디오용 생성 decoder를 연결한다.[^nextgpt]
-예를 들어 이미지 생성을 요청하면 LLM의 출력 표현을 이미지 decoder가 활용할 조건으로 변환하고, decoder가 이미지를 만든다.
-NExT-GPT는 LLM 어휘에 이미지·audio·비디오를 알리는 특수 token(modality signal token)을 추가한다.
-LLM이 이 token을 출력하면 그 위치의 hidden representation을 출력 projection이 생성기의 조건으로 바꾼다.
-기존 생성기를 활용할 수 있지만, 각 decoder가 이해하는 조건과 LLM의 출력을 맞추는 학습이 필요하다.
+NExT-GPT는 사전학습된 입력 encoder인 ImageBind의 연속 표현을 LLM에 넣고, LLM 뒤에 이미지·audio·비디오용 생성 decoder를 연결한다.[^nextgpt]
+이를 위해 NExT-GPT는 LLM 어휘에 이미지·audio·비디오를 알리는 특수 token(modality signal token)을 추가한다.
+예를 들어 사용자가 이미지를 요청하면 LLM이 이미지 signal token을 출력한다.
+그러면 출력 projection이 그 위치의 hidden representation을 이미지 생성기의 조건으로 바꾸고, 생성기가 이미지를 만든다.
+이 방식은 기존 생성기를 그대로 쓸 수 있지만, LLM의 출력을 각 생성기가 이해하는 조건에 맞추는 학습이 필요하다.
 
-AnyGPT는 이미지·음성·음악을 각각 이산 token으로 바꾸어 텍스트 token과 함께 sequence로 모델링하므로, 입력과 출력이 모두 이산 token이다.[^anygpt]
-음성에는 SpeechTokenizer의 내용 중심 token을 사용하고, 이미지에는 이미지 표현을 quantization하여 얻은 token을 사용한다.
+AnyGPT는 이미지·음성·음악을 각각 이산 token으로 바꾸고, 텍스트 token과 함께 하나의 sequence로 모델링한다.[^anygpt]
+그래서 입력과 출력이 모두 이산 token이다.
+음성은 SpeechTokenizer의 내용 중심 token으로, 이미지는 이미지 표현을 quantization해 얻은 token으로 나타낸다.
 Quantization은 연속적인 표현을 codebook의 유한한 선택지 중 하나로 바꾸는 과정이다.
-음성 출력에서는 내용 중심 token 외의 음향 정보를 voice cloning 모델로 보완한다.
+내용 중심 token에 담기지 않은 음향 정보는 음성을 출력할 때 voice cloning 모델이 보완한다.
 LLM이 생성한 modality별 token은 해당 decoder를 거쳐 이미지나 소리로 바뀐다.
-예를 들어 텍스트 다음에 이미지 token을 생성하면 이를 이미지 decoder에 전달한다.
-AnyGPT도 생성한 이미지 코드를 곧바로 픽셀로 읽는 것은 아니다.
-코드를 생성용 표현으로 바꾼 뒤 diffusion 기반 이미지 decoder를 사용한다.
+예를 들어 LLM이 텍스트 다음에 이미지 token을 생성하면, AnyGPT는 이 token을 이미지 decoder에 전달한다.
+이 decoder도 코드를 곧바로 픽셀로 바꾸지는 않는다.
+코드를 생성용 표현으로 바꾼 뒤, diffusion 기반 decoder로 이미지를 만든다.
 따라서 두 방식의 차이는 diffusion을 쓰는지보다, LLM이 생성하는 것이 이미지 코드인지 생성기를 조건화할 signal 위치의 표현인지에 있다.
 
 같은 요청 “고양이 그림을 그려 줘”에 대한 두 경로를 비교하면 중간 표현의 역할이 드러난다.
@@ -129,24 +146,25 @@ ID 숫자는 설명을 위한 가상 값이다.
 
 ### 2-1. 정렬과 instruction tuning
 
-서로 다른 encoder와 LLM을 붙인 구조가 만들어졌다고 곧바로 모든 입력 조합에 답할 수 있는 것은 아니다.
-학습 데이터와 목적함수가 각 입력을 어떻게 사용할지 가르쳐야 한다.
+서로 다른 encoder를 LLM에 붙였다고 해서, 모델이 곧바로 모든 입력 조합에 답하지는 못한다.
+각 입력을 어떻게 쓸지는 학습 데이터와 목적함수가 가르쳐야 한다.
 대표적인 출발점은 이미지–텍스트나 audio–텍스트처럼 대응 관계가 있는 자료다.
-모델은 입력 표현을 바탕으로 대응 텍스트를 생성하도록 학습하면서 connector와 LLM의 연결을 맞춘다.
-일부 접근에서는 앞서 학습한 encoder와 LLM을 고정하고 connector만 학습하며, 다른 접근에서는 더 많은 parameter를 함께 갱신한다.
+모델은 입력 표현을 보고 대응 텍스트를 생성하도록 학습하고, 이 과정에서 connector가 encoder와 LLM을 잇는 법을 배운다.
+어떤 접근은 앞서 학습한 encoder와 LLM을 고정하고 connector만 학습한다.
+다른 접근은 더 많은 parameter를 함께 갱신한다.
 
-이후 instruction tuning에는 사용자 지시, 입력, 원하는 응답의 형태를 갖춘 자료를 사용한다.
-예를 들어 “무슨 악기가 들리는가?”라는 질문에 audio를 함께 주고 “피아노가 들린다”라는 답을 예측하도록 한다.
-영상과 audio를 동시에 보아야 하는 질문도 학습에 포함할 수 있다.
-입력의 순서나 출력 형식이 달라져도 지시를 따르는 행동을 익히는 것이 목적이다.[^survey]
+이후 instruction tuning에서는 사용자 지시, 입력, 원하는 응답을 갖춘 자료로 학습한다.
+예를 들어 “무슨 악기가 들리는가?”라는 질문과 audio를 함께 주고, 모델이 “피아노가 들린다”라는 답을 예측하게 한다.
+영상과 audio를 동시에 보아야 하는 질문도 학습에 넣을 수 있다.
+이 단계의 목적은 입력의 순서나 출력 형식이 달라져도 모델이 지시를 따르게 하는 것이다.[^survey]
 
 단일 modality 데이터 여러 종류를 섞는 것과, 한 예제에서 여러 modality를 **함께 사용하도록 요구하는 것**은 구별해야 한다.
-이미지 질문만 따로, audio 질문만 따로 잘 푼다는 결과만으로 화면의 특정 인물과 동시에 들리는 목소리를 연결할 수 있다고 결론 낼 수는 없다.
-그 관계를 요구하는 평가 자료가 있어야 해당 능력을 확인할 수 있으며, 학습 자료의 구성도 그 능력에 영향을 준다.
+모델이 이미지 질문과 audio 질문을 각각 잘 푼다고 해서, 화면의 특정 인물과 동시에 들리는 목소리를 연결할 수 있다고 결론 낼 수는 없다.
+그 능력은 그 관계를 요구하는 평가 자료로만 확인할 수 있고, 학습 자료의 구성도 그 능력에 영향을 준다.
 
-여러 입력을 함께 이해하려면 구조뿐 아니라 그 조합을 보여 주는 데이터도 필요하다.
-카카오는 2025년 Kanana-o 개발에서 이미지–텍스트 자료의 질문이나 답변을 음성으로 합성해 이미지·음성·텍스트가 함께 쓰이는 학습 예시를 구성했다고 설명한다.[^kanana-o]
-예를 들어 같은 이미지에 대한 질문을 음성으로 제시하고 텍스트로 답하게 하거나, 텍스트 질문에 음성으로 답하게 할 수 있다.
+여러 입력을 함께 이해하려면 모델 구조뿐 아니라 그 조합을 보여 주는 데이터도 필요하다.
+카카오는 2025년 Kanana-o를 개발하면서, 이미지–텍스트 자료의 질문이나 답변을 음성으로 합성해 이미지·음성·텍스트가 함께 쓰이는 학습 예시를 만들었다고 설명한다.[^kanana-o]
+예를 들어 같은 이미지에 대한 질문을 음성으로 주고 텍스트로 답하게 하거나, 텍스트 질문에 음성으로 답하게 할 수 있다.
 합성 음성은 자료를 쉽게 늘려 주지만, 실제 환경의 잡음과 다양한 말투는 담기 어렵다.
 
 카카오가 공개한 다음 영상은 여러 입력·출력 조합을 가진 Omni 학습 데이터의 예시다.
@@ -155,22 +173,25 @@ ID 숫자는 설명을 위한 가상 값이다.
 <Video src="https://www.youtube.com/watch?v=3qJooAWnk8M" caption="kakao tech, Omni-modal 학습 데이터셋 예시 (2025)" />
 
 카카오의 2025년 후속 개발 글은 이미지·audio·텍스트를 다양한 조합으로 사용하는 지시 이행 자료와 여러 차례 질문과 답이 이어지는 대화 자료를 구축한 과정을 설명한다.[^kanana-o-update]
-예를 들어 같은 이미지에 대한 질문이 글이나 음성 중 어느 쪽으로 들어오더라도 지시에 맞게 답하도록 학습하는 것이다.
-동시에 듣고 말하는 full duplex 상호작용은 이 글에서 앞으로의 연구 방향으로 든다.
+예를 들어 같은 이미지에 대한 질문이 글로 들어오든 음성으로 들어오든, 모델이 지시에 맞게 답하도록 학습한다.
+이 글은 동시에 듣고 말하는 full duplex 상호작용을 앞으로의 연구 방향으로 든다.
 
-HyperCLOVA X SEED 8B Omni의 기술 보고서는 먼저 텍스트 언어 모델을 학습하고, image와 audio의 이산 token을 추가해 확장한 다음 여러 modality 데이터로 언어 모델을 함께 학습하는 단계를 설명한다.[^naver-omni-report]
+HyperCLOVA X SEED 8B Omni의 기술 보고서는 학습 단계를 다음과 같이 설명한다.[^naver-omni-report]
+먼저 텍스트 언어 모델을 학습한다.
+그다음 어휘에 image와 audio의 이산 token을 추가하고, 여러 modality 데이터로 언어 모델을 함께 학습한다.
 이후 연속 vision encoder와 audio encoder를 연결해 입력 표현을 정렬한다.
-예를 들어 vision encoder와 언어 모델을 고정하고 그 사이 adapter를 먼저 학습한 뒤, vision을 중심으로 추가 학습한다.
+이때 vision encoder와 언어 모델은 고정하고 그 사이의 adapter를 먼저 학습한 뒤, vision을 중심으로 추가 학습한다.
 Audio encoder는 사전학습된 것을 가져와 고정한다.
-후속 SFT(supervised fine-tuning)에서는 대화와 다양한 입력·출력 task를 학습하고, 비디오와 긴 문맥 데이터를 추가해 시간에 따른 사건을 다루도록 한다.
+후속 SFT(supervised fine-tuning)에서는 대화와 다양한 입력·출력 task를 학습하고, 비디오와 긴 문맥 데이터를 더해 모델이 시간에 따른 사건을 다루게 한다.
 
-2026년 공개된 HyperCLOVA X SEED 4B 개발 글은 별도로 개발한 vision·audio encoder를 연결해 이미지·비디오·audio를 이해하고 텍스트로 답하는 모델을 소개한다.[^naver-omni4b]
-텍스트 사전학습을 마친 언어 모델에 encoder를 연결한 뒤 multimodal pre-training, SFT, 비디오를 포함한 추가 SFT와 RLVR(reinforcement learning with verifiable rewards)을 진행한다.
+2026년 공개된 HyperCLOVA X SEED 4B 개발 글은 네이버가 직접 개발한 vision·audio encoder를 연결한 모델을 소개한다.[^naver-omni4b]
+이 모델은 이미지·비디오·audio를 이해하고 텍스트로 답한다.
+네이버는 텍스트 사전학습을 마친 언어 모델에 encoder를 연결한 뒤, multimodal pre-training, SFT, 비디오를 포함한 추가 SFT, RLVR(reinforcement learning with verifiable rewards)을 차례로 진행했다.
 
 ### 2-2. Interleaved sequence
 
 이미지와 텍스트가 교차하는 interleaved sequence는 여러 이미지와 문맥의 관계를 표현한다.[^flamingo]
-같은 구성 원리를 audio와 비디오까지 확장하면 시간 관계를 표현하는 문제가 생긴다.
+같은 구성 원리를 audio와 비디오까지 넓히면, 시간 관계를 어떻게 표현할지가 문제가 된다.
 
 입력은 개념적으로 다음과 같이 표현할 수 있다.
 대괄호는 데이터의 종류를 알아보기 위해 붙인 표시이며 특정 모델의 실제 특수 token 이름이 아니다.
@@ -180,21 +201,22 @@ Audio encoder는 사전학습된 것을 가져와 고정한다.
 [질문: 박수는 언제 들렸는가?] [답변]
 ```
 
-각 구간의 영상과 audio를 가까이 배치하더라도 구간 내부의 사건 시각은 별도로 나타내야 한다.
-입력 형식이 interleaved라는 사실은 그 자료가 실제 시간에 동기화되어 있다는 뜻과는 다르다.
-문서 속 이미지 순서는 문서의 서술 순서일 수 있지만, 비디오와 audio에서는 각 조각이 실제로 언제 발생했는지가 중요하다.
+각 구간의 영상과 audio를 가까이 배치해도, 구간 안에서 사건이 일어난 시각은 따로 나타내야 한다.
+입력이 interleaved 형식이라고 해서 그 자료가 실제 시간에 맞춰 동기화되어 있다는 뜻은 아니다.
+문서 속 이미지의 순서는 서술 순서일 수 있지만, 비디오와 audio에서는 각 조각이 실제로 언제 일어났는지가 중요하다.
 
 ### 2-3. 영상과 소리의 시간 관계
 
 두 사람이 차례로 말하는 영상에서 “누가 박수가 들릴 때 말했는가?”를 묻는다고 하자.
 모델이 영상에서 두 사람이 모두 등장한다는 사실과 audio에서 박수와 말소리가 난다는 사실만 알아서는 답할 수 없다.
-박수 소리 주변의 연속 frame에서 입의 움직임을 보고 음성과 대조해야 하므로, 사건의 순서와 동시성에 관한 정보가 필요하다.
-명시적인 시간 위치는 이 정보를 제공하는 한 가지 방법이다.
+모델은 박수 소리 주변의 frame에서 입의 움직임을 보고 음성과 대조해야 하고, 그러려면 사건의 순서와 동시성에 관한 정보가 필요하다.
+명시적인 시간 위치는 이 정보를 주는 한 가지 방법이다.
 
 가상 예시로 0초와 1초에 영상 frame을 뽑고, audio는 0–0.5초와 0.5–1초의 구간으로 나눈다고 하자.
 각 audio 구간에는 시작 시각을 위치로 붙인다.
-0.7초의 박수는 두 번째 구간에 들어가지만, 그 구간의 시작 시각만으로 박수의 정확한 시각이 자동으로 알려지는 것은 아니다.
-영상에도 0.7초의 frame이 없으므로 그 순간의 화면을 직접 확인할 수 없다.
+0.7초의 박수는 두 번째 구간에 들어간다.
+하지만 그 구간의 시작 시각인 0.5초만으로는 박수가 정확히 언제 났는지 알 수 없다.
+영상에도 0.7초의 frame이 없으므로, 모델은 그 순간의 화면을 직접 볼 수 없다.
 
 <figure class="lecture-figure" aria-label="0초와 1초에 영상 frame을 뽑고 audio를 0초부터 0.5초까지와 0.5초부터 1초까지 두 구간으로 나눈 가상 예시. 0.7초 박수는 두 번째 audio 구간에 있지만 같은 시각의 영상 frame은 없다.">
 <svg viewBox="0 0 480 180" role="img" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -215,103 +237,123 @@ Audio encoder는 사전학습된 것을 가져와 고정한다.
 <figcaption>가상의 표본 추출. 박수는 두 번째 audio 구간에 있지만, 그 시각의 영상 frame은 입력에 없다.</figcaption>
 </figure>
 
-모델은 보통 원본 영상을 모든 frame 그대로 넣지 않는다.
-Frame을 표본 추출하고 audio도 일정 길이로 나누어 encoder에 통과시킨다.
-촘촘히 추출하면 빠른 움직임과 짧은 소리를 포착할 가능성은 커지지만 입력 feature와 계산량도 늘어난다.
-반대로 압축과 표본 추출을 강하게 하면 LLM에 넣는 길이는 줄어들지만, 입 모양과 음절이 맞는지 같은 세부 관계가 사라질 수 있다.
+모델은 보통 원본 영상의 모든 frame을 넣지 않는다.
+Frame은 표본을 추출하고, audio는 일정 길이로 나누어 encoder에 통과시킨다.
+Frame을 촘촘히 추출하면 빠른 움직임과 짧은 소리를 포착할 가능성은 커지지만, 입력 feature와 계산량도 늘어난다.
+반대로 압축과 표본 추출을 강하게 하면 LLM에 넣는 길이는 줄지만, 입 모양과 음절이 맞는지 같은 세부 관계가 사라질 수 있다.
 
 ## 3. 시간 동기화
 
 ### 3-1. 위치와 실제 시간
 
-텍스트의 위치는 보통 token sequence 안의 순서로 나타낼 수 있다.
-영상은 시간과 더불어 각 frame 안의 세로·가로 위치가 있으며, audio는 영상과 서로 다른 속도로 표현이 만들어진다.
-따라서 단순히 첫 번째 입력, 두 번째 입력이라는 번호만 주면 서로 다른 modality의 위치가 실제 시간상 얼마나 떨어져 있는지 잃을 수 있다.
+텍스트의 위치는 보통 token sequence 안의 순서로 나타낸다.
+영상에는 시간 위치에 더해 frame 안의 세로·가로 위치가 있다.
+Audio encoder는 영상 encoder와 다른 속도로 표현을 만든다.
+그래서 입력에 첫 번째, 두 번째 같은 순번만 매기면, 서로 다른 modality의 표현이 실제 시간에서 얼마나 떨어져 있는지 알 수 없게 된다.
 
 Qwen2.5-Omni는 영상과 audio 표현을 실제 시간에 맞춰 배열하고 TMRoPE(time-aligned multimodal rotary position embedding)로 시간과 공간 위치를 표현한다.[^qwen25]
 위치 ID는 시간·높이·너비의 세 성분으로 이루어진다.
 이미지의 patch들은 같은 시각에 속하므로 시간 ID가 같고 높이·너비 ID가 다르다.
-영상은 frame마다 시간 ID가 달라지며, audio는 2차원 공간 위치가 없으므로 세 성분에 같은 시간 ID를 쓴다.
+영상은 frame마다 시간 ID가 달라진다.
+Audio는 2차원 공간 위치가 없으므로 세 성분에 모두 같은 시간 ID를 쓴다.
 시간 ID 한 칸은 40 ms에 해당한다.
 
 <Figure src="https://arxiv.org/html/2503.20215v1/figures/ATMRoPE.png" alt="TMRoPE의 위치 부여. 영상 frame의 patch마다 (시간, 높이, 너비) 세 숫자가 붙어 있다. 첫 frame의 patch는 (0, 0, 0)부터 (0, 2, 2)까지이고 다음 frame은 시간 성분이 25, 그다음은 50, 75로 늘어난다. 아래의 audio 파형에는 (0, 0, 0), (25, 25, 25), (50, 50, 50)처럼 세 성분이 같은 값으로 붙고, 2초마다 구간이 나뉜다." caption="TMRoPE의 위치 ID (시간, 높이, 너비). 한 frame의 patch는 시간 ID를 공유하고 높이·너비가 다르며, audio는 세 성분이 같은 시간 ID로 함께 늘어난다. 시간 ID 25칸이 1초이므로, 같은 순간의 영상 patch와 audio 표현은 시간 ID가 같다." source="Xu et al. (2025), Figure 3 · CC BY 4.0" wide />
 
-같은 순간의 영상과 audio가 같은 시간 ID를 받으므로, sequence 안에서 멀리 떨어져 있어도 위치 표현으로 둘이 동시에 일어났음을 나타낼 수 있다.
-위치 정보는 단서를 줄 뿐이어서, 모델이 그 관계를 실제로 쓰는지는 “박수가 난 순간 말한 사람”처럼 시간 관계가 필요한 질문으로 평가해야 한다.
+같은 순간의 영상과 audio는 같은 시간 ID를 받는다.
+그래서 둘이 sequence 안에서 멀리 떨어져 있어도, 위치 표현이 둘이 동시에 일어났음을 알려 준다.
+다만 위치 정보는 단서일 뿐이다.
+모델이 그 관계를 실제로 쓰는지는 “박수가 난 순간 말한 사람”처럼 시간 관계가 필요한 질문으로 평가해야 한다.
 
 ### 3-2. Chunk와 동기화의 단위
 
 Qwen2.5-Omni는 영상과 audio를 실제 시간 기준으로 2초씩 나누고 각 구간의 시각 표현 다음에 audio 표현을 배치한다.[^qwen25]
 예컨대 0–2초의 영상 표현과 audio 표현을 둔 다음, 2–4초의 영상 표현과 audio 표현을 둔다.
 이 순서는 처리 단위를 시간에 가깝게 묶어 주지만, 구간 안에 들어간 token이 한 개씩 정확히 시간 순으로 정렬된다는 뜻은 아니다.
-실제 시간 차이는 각 표현의 시간 ID가 나타내며, 2초 묶음 하나는 시간 ID 50칸에 해당한다.
+실제 시간 차이는 각 표현의 시간 ID가 나타낸다.
+2초 묶음 하나는 시간 ID 50칸에 해당한다.
 
-Qwen3-Omni는 정렬을 위한 고정 2초 묶음 대신 실제 시간에 대응하는 위치 ID를 이용해 영상과 audio 표현을 정렬한다고 설명한다.[^qwen3]
-이는 모든 chunk 처리를 없앤다는 뜻은 아니며, 긴 입력의 prefill을 조각으로 나눠 먼저 들어온 부분부터 처리하는 chunked prefilling은 streaming을 위해 별도로 사용한다.
-이 모델에서 audio 표현의 시간 ID 간격은 80 ms이고, 영상 frame에도 실제 timestamp에 따라 시간 ID를 부여한다.
+Qwen3-Omni 보고서는 고정된 2초 묶음 대신, 실제 시간에 대응하는 위치 ID로 영상과 audio 표현을 정렬한다고 설명한다.[^qwen3]
+그렇다고 chunk 처리를 모두 없앤 것은 아니다.
+Qwen3-Omni는 streaming을 위해 chunked prefilling을 따로 쓴다.
+Chunked prefilling은 긴 입력의 prefill을 조각으로 나눠, 먼저 들어온 부분부터 처리하는 방식이다.
+이 모델에서 audio 표현의 시간 ID 간격은 80 ms다.
+영상 frame에도 실제 timestamp에 따라 시간 ID를 붙인다.
 이 간격은 Qwen3-Omni의 audio encoder인 AuT가 초당 12.5개 feature를 내는 출력 시간 해상도와 같다.
 
 긴 비디오에서는 audio 표현의 수도 문제가 된다.
-HyperCLOVA X SEED 8B Omni의 연속 audio encoder는 초당 25개 feature를 만드는데, 비디오의 audio에는 MambaMia compressor를 적용해 초당 1개로 줄인다.[^naver-omni-report]
+HyperCLOVA X SEED 8B Omni의 연속 audio encoder는 초당 25개 feature를 만든다.[^naver-omni-report]
+이 모델은 비디오의 audio에 MambaMia compressor를 적용해 이를 초당 1개로 줄인다.
 10초라면 약 250개 feature가 약 10개가 된다.
 HyperCLOVA X SEED 4B도 긴 비디오의 audio feature를 초당 10개에서 평균 pooling으로 2개로 줄인다.[^naver-omni4b]
 압축이 강할수록 긴 비디오를 넣을 수 있지만, 소리가 난 정확한 시점은 그만큼 흐려진다.
 
-MiniCPM-o 4.5는 시간 분할 다중화(time-division multiplexing, TDM)를 사용해 동시에 흐르는 입력과 출력을 짧은 시간 구간별 정보 묶음으로 바꾸어 언어 모델에서 함께 처리한다.[^minicpmo45]
-한 구간에 해당하는 영상과 소리, 응답 정보를 시간 순서에 맞게 배치하고 다음 구간을 이어 붙여, 동시에 흐르는 여러 흐름을 하나의 sequence로 만든다.
+MiniCPM-o 4.5는 시간 분할 다중화(time-division multiplexing, TDM)를 쓴다.[^minicpmo45]
+TDM은 동시에 흐르는 입력과 출력을 짧은 시간 구간별 묶음으로 바꾸어, 언어 모델이 함께 처리할 수 있게 한다.
+모델은 한 구간에 해당하는 영상과 소리, 응답 정보를 시간 순서에 맞게 배치하고, 그 뒤에 다음 구간을 이어 붙인다.
+그 결과 동시에 흐르는 여러 흐름이 하나의 sequence가 된다.
 
 ## 4. 통합 입력과 출력
 
 ### 4-1. Cascade와 native multimodal
 
-음성 질문이 들어왔을 때 음성 인식기로 텍스트를 만들고, 이미지 모델의 설명을 생성한 다음, 텍스트 LLM이 두 결과를 보고 답하게 만들 수 있다.
+음성 질문과 이미지가 함께 들어오는 경우를 생각해 보자.
+음성 인식기가 질문을 텍스트로 바꾸고, 이미지 모델이 이미지 설명을 생성한 다음, 텍스트 LLM이 두 결과를 보고 답하게 만들 수 있다.
 이런 cascade는 각 부품을 따로 바꾸거나 오류를 추적하기 쉽다.
 하지만 앞 단계가 버린 정보는 다음 단계가 직접 복구할 수 없다.
-예를 들어 “정말 잘했어”라는 문장만 전달되면 칭찬인지 비꼬는 말인지 판단하는 억양이 사라질 수 있다.
+예를 들어 “정말 잘했어”라는 문장만 전달되면, LLM은 칭찬인지 비꼬는 말인지 가를 억양을 알 수 없다.
 이미지 caption에 빠진 시각 정보도 LLM이 확인할 수 없다.
 
-Audio와 이미지 표현을 모델에 직접 전달하면 텍스트로 요약하기 전의 정보에 접근할 경로가 생긴다.
-이때 native multimodal이라는 표현을 쓰기도 하지만, 이 말만으로 학습 방식이나 내부 구조가 하나로 정해지는 것은 아니다.
+Audio와 이미지 표현을 모델에 직접 전달하면, 모델은 텍스트로 요약하기 전의 정보에 접근할 수 있다.
+이런 모델을 native multimodal이라 부르기도 하지만, 이 말만으로는 학습 방식이나 내부 구조를 알 수 없다.
 입력을 직접 처리하는지, 생성도 해당 modality로 하는지, 여러 modality를 어떤 데이터로 함께 학습하는지 확인해야 한다.
-중간에 텍스트로 확정하는 단계 없이 입력부터 출력까지 하나로 이어 학습한 구성을 end-to-end라고 부르며, modality별 encoder나 음성 출력용 decoder 같은 부품이 남아 있어도 이렇게 학습할 수 있다.
-OpenAI는 2024년 GPT-4o를 발표하면서 텍스트·시각·audio를 하나의 신경망에서 end-to-end로 학습하는 방식을 소개했다.[^gpt4o]
-ChatGPT의 이전 Voice Mode가 쓰던 음성 인식 → 텍스트 모델 → 음성 합성 cascade와 비교하면, 모델이 음성의 억양 같은 정보를 텍스트 변환 전에 이용할 수 있는 방향이다.
+중간에 텍스트로 확정하는 단계 없이 입력부터 출력까지 하나로 이어 학습한 구성을 end-to-end라 부른다.
+Modality별 encoder나 음성 출력용 decoder 같은 부품이 남아 있어도 end-to-end로 학습할 수 있다.
+OpenAI의 GPT-4o가 이런 모델이다.[^gpt4o]
+GPT-4o는 텍스트·audio·이미지·비디오를 입력으로 받고 텍스트·audio·이미지를 출력하며, OpenAI는 모든 입력과 출력을 같은 신경망이 처리하도록 end-to-end로 학습했다고 밝혔다.
+음성 인식 → 텍스트 모델 → 음성 합성의 cascade와 달리, 이런 모델은 음성의 억양 같은 정보를 텍스트로 바꾸기 전에 이용할 수 있다.
 
 End-to-end로 학습하는 모델도 대개 사전학습된 부품에서 출발한다.
 Qwen2.5-Omni는 Qwen2.5 언어 모델과 사전학습된 시각·audio encoder를 초기값으로 사용한다.[^qwen25]
-먼저 LLM을 고정하고 각 입력 경로를 이미지–텍스트와 audio–텍스트 자료에 맞춘다.
-이후 parameter를 함께 갱신하며 여러 modality가 섞인 자료로 학습하고, 긴 sequence 자료로 문맥 길이를 확장한다.
-처음부터 입력 경로와 언어 모델이 이미 정렬되어 있다고 가정하지 않고 단계적으로 연결하는 것이다.
+먼저 LLM을 고정하고, 이미지–텍스트와 audio–텍스트 자료로 각 입력 경로를 학습한다.
+그다음 parameter를 함께 갱신하며 여러 modality가 섞인 자료로 학습하고, 긴 sequence 자료로 문맥 길이를 늘린다.
+입력 경로와 언어 모델이 처음부터 정렬되어 있다고 가정하지 않고, 단계적으로 연결하는 셈이다.
 
 카카오의 Kanana-o는 이미지·음성·텍스트를 함께 다루고 텍스트나 음성으로 답하도록 설계된 Omni 모델이다.[^kanana-o]
-예를 들어 사진을 보여 주며 음성으로 “이 물건은 무엇인가?”라고 물으면, 사진과 질문을 함께 조건으로 답변을 만들 수 있다.
-2025년 개발 설명에서는 이미지와 음성을 각각 encoder의 연속 표현으로 언어 모델에 넣고, 음성으로 답할 때는 이산 음성 token을 생성한다.
+예를 들어 사진을 보여 주며 음성으로 “이 물건은 무엇인가?”라고 물으면, 모델은 사진과 질문을 함께 조건으로 답을 만든다.
+2025년 개발 글에 따르면 Kanana-o는 이미지와 음성을 각각 encoder의 연속 표현으로 언어 모델에 넣고, 음성으로 답할 때는 이산 음성 token을 생성한다.
 
-이 모델은 처음부터 하나로 학습하지 않고 두 모델을 합쳐 만들었다.
-Kanana-v와 Kanana-a는 같은 언어 모델을 출발점으로 각각 시각과 음성을 다루도록 학습되었고, Kanana-o는 두 모델의 parameter를 결합하는 model merging으로 시각과 음성 경로를 함께 갖춘 뒤 추가로 학습했다.
+카카오는 Kanana-o를 처음부터 하나로 학습하지 않고, 두 모델을 합쳐 만들었다.
+Kanana-v와 Kanana-a는 같은 언어 모델에서 출발해 각각 시각과 음성을 다루도록 학습되었다.
+Kanana-o는 두 모델의 parameter를 결합하는 model merging으로 시각과 음성 경로를 함께 갖춘 뒤, 추가로 학습되었다.
 두 모델이 같은 언어 모델에서 갈라져 나왔기에 parameter를 결합할 수 있었다.
 
 ### 4-2. Thinker와 Talker
 
 음성으로 답하는 모델은 입력을 이해할 뿐 아니라 말소리를 생성해야 한다.
 텍스트는 짧은 token 몇 개로 표현되는 반면, 자연스러운 음성은 발음·길이·억양 등의 정보를 시간에 따라 담아야 한다.
-음성 출력을 생성하는 일과 입력을 이해하고 답의 내용을 구성하는 일의 계산 특성이 다르므로, 두 역할을 분리하는 설계가 가능하다.
+입력을 이해하고 답의 내용을 정하는 일과 음성을 생성하는 일은 계산의 성격이 다르다.
+그래서 두 역할을 나누는 설계가 가능하다.
 
-Qwen2.5-Omni의 Thinker는 텍스트와 함께 vision·audio encoder가 만든 연속 표현으로 이미지·audio·비디오 입력을 받아 텍스트와 내부 표현을 만들고, Talker는 Thinker의 정보와 텍스트를 조건으로 음성 token을 생성한다.[^qwen25]
-생성된 음성 token은 flow matching 모델에서 Mel spectrogram으로 변환되고, vocoder가 이를 파형으로 복원한다.
+Qwen2.5-Omni의 Thinker는 텍스트와, vision·audio encoder가 이미지·audio·비디오에서 만든 연속 표현을 입력으로 받는다.[^qwen25]
+Thinker는 이 입력으로 응답 텍스트와 내부 표현을 만든다.
+Talker는 Thinker의 내부 표현과 텍스트를 조건으로 음성 token을 생성한다.
+Flow matching 모델이 이 음성 token을 Mel spectrogram으로 바꾸고, vocoder가 Mel spectrogram을 파형으로 복원한다.
 
 <Figure src="https://arxiv.org/html/2503.20215v1/figures/overview.png" alt="Qwen2.5-Omni 구조. 아래쪽에서 시간 순서로 놓인 영상 frame과 audio 파형이 vision encoder와 audio encoder를 거쳐 텍스트 token과 함께 Thinker에 들어간다. Thinker는 응답 텍스트 token을 차례로 sample하고, 그 위의 Talker는 Thinker의 hidden 표현과 sample된 텍스트 token을 받아 codec token을 생성한다. 맨 위의 streaming codec decoder가 codec token을 파형으로 바꾼다." caption="Qwen2.5-Omni의 Thinker–Talker 구조. Thinker가 입력을 이해해 텍스트를 생성하고, Talker는 Thinker의 hidden 표현과 생성된 텍스트를 받아 codec token을 낸다. 맨 위의 decoder가 이를 파형으로 바꾼다." source="Xu et al. (2025), Figure 2 · CC BY 4.0" />
 
 Qwen3-Omni는 Thinker–Talker를 유지하면서 음성 출력을 여러 codebook의 token으로 구성한다.[^qwen3]
-입력은 Qwen2.5-Omni처럼 encoder의 연속 표현으로 받고 음성 출력은 이산 token으로 내는 비대칭 구성이다.
+Qwen3-Omni도 Qwen2.5-Omni처럼 입력은 encoder의 연속 표현으로 받고, 음성 출력은 이산 token으로 낸다.
 Qwen2.5와 달리 Qwen3의 Talker는 Thinker의 고수준 텍스트 hidden representation 대신 텍스트 token과 Thinker의 audio·visual feature를 조건으로 쓴다.
-기술 보고서 안에서도 Talker의 조건을 설명하는 문장이 audio·visual feature만 언급하는 곳과 텍스트 token까지 언급하는 곳으로 엇갈리므로, 이 문장은 두 설명을 합친 것이다.
+다만 기술 보고서 안에서도 Talker의 조건은 audio·visual feature만 언급하는 곳과 텍스트 token까지 언급하는 곳으로 엇갈린다.
+앞 문장은 두 설명을 합친 것이다.
 Talker가 현재 음성 frame의 첫 codebook token을 예측하고, 추가 예측 모듈이 나머지 codebook을 만든다.
 한 frame의 여러 codebook을 작은 모듈에 맡긴다는 점에서 Moshi의 Depth Transformer와 같은 문제를 푸는 설계다.[^moshi]
-이 token들은 causal convolutional decoder를 통해 파형으로 바뀌므로 앞선 문맥을 이용해 순차적으로 음성을 내보낼 수 있다.
-Qwen2.5-Omni의 flow matching 기반 음향 복원을 이렇게 바꾼 것은 첫 codec frame부터 streaming하기 위해서다.
+Causal convolutional decoder가 이 token들을 파형으로 바꾼다.
+Causal decoder는 앞선 문맥만 쓰므로, 모델은 음성을 앞부분부터 순차적으로 내보낼 수 있다.
+Qwen3-Omni가 Qwen2.5-Omni의 flow matching 기반 복원을 이렇게 바꾼 이유는 첫 codec frame부터 streaming하기 위해서다.
 
-두 부분이 나뉘어 있어 Thinker만 따로 쓸 수도 있다.
+Thinker와 Talker가 나뉘어 있으므로 Thinker만 따로 쓸 수도 있다.
 공개 checkpoint 가운데 Qwen3-Omni-30B-A3B-Instruct는 Thinker와 Talker를 모두 포함해 텍스트와 음성을 출력하고, Thinking은 Thinker만 포함해 텍스트만 출력한다.[^qwen3card]
 
 ### 4-3. 음성 token 생성과 발화 제어
@@ -322,8 +364,9 @@ LM-SPT는 음성을 의미·음향 token으로 표현하고 그 token에서 소�
 언어 모델이 질문과 대화 문맥을 처리한 표현과 화자 정보를 Voice Token LM에 전달하면, 이 모델이 의미·음향 token을 생성한다.
 LM-SPT decoder는 token들을 받아 Mel spectrogram을 거치지 않고 waveform을 복원한다.
 하나의 시간 frame에 여러 codebook이 있으므로 Voice Token LM은 codebook별 출력 head를 사용한다.
-각 codebook의 출력을 한 단계씩 지연시키면, 뒤쪽 codebook이 같은 frame에 해당하는 앞쪽 codebook의 결과를 참고하면서도 여러 시간 위치의 token을 병렬로 생성할 수 있다.
-생성 후 지연된 token을 원래 frame 순서로 다시 맞춰 decoder에 넣는다.
+Voice Token LM은 각 codebook의 출력을 한 단계씩 지연시킨다.
+그러면 뒤쪽 codebook은 같은 frame의 앞쪽 codebook 결과를 참고할 수 있고, 모델은 여러 시간 위치의 token을 병렬로 생성할 수 있다.
+생성이 끝나면 지연된 token을 원래 frame 순서로 다시 맞춰 decoder에 넣는다.
 
 두 frame과 의미 codebook 하나, 음향 codebook 하나만 있는 가상의 예로 순서를 살펴보자.
 `S1`은 첫 frame의 의미 token, `A1`은 같은 frame의 음향 token이다.
@@ -337,50 +380,60 @@ LM-SPT decoder는 token들을 받아 Mel spectrogram을 거치지 않고 wavefor
 두 번째 단계에서는 다음 frame의 `S2`와 첫 frame의 `A1`을 함께 예측한다.
 `A1`을 만들 때는 이미 생성한 `S1`을 참고할 수 있다.
 생성이 끝나면 `S1`과 `A1`, `S2`와 `A2`를 각각 같은 frame으로 다시 묶는다.
-실제 모델은 음향 codebook이 여러 개이므로 각 스트림의 지연을 더해 처리하며, 위 표는 시작·종료 token을 생략한 단순한 예다.
+실제 모델은 음향 codebook이 여러 개이므로 각 스트림의 지연을 더해 처리한다.
+위 표는 시작·종료 token을 생략한 단순한 예다.
 
 음성 token을 생성할 수 있다는 것과 “아주 빠르게 말해 줘”라는 지시를 정확히 따르는 것은 별개다.
 카카오는 같은 문장과 화자 조건에서 발화 속도 등 비교 대상만 바꾼 음성들을 만들고, 지시에 따라 어느 음성이 더 적절한지 선호 쌍을 구성했다.
 예를 들어 같은 두 음성이라도 “빠르게”라는 지시에서는 빠른 음성이, “천천히”라는 지시에서는 느린 음성이 선호될 수 있다.
-이 자료로 Kanana-a를 기반으로 한 보상 모델이 발화 지시와 생성 음성의 적합도를 평가하도록 학습한다.
+카카오는 이 자료로 Kanana-a 기반 보상 모델을 학습해, 발화 지시와 생성 음성이 얼마나 맞는지 평가하게 했다.
 
-그다음 Voice Token LM이 학습 중 직접 생성한 음성을 평가해 모델을 갱신하는 online RL(reinforcement learning)을 적용한다.
-발화 지시 점수만 높이면 빠르게 말하는 대신 단어를 빠뜨리는 식의 문제가 생길 수 있으므로, 지시 이행 외에 발화 오류율·화자 유사도·음질도 함께 고려한다.
+그다음 online RL(reinforcement learning)을 적용한다.
+Voice Token LM이 학습 중에 음성을 생성하면, 그 음성을 평가한 점수로 Voice Token LM을 갱신한다.
+발화 지시 점수만 높이면, 모델이 빠르게 말하는 대신 단어를 빠뜨리는 식의 문제가 생길 수 있다.
+그래서 카카오는 지시 이행 외에 발화 오류율·화자 유사도·음질도 함께 고려했다.
 
 ### 4-4. 실시간 상호작용
 
-전체 답변이 완성된 뒤에만 음성을 만들면 사용자는 기다려야 하므로, 음성으로 답하는 모델은 출력을 작은 조각으로 나누어 앞부분부터 내보내는 streaming을 쓴다.
+모델이 답변 전체를 완성한 뒤에야 음성을 만들면 사용자는 그만큼 기다려야 한다.
+그래서 음성으로 답하는 모델은 출력을 작은 조각으로 나누어 앞부분부터 내보내는 streaming을 쓴다.
 첫 조각을 빨리 내는 것과, 사용자가 말하는 동안 시스템도 듣고 말하는 full duplex는 다른 문제다.
 Thinker와 Talker를 나누고 출력을 streaming해도, 말하는 동안 들어오는 입력을 처리하지 않으면 끼어들기에 반응할 수 없다.
 
 MiniCPM-o 4.5는 이 문제를 입력과 출력을 한 sequence에 엮어 푼다.[^minicpmo45]
-사전학습된 vision encoder, 음성 encoder와 생성기, 언어 모델에서 출발하고, 앞의 TDM으로 입력 흐름과 응답 흐름을 짧은 시간 구간마다 한 sequence에 끼워 넣는다.
-구간마다 새로 들어온 입력과 응답의 다음 조각이 번갈아 놓이므로, 사용자의 영상과 음성을 받아들이는 동안에도 음성으로 응답하는 full duplex 상호작용을 지향할 수 있다.
+이 모델은 사전학습된 vision encoder, 음성 encoder와 음성 생성기, 언어 모델에서 출발한다.
+그리고 앞에서 본 TDM으로 입력 흐름과 응답 흐름을 짧은 시간 구간마다 한 sequence에 끼워 넣는다.
+구간마다 새로 들어온 입력과 응답의 다음 조각이 번갈아 놓인다.
+그래서 모델은 사용자의 영상과 음성을 받아들이는 동안에도 음성으로 응답하는 full duplex 상호작용을 지향할 수 있다.
 
 기기에서 실행하는 작은 모델도 같은 구성 요소를 갖춘다.
-Liquid AI의 LFM3-Omni-2B는 약 22억 개 parameter를 사용하며 텍스트·이미지·비디오·audio를 입력으로 받아 텍스트나 음성, 또는 두 출력이 교차하는 sequence를 만든다.[^lfm3omni]
-Vision encoder와 audio encoder가 입력을 언어 모델에 연결하고, 음성 출력은 별도의 생성 모듈과 audio codec을 거쳐 파형으로 복원한다.
+Liquid AI의 LFM3-Omni-2B는 약 22억 개 parameter를 쓴다.[^lfm3omni]
+이 모델은 텍스트·이미지·비디오·audio를 입력으로 받아 텍스트나 음성, 또는 두 출력이 교차하는 sequence를 만든다.
+Vision encoder와 audio encoder가 입력을 언어 모델에 연결한다.
+음성 출력은 별도의 생성 모듈과 audio codec을 거쳐 파형으로 복원된다.
 
 ## 5. 상호작용과 평가
 
 ### 5-1. 관찰과 행동
 
 영상과 음성 입력을 처리하는 모델은 사용자 지시를 이해한 뒤 외부 도구를 호출하는 시스템의 일부가 될 수도 있다.
-예를 들어 화면을 보여 주며 “이 문서를 열어 줘”라고 말하면, 모델은 음성과 화면을 바탕으로 대상과 행동을 정하고 시스템은 클릭 같은 도구를 실행한다.
-실행 결과로 바뀐 화면을 다시 받아 성공 여부를 확인해야 한다.
+예를 들어 사용자가 화면을 보여 주며 “이 문서를 열어 줘”라고 말한다고 하자.
+모델은 음성과 화면을 바탕으로 대상과 행동을 정하고, 시스템은 클릭 같은 도구를 실행한다.
+그다음 모델은 실행 결과로 바뀐 화면을 다시 받아 성공 여부를 확인해야 한다.
 영상·음성을 이해하는 모델의 능력과 실제 도구를 실행하는 환경의 능력은 구분해야 한다.
 
 ### 5-2. 평가의 단위
 
 입력 modality별 점수와 modality를 함께 써야 하는 문제의 점수는 서로 다른 능력을 측정한다.
-이미지 질문과 audio 질문을 각각 잘 풀어도, 두 신호를 함께 연결하는 문제에서는 실패할 수 있다.
-평가 데이터에는 한 modality만 보고도 맞힐 수 있는 지름길이 있을 수 있으므로, 한 입력을 가리거나 시간 순서를 바꾼 비교가 도움이 된다.
-예를 들어 박수 소리를 다른 순간으로 옮겼을 때 정답이 바뀌는 문제라면 시간 관계에 모델이 민감한지 확인할 수 있다.
+모델이 이미지 질문과 audio 질문을 각각 잘 풀어도, 두 신호를 함께 연결하는 문제에서는 실패할 수 있다.
+평가 데이터에는 한 modality만 보고도 맞힐 수 있는 지름길이 있을 수 있다.
+그래서 한 입력을 가리거나 시간 순서를 바꿔 결과를 비교하면 도움이 된다.
+예를 들어 박수 소리를 다른 순간으로 옮기면 정답이 바뀌는 문제로, 모델이 시간 관계에 민감한지 확인할 수 있다.
 가령 같은 영상에서 A가 먼저 말하고 B가 나중에 말한다면, A가 말하는 구간에 박수를 넣은 예시의 정답은 A다.
 발화는 그대로 두고 박수만 B의 발화 구간으로 옮긴 예시에서는 정답이 B로 바뀐다.
-두 경우에 같은 답을 낸다면 영상에 두 사람이 있다는 사실은 알아도 박수와 발화의 시간 관계를 충분히 사용하지 못했을 수 있다.
+모델이 두 경우에 같은 답을 낸다면, 영상에 두 사람이 있다는 사실은 알아도 박수와 발화의 시간 관계는 충분히 쓰지 못했을 수 있다.
 
-실시간 시스템은 정답의 내용 외에도 입력 시작부터 첫 응답까지의 지연, 응답을 지속적으로 생성하는 속도, 입력이 겹쳤을 때의 행동을 살펴야 한다.
+실시간 시스템을 평가할 때는 정답의 내용 외에도 입력 시작부터 첫 응답까지의 지연, 응답을 계속 생성하는 속도, 입력이 겹쳤을 때의 행동을 살펴야 한다.
 이 수치는 하드웨어, 입력 길이, 동시 요청 수, 측정 시작점에 따라 달라지므로, 논문이 보고한 지연은 그 측정 조건과 함께 읽어야 한다.
 모델의 환각, 시각적으로 보이지 않거나 audio에 없는 정보의 추론, 민감한 음성 정보의 처리도 별도로 평가해야 한다.
 
@@ -389,18 +442,22 @@ Vision encoder와 audio encoder가 입력을 언어 모델에 연결하고, 음�
 연속 표현과 이산 token 사이의 선택은 이미지와 음성에만 있는 문제가 아니다.
 시계열·표·분자처럼 텍스트가 아닌 데이터를 다루는 foundation model에서도 같은 두 갈래가 나타난다.
 
-시계열에서 Chronos는 값의 크기를 맞춘 뒤 값의 범위를 일정한 구간(bin)으로 나누어 시점마다의 값을 구간 번호로 바꾼다.
-이렇게 특수 token을 포함한 4,096개 항목의 고정 어휘를 만들고, 대표적으로 T5 구조의 언어 모델을 cross-entropy로 학습한다.[^chronos]
+시계열 모델 Chronos는 먼저 값의 크기를 맞춘다.
+그다음 값의 범위를 일정한 구간(bin)으로 나누고, 시점마다의 값을 구간 번호로 바꾼다.
+이렇게 만든 고정 어휘는 특수 token을 포함해 4,096개 항목이다.
+Chronos는 이 어휘 위에서 대표적으로 T5 구조의 언어 모델을 cross-entropy로 학습한다.[^chronos]
 예측할 때는 모델이 다음 구간의 ID를 고르고, 그 구간의 대표값을 원래 크기로 되돌린다.
 예를 들어 과거 값이 $[1, 3]$이면 절댓값의 평균인 2로 나누어 $[0.5, 1.5]$로 크기를 맞출 수 있다.
 가상의 구간에서 대표값 1.5에 ID 7을 붙였다면, 모델이 ID 7을 예측한 결과는 원래 단위에서 $1.5\times2=3$으로 되돌린다.
 구간과 ID는 가상의 예이며, 구간으로 묶는 과정에서 원래 값의 세부 정보는 잃는다.
-반면 TimesFM은 연속된 시점의 값을 입력 patch로 묶어 벡터로 넣고, 지난 patch들을 바탕으로 이어지는 시간 구간의 값을 회귀로 예측하는 decoder-only 모델이다.[^timesfm]
+반면 TimesFM은 decoder-only 모델로, 연속된 시점의 값을 patch로 묶어 벡터로 넣는다.[^timesfm]
+TimesFM은 지난 patch들을 바탕으로 이어지는 시간 구간의 값을 회귀로 예측한다.
 예측하는 출력 구간의 길이는 입력 patch의 길이와 같을 필요가 없다.
 표 데이터의 TabPFN은 셀 값을 어휘로 바꾸지 않고 실수 그대로 벡터로 넣는 연속 방식이다.
 사전 분포에서 뽑은 합성 데이터로 미리 학습한 Transformer가 학습용 행과 label을 문맥으로 받아, 가중치 갱신 없이 in-context learning으로 test 행의 label을 예측한다.[^tabpfn]
-분자에서는 MolT5처럼 원자와 결합을 한 줄의 문자로 적는 SMILES 표기를 텍스트와 같은 이산 token으로 다루는 방식과,[^molt5]
-MolCA처럼 분자 graph를 graph encoder로 표현한 뒤 Q-Former로 언어 모델에 연결하는 연속 방식이 함께 쓰인다.[^molca]
+분자에서는 두 방식이 함께 쓰인다.
+MolT5는 원자와 결합을 한 줄의 문자로 적는 SMILES 표기를 텍스트와 같은 이산 token으로 다룬다.[^molt5]
+MolCA는 분자 graph를 graph encoder로 표현한 뒤, Q-Former로 언어 모델에 연결하는 연속 방식을 쓴다.[^molca]
 
 어느 쪽을 고를지는 이미지·음성에서와 마찬가지로, 데이터가 원래 유한한 기호에 가까운지와 출력을 어떤 형태로 만들어야 하는지에 따라 달라진다.
 Chronos처럼 원래 연속인 데이터라도, 출력을 어휘 위의 확률분포로 다루려고 일부러 이산화하기도 한다.
@@ -415,7 +472,7 @@ Chronos처럼 원래 연속인 데이터라도, 출력을 어휘 위의 확률�
 [^qwen3]: Xu, J., et al. (2025). Qwen3-Omni Technical Report. *arXiv*. [논문](https://arxiv.org/abs/2509.17765).
 [^qwen3card]: Qwen Team. (2025). Qwen3-Omni-30B-A3B-Instruct. *Hugging Face model card*. [모델 카드](https://huggingface.co/Qwen/Qwen3-Omni-30B-A3B-Instruct).
 [^minicpmo45]: OpenBMB. (2026). MiniCPM-o 4.5. *GitHub documentation*. [문서](https://github.com/OpenBMB/MiniCPM-V/blob/main/docs/minicpm_o4dot5_en.md).
-[^gpt4o]: OpenAI. (2024). Hello GPT-4o. *OpenAI*. [글](https://openai.com/index/hello-gpt-4o/).
+[^gpt4o]: OpenAI. (2024). GPT-4o System Card. *arXiv*. [논문](https://arxiv.org/abs/2410.21276).
 [^gemini4argon]: Google DeepMind. (2026). Gemini 4 Argon Model Card. *Google DeepMind*. [모델 카드](https://deepmind.google/models/model-cards/gemini-4-argon/).
 [^lfm3omni]: Liquid AI. (2026). LFM3-Omni-2B. *Hugging Face model card*. [모델 카드](https://huggingface.co/LiquidAI/LFM3-Omni-2B).
 [^moshi]: Défossez, A., et al. (2024). Moshi: a speech-text foundation model for real-time dialogue. *arXiv*. [논문](https://arxiv.org/abs/2410.00037).
