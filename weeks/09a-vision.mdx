@@ -4,136 +4,113 @@ week: 9
 order: 0
 ---
 
-사진을 보여 주며 “이 표지판에 적힌 문구가 무엇이고, 어느 쪽으로 가야 하나?”라고 물으면 모델은 글자를 읽고, 이미지 안의 위치와 질문을 연결해 답해야 한다.
-이미지 전체를 한 범주로 분류하는 것만으로는 충분하지 않다.
-많은 멀티모달 대규모 언어 모델(multimodal large language model, MLLM)은 vision encoder가 만든 표현을 언어 모델에 전달하여 이런 입력과 지시를 함께 다룬다.[^survey]
-이 노트는 이미지가 Transformer의 입력이 되는 과정과 vision encoder의 사전학습에서 시작해 이미지와 텍스트의 정렬, 언어 모델과의 연결, 해상도와 여러 이미지, 비디오의 시간 정보, 이미지 속 위치 찾기, 화면을 보며 행동하는 agent까지 차례로 살펴본다.
+import vitArchitecture from "./assets/week09-vit-architecture.png";
 
-먼저 이미지와 음성을 함께 다루는 Kanana-o의 개발 사례를 영상으로 보자.
-구조와 학습 과정을 처음부터 다 이해할 필요는 없고, 모델이 어떤 입력을 받아 무엇을 하는지만 눈여겨보면 된다.
+대규모 언어 모델(large language model, LLM)은 텍스트만 읽는다.
+정확히는 token ID를 embedding으로 바꾼 벡터의 sequence를 받아 다음 token을 예측한다.
+그렇다면 LLM이 이미지를 보게 하려면 어떻게 할까?
+
+가장 널리 쓰이는 답은 이미지도 같은 크기의 벡터 sequence로 바꾸어 텍스트 embedding 옆에 놓는 것이다.
+LLM은 그 벡터를 문맥의 일부로 읽고, 지금까지 하던 대로 다음 token을 예측한다.
+Vision-language model(VLM)의 대부분은 이를 위해 세 조각으로 이루어진다.[^survey]
+**Vision encoder**가 이미지를 feature로 바꾸고, **connector**가 그 feature를 LLM의 입력 차원에 맞추며, **LLM**이 이렇게 들어온 벡터와 질문을 한 문맥에서 읽고 답을 생성한다.
+**이미지 한 장은 매우 긴 벡터 시퀀스**가 되어 질문의 token과 나란히 놓인다.
+LLM에 이미지나 소리 같은 다른 modality의 입력을 붙인 모델을 넓게 멀티모달 대규모 언어 모델(multimodal large language model, MLLM)이라 부르고, VLM은 그 가운데 시각 입력을 다루는 경우다.
+
+이에 앞서, 이미지(Kanana-v)와 음성(Kanana-a)을 함께 다루는 Kanana-o의 개발 사례를 영상으로 제공한다.
 
 <Video src="https://www.youtube.com/watch?v=S4CMtHfscis" caption="노병석, 눈으로 보고, 귀로 듣고, 입으로 말하는 AI – 통합 멀티모달 언어모델 Kanana-o 개발기 (if(kakao)25)" />
 
-## 1. Vision Transformer와 사전학습
+## 1. Vision Transformer
 
 ### 1-1. 픽셀에서 patch로
 
 텍스트 Transformer는 token을 순서대로 나열한 sequence를 받는다.
-이미지는 높이, 너비, 색 채널로 이루어진 배열이므로 텍스트처럼 token sequence로 처리하려면 입력 표현을 구성해야 한다.
-Vision Transformer(ViT)는 이미지를 같은 크기의 작은 격자 조각, patch로 나누고 각 조각의 픽셀을 일렬로 펴서 하나의 벡터로 바꾼다.[^vit]
+이미지는 높이(H), 너비(W), 색 채널(C)로 이루어진 배열이어서 그대로는 넣을 수 없고, 먼저 벡터의 sequence로 바꿔야 한다.
+Vision Transformer(ViT)는 이미지를 같은 크기의 작은 격자 조각, **patch**로 나누고 각 조각의 픽셀을 일렬로 펴서 하나의 벡터로 바꾼다.[^vit]
 RGB 이미지에서 patch 한 변의 길이가 $P$이면 한 조각의 원소 수는 $3P^2$이다.
-모든 patch에 같은 학습 가능한 선형 변환을 적용하면 Transformer의 hidden dimension $D$에 맞는 벡터가 만들어진다.
+모든 patch에 같은 변환을 적용하면 Transformer의 hidden dimension $D$에 맞는 벡터가 만들어진다.
+**ViT에는 이미지만 들어가고 텍스트는 들어가지 않는다.**
+**출력도 문장이 아니라 patch별 벡터와 그것으로 계산한 분류 결과다.**
 
-<Callout type="example">
-높이와 너비가 각각 64인 RGB 이미지에 16×16 patch를 적용하면 한 변에 4개씩, 총 16개의 patch가 생긴다.
-Patch 하나는 16×16×3 = 768개의 픽셀 값을 담는다.
-각 768차원 벡터를 $D$차원으로 투영하면 Transformer에 넣을 16개의 벡터가 된다.
-Patch의 개수와 벡터 차원은 서로 다른 양이다.
-같은 patch 크기로 224×224 이미지를 나누면 한 변에 14개씩 총 196개의 patch가 생긴다.
-</Callout>
+<Figure src={vitArchitecture.src} alt="Vision Transformer 구조. 이미지를 아홉 개의 patch로 나누어 한 줄로 펴고, 선형 투영으로 patch embedding을 만든 뒤 위치 embedding을 더한다. 맨 앞에 학습 가능한 class embedding을 붙여 Transformer encoder에 넣고, 그 위치의 출력을 MLP head에 넣어 범주를 예측한다. 오른쪽에는 multi-head attention과 MLP, normalization으로 이루어진 encoder block이 있다." caption="ViT의 입력 구성. 맨 앞의 [CLS] 위치 출력으로 분류한다." source="Dosovitskiy et al. (2021), Figure 1" wide />
 
-<figure class="lecture-figure" aria-label="64 곱하기 64 이미지를 16 곱하기 16 patch로 나누면 16개가 된다. 각 patch를 embedding으로 바꾸고 위치 정보를 더해 Transformer encoder에 전달하는 예시다.">
-<svg viewBox="0 0 480 165" role="img" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
-  <text x="66" y="22" text-anchor="middle" font-size="15" fill="#0f172a">64×64 이미지</text>
-  <rect x="30" y="36" width="72" height="72" fill="#dbeafe" stroke="#2a78d6" />
-  <path d="M48 36v72 M66 36v72 M84 36v72 M30 54h72 M30 72h72 M30 90h72" stroke="#2a78d6" fill="none" />
-  <text x="66" y="131" text-anchor="middle" font-size="14" fill="#64748b">16×16 patch 16개</text>
-  <text x="123" y="79" font-size="20" fill="#64748b">→</text>
-  <rect x="151" y="42" width="132" height="61" rx="5" fill="#f8fafc" stroke="#94a3b8" />
-  <text x="217" y="67" text-anchor="middle" font-size="14" fill="#0f172a">patch 투영</text>
-  <text x="217" y="88" text-anchor="middle" font-size="14" fill="#0f172a">+ 위치 embedding</text>
-  <text x="297" y="79" font-size="20" fill="#64748b">→</text>
-  <rect x="325" y="42" width="135" height="61" rx="5" fill="#e2e8f0" stroke="#94a3b8" />
-  <text x="392" y="67" text-anchor="middle" font-size="14" fill="#0f172a">Transformer</text>
-  <text x="392" y="88" text-anchor="middle" font-size="14" fill="#0f172a">encoder</text>
-</svg>
-<figcaption>작은 예시에서 이미지의 각 patch를 벡터로 바꾸고 위치 정보를 더해 encoder에 전달한다.</figcaption>
-</figure>
-
-이 벡터만 모으면 각 조각의 원래 위치를 구별하기 어렵다.
-ViT는 patch마다 위치 embedding을 더해 순서 정보를 주고, classification을 위해 맨 앞에 학습 가능한 `[CLS]` token을 붙인다.
-Transformer encoder의 self-attention은 각 patch가 다른 patch의 정보를 받아 갱신하게 한다.
+Patch 벡터만 모아서는 각 조각이 원래 어디에 있었는지 알 수 없으므로, ViT는 patch마다 위치 embedding을 더한다.
+Transformer encoder의 self-attention은 각 patch가 다른 patch의 정보를 받아 자신의 표현을 갱신하게 한다.
 예를 들어 자동차의 바퀴를 담은 patch가 차체를 담은 patch를 참고하면 국소적인 무늬와 전체 물체를 연결할 수 있다.
-분류 시에는 최종 `[CLS]` 표현을 classifier에 넣는다.
 입력 patch token은 사진의 작은 조각에서 출발하지만, 여러 층을 통과한 출력은 다른 위치의 정보를 포함하는 문맥화된 표현이다.
+분류를 위해서는 맨 앞에 학습 가능한 `[CLS]` token을 붙이고, 마지막 층에서 그 위치의 표현을 classifier에 넣는다.
+
+ViT는 decoder가 아니라 Transformer **encoder**다.
+Causal mask가 없어서 모든 patch가 앞뒤 구분 없이 서로를 본다.
+이미지는 처음부터 전체가 주어지고 patch 사이에 먼저와 나중이 없으므로, 뒤쪽을 가릴 이유가 없다.
+
+ViT 원논문은 범주 라벨이 붙은 이미지를 분류하게 하여 이 encoder를 학습했다.
+CNN(convolutional neural network)은 가까운 픽셀끼리 먼저 묶고, 같은 무늬는 어느 위치에 있든 같은 방식으로 처리한다는 가정을 구조에 담고 있다.
+이렇게 학습 전에 모델 구조가 미리 갖고 있는 가정을 **inductive bias**라 한다.
+ViT의 self-attention은 처음부터 **모든 patch를 서로 연결하므로 이런 inductive bias가 약하고, 가까운 것끼리 관련이 깊다는 사실도 데이터에서 배워야 한다.**
+
+CNN은 가까운 픽셀이 서로 관련 있다는 것을 처음부터 알고 시작하지만, ViT는 같은 사실을 예시에서 찾아내야 하므로 데이터가 적으면 일반화가 떨어진다.
+약 130만 장의 ImageNet으로 사전학습하면 ViT는 비교 대상인 CNN보다 정확도가 낮았고, 더 큰 ViT가 작은 ViT보다 오히려 낮았다.
+1,400만 장에서 3억 장 규모의 라벨 데이터로 사전학습했을 때 ViT가 CNN을 앞섰다.
+**원논문은 이를 두고 큰 규모의 학습이 inductive bias를 이긴다고 정리한다.**
 
 ### 1-2. Masked image modeling
 
-ViT 원논문은 범주 라벨이 붙은 이미지를 분류하게 하여 encoder를 사전학습했다.
-CNN(convolutional neural network)은 가까운 픽셀끼리 먼저 묶는다는 가정을 구조에 담고 있지만, ViT의 self-attention에는 그런 가정이 없어 이를 데이터에서 배워야 한다.
-원논문의 비교에서는 약 130만 장의 ImageNet으로 사전학습한 ViT가 비교 대상인 CNN보다 낮은 정확도를 보였고, 훨씬 큰 라벨 데이터로 사전학습했을 때 ViT가 CNN을 앞섰다.
-
+ViT 원논문의 학습은 사람이 붙인 범주 라벨에 의존했다.
 그런데 라벨은 만들기 비싸고, 학습할 때 정한 범주만 담는다.
-“고양이”라는 라벨에는 털의 색이나 고양이가 놓인 위치, 옆에 있는 물체가 들어 있지 않다.
 라벨 없이 이미지 자체에서 학습 신호를 만드는 자기지도(self-supervised) 사전학습은 이 문제에서 출발해 크게 두 갈래로 발전했다.
-하나는 이미지의 일부를 가리고 복원하게 하는 masked image modeling이고, 다른 하나는 같은 이미지를 다르게 변형한 입력들이 같은 출력을 내게 하는 방식이다.
+하나는 이미지의 일부를 가리고 복원하게 하는 **masked image modeling**이고, 다른 하나는 같은 이미지를 다르게 변형한 입력들이 같은 출력을 내는 **self-distillation** 방식이다.
 
 텍스트에서는 BERT의 MLM(masked language modeling)이 문장의 일부 token을 가리고 문맥으로 원래 token을 맞히게 했다.
-MAE(masked autoencoder)는 같은 발상을 이미지 patch에 적용한 대표적인 masked image modeling 방법이다.[^mae]
+<strong>MAE(masked autoencoder)</strong>는 같은 발상을 이미지 patch에 적용한 대표적인 masked image modeling 방법이다.[^mae]
 이미지를 patch로 나눈 뒤 무작위로 75%를 가리고, encoder에는 가려지지 않은 25%의 patch만 넣는다.
-작은 decoder는 encoder의 출력과 mask token을 함께 받는다.
+decoder는 encoder의 출력과 mask token을 함께 받는다.
 Mask token은 가려진 자리를 표시하는 학습 가능한 벡터이며, 위치 embedding을 더해 어느 자리인지 알려 준다.
-Decoder는 가려진 patch의 픽셀 값을 복원하고, 손실은 가려진 patch에서만 계산한다.
+Decoder는 가려진 patch의 픽셀 값을 복원하고, **손실은 가려진 patch에서만 계산한다.**
 픽셀 값은 어휘의 ID가 아니므로 MLM처럼 softmax로 고르지 않고, 원래 픽셀과의 평균 제곱 오차(mean squared error)를 줄이는 회귀로 학습한다.
 
-<Figure src="https://arxiv.org/html/2111.06377v3/arch.png" alt="MAE 구조. 왼쪽 입력 이미지의 patch 대부분이 회색으로 가려져 있다. 가려지지 않은 patch만 encoder에 들어가고, encoder 출력 사이사이에 회색 mask token을 끼워 넣은 전체 sequence를 작은 decoder가 받아 오른쪽의 원본 이미지를 복원한다." caption="MAE는 가려지지 않은 patch만 encoder에 넣는다. Mask token은 encoder 뒤에서 더해지고, 작은 decoder가 가려진 patch의 픽셀을 복원한다." source="He et al. (2022), Figure 1 · CC BY 4.0" wide />
+<Figure src="https://arxiv.org/html/2111.06377v3/arch.png" alt="MAE 구조. 왼쪽 입력 이미지의 patch 대부분이 회색으로 가려져 있다. 가려지지 않은 patch만 encoder에 들어가고, encoder 출력 사이사이에 회색 mask token을 끼워 넣은 전체 sequence를 작은 decoder가 받아 오른쪽의 원본 이미지를 복원한다." caption="MAE는 가려지지 않은 patch만 encoder에 넣는다. Mask token은 encoder 뒤에서 더해지고, decoder가 가려진 patch의 픽셀을 복원한다." source="He et al. (2022), Figure 1 · CC BY 4.0" wide />
 
 BERT의 MLM은 token의 15%를 예측 대상으로 고르지만 MAE는 patch의 75%를 가린다.
-MAE에서 가리는 비율을 높이는 이유는 이미지의 중복에 있다.
+MAE에서 가리는 비율을 높이는 이유는 **이미지의 중복에 있다.**
 문장에서 단어 하나를 지우면 주변 단어만으로 맞히기 쉽지 않지만, 이미지에서는 이웃한 patch끼리 비슷해서 몇 개를 지워도 주변을 이어 붙이듯 채울 수 있다.
 가리는 비율을 높이면 가까운 주변을 복사하는 것만으로 빈 곳을 채우기 어려워져, 더 넓은 범위의 물체와 장면 구조를 활용하도록 유도한다.
 Encoder가 보이는 patch만 처리하므로 사전학습 계산도 줄어든다.
 
-<Callout type="example">
-224×224 이미지를 16×16 patch로 나누면 196개의 patch가 생긴다.
-75%를 가리면 encoder는 49개의 patch만 처리한다.
-Decoder는 patch에 해당하는 encoder 출력 49개와 mask token 147개를 받아 가려진 147개 patch의 픽셀을 복원한다.
-Attention 점수는 token 쌍마다 계산하므로, encoder의 patch 간 점수 개수는 196개를 모두 넣을 때의 $(49/196)^2=1/16$로 줄어든다.
-</Callout>
-
 MAE는 추가 라벨 데이터 없이 ImageNet의 이미지만으로 사전학습하고도, 미세조정한 큰 ViT가 높은 정확도를 낼 수 있음을 보였다.
-이렇게 사전학습한 encoder는 이미지 feature가 필요한 다른 모델에도 쓰인다.
+**이렇게 사전학습한 encoder는 이미지 feature가 필요한 다른 모델에도 쓰인다.**
 예를 들어 물체의 윤곽을 픽셀 단위로 칠한 영역을 그리는 SAM(Segment Anything Model)의 image encoder도 MAE로 사전학습한 ViT다.[^sam]
-다만 픽셀을 복원하는 task와 범주를 알아보는 task 사이에는 간극이 있다.
-MAE 원논문의 ImageNet-1K와 ViT-L 비교에서는 encoder를 고정하고 그 위에 선형 분류기만 학습하는 linear probing에서, 같은 이미지의 변형을 맞추게 하는 갈래의 MoCo v3보다 정확도가 낮다.[^mae]
-반면 이 비교에서 encoder의 마지막 block을 하나 이상 미세조정하면 MAE가 앞선다.
+다만 픽셀을 복원하는 task와 classification task 사이에는 간극이 있다.
 
 ### 1-3. Self-distillation
 
-다른 갈래의 대표적인 방법인 DINO(self-distillation with no labels)는 MAE보다 조금 먼저 나왔다.[^dino]
-DINO는 픽셀을 복원하는 대신, 같은 이미지를 자르거나 색을 바꾸어 만든 변형본(view)들이 같은 출력을 내도록 학습한다.
-한 이미지에서 넓은 영역을 자른 global crop 두 장과 좁은 영역을 자른 local crop 여러 장을 만들고, 색이나 밝기도 무작위로 바꾼다.
-KD(knowledge distillation)에서는 미리 학습된 teacher의 출력 분포를 student가 따라 배운다.
-DINO도 구조가 같은 student와 teacher 두 네트워크를 두지만, 미리 학습된 teacher는 없다.
-Teacher는 global crop만, student는 모든 crop을 받는다.
-Teacher의 가중치는 기울기로 갱신하지 않고, student 가중치의 지수 이동 평균(exponential moving average)으로 천천히 따라가게 한다.
-미리 학습된 teacher 없이 student 자신의 과거 가중치를 평균한 모델에서 배우므로, 원논문은 이를 라벨 없는 self-distillation으로 해석한다.
-각 네트워크는 crop마다 $K$차원 출력에 softmax를 적용한 확률 분포를 내고, student는 다른 crop에 대한 teacher의 분포를 맞히도록 cross-entropy로 학습한다.
-예를 들어 고양이 귀만 담은 local crop을 본 student가 고양이 전체를 담은 global crop에 대한 teacher의 출력을 맞히려면, 일부만 보고도 전체 물체를 알아보는 표현이 필요하다.
+다른 갈래의 대표는 DINO(self-distillation with no labels)다.[^dino]
+픽셀을 복원하는 대신, 같은 이미지를 다르게 변형한 변형본(view)들이 같은 출력을 내도록 학습한다.
+구조가 같은 student와 teacher 두 네트워크를 두고, student가 teacher의 출력 분포를 cross-entropy로 맞힌다.
+미리 학습된 teacher가 없다.
+Teacher의 가중치는 기울기로 갱신하지 않고 <strong>student 가중치의 지수 이동 평균(exponential moving average)</strong>으로 둔다.
+Student가 자신의 과거를 평균한 모델에서 배우는 셈이어서 self-distillation이라 부른다.<Sidenote>원논문은 teacher를 갱신하는 방법을 비교했다. Teacher를 매 step student의 복사본으로 두면 학습이 수렴하지 않았고, 한 epoch 동안 고정해 두는 것만으로도 학습이 됐으며, 지수 이동 평균이 가장 잘 맞았다. 가중치를 평균한 teacher는 최근 student들을 ensemble한 것과 비슷해서 학습 내내 student보다 성능이 높았고, 그만큼 더 좋은 목표를 준다는 것이 원논문의 설명이다.[^dino] 출력이 아니라 가중치를 평균한다는 점에서, 한 학습 궤적의 checkpoint들을 평균해 일반화를 높이는 SWA(stochastic weight averaging)와 같은 계열로 볼 수 있다.[^swa]</Sidenote>
 
-<Figure src="https://arxiv.org/html/2104.14294v2/test.svg" alt="DINO의 학습 구조. 이미지 x에서 만든 두 view x1, x2가 각각 student와 teacher 네트워크에 들어간다. Teacher 쪽 출력에는 centering을 적용한 뒤 softmax를 취하고 기울기를 막는다. 두 확률 분포 p1, p2의 cross-entropy가 손실이며, teacher의 가중치는 student의 지수 이동 평균으로 갱신된다." caption="DINO의 self-distillation. 같은 이미지의 두 view를 student와 teacher에 넣고 teacher의 분포를 student가 맞힌다. 기울기는 student로만 흐르고(sg는 stop-gradient), teacher는 student의 지수 이동 평균(ema)이다." source="Caron et al. (2021), Figure 2 · CC BY 4.0" />
+핵심은 두 네트워크가 서로 다른 것을 본다는 점이다.
+Teacher는 넓은 영역을 자른 global crop만 받고, student는 좁은 영역을 자른 local crop까지 받는다.
+고양이 귀만 담은 local crop을 본 student가 고양이 전체를 본 teacher의 출력을 맞히려면, 일부만 보고도 전체 물체를 알아보는 표현이 필요하다.
 
-다만 두 네트워크가 모든 이미지에 같은 출력을 내도 손실이 작아질 수 있다.
-이런 붕괴(collapse)를 막으려고 teacher의 softmax 이전 출력인 logit에 centering과 sharpening을 함께 적용한다.
-Centering은 출력 차원마다 batch의 teacher logit을 이미지들에 걸쳐 평균해 그 지수 이동 평균을 유지하고, teacher logit에서 이 값을 뺀다.
-예를 들어 두 차원의 이동 평균이 $[3, 1]$이고 한 이미지의 teacher logit이 $[4, 2]$라면, centering한 logit은 $[1, 1]$이다.
-어느 이미지에서나 크게 나오던 첫 차원의 우위가 사라지므로, 출력이 특정 차원으로 쏠리는 붕괴를 누른다.
-반대로 centering만 쓰면 출력 분포가 모든 차원에서 비슷한 균등 분포로 붕괴할 수 있다.
-Sharpening은 centering한 logit을 낮은 온도로 나눈 뒤 softmax를 적용해 분포를 뾰족하게 만들어 이 붕괴를 막는다.
-KD에서 teacher의 온도를 높여 분포를 부드럽게 하는 것과는 반대 방향이다.
-이렇게 학습한 feature는 linear probing만으로도 범주를 잘 구분한다.
-라벨 없이 학습했는데도 마지막 층의 `[CLS]` token이 patch에 주는 attention이 물체의 영역을 따라가는 성질도 나타난다.
+<Figure src="https://arxiv.org/html/2104.14294v2/test.svg" alt="DINO의 학습 구조. 이미지 x에서 만든 두 view x1, x2가 각각 student와 teacher 네트워크에 들어간다. Teacher 쪽 출력에는 centering을 적용한 뒤 softmax를 취하고 기울기를 막는다. 두 확률 분포 p1, p2의 cross-entropy가 손실이며, teacher의 가중치는 student의 지수 이동 평균으로 갱신된다." caption="DINO의 self-distillation. 같은 이미지의 두 view를 student와 teacher에 넣고 teacher의 분포를 student가 맞힌다. 기울기는 student로만 흐르고(sg는 stop-gradient), teacher는 student의 지수 이동 평균(ema)으로 갱신한다. Teacher 쪽의 centering은 모든 이미지에 같은 출력을 내는 붕괴를 막으려고, 출력이 한 차원으로 쏠리지 않게 batch 평균을 빼는 처리다." source="Caron et al. (2021), Figure 2 · CC BY 4.0" />
 
-DINO는 이미지 전체를 대표하는 `[CLS]` 출력만 맞추므로, patch 하나하나의 feature는 직접 학습 신호를 받지 않는다.
-DINOv2는 DINO의 목표에, 가린 patch마다 teacher의 출력을 맞히는 masked image modeling 목표를 함께 쓰는 iBOT의 학습을 이어받아 이를 보완했다.[^dinov2]
-Student는 일부 patch가 가려진 이미지를 받고, 가려진 자리에서 teacher가 가리지 않은 이미지의 같은 patch에 내는 출력을 맞힌다.
+이렇게 학습한 ViT에서는 라벨을 쓰지 않았는데도 마지막 층의 `[CLS]` token이 patch에 주는 attention이 물체의 영역을 따라간다.
+
+다만 DINO는 이미지 전체를 대표하는 `[CLS]` 출력만 맞추므로, patch 하나하나의 feature는 직접 학습 신호를 받지 않는다.
+DINOv2는 가린 patch 자리에서 teacher의 출력을 맞히는 목표를 더해 이를 보완했다.[^dinov2]
+이 patch 목표는 같은 view 안에서 계산한다.
+Student에는 일부 patch를 mask token으로 가린 view를, teacher에는 가리지 않은 같은 view를 넣고, 가려진 자리마다 teacher가 그 자리에 낸 출력을 맞힌다.
+서로 다른 view는 잘린 영역이 달라 patch끼리 대응하지 않으므로, 다른 view의 patch를 맞히게 할 수는 없다.
+`[CLS]` 출력은 이미지 전체를 요약하므로 DINO와 같이 서로 다른 view 사이에서 맞힌다.
 MAE처럼 가린 patch를 맞히되 픽셀이 아니라 teacher의 출력을 맞히는 방식으로, 두 갈래가 한 학습에서 합쳐졌다.
-학습 데이터도 늘려, 큐레이션된 데이터셋의 이미지와 비슷한 웹 이미지를 골라 더한 1억 4,200만 장을 썼다.
-DINOv2의 feature는 encoder를 고정한 채로도 분류, 픽셀마다 범주를 나누는 segmentation, 깊이 추정 같은 여러 task에 쓸 수 있다.
 
 MAE와 DINO는 라벨 없이 이미지만으로 학습해 범주 라벨의 한계를 피하지만, 학습된 feature가 “고양이”라는 단어와 연결되지는 않는다.
-ViT는 이미지를 벡터로 바꾸는 방법을 제공하지만, **어떤 의미를 그 벡터에 담을지는 학습 데이터와 objective가 결정한다.**
-시각적 질문에 답하려면 사물의 이름뿐 아니라 색, 수량, 위치, 장면 속 관계를 언어와 연결해야 한다.
+ViT는 이미지를 벡터로 바꾸는 방법을 제공하지만, 어떤 의미를 그 벡터에 담을지는 학습 데이터와 objective가 결정한다.
+시각적 질문에 답하려면 사물의 이름뿐 아니라 색, 수량, 위치, 장면 속 관계를 **언어와 연결해야 한다.**
 이미지와 언어를 짝지어 학습하면 고정된 범주 이름에 묶이지 않으면서 언어와 연결된 시각 표현을 얻을 수 있다.
 
 ## 2. 이미지와 텍스트의 정렬
@@ -267,7 +244,7 @@ Sigmoid 손실에 캡션, 지시 표현에 해당하는 상자 좌표, 영역별
 2026년 공개된 개발 글은 이미지와 상세한 설명을 함께 주고 **다음 텍스트 token을 예측**하도록 학습하는 과정을 소개한다.[^kanana-encoder-blog]
 메뉴판의 글자와 가격이 설명에 들어 있다면, 그 token을 맞히려면 이미지의 세부 정보를 읽어야 한다.
 이미지 patch embedding과 설명의 텍스트 embedding을 하나의 통합 Transformer에 넣고, 이미지와 앞의 설명을 조건으로 다음 설명 token을 예측하게 한다.
-외부의 사전학습된 vision encoder는 가져오지 않았지만, 통합 Transformer는 이미 학습된 Kanana-2 LLM(large language model)의 가중치로 초기화했다.
+외부의 사전학습된 vision encoder는 가져오지 않았지만, 통합 Transformer는 이미 학습된 Kanana-2 LLM의 가중치로 초기화했다.
 학습이 끝난 Transformer는 텍스트를 생성하는 head 없이 이미지 feature를 만드는 vision encoder로 쓴다.
 
 학습은 이미지의 크기를 달리하는 세 단계로 진행하며 각 단계에서 전체 parameter를 갱신한다.
@@ -287,7 +264,7 @@ Sigmoid 손실에 캡션, 지시 표현에 해당하는 상자 좌표, 영역별
 여기서도 낮은 해상도에서 시작해 점차 해상도를 높이며, 이미지의 작은 window 안에서 attention을 계산해 고해상도 처리 비용을 줄인다.
 
 세 갈래 모두 결과물은 이미지 feature를 내는 encoder다.
-이것만으로는 질문에 답하는 VLM(vision-language model)이 되지 않으며, feature를 언어 모델에 연결하고 함께 쓰도록 학습해야 한다.
+이것만으로는 질문에 답하는 VLM이 되지 않으며, feature를 언어 모델에 연결하고 함께 쓰도록 학습해야 한다.
 
 ## 3. 시각 표현과 언어 생성의 연결
 
@@ -746,6 +723,7 @@ OSWorld는 실제 컴퓨터 환경을 이용해 이런 여러 단계의 task를 
 [^mae]: He, K., Chen, X., Xie, S., et al. (2022). Masked Autoencoders Are Scalable Vision Learners. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2111.06377).
 [^sam]: Kirillov, A., Mintun, E., Ravi, N., et al. (2023). Segment Anything. *Proceedings of the IEEE/CVF International Conference on Computer Vision*. [논문](https://arxiv.org/abs/2304.02643).
 [^dino]: Caron, M., Touvron, H., Misra, I., et al. (2021). Emerging Properties in Self-Supervised Vision Transformers. *Proceedings of the IEEE/CVF International Conference on Computer Vision*. [논문](https://arxiv.org/abs/2104.14294).
+[^swa]: Izmailov, P., Podoprikhin, D., Garipov, T., Vetrov, D., & Wilson, A. G. (2018). Averaging Weights Leads to Wider Optima and Better Generalization. *Proceedings of the Conference on Uncertainty in Artificial Intelligence*. [논문](https://arxiv.org/abs/1803.05407).
 [^dinov2]: Oquab, M., Darcet, T., Moutakanni, T., et al. (2024). DINOv2: Learning Robust Visual Features without Supervision. *Transactions on Machine Learning Research*. [논문](https://arxiv.org/abs/2304.07193).
 [^siglip]: Zhai, X., Mustafa, B., Kolesnikov, A., & Beyer, L. (2023). Sigmoid Loss for Language Image Pre-Training. *Proceedings of the IEEE/CVF International Conference on Computer Vision*. [논문](https://arxiv.org/abs/2303.15343).
 [^siglip2]: Tschannen, M., Gritsenko, A., Wang, X., et al. (2025). SigLIP 2: Multilingual Vision-Language Encoders with Improved Semantic Understanding, Localization, and Dense Features. *arXiv*. [논문](https://arxiv.org/abs/2502.14786).
