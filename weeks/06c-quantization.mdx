@@ -640,10 +640,10 @@ STE는 QAT뿐 아니라 <strong>VQ(vector quantization)</strong>에도 쓰인다
 예를 들어 VQ-VAE에서는 encoder가 만든 벡터에 가장 가까운 codebook 벡터를 골라 decoder에 전달한다.
 어느 벡터를 고르는지는 이산적인 선택이므로, STE를 사용해 decoder에서 나온 gradient를 encoder로 전달한다.[^vqvae]
 Codebook은 별도의 손실이나 갱신 방법으로 학습한다.
-이렇게 선택한 codebook 항목의 번호는 이미지나 음성을 나타내는 **이산 token**으로도 사용할 수 있다.
-예를 들어 VQGAN은 이미지를 이산 token으로 표현하고,[^vqgan] EnCodec 같은 neural audio codec은 음성을 codebook 번호로 압축한 뒤 decoder로 파형을 복원한다.[^encodec]
+이렇게 선택한 codebook 항목의 번호는 이미지나 음성을 나타내는 **discrete token**으로도 사용할 수 있다.
+예를 들어 VQGAN은 이미지를 discrete token으로 표현하고,[^vqgan] EnCodec 같은 neural audio codec은 음성을 codebook 번호로 압축한 뒤 decoder로 파형을 복원한다.[^encodec]
 생성 모델은 이런 token을 예측해 이미지나 음성을 만들 수 있다.
-다만 모든 VLM이나 음성 모델이 이산 token을 쓰는 것은 아니며, 연속적인 encoder 표현을 사용하기도 한다.
+다만 모든 VLM이나 음성 모델이 discrete token을 쓰는 것은 아니며, encoder의 continuous representation을 사용하기도 한다.
 
 STE가 전달하는 값은 실제 반올림이나 선택 연산의 미분이 아니다.
 **근사한 gradient**가 실제로 손실을 줄이는 방향과 다를 수 있으므로, 학습이 불안정하거나 품질이 기대보다 낮아질 수 있다.

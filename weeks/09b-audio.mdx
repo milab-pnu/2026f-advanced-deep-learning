@@ -126,7 +126,7 @@ AST의 분류 출력은 녹음 전체에 대한 하나의 예측이지만, 언�
 Audio를 이해하는 모델의 feature는 대개 실수 벡터이고, sequence의 각 위치에 여러 차원의 값을 담는다.
 이 벡터가 무엇을 보존하는지는 encoder의 학습 목표와 데이터에 따라 달라진다.
 
-### 1-5. 연속 표현과 이산 token
+### 1-5. Continuous representation과 discrete token
 
 텍스트 LLM(large language model)의 Transformer 층은 token ID가 아니라 embedding 벡터의 sequence를 받는다.
 그래서 audio도 벡터로 만들 수만 있으면 텍스트와 한 sequence에 넣을 수 있다.
@@ -143,9 +143,9 @@ Sample마다 65,536개 값에 softmax를 계산하기는 너무 크므로, WaveN
 그래서 audio를 언어 모델에 연결할 때는 먼저 waveform을 훨씬 짧은 sequence로 압축한다.
 연결 방법은 압축한 결과의 형식에 따라 두 갈래로 나뉜다.
 
-- **연속 표현**: audio encoder가 짧은 구간마다 실수 벡터를 만들고, 작은 변환 모듈인 connector가 이를 LLM의 입력 차원에 맞춰 embedding 자리에 바로 넣는다.
+- **Continuous representation**: audio encoder가 짧은 구간마다 실수 벡터를 만들고, 작은 변환 모듈인 connector가 이를 LLM의 입력 차원에 맞춰 embedding 자리에 바로 넣는다.
   이 벡터는 어휘나 embedding table을 거치지 않는다.
-- **이산 token**: neural audio codec(waveform을 번호 sequence로 압축하는 encoder와 번호에서 waveform을 되살리는 decoder를 함께 학습한 모델)이 구간마다 codebook(학습되는 벡터들의 집합)에서 가장 가까운 항목의 번호를 고른다.
+- **Discrete token**: neural audio codec(waveform을 번호 sequence로 압축하는 encoder와 번호에서 waveform을 되살리는 decoder를 함께 학습한 모델)이 구간마다 codebook(학습되는 벡터들의 집합)에서 가장 가까운 항목의 번호를 고른다.
   이 번호를 어휘에 추가하면 audio도 텍스트처럼 ID sequence가 되고, LLM은 embedding table에서 각 ID의 벡터를 꺼낸다.
 
 <Callout type="example">
@@ -157,12 +157,12 @@ Frame rate는 waveform의 sampling rate와 다른 값이다.
 Mimi는 24 kHz 음성을 입력받아 초당 12.5개 frame을 낸다.
 </Callout>
 
-음성을 이해하는 입력 쪽에는 음성 인식(automatic speech recognition, ASR) 등으로 미리 학습한 encoder의 연속 표현이 흔하다.
-음성을 생성하는 출력 쪽에는 이산 token이 흔하다.
-LLM이 softmax로 확률을 계산해 이산 token을 고를 수 있고, codec decoder가 그 token을 소리로 되돌릴 수 있기 때문이다.
-대신 이산 token은 codebook으로 근사하는 과정에서 음색 같은 세부를 잃을 수 있다.
+음성을 이해하는 입력 쪽에는 음성 인식(automatic speech recognition, ASR) 등으로 미리 학습한 encoder의 continuous representation이 흔하다.
+음성을 생성하는 출력 쪽에는 discrete token이 흔하다.
+LLM이 softmax로 확률을 계산해 discrete token을 고를 수 있고, codec decoder가 그 token을 소리로 되돌릴 수 있기 때문이다.
+대신 discrete token은 codebook으로 근사하는 과정에서 음색 같은 세부를 잃을 수 있다.
 또 codebook이 여러 개면 모델이 초당 예측할 값이 frame 수의 몇 배로 늘어난다.
-입력에도 이산 token을 쓰거나 출력을 연속 표현으로 생성하는 설계도 있으므로, 모델마다 입력과 출력의 표현을 따로 확인해야 한다.
+입력에도 discrete token을 쓰거나 출력을 continuous representation으로 생성하는 설계도 있으므로, 모델마다 입력과 출력의 표현을 따로 확인해야 한다.
 
 ## 2. Audio와 언어의 연결
 
@@ -298,7 +298,7 @@ Connector와 필요한 모델 구성 요소를 audio와 텍스트 답변이 짝�
 
 ### 4-1. Semantic token과 acoustic token
 
-음성을 이산 token으로 바꾸면 텍스트 LLM과 같은 다음 token 예측을 audio에도 적용할 수 있다.
+음성을 discrete token으로 바꾸면 텍스트 LLM과 같은 다음 token 예측을 audio에도 적용할 수 있다.
 Speech tokenizer는 음성에서 이런 이산 단위를 얻는 방법을 가리키는 넓은 표현이다.
 같은 이름의 특정 모델인 SpeechTokenizer도 있으므로 문맥으로 구분한다.
 
@@ -316,8 +316,19 @@ Encoder는 가까운 sample들을 묶어 더 낮은 시간 해상도의 연속 �
 Decoder는 선택한 codebook 벡터들을 사용해 파형을 재구성한다.
 입력과 출력이 비슷한 소리로 들리도록 복원 손실 등을 이용해 codec을 학습한다.
 
-한 codebook으로 매우 많은 벡터를 구별하려면 항목 수가 커진다.
-Residual vector quantization(RVQ)은 여러 단계의 codebook을 사용한다.
+Codec 학습에서는 녹음 → encoder → codebook 선택 → decoder → 복원된 녹음 경로를 사용한다.
+생성 모델을 학습할 때는 학습된 codec으로 녹음에서 codebook ID를 얻고, 생성 모델이 조건에 맞는 ID를 예측하도록 학습한다.
+새 음성을 생성할 때는 원본 녹음을 encoder에 넣는 대신 생성 모델이 ID를 만들고, codec decoder가 해당 codebook 벡터를 읽어 파형을 만든다.
+따라서 codec의 복원 학습과 생성 모델의 다음 ID 예측은 서로 다른 학습 목표다.
+
+### 4-3. Residual vector quantization
+
+Codebook 하나로 음성을 충분히 복원하려면 codebook이 감당할 수 없을 만큼 커진다.
+EnCodec은 24 kHz 음성을 초당 75개 frame으로 바꾸고, 6 kbps 설정에서는 frame 하나에 80 bit를 쓴다.[^encodec]
+80 bit를 codebook 하나로 나타내려면 frame마다 $2^{80}$개 벡터 가운데 하나를 골라야 한다.
+이런 codebook은 저장할 수도 학습할 수도 없다.
+
+Residual vector quantization(RVQ)은 작은 codebook 여러 개를 이어 쓴다.[^soundstream]
 RVQ는 첫 codebook에서 가장 가까운 벡터를 고른다.
 그다음 원래 벡터에서 그 선택을 뺀 잔차를 두 번째 codebook에서 고른 벡터로 근사한다.
 이 과정을 반복해 고른 벡터들을 더하면 원래 벡터에 가까워진다.
@@ -325,17 +336,65 @@ RVQ는 첫 codebook에서 가장 가까운 벡터를 고른다.
 두 번째 codebook의 항목이 $\{-0.5, 0, 0.5\}$라면 잔차 −0.3에 가장 가까운 −0.5를 골라 복원값은 1.5가 되고, 남은 오차 0.2는 다음 codebook이 더 줄일 수 있다.
 실제 codec은 스칼라가 아닌 고차원 벡터를 다루며, codebook도 데이터로부터 학습한다.
 
-Codec 학습에서는 녹음 → encoder → codebook 선택 → decoder → 복원된 녹음 경로를 사용한다.
-생성 모델을 학습할 때는 학습된 codec으로 녹음에서 codebook ID를 얻고, 생성 모델이 조건에 맞는 ID를 예측하도록 학습한다.
-새 음성을 생성할 때는 원본 녹음을 encoder에 넣는 대신 생성 모델이 ID를 만들고, codec decoder가 해당 codebook 벡터를 읽어 파형을 만든다.
-따라서 codec의 복원 학습과 생성 모델의 다음 ID 예측은 서로 다른 학습 목표다.
+<figure>
+<svg viewBox="0 0 600 352" role="img" aria-label="RVQ의 1차원 가상 예. 1단계에서 feature 1.7은 첫 codebook의 값 0, 1, 2 가운데 가장 가까운 2(번호 2)로 근사되고 남은 차이는 −0.3이다. 2단계에서 남은 차이 −0.3은 두 번째 codebook의 값 −0.5, 0, 0.5 가운데 가장 가까운 −0.5(번호 0)로 근사되어 복원값은 1.5, 남은 차이는 0.2가 된다. 3단계 codebook은 0.2를 다시 근사한다. 아래쪽은 시간 위치마다 codebook 수만큼 번호가 나와 audio token이 시간 × codebook의 배열이 되는 모습이다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<text x="13" y="22" font-size="15" font-weight="600" fill="#0f172a">① 남은 차이를 다음 codebook이 다시 근사한다</text>
+<text x="13" y="50" font-size="14" font-weight="600" fill="#0f172a">1단계</text>
+<path d="M40 80 H330" stroke="#94a3b8"/>
+<circle cx="88" cy="80" r="6" fill="#2a78d6"/><circle cx="185" cy="80" r="6" fill="#2a78d6"/><circle cx="282" cy="80" r="6" fill="#2a78d6"/>
+<text x="88" y="102" font-size="13" text-anchor="middle" fill="#2a78d6">0</text><text x="185" y="102" font-size="13" text-anchor="middle" fill="#2a78d6">1</text><text x="282" y="102" font-size="13" text-anchor="middle" fill="#2a78d6">2</text>
+<circle cx="253" cy="80" r="5" fill="#ffffff" stroke="#eb6834" stroke-width="2"/><text x="253" y="66" font-size="13" text-anchor="middle" font-weight="600" fill="#eb6834">1.7</text>
+<path d="M258 80 H275" stroke="#eb6834" stroke-width="1.5" stroke-dasharray="3 3"/>
+<text x="350" y="68" font-size="14" fill="#0f172a">1.7 → 가장 가까운 <tspan fill="#2a78d6" font-weight="600">2</tspan> (번호 2)</text>
+<text x="350" y="90" font-size="13" fill="#64748b">남은 차이 = 1.7 − 2 = −0.3</text>
+<text x="13" y="130" font-size="14" font-weight="600" fill="#0f172a">2단계</text>
+<path d="M40 160 H330" stroke="#94a3b8"/>
+<circle cx="112" cy="160" r="6" fill="#2a78d6"/><circle cx="185" cy="160" r="6" fill="#2a78d6"/><circle cx="258" cy="160" r="6" fill="#2a78d6"/>
+<text x="112" y="182" font-size="13" text-anchor="middle" fill="#2a78d6">−0.5</text><text x="185" y="182" font-size="13" text-anchor="middle" fill="#2a78d6">0</text><text x="258" y="182" font-size="13" text-anchor="middle" fill="#2a78d6">0.5</text>
+<circle cx="141" cy="160" r="5" fill="#ffffff" stroke="#eb6834" stroke-width="2"/><text x="141" y="146" font-size="13" text-anchor="middle" font-weight="600" fill="#eb6834">−0.3</text>
+<path d="M136 160 H119" stroke="#eb6834" stroke-width="1.5" stroke-dasharray="3 3"/>
+<text x="350" y="148" font-size="14" fill="#0f172a">−0.3 → 가장 가까운 <tspan fill="#2a78d6" font-weight="600">−0.5</tspan> (번호 0)</text>
+<text x="350" y="170" font-size="13" fill="#64748b">복원값 = 2 + (−0.5) = 1.5, 남은 차이 0.2</text>
+<text x="13" y="212" font-size="13" fill="#64748b">3단계 codebook은 0.2를 다시 근사한다. 단계가 늘수록 복원값이 1.7에 가까워진다.</text>
+<text x="13" y="248" font-size="15" font-weight="600" fill="#0f172a">② 한 시간 위치에서 번호가 codebook 수만큼 나온다</text>
+<text x="160" y="272" font-size="13" text-anchor="middle" fill="#64748b">t₁</text><text x="216" y="272" font-size="13" text-anchor="middle" fill="#64748b">t₂</text><text x="272" y="272" font-size="13" text-anchor="middle" fill="#64748b">t₃</text><text x="328" y="272" font-size="13" text-anchor="middle" fill="#64748b">t₄</text>
+<text x="13" y="296" font-size="13" fill="#0f172a">codebook 1</text><text x="13" y="322" font-size="13" fill="#0f172a">codebook 2</text><text x="13" y="348" font-size="13" fill="#0f172a">codebook 3</text>
+<rect x="134" y="280" width="52" height="24" rx="4" fill="#e2e8f0" stroke="#0f172a"/><text x="160" y="297" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">2</text>
+<rect x="134" y="306" width="52" height="24" rx="4" fill="#e2e8f0" stroke="#0f172a"/><text x="160" y="323" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">0</text>
+<rect x="134" y="332" width="52" height="18" rx="4" fill="#e2e8f0" stroke="#0f172a"/><text x="160" y="346" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">…</text>
+<rect x="190" y="280" width="52" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="216" y="297" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="190" y="306" width="52" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="216" y="323" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="190" y="332" width="52" height="18" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="216" y="346" font-size="13" text-anchor="middle" fill="#0f172a">…</text>
+<rect x="246" y="280" width="52" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="272" y="297" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="246" y="306" width="52" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="272" y="323" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="246" y="332" width="52" height="18" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="272" y="346" font-size="13" text-anchor="middle" fill="#0f172a">…</text>
+<rect x="302" y="280" width="52" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="328" y="297" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<rect x="302" y="306" width="52" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="328" y="323" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="302" y="332" width="52" height="18" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="328" y="346" font-size="13" text-anchor="middle" fill="#0f172a">…</text>
+<text x="372" y="298" font-size="13" fill="#0f172a">t₁ 열의 (2, 0, …)이 위의 예다.</text>
+<text x="372" y="320" font-size="13" fill="#64748b">텍스트 token은 위치마다 번호 1개,</text>
+<text x="372" y="340" font-size="13" fill="#64748b">RVQ audio token은 codebook 수만큼.</text>
+</svg>
+<figcaption>RVQ의 1차원 가상 예. 위는 본문의 1.7 예를 두 단계로 근사하는 과정이고, 아래는 그 결과 시간 위치마다 codebook 수만큼 번호가 나오는 모습이다. t₂~t₄ 열의 번호는 설명을 위해 임의로 넣었다.</figcaption>
+</figure>
 
-각 시간 위치에서 여러 codebook의 ID가 나오므로 audio token은 단일 텍스트 token처럼 한 줄이 아니라 시간 × codebook의 배열이 될 수 있다.
-초당 frame이 많거나 codebook이 많으면 세부를 더 표현할 여지가 생기지만, 생성 모델이 예측해야 할 값도 늘어난다.
-반대로 너무 적은 token만 쓰면 화자 특성이나 고주파 음향이 손상될 수 있다.
-압축률과 복원 품질, 생성의 난이도, 실시간 지연은 함께 살펴야 한다.
+EnCodec의 codebook은 하나에 1024개(10 bit) 벡터를 담는다.
+이런 codebook 8개를 이어 쓰면 frame당 80 bit가 된다.
+저장하는 벡터는 $8\times1024=8{,}192$개뿐이지만, frame마다 고를 수 있는 조합은 $1024^8=2^{80}$가지다.
+**저장할 벡터는 덧셈으로 늘고 표현할 수 있는 조합은 곱셈으로 늘어나는 것이 RVQ의 핵심이다.**
 
-### 4-3. SpeechTokenizer
+RVQ의 codebook은 순서에 따라 맡는 정보가 다르다.
+첫 codebook이 원래 벡터를 대략 근사하고, 뒤의 codebook들은 남은 작은 차이를 채운다.
+그래서 뒤쪽 codebook을 덜 쓰면 bitrate는 낮아지고 소리는 거칠어진다.
+SoundStream은 학습 중에 쓰는 quantizer 수를 무작위로 줄이는 방식(quantizer dropout)으로, 한 모델이 3 kbps부터 18 kbps까지의 bitrate에서 동작하게 했다.[^soundstream]
+EnCodec도 학습 중에 codebook 수를 무작위로 골라 여러 bitrate를 한 모델로 다룬다.[^encodec]
+
+각 시간 위치에서 여러 codebook의 ID가 나오므로, audio token은 텍스트 token처럼 한 줄이 아니라 시간 × codebook의 배열이 된다.
+초당 frame이나 codebook이 많으면 세부를 더 표현할 수 있지만, 생성 모델이 예측해야 할 값도 늘어난다.
+반대로 token이 너무 적으면 화자 특성이나 고주파 음향이 손상될 수 있다.
+그래서 이 배열을 어떤 순서로 생성할지가 audio 생성 모델의 설계 문제가 된다.
+
+### 4-4. SpeechTokenizer
 
 내용과 음향을 서로 다른 tokenizer로 얻으면 두 표현을 결합하는 생성 단계와 정보 중복을 함께 관리해야 한다.
 SpeechTokenizer는 encoder–RVQ–decoder의 codec 구조에 내용 중심의 학습 신호를 더해, 하나의 RVQ 계층에서 내용에 유용한 표현과 복원에 필요한 나머지 정보를 함께 얻는다.[^speechtokenizer]
@@ -350,7 +409,7 @@ Moshi의 codec인 Mimi도 사전학습된 speech 모델 WavLM의 표현을 같�
 그림은 [원논문 공개본](https://arxiv.org/abs/2308.16692)의 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) 조건을 따른다.
 학습 목표는 정보의 배치를 유도할 뿐이어서, 첫 quantizer에 실제로 어떤 정보가 얼마나 남는지는 따로 측정해야 한다.
 
-### 4-4. LM-SPT
+### 4-5. LM-SPT
 
 SpeechTokenizer는 quantizer의 출력을 teacher feature와 시점마다 직접 맞춘다.
 Token 수를 줄이려고 frame rate를 낮추면, teacher feature도 평균 pooling으로 줄여 맞춰야 한다.
@@ -456,16 +515,16 @@ GLM-4-Voice는 ASR 모델의 encoder 중간에 vector quantization 병목을 넣
 Token이 담는 정보가 적은 만큼, 생성한 token을 파형으로 되살리는 일은 flow matching 모델과 HiFi-GAN vocoder로 된 decoder가 맡는다.
 
 셋째는 입력과 출력의 표현을 다르게 두는 것이다.
-모델은 이해에 쓰는 입력을 encoder의 연속 feature로 받고, 출력만 이산 token으로 낸다.
+모델은 이해에 쓰는 입력을 encoder의 연속 feature로 받고, 출력만 discrete token으로 낸다.
 Liquid AI의 LFM3-Audio-2B는 텍스트와 audio를 입력받아 텍스트, 음성 또는 둘을 번갈아 배치한 출력을 만든다.[^lfm3-audio]
 음성 입력은 미래 입력을 보지 않는 인과적(causal) audio encoder와 projector를 거친 연속 벡터로 언어 모델에 들어간다.
 음성을 출력할 때는 모델이 이산 audio token을 예측하고, LiquidCodec decoder가 이를 파형으로 바꾼다.
-LiquidCodec은 음성 80 ms를 12개 이산 token으로 표현한다.
+LiquidCodec은 음성 80 ms를 12개 discrete token으로 표현한다.
 
 카카오가 2025년에 설명한 Kanana-a도 같은 비대칭 구성이다.[^kanana-a]
-음성 입력은 Mel spectrogram과 Whisper audio encoder, audio projector를 거쳐 연속 표현이 된다.
+음성 입력은 Mel spectrogram과 Whisper audio encoder, audio projector를 거쳐 continuous representation이 된다.
 Projector는 1차원 convolution과 pooling을 조합한 1D-C-Abstractor로 긴 feature sequence를 줄인다.
-음성으로 답할 때는 별도의 Voice Token LM이 LLM의 정보를 바탕으로 이산 음성 token을 만든다.
+음성으로 답할 때는 별도의 Voice Token LM이 LLM의 정보를 바탕으로 음성의 discrete token을 만든다.
 Token-Voicebox가 이 token을 Mel spectrogram으로 바꾸고, vocoder UnivNet이 파형으로 바꾼다.
 학습은 세 단계로 진행한다.
 먼저 ASR·TTS 자료로 projector와 Voice Token LM을 맞춘다.
@@ -475,11 +534,11 @@ Kanana-o의 2026년 후속 개발에서는 tokenizer를 LM-SPT로 바꾸어 toke
 
 | 모델 | LLM이 받는 음성 입력 | LLM이 내는 음성 token | 파형 복원 |
 | --- | --- | --- | --- |
-| Moshi | Mimi의 이산 token | 12.5 Hz, codebook 8개 | Mimi decoder |
-| MiMo-Audio | 이산 token의 patch | 25 Hz, codebook 8개를 네 frame씩 patch | patch decoder → audio decoder → vocoder |
-| GLM-4-Voice | 단일 codebook 이산 token | 12.5 Hz, codebook 1개 | flow matching → HiFi-GAN |
+| Moshi | Mimi의 discrete token | 12.5 Hz, codebook 8개 | Mimi decoder |
+| MiMo-Audio | discrete token의 patch | 25 Hz, codebook 8개를 네 frame씩 patch | patch decoder → audio decoder → vocoder |
+| GLM-4-Voice | 단일 codebook discrete token | 12.5 Hz, codebook 1개 | flow matching → HiFi-GAN |
 | LFM3-Audio-2B | encoder의 연속 feature | 80 ms마다 12개 | LiquidCodec decoder |
-| Kanana-a (2025) | Whisper encoder의 연속 feature | Voice Token LM의 이산 token | Token-Voicebox → UnivNet |
+| Kanana-a (2025) | Whisper encoder의 연속 feature | Voice Token LM의 discrete token | Token-Voicebox → UnivNet |
 
 ### 5-4. 텍스트와 음성의 interleaving
 
@@ -489,7 +548,7 @@ Kanana-o의 2026년 후속 개발에서는 tokenizer를 LM-SPT로 바꾸어 toke
 텍스트와 음성을 작은 단위로 번갈아 배치하는 interleaving은 일부를 먼저 생성할 수 있게 하면서, 사전학습된 텍스트 LLM의 지식을 음성 token으로 잇는 방법이기도 하다.
 
 서울대와 네이버 연구진의 USDM(Unified Spoken Dialog Model)은 음성 질문을 받아 음성으로 응답한다.[^naver-usdm]
-USDM은 입력 음성을 speech tokenizer로 이산 token으로 바꾼다.
+USDM은 입력 음성을 speech tokenizer로 discrete token으로 바꾼다.
 USDM의 언어 모델은 응답의 텍스트를 먼저 생성한 뒤 speech token을 생성한다.
 Token-Voicebox가 생성된 speech token을 Mel spectrogram으로 바꾸고, vocoder가 파형으로 복원한다.
 USDM은 사전학습된 텍스트 LLM(공개 구현은 Mistral-7B)에서 출발한다.
@@ -528,7 +587,7 @@ Streaming은 데이터를 조금씩 처리한다는 뜻일 뿐이다.
 Full duplex 시스템은 자신이 말하는 동안에도 사용자 입력을 계속 듣고 반영해야 한다.
 
 Moshi는 사용자 음성과 모델의 음성을 별도의 병렬 스트림으로 표현하고, 두 스트림의 시간 관계를 모델링해 실시간 대화를 구성한다.[^moshi]
-Moshi는 사용자 음성 입력과 모델 음성 출력을 모두 Mimi라는 neural codec의 이산 token으로 표현한다.
+Moshi는 사용자 음성 입력과 모델 음성 출력을 모두 Mimi라는 neural codec의 discrete token으로 표현한다.
 Mimi의 frame 간격이 80 ms이므로 모델은 80 ms마다 사용자 스트림의 새 frame을 받고 자기 스트림의 다음 frame을 낸다.
 Moshi는 여기에 응답 음성과 시간적으로 맞춘 텍스트 token을 함께 예측하는 Inner Monologue 방식을 더한다.
 Moshi는 speech-to-speech 모델이지만, 각 시간 칸에서 자기가 할 말의 텍스트 token을 음성 token보다 먼저 예측한다.
@@ -572,6 +631,7 @@ LFM3-Audio-2B는 음성 요청으로부터 도구 호출을 생성하는 사용 
 [^whisper]: Radford, A., Kim, J. W., Xu, T., Brockman, G., McLeavey, C., & Sutskever, I. (2023). Robust Speech Recognition via Large-Scale Weak Supervision. *Proceedings of the 40th International Conference on Machine Learning*. [논문](https://proceedings.mlr.press/v202/radford23a.html).
 [^qwen3-asr]: Qwen Team. (2026). Qwen3-ASR-1.7B. *Hugging Face model card*. [모델 카드](https://huggingface.co/Qwen/Qwen3-ASR-1.7B).
 [^salmonn]: Tang, C., Yu, W., Sun, G., Chen, X., Tan, T., Li, W., Lu, L., Ma, Z., & Zhang, C. (2024). SALMONN: Towards Generic Hearing Abilities for Large Language Models. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2310.13289).
+[^soundstream]: Zeghidour, N., Luebs, A., Omran, A., et al. (2022). SoundStream: An End-to-End Neural Audio Codec. *IEEE/ACM Transactions on Audio, Speech, and Language Processing*. [논문](https://arxiv.org/abs/2107.03312).
 [^encodec]: Défossez, A., Copet, J., Synnaeve, G., & Adi, Y. (2023). High Fidelity Neural Audio Compression. *Transactions on Machine Learning Research*. [논문](https://openreview.net/forum?id=ivCd8z8zR2), [공개본](https://arxiv.org/abs/2210.13438).
 [^speechtokenizer]: Zhang, X., Zhang, D., Li, S., Zhou, Y., & Qiu, X. (2024). SpeechTokenizer: Unified Speech Tokenizer for Speech Language Models. *International Conference on Learning Representations*. [논문](https://proceedings.iclr.cc/paper_files/paper/2024/hash/86d1ab582afb247ccaa84bec4a7e24f7-Abstract-Conference.html).
 [^moshi]: Défossez, A., Mazaré, L., Orsini, M., Royer, A., Pérez, P., Jégou, H., Grave, E., & Zeghidour, N. (2024). Moshi: a speech-text foundation model for real-time dialogue. *arXiv preprint arXiv:2410.00037*. [논문](https://arxiv.org/abs/2410.00037).

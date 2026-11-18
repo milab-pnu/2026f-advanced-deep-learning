@@ -7,6 +7,7 @@ order: 0
 import vitArchitecture from "./assets/week09-vit-architecture.png";
 import clipOverview from "./assets/week09-clip-overview.png";
 import vqganOverview from "./assets/week09-vqgan-overview.png";
+import honeybeeProjectors from "./assets/week09-honeybee-projectors.png";
 import groundingDino from "./assets/week09-grounding-dino.jpg";
 import samDiagram from "./assets/week09-sam-diagram.png";
 
@@ -20,9 +21,7 @@ Vision-language model(VLM)의 대부분은 이를 위해 세 조각으로 이루
 **Vision encoder**가 이미지를 feature로 바꾸고, **connector**가 그 feature를 LLM의 입력 차원에 맞추며, **LLM**이 이렇게 들어온 벡터와 질문을 한 문맥에서 읽고 답을 생성한다.
 **이미지 한 장은 매우 긴 벡터 sequence**가 되어 질문의 token과 나란히 놓인다.
 LLM에 이미지나 소리 같은 다른 modality의 입력을 붙인 모델을 넓게 멀티모달 대규모 언어 모델(multimodal large language model, MLLM)이라 부르고, VLM은 그 가운데 시각 입력을 다루는 경우다.
-다만 VLM이라는 말은 문헌마다 범위가 다르다.
-CLIP처럼 이미지와 텍스트를 같은 공간에 맞추는 encoder도 VLM이라 부르는 경우가 많고,[^vlmsurvey] LLM을 붙인 쪽을 따로 LVLM(large vision-language model)이나 vision LLM이라 부르기도 한다.
-**이 노트에서 VLM은 LLM에 시각 입력을 붙여 텍스트를 생성하는 모델만 가리키고**, CLIP 같은 모델은 이미지–텍스트 encoder라 부른다.
+CLIP처럼 이미지와 텍스트를 같은 공간에 맞추는 encoder도 VLM이라 부르는 문헌이 있지만,[^vlmsurvey] **이 노트에서 VLM은 LLM에 시각 입력을 붙여 텍스트를 생성하는 모델만 가리킨다.**
 
 이에 앞서, 이미지(Kanana-v)와 음성(Kanana-a)을 함께 다루는 Kanana-o의 개발 사례를 영상으로 제공한다.
 
@@ -47,7 +46,6 @@ ViT는 모든 patch에 같은 변환을 적용해, 이 벡터를 Transformer의 
 Patch 벡터만 모아서는 각 조각이 원래 어디에 있었는지 알 수 없으므로, ViT는 patch마다 위치 embedding을 더한다.
 Transformer encoder의 self-attention은 각 patch가 다른 patch의 정보를 받아 자신의 표현을 갱신하게 한다.
 예를 들어 자동차의 바퀴를 담은 patch가 차체를 담은 patch를 참고하면 국소적인 무늬와 전체 물체를 연결할 수 있다.
-입력 patch token은 사진의 작은 조각에서 출발하지만, 여러 층을 통과한 출력은 다른 위치의 정보를 포함하는 문맥화된 표현이다.
 분류할 때 ViT는 sequence 맨 앞에 학습 가능한 `[CLS]` token을 붙이고, 마지막 층에서 그 위치의 표현을 classifier에 넣는다.
 
 ViT는 decoder가 아니라 Transformer **encoder**다.
@@ -60,10 +58,8 @@ CNN(convolutional neural network)은 가까운 픽셀끼리 먼저 묶고, 같�
 ViT의 self-attention은 처음부터 **모든 patch를 서로 연결하므로 이런 inductive bias가 약하다.**
 그래서 **ViT는 가까운 것끼리 관련이 깊다는 사실도 데이터에서 배워야 한다.**
 
-CNN은 가까운 픽셀이 서로 관련 있다는 것을 처음부터 알고 시작한다.
-반면 ViT는 같은 사실을 예시에서 찾아내야 하므로, 데이터가 적으면 일반화가 떨어진다.
+데이터가 적으면 ViT는 이 사실을 충분히 배우지 못해 일반화가 떨어진다.
 약 130만 장의 ImageNet으로 사전학습했을 때 ViT는 비교 대상인 CNN보다 정확도가 낮았다.
-더 큰 ViT가 작은 ViT보다 오히려 낮기도 했다.
 1,400만 장에서 3억 장 규모의 라벨 데이터로 사전학습했을 때 ViT가 CNN을 앞섰다.
 **원논문은 이를 두고 큰 규모의 학습이 inductive bias를 이긴다고 정리한다.**
 
@@ -95,9 +91,6 @@ MAE에서 가리는 비율을 높이는 이유는 **이미지의 중복에 있�
 Encoder가 보이는 patch만 처리하므로 사전학습 계산도 줄어든다.
 
 MAE 원논문은 추가 라벨 데이터 없이 ImageNet의 이미지만으로 큰 ViT를 사전학습했고, 이 ViT를 미세조정해 높은 정확도를 얻었다.
-**이렇게 사전학습한 encoder는 이미지 feature가 필요한 다른 모델에도 쓰인다.**
-예를 들어 물체의 윤곽을 픽셀 단위로 칠한 영역을 그리는 SAM(Segment Anything Model)의 image encoder도 MAE로 사전학습한 ViT다.[^sam]
-다만 픽셀을 복원하는 task와 classification task 사이에는 간극이 있다.
 
 ### 1-3. Self-distillation
 
@@ -130,7 +123,6 @@ DINOv2는 MAE처럼 가린 patch를 맞히되, 픽셀이 아니라 teacher의 �
 
 MAE와 DINO는 라벨 없이 이미지만으로 학습해 범주 라벨의 한계를 피한다.
 하지만 이렇게 학습한 feature는 “고양이”라는 단어와 연결되지 않는다.
-ViT는 이미지를 벡터로 바꾸는 방법을 제공할 뿐이고, 그 벡터에 어떤 의미를 담을지는 학습 데이터와 objective가 결정한다.
 시각적 질문에 답하려면 모델이 사물의 이름뿐 아니라 색, 수량, 위치, 장면 속 관계를 **언어와 연결해야 한다.**
 이미지와 언어를 짝지어 학습하면, 모델은 고정된 범주 이름에 묶이지 않고 언어와 연결된 시각 표현을 얻는다.
 
@@ -171,8 +163,6 @@ CLIP에서는 범주 이름을 문장으로 써서 텍스트 encoder에 넣으�
 앞 그림의 (2)와 (3)이 이 과정이다.
 이렇게 해당 task의 학습 예시를 하나도 보지 않고 푸는 것을 **zero-shot**이라 하고, 고를 범주를 미리 정해 두지 않아도 되는 성질을 **open-vocabulary**라 한다.
 CLIP은 ImageNet의 학습 이미지 128만 장을 한 장도 쓰지 않고, 그 데이터로 학습한 ResNet-50과 같은 76.2%의 정확도를 냈다.[^clip]
-다만 결과는 문장을 어떻게 쓰느냐에 따라 달라진다.
-범주 이름만 넣는 것보다 `A photo of a {label}.` 형식을 쓸 때 ImageNet 정확도가 1.3%p 높았고, 서로 다른 문장 형식 80개의 결과를 앙상블하면 3.5%p가 더 올랐다.
 
 이 성질은 범주가 계속 늘어나는 class-incremental learning에서 특히 쓸모가 있다.
 분류 head를 쓰는 모델은 새 범주가 생길 때마다 head를 늘려 다시 학습해야 한다.
@@ -193,7 +183,6 @@ SigLIP은 이미지 $i$와 텍스트 $j$가 짝이면 $z_{ij}=1$, 아니면 $z_{
 
 각 칸의 손실은 다른 칸의 점수와 무관하다.
 그래서 **각 장치는 자기 몫의 칸만 계산하면 되고, 행렬 전체를 한곳에 모으거나 메모리에 올리지 않아도 된다.**
-원논문은 batch가 16,000보다 작을 때 sigmoid 손실이 softmax 손실보다 뚜렷이 좋고, batch를 키우는 이득은 두 손실 모두 32,000 근처에서 포화한다고 보고한다.
 한 가지 주의할 점은 정답 칸이 $N$개뿐이고 나머지 $N^2-N$개는 짝이 아닌 칸이라는 것이다.
 학습 초기에는 이 많은 오답 칸의 손실이 전체를 압도한다.
 그래서 SigLIP은 학습 가능한 bias를 큰 음수(−10)로 초기화해, 처음에는 모든 칸을 “짝이 아니다”에 가깝게 판정하도록 둔다.
@@ -214,29 +203,74 @@ VLM에서 LLM이 읽는 것은 encoder의 patch feature이므로, 여기서 빠�
 
 ## 3. 시각 표현과 언어 생성의 연결
 
-### 3-1. 연속 표현과 이산 token
+### 3-1. Continuous representation과 discrete token
 
 텍스트 LLM은 크기가 $V$인 어휘(vocabulary)의 token ID를 입력으로 받아 embedding table에서 벡터를 꺼내고, 출력에서도 $V$개 token 가운데 하나를 고른다.
-이처럼 정해진 번호 가운데 하나를 주고받는 것을 이산(discrete)이라 한다.
+이처럼 입력과 출력이 정해진 번호 가운데 하나이므로, 텍스트 token은 discrete token이다.
 이미지를 LLM에 넣는 방법은 이 기준에서 둘로 나뉜다.
 
-**이산 token**은 이미지를 텍스트처럼 번호로 바꾼다.
-VQ-VAE(vector quantized variational autoencoder)는 학습되는 벡터 $K$개로 이루어진 codebook을 두고, encoder가 만든 위치별 벡터를 가장 가까운 codebook 벡터의 번호로 바꾼다.[^vqvae]
+**Discrete token**은 이미지를 텍스트처럼 번호로 바꾼다.
+이미지 자체가 discrete한 것은 아니다.
+Encoder가 만든 벡터는 어떤 실수 값이든 될 수 있는데, discrete token은 이 벡터를 미리 학습해 둔 $K$개 벡터 가운데 가장 가까운 것으로 바꿔 번호를 붙인다.
+VQ-VAE(vector quantized variational autoencoder)는 학습되는 벡터 $K$개로 이루어진 codebook을 두고, encoder가 만든 위치별 벡터를 가장 가까운 codebook 벡터의 번호로 바꾼다.[^vqvae]<Sidenote>VQ-VAE는 이미지를 압축했다가 다시 복원하는 autoencoder다. Encoder, codebook, decoder를 함께 학습하며, 목표는 decoder가 고른 codebook 벡터들만으로 원래 이미지를 복원하는 것이다. 라벨이나 텍스트는 쓰지 않는다. 학습이 끝나면 encoder와 codebook은 이미지를 번호로 바꾸는 tokenizer가 되고, decoder는 번호를 이미지로 되돌린다. 원논문은 그다음 번호 sequence의 분포를 PixelCNN 같은 autoregressive 모델로 따로 학습해 이미지를 생성했다.</Sidenote>
 **Codebook이 어휘에, 크기 $K$가 $V$에, codebook 벡터의 번호가 token ID에 대응한다.**
 이 번호를 LLM의 어휘에 추가하면 어휘 크기는 $V+K$가 된다.
+
+<figure>
+<svg viewBox="0 0 600 396" role="img" aria-label="가상 예. 위쪽은 2차원 feature 공간에 codebook 벡터 네 개(#0~#3)가 있고, 이미지 patch A, B, C의 feature가 각각 가장 가까운 codebook 벡터로 옮겨지는 모습이다. patch A의 feature (0.8, 0.2)는 #1 (1.0, 0.0)으로 바뀌어 LLM에는 번호 1만 전달되고, 두 값의 차이는 버려진다. 아래쪽은 같은 patch가 LLM에 들어가는 두 경로다. Discrete token 경로는 encoder, feature (0.8, 0.2), 가장 가까운 #1, token ID 1, embedding table의 1번 행 순서이고, continuous representation 경로는 encoder, feature (0.8, 0.2), connector를 거쳐 그 벡터가 그대로 LLM 입력이 된다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<text x="13" y="22" font-size="15" font-weight="600" fill="#0f172a">① 각 feature를 가장 가까운 codebook 벡터로 옮긴다</text>
+<rect x="30" y="38" width="220" height="172" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<path d="M140 38 V210 M30 124 H250" stroke="#94a3b8" stroke-dasharray="4 4"/>
+<path d="M180 160 L198 175 M100 95 L81 76 M170 100 L198 76" stroke="#eb6834" stroke-width="1.5" stroke-dasharray="3 3"/>
+<circle cx="75" cy="180" r="6" fill="#2a78d6"/><text x="86" y="198" font-size="13" fill="#2a78d6">#0</text>
+<circle cx="205" cy="180" r="6" fill="#2a78d6"/><text x="216" y="198" font-size="13" fill="#2a78d6">#1</text>
+<circle cx="75" cy="70" r="6" fill="#2a78d6"/><text x="86" y="60" font-size="13" fill="#2a78d6">#2</text>
+<circle cx="205" cy="70" r="6" fill="#2a78d6"/><text x="216" y="60" font-size="13" fill="#2a78d6">#3</text>
+<circle cx="180" cy="160" r="5" fill="#ffffff" stroke="#eb6834" stroke-width="2"/><text x="160" y="164" font-size="13" font-weight="600" fill="#eb6834">A</text>
+<circle cx="100" cy="95" r="5" fill="#ffffff" stroke="#eb6834" stroke-width="2"/><text x="110" y="108" font-size="13" font-weight="600" fill="#eb6834">B</text>
+<circle cx="170" cy="100" r="5" fill="#ffffff" stroke="#eb6834" stroke-width="2"/><text x="150" y="104" font-size="13" font-weight="600" fill="#eb6834">C</text>
+<text x="140" y="228" font-size="13" text-anchor="middle" fill="#64748b">2차원으로 줄여 그린 feature 공간</text>
+<text x="272" y="62" font-size="14" font-weight="600" fill="#2a78d6">codebook: 학습된 벡터 4개 (#0~#3)</text>
+<text x="272" y="92" font-size="14" fill="#0f172a">patch A의 feature = <tspan fill="#eb6834" font-weight="600">(0.8, 0.2)</tspan></text>
+<text x="272" y="116" font-size="14" fill="#0f172a">→ 가장 가까운 <tspan fill="#2a78d6" font-weight="600">#1 = (1.0, 0.0)</tspan>으로 바뀜</text>
+<text x="272" y="140" font-size="14" fill="#0f172a">→ LLM이 받는 것은 번호 <tspan font-weight="600">1</tspan>뿐</text>
+<text x="272" y="170" font-size="13" fill="#64748b">(0.8, 0.2)와 (1.0, 0.0)의 차이는 버려진다</text>
+<text x="272" y="194" font-size="13" fill="#64748b">물감 대신 크레파스 4색 중 가장 비슷한 색으로</text>
+<text x="272" y="212" font-size="13" fill="#64748b">칠하는 셈이다</text>
+<text x="13" y="256" font-size="15" font-weight="600" fill="#0f172a">② 같은 patch A가 LLM에 들어가는 두 경로</text>
+<text x="13" y="280" font-size="14" font-weight="600" fill="#0f172a">Discrete token</text>
+<rect x="13" y="288" width="84" height="34" rx="6" fill="#f8fafc" stroke="#94a3b8"/><text x="55" y="310" font-size="13" text-anchor="middle" fill="#0f172a">patch A</text>
+<rect x="111" y="288" width="84" height="34" rx="6" fill="#f8fafc" stroke="#94a3b8"/><text x="153" y="310" font-size="13" text-anchor="middle" fill="#0f172a">encoder</text>
+<rect x="209" y="288" width="84" height="34" rx="6" fill="#f8fafc" stroke="#eb6834"/><text x="251" y="310" font-size="13" text-anchor="middle" fill="#eb6834">(0.8, 0.2)</text>
+<rect x="307" y="288" width="84" height="34" rx="6" fill="#f8fafc" stroke="#2a78d6"/><text x="349" y="310" font-size="13" text-anchor="middle" fill="#2a78d6">→ #1</text>
+<rect x="405" y="288" width="84" height="34" rx="6" fill="#e2e8f0" stroke="#0f172a"/><text x="447" y="310" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">token ID 1</text>
+<rect x="503" y="288" width="84" height="34" rx="6" fill="#f8fafc" stroke="#94a3b8"/><text x="545" y="303" font-size="12" text-anchor="middle" fill="#0f172a">embedding</text><text x="545" y="317" font-size="12" text-anchor="middle" fill="#0f172a">table 1번 행</text>
+<text x="13" y="354" font-size="14" font-weight="600" fill="#0f172a">Continuous representation</text>
+<rect x="13" y="362" width="84" height="34" rx="6" fill="#f8fafc" stroke="#94a3b8"/><text x="55" y="384" font-size="13" text-anchor="middle" fill="#0f172a">patch A</text>
+<rect x="111" y="362" width="84" height="34" rx="6" fill="#f8fafc" stroke="#94a3b8"/><text x="153" y="384" font-size="13" text-anchor="middle" fill="#0f172a">encoder</text>
+<rect x="209" y="362" width="84" height="34" rx="6" fill="#f8fafc" stroke="#eb6834"/><text x="251" y="384" font-size="13" text-anchor="middle" fill="#eb6834">(0.8, 0.2)</text>
+<rect x="307" y="362" width="84" height="34" rx="6" fill="#f8fafc" stroke="#94a3b8"/><text x="349" y="384" font-size="13" text-anchor="middle" fill="#0f172a">connector</text>
+<rect x="405" y="362" width="182" height="34" rx="6" fill="#e2e8f0" stroke="#0f172a"/><text x="496" y="384" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">그 벡터가 그대로 LLM 입력</text>
+<path d="M98 305 H106 M196 305 H204 M294 305 H302 M392 305 H400 M490 305 H498 M98 379 H106 M196 379 H204 M294 379 H302 M392 379 H400" stroke="#0f172a"/>
+<polygon points="111,305 105,301 105,309" fill="#0f172a"/><polygon points="209,305 203,301 203,309" fill="#0f172a"/><polygon points="307,305 301,301 301,309" fill="#0f172a"/><polygon points="405,305 399,301 399,309" fill="#0f172a"/><polygon points="503,305 497,301 497,309" fill="#0f172a"/>
+<polygon points="111,379 105,375 105,383" fill="#0f172a"/><polygon points="209,379 203,375 203,383" fill="#0f172a"/><polygon points="307,379 301,375 301,383" fill="#0f172a"/><polygon points="405,379 399,375 399,383" fill="#0f172a"/>
+</svg>
+<figcaption>설명을 위해 feature를 2차원으로, codebook을 4개로 줄인 가상 예. Discrete token 경로에서 LLM이 받는 것은 번호이고, 그 번호의 embedding은 LLM이 따로 학습한 벡터다. Continuous representation 경로에서는 encoder가 계산한 벡터가 connector를 거쳐 그대로 들어간다.</figcaption>
+</figure>
+
 아래 그림의 VQGAN은 이 방식의 대표적인 tokenizer다.[^vqgan]
 
-<Figure src={vqganOverview.src} alt="VQGAN과 Transformer의 구성. 아래쪽 VQGAN에서 CNN encoder E가 개 사진을 격자 모양의 feature로 바꾸고, 각 위치를 가장 가까운 codebook 벡터의 번호(1, 42, 3, 94 등)로 바꾼 뒤 CNN decoder G가 사진을 복원한다. 오른쪽 위의 CNN discriminator D는 복원한 이미지의 patch마다 진짜인지 가짜인지 판정한다. 위쪽 Transformer는 번호 sequence에서 앞의 번호들을 보고 다음 번호의 확률 분포를 예측한다." caption="VQGAN의 이산 token. Encoder의 feature를 가장 가까운 codebook 벡터의 번호로 바꾸고(quantization), Transformer가 그 번호 sequence를 다음 token 예측으로 생성한다." source="Esser et al. (2021), Figure 2" wide />
+<Figure src={vqganOverview.src} alt="VQGAN과 Transformer의 구성. 아래쪽 VQGAN에서 CNN encoder E가 개 사진을 격자 모양의 feature로 바꾸고, 각 위치를 가장 가까운 codebook 벡터의 번호(1, 42, 3, 94 등)로 바꾼 뒤 CNN decoder G가 사진을 복원한다. 오른쪽 위의 CNN discriminator D는 복원한 이미지의 patch마다 진짜인지 가짜인지 판정한다. 위쪽 Transformer는 번호 sequence에서 앞의 번호들을 보고 다음 번호의 확률 분포를 예측한다." caption="VQGAN의 discrete token. Encoder의 feature를 가장 가까운 codebook 벡터의 번호로 바꾸고(quantization), Transformer가 그 번호 sequence를 다음 token 예측으로 생성한다." source="Esser et al. (2021), Figure 2" wide />
 
-**연속 표현**은 어휘 없이, vision encoder의 출력을 connector가 LLM의 hidden dimension $d$에 맞춰 텍스트 embedding 자리에 바로 넣는다.
+**Continuous representation**은 어휘 없이, vision encoder의 출력을 connector가 LLM의 hidden dimension $d$에 맞춰 텍스트 embedding 자리에 바로 넣는다.
 **이 벡터 하나도 LLM 입력의 한 자리를 차지하므로 흔히 visual token이라 부른다.**
 
-| | 이산 token | 연속 표현 |
+| | Discrete token | Continuous representation |
 | --- | --- | --- |
 | 정보 손실 | codebook 벡터로 바꾸는 만큼 잃는다 | quantization으로 잃는 정보가 없다 |
 | 이미지 생성 | 텍스트처럼 softmax로 다음 token을 예측한다 | softmax를 쓸 수 없어 다른 출력 방식이 필요하다 |
 
-이미지를 보고 텍스트로 답하는 VLM은 대부분 연속 표현을 입력으로 쓰며, 이 노트의 나머지도 이런 VLM을 다룬다.
+이미지를 보고 텍스트로 답하는 VLM은 대부분 continuous representation을 입력으로 쓰며, 이 노트의 나머지도 이런 VLM을 다룬다.
 
 <Details summary="VQ-VAE의 학습: straight-through estimator와 손실">
 
@@ -261,32 +295,39 @@ Gradient를 $z_e$로 복사하므로 codebook 벡터는 복원 손실에서 grad
 
 ### 3-2. 사전학습된 모델의 결합
 
-연속 표현을 쓰려면 vision encoder의 출력을 LLM의 embedding 자리에 넣어야 한다.
+Continuous representation을 쓰려면 vision encoder의 출력을 LLM의 embedding 자리에 넣어야 한다.
 그런데 vision encoder의 출력은 LLM의 입력 embedding과 차원도 분포도 다르다.
-그래서 **connector**가 시각 feature를 LLM이 읽을 수 있는 입력으로 바꾼다.
-Connector는 차원만 맞추는 것이 아니라, 어떤 벡터가 이미지의 어떤 내용에 대응하는지도 학습해야 한다.
-
-CLIP은 분류할 때 `[CLS]` 출력 하나만 쓴다.
-반면 VLM은 patch마다 나오는 feature를 모두 LLM에 넘긴다.
+그래서 **connector**가 시각 feature를 LLM이 읽을 수 있는 visual token으로 바꾼다.
+CLIP은 분류할 때 `[CLS]` 출력 하나만 쓰지만, VLM의 connector는 patch feature를 입력으로 받는다.
 “개 왼쪽에 무엇이 있는가?” 같은 질문에 답하려면 이미지 전체의 요약이 아니라 위치별 정보가 필요하기 때문이다.
 
-LLaVA는 이미 학습된 두 모델을 그대로 이어 붙인 가장 단순한 VLM이다.[^llava]
-CLIP의 vision encoder가 이미지에서 patch별 feature를 만든다.
-선형층 하나로 된 connector, 즉 projector가 이 feature를 LLM의 입력 차원에 맞춘다.
-LLM인 Vicuna는 이 visual token과 질문을 같은 문맥에서 읽고 답을 생성한다.
-Vicuna는 LLaMA를 사용자가 공유한 ChatGPT 대화로 미세조정한 모델이다.[^vicuna]
-예를 들어 224×224 이미지를 14×14 patch로 나누면 encoder는 patch feature 256개를 낸다.
-Projector는 차원만 바꾸므로 visual token도 256개다.
-후속 LLaVA-1.5는 projector를 2층 MLP(multilayer perceptron)로 바꾸고 입력 해상도를 336×336으로 올렸다.[^llava15]
-그래도 encoder, projector, LLM의 세 조각은 그대로다.
+**Connector는 차원만 맞추는 부품이 아니다.**
+Honeybee 원논문은 connector가 VLM의 효율과 성능을 함께 정한다고 지적한다.[^honeybee]
+VLM의 계산은 대부분 LLM에서 일어나므로, connector가 만드는 visual token의 수가 전체 계산량을 정한다.
+또 connector가 patch feature의 local 정보를 얼마나 보존하느냐에 따라, 물체의 위치 관계를 묻는 질문의 성능이 달라진다.
+그래서 원논문은 connector가 갖춰야 할 두 성질로 visual token 수를 정할 수 있는 <strong>유연성(flexibility)</strong>과 <strong>local 정보 보존(locality preservation)</strong>을 든다.
 
-<Figure src="https://arxiv.org/html/2304.08485v2/llava_arch.svg" alt="LLaVA 구조. 이미지가 vision encoder와 학습 가능한 projection을 거쳐 시각 토큰이 되고 질문과 함께 언어 모델에 전달되어 응답을 생성한다." caption="CLIP vision encoder의 출력을 projection으로 변환해 질문과 함께 언어 모델에 전달한다." source="Liu et al. (2023), Figure 1 · CC BY 4.0" wide />
+<Figure src={honeybeeProjectors.src} alt="VLM의 connector 비교. 위쪽은 vision encoder가 만든 visual feature를 projector가 visual token으로 바꾸어 텍스트 token과 함께 LLM에 넣는 구조다. 아래쪽 (a) 선형 projector는 feature 격자를 하나씩 같은 수의 token으로 바꾸어 유연성은 없고 local 정보는 보존한다. (b) resampler 같은 abstractor는 여러 feature를 몇 개의 token으로 모아 유연성은 있지만 local 정보를 잃는다. (c) C-Abstractor와 D-Abstractor는 주변 feature를 모아 적은 수의 token을 만들며 두 성질을 모두 갖는다." caption="Connector의 세 유형. (a) 선형 projector는 local 정보를 보존하지만 token 수를 줄일 수 없고, (b) abstractor는 token 수를 정할 수 있지만 local 정보를 잃기 쉽다. (c) Honeybee는 두 성질을 함께 갖춘 connector를 제안한다." source="Cha et al. (2024), Figure 2 · kakaobrain/honeybee · Apache-2.0" wide />
+
+이 기준에서 가장 단순한 connector는 그림 (a)의 선형 projector다.
+LLaVA는 이미 학습된 두 모델을 선형 projector로 이어 붙인 VLM이다.[^llava]
+CLIP의 vision encoder가 이미지에서 patch feature를 만들고, 선형층 하나로 된 projector가 이 feature를 LLM의 입력 차원에 맞춘다.
+LLM인 Vicuna는 이렇게 만든 visual token과 질문을 같은 문맥에서 읽고 답을 생성한다.
+예를 들어 224×224 이미지를 14×14 patch로 나누면 encoder는 patch feature 256개를 낸다.
+Projector는 patch feature를 하나씩 따로 변환하므로 visual token도 256개다.
+그래서 local 정보는 그대로 남지만, visual token 수는 patch 수보다 줄일 수 없다.
+후속 LLaVA-1.5는 projector를 2층 MLP(multilayer perceptron)로 바꾸고 입력 해상도를 336×336으로 올렸다.[^llava15]
+그러자 visual token도 576개로 늘었다.
+
+<Figure src="https://arxiv.org/html/2304.08485v2/llava_arch.svg" alt="LLaVA 구조. 이미지가 vision encoder와 학습 가능한 projection을 거쳐 visual token이 되고 질문과 함께 언어 모델에 전달되어 응답을 생성한다." caption="CLIP vision encoder의 출력을 projection으로 변환해 질문과 함께 언어 모델에 전달한다." source="Liu et al. (2023), Figure 1 · CC BY 4.0" wide />
 
 LLM 안에서 visual token들은 patch의 행 순서대로 한 줄로 놓이고, 질문의 token과 함께 하나의 sequence를 이룬다.
 LLM은 이 sequence 전체에 텍스트와 똑같이 1차원 위치 번호를 매긴다.
-Vicuna는 LLaMA 계열이라 RoPE로 위치를 표현한다.
-그런데 1차원 번호만으로는 두 visual token이 위아래로 이웃했는지 알 수 없다.
-LLM은 행과 열의 정보를, vision encoder가 위치 embedding으로 feature 안에 넣어 둔 것에 기댄다.
+Vicuna는 LLaMA 계열이라 이 번호를 RoPE로 표현한다.[^vicuna]
+그러면 위아래로 이웃한 두 visual token은 1차원 번호에서 한 행의 길이만큼 떨어진다.
+앞의 224×224 예에서는 16칸이다.
+LLM은 “16칸 떨어지면 위아래”라는 관계를 학습으로 익혀야 하고, 해상도가 바뀌어 한 행의 길이가 달라지면 같은 거리가 다른 위치 관계를 뜻하게 된다.
+Vision encoder가 위치 embedding으로 각 feature에 넣어 둔 위치 정보도 행과 열의 단서가 된다.
 
 VLM의 vision encoder로는 CLIP과 SigLIP 계열이 널리 쓰여 왔다.
 그런데 global 정렬로 학습한 encoder는 local 정보가 약할 수 있다.
@@ -295,18 +336,50 @@ Prismatic VLMs는 같은 이미지에서 얻은 DINOv2와 SigLIP의 patch featur
 DINOv2는 patch 단위 목표로 학습한 encoder라서 local 정보를 보탠다.
 원논문은 이렇게 하면 위치를 찾는 task에서 성능이 오른다고 보고한다.
 
-Encoder를 처음부터 LLM에 맞춰 학습하기도 한다.
+Vision encoder를 contrastive 학습 대신 LLM처럼 다음 token 예측으로 학습하기도 한다.
 카카오의 Kanana-2 vision encoder는 contrastive 학습을 쓰지 않는다.[^kanana-encoder-blog]
 대신 Kanana-2 LLM의 가중치로 초기화한 Transformer에 이미지와 상세한 설명을 넣고, **다음 설명 token을 예측**하게 학습한다.
 설명에 메뉴판의 글자와 가격까지 들어 있으면, 모델은 그 token을 맞히기 위해 이미지의 세부를 읽어야 한다.
-그 결과 local 정보를 담은 encoder가 만들어진다.
-카카오는 이렇게 학습한 모델을 VLM의 vision encoder로 쓴다.
 
 <Callout type="note">
 [Kanana Vision Encoder: 글로벌 최고 수준에 도전하는 자체 비전 인코더 개발기](https://if.kakao.com/2026/session/time-table?sessionId=86)는 카카오가 자체 vision encoder를 개발한 과정을 소개하는 기술 세션이다.
 </Callout>
 
-### 3-3. 단계별 학습과 early fusion
+### 3-3. 고정 길이의 query와 정보 병목
+
+선형 projector는 patch 수만큼 visual token을 만든다.
+이미지가 커지면 patch가 늘고, LLM의 입력 sequence도 그만큼 길어진다.
+그림 (b)의 abstractor는 patch feature를 일정한 수의 벡터로 요약해 이 길이를 제한한다.
+하지만 요약에서 빠진 정보는 LLM이 다시 확인할 수 없다.
+
+BLIP-2의 Q-Former(Querying Transformer)는 요약하는 쪽을 택했다.[^blip2]
+Q-Former는 학습 가능한 query 벡터를 두고, 이 query로 이미지 feature에 cross-attention을 적용한다.
+여기서 query는 사용자의 질문이 아니라, 이미지에서 정보를 읽어 오도록 학습되는 벡터다.
+Cross-attention은 query마다 출력을 하나씩 내므로, 출력의 개수는 patch 수가 아니라 query 수로 정해진다.
+BLIP-2는 query 32개를 쓴다.
+224×224 이미지에서 patch feature 256개가 나오면, 각 query가 여러 patch의 feature를 서로 다른 비중으로 섞어 벡터 32개를 만든다.
+이미지가 커져 patch가 늘어도 LLM이 받는 벡터는 32개로 같다.
+
+<Figure src="https://arxiv.org/html/2301.12597v3/fig1-example.png" alt="BLIP-2 개요. 왼쪽은 고정된 image encoder와 Q-Former로 이루어진 표현 학습 단계로, Q-Former가 학습 가능한 query들과 텍스트를 입력받는다. 오른쪽은 Q-Former의 출력을 고정된 LLM에 넣어 이미지에 맞는 글을 생성하는 단계다." caption="BLIP-2의 두 단계. 눈꽃 표시는 고정된 모델이다. 학습되는 것은 가운데 Q-Former(query 포함)이며, query의 출력이 선형층을 거쳐 LLM의 입력이 된다." source="Li et al. (2023), Figure 1 · CC BY 4.0" wide />
+
+BLIP-2는 이미지 encoder와 LLM을 고정하고, Q-Former와 그 출력을 LLM의 차원에 맞추는 선형층만 학습한다.
+어떤 정보가 32개의 벡터를 통과할지는 학습이 정한다.
+Honeybee 원논문은 Q-Former와 같은 계열인 resampler가 선형 projector보다 위치 관계를 묻는 task에서 약하다고 보고한다.[^honeybee]
+원논문은 그 원인으로 resampler의 attention이 몇몇 영역에 몰려 나머지 영역의 세부를 놓치는 점을 든다.
+
+Qwen-VL은 같은 생각을 더 단순하게 구현했다.[^qwenvl]
+Qwen-VL의 adapter는 학습 가능한 query 256개와 cross-attention 층 하나로 이루어지고, 이미지 feature를 벡터 256개로 줄인다.
+요약하면서 위치 정보가 사라지지 않도록, adapter는 cross-attention의 query와 key에 2D 절대 위치 encoding을 더한다.
+Qwen-VL은 입력 이미지를 정해진 정사각형 해상도로 조정해 넣는다.
+처음 사전학습에서는 224×224를, 그다음 단계부터는 448×448을 쓴다.
+
+그림 (c)의 C-Abstractor는 Honeybee가 제안한 connector로, 격자 구조를 남긴 채 token을 줄인다.[^honeybee]
+C-Abstractor는 convolution으로 인접한 patch의 정보를 섞고, adaptive average pooling으로 출력의 공간 크기를 조절한다.
+예를 들어 16×16 위치의 feature를 8×8 위치로 줄이면 visual token은 256개에서 64개가 된다.
+Q-Former의 query는 이미지 전체에서 정보를 자유롭게 모으지만, C-Abstractor의 출력은 격자 위치를 유지하므로 위치 관계가 남는다.
+대신 pooling에서 사라진 작은 글자 같은 세부는 나중에 복원할 수 없다.
+
+### 3-4. 단계별 학습과 early fusion
 
 LLaVA는 두 단계로 학습한다.
 첫 단계에서는 vision encoder와 LLM을 고정하고 projector만 학습한다.
@@ -323,51 +396,11 @@ Projector는 고정된 LLM이 이미지에 관한 단어를 잘 맞히도록 시
 연구진은 텍스트만 입력받는 GPT-4에 이미지 대신 COCO의 캡션과 상자(bounding box) 정보를 주고 대화를 생성하게 했다.
 GPT-4는 사진을 직접 보지 못했다.
 그래서 캡션과 상자 정보에 컵의 색이 없다면, 대화에 나오는 컵의 색이 실제 사진과 맞는다는 보장이 없다.
-이런 데이터로 학습한 모델은 사진에 없는 내용도 그럴듯하게 말할 수 있다.
-따라서 VLM을 평가할 때는 이미지 없이도 답할 수 있는 질문만으로는 부족하다.
-이미지의 일부가 바뀌면 정답도 바뀌는 예시나 세부 위치·문자 인식 task를 써야, 모델이 시각 정보를 실제로 쓰는지 확인할 수 있다.
 
 LLaVA는 따로 사전학습한 encoder와 LLM을 나중에 잇는다.
 반대로 처음부터 텍스트와 시각 입력을 한 모델에 함께 넣어 사전학습하는 방식을 **early fusion**이라 한다.
-Chameleon은 VQ 계열 tokenizer가 만든 이산 token과 텍스트 token을 한 Transformer로 처음부터 함께 학습한다.[^chameleon]
-Chameleon 원논문은 이 방식을 early fusion이라 부르고, 이미지와 텍스트를 따로 인코딩한 뒤 결합하는 Flamingo·LLaVA류를 late fusion으로 분류한다.
-다만 문헌마다 이 용어의 범위가 다르다.
-Meta의 Llama 4와 Qwen3.5도 early fusion 학습을 내세운다.[^llama4][^qwen35]
-그런데 Llama 4는 MetaCLIP 기반의 별도 vision encoder를 쓴다.
-따라서 early fusion인지 판단할 때 물어야 할 것은 이산 tokenizer를 쓰느냐가 아니라 **언제부터 어떤 데이터를 함께 학습하느냐**이다.
-
-### 3-4. 고정 길이의 query와 정보 병목
-
-이미지가 커지면 patch feature도 많아진다.
-모든 patch feature를 그대로 LLM에 넘기면 세부 정보는 남지만 입력 sequence가 길어진다.
-반대로 connector가 patch feature를 일정한 수의 벡터로 요약하면 길이는 제한된다.
-하지만 요약에서 빠진 정보는 LLM이 다시 확인할 수 없다.
-
-BLIP-2의 Q-Former(Querying Transformer)는 요약하는 쪽을 택했다.[^blip2]
-Q-Former는 학습 가능한 query 벡터를 두고, 이 query로 이미지 feature에 cross-attention을 적용한다.
-여기서 query는 사용자의 질문이 아니라, 이미지에서 정보를 읽어 오도록 학습되는 벡터다.
-Cross-attention은 query마다 출력을 하나씩 내므로, 출력의 개수는 patch 수가 아니라 query 수로 정해진다.
-예를 들어 patch feature 196개에 query 32개를 적용하면, 각 query가 여러 patch의 feature를 서로 다른 비중으로 섞어 벡터 32개를 만든다.
-이미지가 커져 patch가 늘어도 LLM이 받는 벡터는 32개로 같다.
-
-<Figure src="https://arxiv.org/html/2301.12597v3/fig1-example.png" alt="BLIP-2 개요. 왼쪽은 고정된 image encoder와 Q-Former로 이루어진 표현 학습 단계로, Q-Former가 학습 가능한 query들과 텍스트를 입력받는다. 오른쪽은 Q-Former의 출력을 고정된 LLM에 넣어 이미지에 맞는 글을 생성하는 단계다." caption="BLIP-2의 두 단계. 눈꽃 표시는 고정된 모델이다. 학습되는 것은 가운데 Q-Former와 query뿐이며, query의 출력이 LLM의 입력이 된다." source="Li et al. (2023), Figure 1 · CC BY 4.0" wide />
-
-BLIP-2는 이미지 encoder와 LLM을 고정하고 Q-Former만 학습한다.
-먼저 Q-Former를 이미지–텍스트 표현 학습으로 학습하고, 그다음 LLM에 연결해 이미지를 보고 텍스트를 생성하도록 학습한다.
-이 방식으로 LLM이 받는 token 수는 제한된다.
-하지만 어떤 정보가 병목을 통과할지는 학습이 정하고, 특정 query가 특정 물체를 맡는 식으로 정해지지도 않는다.
-
-Qwen-VL은 같은 생각을 더 단순하게 구현했다.[^qwenvl]
-Qwen-VL의 adapter는 학습 가능한 query 256개와 cross-attention 층 하나로 이루어지고, 이미지 feature를 벡터 256개로 줄인다.
-요약하면서 위치 정보가 사라지지 않도록, adapter는 cross-attention의 query와 key에 2D 절대 위치 encoding을 더한다.
-Qwen-VL은 학습과 추론 모두에서 입력 이미지를 정해진 해상도로 조정해 넣었다.
-
-C-Abstractor는 격자 구조를 남긴 채 token을 줄인다.[^honeybee]
-선형 projector는 patch 벡터를 하나씩 따로 변환한다.
-반면 C-Abstractor는 convolution으로 인접한 patch의 정보를 섞고, adaptive average pooling으로 출력의 공간 크기를 조절한다.
-예를 들어 16×16 위치의 feature를 8×8 위치로 줄이면 visual token은 256개에서 64개가 된다.
-Q-Former의 query는 이미지 전체에서 정보를 자유롭게 모으지만, C-Abstractor의 출력은 격자 위치를 유지하므로 위치 관계가 남는다.
-대신 pooling에서 사라진 작은 글자 같은 세부는 나중에 복원할 수 없다.
+Chameleon은 VQ 계열 tokenizer가 만든 discrete token과 텍스트 token을 한 Transformer로 처음부터 함께 학습한다.[^chameleon]
+Chameleon 원논문은 이 방식을 early fusion이라 부르고, 이미지와 텍스트를 따로 인코딩한 뒤 결합하는 Flamingo·LLaVA류를 late fusion으로 분류한다.[^flamingo]
 
 ### 3-5. 후속 학습
 
@@ -377,205 +410,15 @@ VLM의 학습은 connector 정렬과 instruction tuning으로 끝나지 않는�
 카카오의 Kanana-v-4b-hybrid는 vision encoder, C-Abstractor, 언어 모델을 결합한 VLM이다.[^kanana-v][^kanana-v-hybrid]
 이 모델은 간단한 질문에는 짧게 답하고, 복잡한 시각 문제에는 추론 과정을 거쳐 답한다.
 카카오는 이 모델을 네 단계로 학습했다.
-모델은 먼저 기초 멀티모달 학습으로 이미지 이해와 지시 이행을 익힌다.
-그다음 카카오는 긴 추론 과정에 대한 SFT, offline RL(reinforcement learning), online RL을 차례로 적용했다.
-Offline RL 단계에서는 미리 마련한 응답 자료와 DPO(direct preference optimization)로 모델의 출력 분포와 추론 습관을 조정한다.
+첫 단계는 기초 멀티모달 학습으로, 모델이 이미지 이해와 지시 이행을 익힌다.
+이어지는 세 단계는 긴 추론 과정에 대한 SFT, offline RL(reinforcement learning), online RL이다.
 Online RL 단계에서는 현재 모델이 문제마다 새로 응답을 생성하고, 그 응답에서 얻은 검증 보상으로 모델을 갱신한다.
 검증 보상은 규칙으로 정답을 확인할 수 있는 문제에서만 얻을 수 있다.
 그래프에서 값을 찾아 계산하는 문제는 생성한 답을 정답과 비교할 수 있지만, 정답을 하나로 정하기 어려운 시각 질문에는 이 보상을 쓰기 어렵다.
 
-네이버의 HyperCLOVAX-SEED-Vision-Instruct-3B도 SigLIP 기반 encoder와 C-Abstractor를 쓰는 LLaVA 계열 VLM이다.[^naver-vision3b]
-모델 카드에 따르면 이 모델은 SFT 뒤에 GRPO(group relative policy optimization) 기반 RLHF(reinforcement learning from human feedback)를 적용했고, 시각 task를 위한 V-RLHF 데이터를 썼다.
+## 4. Grounding과 컴퓨터 사용
 
-## 4. 해상도와 비디오
-
-### 4-1. 고정 해상도의 손실과 비용
-
-ViT의 위치 embedding은 학습할 때의 patch 격자 크기만큼만 있다.
-그래서 VLM은 보통 원본 이미지를 그 크기로 resize하거나 crop해서 넣는다.
-더 큰 이미지를 넣으려면 ViT 원논문처럼 학습된 위치 embedding을 새 격자에 맞게 보간해야 한다.
-책 페이지를 작은 정사각형으로 줄이면 전체 배치는 남지만 작은 글자가 읽히지 않을 수 있다.
-해상도를 높여 더 많은 patch를 만들면 세부 정보는 남지만 계산량과 LLM의 문맥 길이가 늘어난다.
-Patch 한 변을 그대로 두고 높이와 너비를 각각 두 배로 늘리면 patch 수는 네 배가 된다.
-전체 self-attention에서 token 쌍을 모두 계산한다면 관련 연산은 sequence 길이에 대해 제곱으로 증가한다.
-실제 비용은 attention 구현과 visual token을 압축하는 위치에 따라 달라진다.
-
-한 가지 선택은 전체 이미지를 줄인 그림과 고해상도 crop들을 함께 제공하는 것이다.
-LLaVA-1.5의 고해상도 확장이 이 방식을 썼고,[^llava15] 후속 LLaVA 계열은 이를 AnyRes라 부른다.[^llavaonevision]
-AnyRes는 이미지를 encoder가 학습한 해상도의 조각들로 나누어 조각마다 인코딩한다.
-그리고 전체 이미지를 줄여 인코딩한 feature를 덧붙인다.
-
-<Figure src="https://arxiv.org/html/2310.03744v2/high_res_arch_v2.png" alt="LLaVA-1.5의 고해상도 입력 처리. 위쪽 경로에서는 원본 이미지를 네 조각으로 나누어 각각 인코딩하고, 아래쪽 경로에서는 전체 이미지를 줄여 인코딩한다. 두 경로의 feature를 펼쳐 이어 붙여 LLM에 넣는다." caption="이미지를 조각으로 나누어 각각 인코딩하고(위), 전체를 줄인 이미지의 feature(아래)를 함께 LLM에 넣는다. Encoder의 입력 해상도는 그대로 두고 조각 수로 해상도를 높인다." source="Liu et al. (2024), Figure 2 · CC BY 4.0" wide />
-
-이 방식으로 모델은 전체 배치와 국소 세부를 함께 볼 수 있다.
-하지만 모델이 crop 사이에 걸친 관계를 스스로 연결해야 하고, visual token도 crop 수에 비례해 늘어난다.
-LLaVA-OneVision에서는 crop 하나가 729 token이어서, 3×3 crop에 전체 이미지를 더하면 7,290 token이 된다.[^llavaonevision]
-LLaVA-OneVision은 token 수가 정해 둔 한도를 넘으면 bilinear interpolation으로 crop당 token 수를 줄인다.
-
-다른 선택은 이미지 크기와 종횡비를 고려해 입력마다 다른 수의 patch를 쓰는 dynamic resolution이다.
-Qwen2-VL은 Qwen-VL의 고정 해상도와 고정 길이 adapter를 버리고, 해상도에 따라 달라지는 visual token 수를 사용한다.[^qwen2vl]
-대신 Qwen2-VL은 인접한 2×2 patch feature를 MLP로 합쳐, LLM으로 전달할 token 수를 줄인다.
-격자 크기가 입력마다 달라지므로, Qwen2-VL은 ViT의 학습된 절대 위치 embedding을 없앴다.
-대신 patch의 행과 열 위치를 attention 안에서 회전으로 표현하는 2D RoPE를 쓴다.
-예컨대 224×224 이미지를 14×14 patch로 나누면 patch 16×16개가 생기고, 2×2씩 합치면 이미지 내용에 해당하는 token 64개가 남는다.
-원논문이 말하는 66개는 여기에 이미지의 시작과 끝을 알리는 특수 token 둘을 더한 수다.
-
-작은 모델도 같은 계산을 한다.
-Liquid AI의 LFM3-VL-2B는 약 19억 parameter의 VLM이다.[^lfm3vl]
-이 모델은 16×16 픽셀을 patch 하나로 만들고, 인접한 2×2 patch를 visual token 하나로 합친다.
-그래서 512×512 이미지는 patch 32×32개를 거쳐 visual token 256개가 된다.
-입력 해상도가 곧 token 수와 연산 비용을 정하므로, 작은 모델에서도 이미지 크기를 정하는 문제가 남는다.
-
-Native resolution이라는 말은 원본에 가까운 크기나 종횡비를 활용하는 접근을 가리킨다.
-하지만 이 말이 원본 픽셀을 제한 없이 그대로 처리한다는 뜻은 아니다.
-실제 시스템은 최소·최대 픽셀 수나 token budget에 맞춰 이미지 크기를 조정하기도 한다.
-또 native resolution은 여러 modality를 통합해 학습하거나 처리한다는 뜻의 native multimodal과도 다른 말이다.
-
-### 4-2. Interleaved 이미지와 텍스트
-
-모델이 이미지 한 장과 캡션 한 문장의 쌍만 학습하면, 이미지 두 장을 비교하거나 긴 문서의 그림과 주변 문장을 연결하는 형식을 충분히 경험하지 못한다.
-Interleaved 데이터는 한 sequence 안에서 텍스트와 이미지가 번갈아 나타나는 자료다.
-예를 들어 “변경 전 사진: [이미지 A]. 변경 후 사진: [이미지 B]. 어떤 부품이 추가되었나?”라는 입력에서는 이미지의 순서와 바로 앞 문장이 각각의 역할을 정한다.
-이름표가 바뀌거나 두 이미지의 순서가 바뀌면 같은 문장이라도 참조 대상이 달라질 수 있다.
-
-Flamingo는 시각 입력과 텍스트가 섞인 sequence를 다루려고, 이미지 encoder와 언어 모델 사이에 시각 정보를 읽는 모듈인 Perceiver Resampler를 둔다.[^flamingo]
-그리고 언어 모델 층 사이에 cross-attention 층을 추가한다.
-Perceiver Resampler는 이미지마다 정해진 개수의 시각 표현을 만든다.
-Q-Former처럼 학습 가능한 query 벡터로 이미지 feature에 cross-attention을 적용해, 고정된 수(Flamingo는 64개)의 벡터를 만든다.
-LLaVA나 BLIP-2는 시각 벡터를 LLM 입력 sequence에 이어 붙인다.
-반면 Flamingo에서는 텍스트 위치가 언어 모델 층 사이에 끼운 cross-attention으로 이 시각 벡터를 조회한다.
-Flamingo의 cross-attention에서 각 텍스트 위치는 그 앞에 나온 이미지 가운데 가장 최근 이미지에 직접 접근한다.
-그보다 앞선 이미지의 정보는, 그 이미지를 보았던 이전 텍스트 위치를 self-attention으로 참조해 간접적으로 얻는다.
-정리하면 interleaved는 데이터의 **순서와 구성**을 가리키는 말이고, cross-attention이나 projector는 그 데이터를 처리하는 **구조**를 가리키는 말이다.
-
-웹 문서를 이용한 학습 자료에는 이미지와 주변 문장이 약하게만 연결된 경우가 있다.
-Multimodal C4는 텍스트 문서에 이미지들을 배치할 때 CLIP feature를 이용해 관련 문장과 이미지의 대응을 추정한다.[^mmc4]
-이 방법으로 문맥이 긴 이미지–텍스트 자료를 대규모로 만들 수 있지만, 자동으로 추정한 대응에는 오류가 섞인다.
-
-### 4-3. 비디오 입력과 visual token
-
-비디오는 시간 순서가 있는 frame들의 연속이다.
-사진을 보고 컵이 있는지 답하는 일과, 컵을 **집은 다음** 어디에 놓았는지 답하는 일은 다르다.
-후자에 답하려면 모델이 여러 장면을 연결해, 같은 물체가 시간에 따라 어떻게 바뀌는지 따라가야 한다.
-
-다음은 설명을 위한 가상의 영상이다.
-원본에는 더 많은 frame이 있지만, 모델의 입력으로는 세 시점만 선택했다고 하자.
-
-| 시각 | 선택된 frame의 내용 |
-| --- | --- |
-| 0초 | 컵이 탁자 위에 있다. |
-| 2초 | 사람이 컵을 손에 들고 있다. |
-| 4초 | 컵이 선반 위에 있다. |
-
-질문이 “컵을 집은 다음 어디에 놓았나?”라면 사람이 보기에 이 세 frame은 “탁자 → 손 → 선반”이라는 변화의 단서다.
-모델은 컵의 위치가 바뀌는 순서를 비교해 “선반”이라는 답을 만들 수 있다.
-하지만 2초와 4초 사이에 컵을 잠깐 다른 곳에 놓았는지, 누가 선반에 옮겼는지는 이 세 frame만으로 확인할 수 없다.
-
-이 영상이 VLM에 들어가는 경로는 여러 이미지를 넣을 때와 같다.
-전처리기가 영상에서 frame과 각각의 시각을 추출하고, vision encoder가 frame들을 시각 feature 벡터로 바꾼다.
-모델에 따라 vision encoder는 frame을 하나씩 처리하기도 하고, 인접 frame의 정보를 함께 처리하기도 한다.
-Connector는 이 벡터를 언어 모델의 입력으로 바꾸고, 필요하면 그 수를 줄인다.
-언어 모델은 시간 순서로 놓인 visual token과 질문을 받아 답을 생성한다.
-이미지 여러 장을 넣을 때와 달라지는 점은 두 가지다.
-첫째, frame이 늘수록 visual token이 문맥을 빠르게 채운다.
-둘째, frame의 순서뿐 아니라 실제 시간 간격도 의미를 가진다.
-
-표본 추출은 볼 수 있는 사건과 비용을 함께 정한다.
-10초짜리 영상에서 0, 2, 4, 6, 8초의 다섯 frame만 고르면 3초에 잠깐 나타났다 사라진 물체는 빠질 수 있다.
-더 촘촘히 고르면 짧은 사건을 포착할 기회가 늘지만 처리할 frame도 늘어난다.
-각 frame에서 언어 모델에 전달하는 visual token이 256개라면 다섯 frame은 1,280개, 30 frame은 7,680개다.
-Frame마다 token을 줄이면 같은 문맥에 더 많은 시점을 넣을 수 있으나 작은 물체나 글자가 사라질 수 있다.
-Frame 수와 각 frame의 해상도, 압축률은 입력 예산을 나누는 선택이다.
-LLaVA-OneVision은 입력의 종류에 따라 이 예산을 다르게 나눈다.[^llavaonevision]
-이미지 한 장에는 최대 7,290 token을 쓴다.
-이미지 여러 장에는 crop 없이 장당 729 token을 쓰고, 비디오는 frame당 196 token으로 줄여 최대 32 frame을 넣는다.
-LLaVA-OneVision은 세 경우의 최대 token 수를 비슷하게 맞추고, 그 예산 안에서 한 장을 자세히 볼지 여러 시점을 볼지를 고른다.
-
-표본 추출 속도는 초당 선택할 frame 수, 즉 FPS(frames per second)로 나타낸다.
-앞의 예에서 2초마다 한 frame을 고르는 것은 0.5 FPS이고, 원본이 초당 30 frame이라면 모델은 60장 가운데 한 장만 받는다.
-
-### 4-4. 시간에 따른 표현과 학습
-
-이미지 encoder가 frame을 각각 처리했다면 각 출력은 그 frame의 시각 feature다.
-모델이 변화에 관한 답을 만들려면, 여러 frame의 표현을 시간 순서와 함께 받아 서로 비교할 수 있어야 한다.
-초기 비디오 언어 모델인 **Video-LLaMA**는 이 문제를 Q-Former로 다루었다.[^videollama]
-Video-LLaMA는 BLIP-2의 ViT와 이미지 Q-Former를 이미지 encoder로 써서 frame별 feature를 만든다.
-그다음 frame마다 위치 embedding을 더해 순서를 표시하고, 그 뒤에 따로 붙인 Video Q-Former에 넣는다.
-Video Q-Former는 학습 가능한 query로 여러 frame의 feature를 함께 읽어 고정 개수의 비디오 표현을 만든다.
-선형 투영이 이 표현의 차원을 언어 모델의 입력 차원에 맞춘다.
-언어 모델은 이 표현과 텍스트 embedding을 이어 붙여 받고 답을 생성한다.
-Video Q-Former의 출력 개수는 고정이므로, 영상이 길어져도 언어 모델이 받는 길이는 늘지 않는다.
-하지만 어떤 frame의 어떤 정보가 남을지는 학습된 query에 달려 있다.
-
-Video-LLaMA도 LLaVA처럼 두 단계로 학습한다.
-첫 단계에서는 이미지 encoder와 언어 모델을 고정하고, 그 사이의 연결 부분만 학습한다.
-학습 데이터는 비디오·이미지와 설명문이고, 모델은 시각 표현을 조건으로 설명문을 생성한다.
-두 번째 단계에서는 이미지·비디오 instruction 데이터로, 모델이 질문과 지시에 응답하도록 추가 학습한다.
-하지만 모델은 구조를 연결하는 것만으로는 시간 관계를 배우지 못한다.
-설명문에 순서나 빠른 동작이 빠져 있다면, 그 문장은 해당 시간 관계를 가르치지 못한다.
-그래서 “먼저 무엇을 했나”, “어느 구간에서 문이 열리나” 같은 task에는 그 관계를 담은 학습 데이터가 필요하다.
-
-모델은 frame의 순서만으로는 실제 시간 간격을 알기 어렵다.
-연속된 두 frame이 0.1초 간격인지 10초 간격인지에 따라 같은 위치 변화도 다른 속도를 뜻한다.
-Qwen2-VL이 도입한 MRoPE(multimodal rotary position embedding)는 LLM의 위치 번호를 시간·높이·너비 세 성분으로 나눈다.[^qwen2vl]
-텍스트 token은 세 성분에 같은 번호를 받으므로, 텍스트에서 MRoPE는 기존 1차원 RoPE와 같다.
-이미지의 visual token은 높이·너비 성분으로 격자 위치를 나타낸다.
-비디오에서는 frame이 바뀔 때마다 시간 성분이 커진다.
-그래서 LLM은 1차원 위치 번호로는 알 수 없던 visual token의 행과 열을 구분할 수 있다.
-Qwen2.5-VL은 여러 frame rate로 학습하고, 이 시간 위치 ID의 간격을 입력 영상의 실제 시간 간격에 맞춰 지정한다.[^qwen25vl]
-예를 들어 1초와 3초에 뽑은 두 frame이 sequence에서 이웃해도, Qwen2.5-VL은 두 frame의 시간 차이가 2초라는 정보를 위치 표현에 담는다.
-
-Qwen3-VL은 시간을 위치 번호가 아니라 텍스트로 알려 준다.[^qwen3vl]
-Qwen3-VL은 인접 frame들의 정보를 묶은 시간 patch를 입력 단위로 쓴다.
-그리고 각 시간 patch 앞에 `<3.0 seconds>` 같은 시간 표시 token을 넣는다.
-
-**GLM-V** 계열도 이미지와 비디오를 함께 다루는 VLM이다.
-GLM-4.1V-Thinking, GLM-4.5V, GLM-4.6V의 보고서는 vision encoder, MLP projector, 언어 decoder를 연결한 공통 구조를 설명한다.[^glmv]
-이 계열의 vision encoder는 시간 축도 포함하는 3D convolution을 써서 비디오의 시간 방향 표현 수를 절반으로 줄인다.
-예를 들어 시간 방향으로 frame 8개를 입력하면 출력의 시간 위치는 4개가 된다.
-3D convolution은 두 frame 가운데 하나를 고르지 않는다.
-필터가 높이·너비와 함께 인접한 시간 위치에도 걸쳐 계산하므로, 출력 하나에 이웃한 frame들의 정보가 함께 반영된다.
-GLM-V는 정지 이미지를 두 번 넣어 이 입력 형식에 맞춘다.
-
-그다음 projector가 시각 feature를 언어 모델에 맞는 차원으로 바꾼다.
-GLM-V는 이 시각 입력과 함께 시간 index token도 언어 모델에 넣는다.
-보고서는 각 frame의 visual token 뒤에 시각을 문자열로 나타낸 시간 index token을 넣는다고 설명한다.
-Qwen3-VL과는 넣는 자리가 다르지만, 두 모델 모두 시간을 텍스트로 표현한다.
-영상을 고정 개수의 query로 요약하는 Video Q-Former와 달리, GLM-V의 token 수는 시간축을 압축한 뒤에도 영상의 길이와 해상도에 따라 늘어난다.
-
-<Figure src="https://arxiv.org/html/2507.01006v6/glm-4v-thinking.png" alt="GLM-V의 이미지와 비디오 처리 구조. 아래에 크기가 다른 이미지 두 장과 여러 frame으로 구성된 20초 비디오가 있다. ViT encoder가 이를 처리하며 비디오는 시간 방향으로 두 배 압축한다. MLP projector의 출력을 언어 decoder의 입력 sequence에 넣으며, 비디오 표현 사이에 0, 2, 4, 6과 같은 시간 index token이 표시되어 있다. 이미지와 비디오 뒤에는 질문과 생성할 답변 token이 이어진다." caption="GLM-V의 입력 경로. 이미지와 비디오를 ViT와 projector로 표현하고, 비디오에는 시간 index를 함께 넣어 언어 decoder가 질문에 답한다. 그림의 token 수는 표시된 입력에 대한 예다." source="GLM-V Team (2026), Figure 2 · CC BY 4.0" wide />
-
-GLM-V의 학습 자료에는 비디오와 설명문이 들어 있다.[^glmv]
-개발팀은 복잡한 동작과 화면 속 글자 등을 놓치지 않도록, 사람이 단 세밀한 주석을 활용했다고 설명한다.
-보고서는 비디오와 긴 입력으로 학습을 이어 간 뒤 지도학습과 강화학습을 적용한다고 설명한다.
-강화학습 단계에서 GLM-V는 비디오 질문에 대한 답이 정답과 정확히 일치하는지, 또는 LLM judge가 보기에 의미가 일치하는지를 보상으로 쓴다.
-시간 관계를 담은 학습 자료와 그 답을 평가하는 보상이 각각 필요한 셈이다.
-
-### 4-5. 비디오 이해의 평가와 입출력 범위
-
-정지된 한 frame으로도 답할 수 있는 질문만으로는 모델이 시간 관계를 이용했는지 알기 어렵다.
-예컨대 컵이 든 마지막 frame만 보고도 “무엇을 들고 있나?”에 답할 수 있지만, “컵을 든 뒤 문을 열었나, 문을 연 뒤 컵을 들었나?”에는 사건의 순서가 필요하다.
-평가자는 같은 frame들을 역순으로 넣고 시간 표시도 그 순서에 맞게 바꾼 뒤, 순서에 관한 답이 바뀌는지 볼 수 있다.
-사건에 필요한 frame을 뺐을 때 답이 달라지는지도 비교할 수 있다.
-이런 비교는 모델이 어떤 시각 단서에 의존하는지 점검하는 방법이다.
-TemporalBench는 사건의 순서뿐 아니라 동작 횟수와 움직임의 크기처럼 세밀한 시간 차이를 묻는 평가의 예다.[^temporalbench]
-
-Video-MME는 서로 다른 길이와 주제의 비디오에 대한 질문으로 모델을 평가하며, 영상에 자막이나 audio를 추가하는 설정도 포함한다.[^videomme]
-결과를 비교할 때는 모델 이름뿐 아니라 추출한 frame 수와 해상도, 자막·audio의 제공 여부를 함께 확인해야 한다.
-자막에 정답 단서가 있으면 모델은 시각 정보 없이도 맞힐 수 있다.
-반대로 필요한 순간을 표본에서 놓치면, 모델은 시간 추론 능력과 별개로 답하기 어렵다.
-
-예를 들어 GLM-V 보고서의 GLM-4.5V thinking 설정에서 Video-MME 점수는 자막 없이 74.6, 자막을 함께 넣으면 80.7이었다.[^glmv]
-같은 모델의 점수도 자막을 넣었는지에 따라 6.1점이 달라지므로, 두 설정의 결과를 섞어 비교하면 안 된다.
-
-VLM이 비디오를 입력받는다고 해서 소리를 듣거나 영상을 생성하는 것은 아니다.
-시각 frame만 보고 텍스트로 답하는 VLM과, 별도의 audio 경로로 소리도 함께 처리하는 모델은 입력 경로가 다르다.
-Video-LLaMA는 시각 frame과 audio를 각각의 encoder와 연결 경로로 처리해 언어 모델에 전달하는 사례다.[^videollama]
-두 경로의 표현이 존재하는 것과 “박수 소리가 날 때 누가 말했나”처럼 시각·음향 사건을 정확히 맞추는 것은 별개의 문제다.
-
-## 5. Grounding과 컴퓨터 사용
-
-### 5-1. 이미지의 visual grounding
+### 4-1. 이미지의 visual grounding
 
 VLM이 “탁자 위에 컵이 있다”고 답해도, 그 답만으로는 컵이 이미지의 어디에 있는지 알 수 없다.
 로봇이 컵을 집거나 사진에서 특정 물체만 편집하려면, 모델이 그 위치를 상자나 픽셀 영역으로 내놓아야 한다.
@@ -585,15 +428,14 @@ VLM이 “탁자 위에 컵이 있다”고 답해도, 그 답만으로는 컵�
 보통의 detector는 이미지 속 물체마다 상자와 범주를 예측하지만, 학습 때 정한 범주만 찾을 수 있다.
 Grounding DINO는 CLIP의 open-vocabulary 분류처럼 찾을 대상을 텍스트로 받는다.[^groundingdino]
 그래서 학습 때 없던 범주나 “The left lion” 같은 지시 표현에 해당하는 상자도 찾는다.
-Grounding DINO는 텍스트 feature와 이미지 feature를 여러 층에서 cross-attention으로 섞는다.
-그리고 상자마다 텍스트의 어느 부분에 해당하는지 점수를 낸다.
+Grounding DINO는 텍스트 feature와 이미지 feature를 여러 층에서 cross-attention으로 섞고, 상자마다 텍스트의 어느 부분에 해당하는지 점수를 낸다.
 이름의 DINO는 Grounding DINO가 바탕으로 삼은 detector의 이름이며, self-distillation 방법 DINO와는 관계없다.
 
 <Figure src={groundingDino.src} alt="Grounding DINO의 입력과 출력 예. 왼쪽 (a)는 정해진 범주만 찾는 기존 detector로 bench, person 같은 COCO 범주에 상자를 그린다. 가운데 (b)는 사람이 입력한 새 범주 ear, lion, bench, worldcup에 상자를 그리는 경우와, The left lion, The bottom man with his head up 같은 지시 문장에 해당하는 물체 하나에만 상자를 그리는 경우다. 오른쪽 (c)는 찾은 영역을 Stable Diffusion으로 편집해 왼쪽 사자를 개로 바꾸는 응용이다." caption="Grounding DINO의 입력과 출력. (a) 정해진 범주만 찾는 기존 detector, (b) 새 범주 이름이나 “The left lion” 같은 지시 표현으로 상자를 찾는 open-set detection, (c) 찾은 영역을 Stable Diffusion으로 편집하는 응용." source="Liu et al. (2024), Figure 1 · IDEA-Research/GroundingDINO 저장소 · Apache-2.0 · 아래쪽 논문 캡션을 잘라냄" wide />
 
 상자는 물체의 경계를 따르지 않으므로, 물체만 오려 내려면 픽셀 단위의 영역인 segmentation mask가 필요하다.
 이 mask는 MAE에서 patch를 가리는 mask와는 다른 뜻이다.
-SAM은 점이나 상자로 위치를 알려 주면 그 물체의 mask를 그리는 promptable segmentation 모델이다.
+SAM(Segment Anything Model)은 점이나 상자로 위치를 알려 주면 그 물체의 mask를 그리는 promptable segmentation 모델이다.[^sam]
 SAM에서는 MAE로 사전학습한 ViT encoder가 이미지 feature를 한 번만 계산해 둔다.
 그다음 가벼운 mask decoder가 prompt마다 mask를 낸다.
 점 하나는 셔츠를 가리키는지 셔츠를 입은 사람을 가리키는지 모호하므로, decoder는 mask 후보 여러 개와 각각의 품질 점수를 함께 낸다.
@@ -603,7 +445,6 @@ SAM에서는 MAE로 사전학습한 ViT encoder가 이미지 feature를 한 번�
 공개된 SAM은 텍스트를 받지 않는다.
 그래서 Grounding DINO가 텍스트로 찾은 상자를 SAM의 prompt로 넣으면, 텍스트로 지정한 물체의 mask를 얻을 수 있다.
 SAM 3는 “노란 스쿨버스” 같은 짧은 명사구를 직접 받아, 해당하는 모든 물체의 mask를 찾도록 확장했다.[^sam3]
-SAM 3 원논문은 위의 Grounding DINO와 SAM 조합을 비교 기준으로 삼는다.
 다만 SAM 3는 긴 지시나 추론이 필요한 질의를 다루도록 설계되지 않았다.
 
 “비타민 C가 많은 음식”처럼 추론이 필요한 질의는 LLM이 먼저 해석해야 한다.
@@ -614,12 +455,12 @@ LLM이 해석한 결과를 위치로 내놓는 방식은 세 가지다.
   SAM 3 원논문은 이런 구성을 SAM 3 Agent라 부른다.
 - **좌표를 텍스트로 출력**: Qwen2.5-VL은 상자의 좌표를 `[120, 45, 210, 160]`처럼 입력 이미지의 픽셀 기준 숫자로 생성한다.[^qwen25vl]
   이 방식은 별도 모듈이 필요 없지만, 복잡한 모양의 mask를 숫자 몇 개로 나타내기는 어렵다.
-- **Hidden state를 mask decoder에 전달**: LISA(large language instructed segmentation assistant)는 어휘에 `<SEG>` token을 추가한다.[^lisa]
-  LLM이 이 token을 생성하면, LISA는 그 위치의 hidden state를 투영해 SAM 구조의 mask decoder에 넘긴다.
-  어휘 token 하나로는 픽셀별 mask를 담을 수 없다.
-  그래서 LISA는 질의를 해석한 결과가 담긴 연속 벡터를 decoder에 넘기고, decoder가 mask를 그린다.
+- **Hidden state를 mask decoder에 전달**: discrete token 하나로는 픽셀별 mask를 담을 수 없다.
+  그래서 LISA(large language instructed segmentation assistant)는 어휘에 `<SEG>` token을 추가한다.[^lisa]
+  LLM이 이 token을 생성하면, LISA는 그 위치의 hidden state를 투영해 SAM 구조의 mask decoder에 넘기고, decoder가 mask를 그린다.
+  Hidden state는 질의를 해석한 결과가 담긴 continuous representation이므로, token ID 하나보다 훨씬 많은 정보를 decoder에 전달한다.
 
-### 5-2. 화면 grounding과 행동
+### 4-2. 화면 grounding과 행동
 
 화면도 이미지다.
 “저장 버튼을 눌러라”를 수행하려면 모델이 화면에서 저장 버튼의 위치를 찾아야 한다.
@@ -639,7 +480,7 @@ CUA(computer-using agent)는 스크린샷이나 accessibility tree를 관찰하�
 Tool calling은 모델이 함수와 인자를 적어 실행 환경에 요청하는 인터페이스다.
 앞의 SAM 3 Agent도 같은 방식으로 SAM 3를 부른다.
 
-### 5-3. 관찰과 실행의 반복
+### 4-3. 관찰과 실행의 반복
 
 “스프레드시트에서 매출 합계를 계산하고 파일을 저장하라”는 클릭 한 번으로 끝나지 않는다.
 Agent는 앱을 확인하고, 셀을 골라 수식을 넣고, 결과를 보고, 저장 대화상자의 경로를 확인해야 한다.
@@ -658,6 +499,77 @@ Anthropic의 Claude 3.5 Sonnet computer use가 이런 화면 기반 agent의 사
 
 <Video src="https://www.youtube.com/watch?v=ODaHJzOyVCQ" caption="Anthropic, Claude | Computer use for automating operations. Claude 3.5 Sonnet이 여러 탭을 오가며 필요한 정보를 모으고 양식을 채우는 데모로, 화면의 모든 조작을 모델이 생성했다." />
 
+<Details summary="더 보기: 고해상도 이미지와 비디오 입력">
+
+**고정 해상도의 한계.**
+ViT의 위치 embedding은 학습할 때의 patch 격자 크기만큼만 있다.
+그래서 VLM은 보통 원본 이미지를 그 크기로 resize하거나 crop해서 넣는다.
+책 페이지를 작은 정사각형으로 줄이면 전체 배치는 남지만 작은 글자가 읽히지 않을 수 있다.
+반대로 해상도를 높이면 patch가 늘어난다.
+Patch 한 변을 그대로 두고 높이와 너비를 각각 두 배로 늘리면 patch 수는 네 배가 되고, LLM의 문맥도 그만큼 길어진다.
+
+**AnyRes.**
+한 가지 해법은 전체 이미지를 줄인 그림과 고해상도 crop들을 함께 넣는 것이다.
+LLaVA-1.5의 고해상도 확장이 이 방식을 썼고,[^llava15] 후속 LLaVA 계열은 이를 AnyRes라 부른다.[^llavaonevision]
+AnyRes는 이미지를 encoder가 학습한 해상도의 조각들로 나누어 조각마다 인코딩하고, 전체 이미지를 줄여 인코딩한 feature를 덧붙인다.
+
+<Figure src="https://arxiv.org/html/2310.03744v2/high_res_arch_v2.png" alt="LLaVA-1.5의 고해상도 입력 처리. 위쪽 경로에서는 원본 이미지를 네 조각으로 나누어 각각 인코딩하고, 아래쪽 경로에서는 전체 이미지를 줄여 인코딩한다. 두 경로의 feature를 펼쳐 이어 붙여 LLM에 넣는다." caption="이미지를 조각으로 나누어 각각 인코딩하고(위), 전체를 줄인 이미지의 feature(아래)를 함께 LLM에 넣는다. Encoder의 입력 해상도는 그대로 두고 조각 수로 해상도를 높인다." source="Liu et al. (2024), Figure 2 · CC BY 4.0" wide />
+
+이 방식으로 모델은 전체 배치와 국소 세부를 함께 볼 수 있다.
+하지만 모델이 crop 사이에 걸친 관계를 스스로 연결해야 하고, visual token도 crop 수에 비례해 늘어난다.
+LLaVA-OneVision에서는 crop 하나가 729 token이어서, 3×3 crop에 전체 이미지를 더하면 7,290 token이 된다.[^llavaonevision]
+
+**Native resolution.**
+다른 해법은 이미지를 원래 크기와 종횡비에 가깝게 넣고, 입력마다 patch 수를 다르게 쓰는 것이다.
+이를 native resolution이라 한다.
+NaViT(Native Resolution ViT)는 해상도와 종횡비가 다른 이미지들의 patch를 한 sequence에 이어 담는 packing으로 ViT를 학습했다.[^navit]
+Qwen2-VL은 이 방식을 VLM에 가져와, Qwen-VL의 고정 해상도와 고정 길이 adapter를 버렸다.[^qwen2vl]
+격자 크기가 입력마다 달라지므로, Qwen2-VL은 ViT의 학습된 절대 위치 embedding을 없애고 patch의 행과 열 위치를 attention 안에서 회전으로 표현하는 2D RoPE를 쓴다.
+그리고 인접한 2×2 patch feature를 MLP로 합쳐 visual token 수를 줄인다.
+예컨대 224×224 이미지는 14×14 patch 16×16개가 되고, 2×2씩 합치면 visual token 64개가 남는다.
+Qwen2.5-VL은 native resolution으로 동작하는 ViT를 처음부터 학습하고, 대부분의 층에 window attention을 써서 계산량이 patch 수에 선형으로 늘게 했다.[^qwen25vl]
+다만 native resolution이 원본 픽셀을 제한 없이 처리한다는 뜻은 아니다.
+실제 시스템은 최소·최대 픽셀 수에 맞춰 이미지 크기를 조정하기도 한다.
+
+**비디오 입력.**
+비디오는 시간 순서가 있는 frame들의 연속이다.
+비디오가 VLM에 들어가는 경로는 여러 이미지를 넣을 때와 같다.
+전처리기가 영상에서 frame과 각 frame의 시각을 추출하고, vision encoder와 connector가 frame마다 visual token을 만든다.
+언어 모델은 시간 순서로 놓인 visual token과 질문을 받아 답을 생성한다.
+이미지 여러 장과 다른 점은 두 가지다.
+첫째, frame이 늘수록 visual token이 문맥을 빠르게 채운다.
+Frame마다 visual token이 256개라면 다섯 frame은 1,280개, 30 frame은 7,680개다.
+Frame을 듬성듬성 고르면 잠깐 나타났다 사라진 물체를 놓치고, frame마다 token을 줄이면 작은 물체나 글자가 사라진다.
+둘째, frame의 순서뿐 아니라 실제 시간 간격도 의미를 가진다.
+연속된 두 frame이 0.1초 간격인지 10초 간격인지에 따라 같은 위치 변화도 다른 속도를 뜻한다.
+
+**시간을 알려 주는 방법.**
+초기 비디오 언어 모델인 Video-LLaMA는 frame별 feature에 frame 순서의 위치 embedding을 더하고, Video Q-Former로 고정 개수의 비디오 표현으로 요약했다.[^videollama]
+그래서 영상이 길어져도 언어 모델이 받는 길이는 늘지 않지만, 어떤 frame의 어떤 정보가 남을지는 학습된 query에 달려 있다.
+Qwen2-VL의 MRoPE(multimodal rotary position embedding)는 LLM의 위치 번호를 시간·높이·너비 세 성분으로 나눈다.[^qwen2vl]
+텍스트 token은 세 성분에 같은 번호를 받으므로, 텍스트에서 MRoPE는 기존 1차원 RoPE와 같다.
+이미지의 visual token은 높이·너비 성분으로 격자 위치를 나타내고, 비디오에서는 frame이 바뀔 때마다 시간 성분이 커진다.
+Qwen2.5-VL은 이 시간 성분의 간격을 실제 시간 간격에 맞춘다.[^qwen25vl]
+예를 들어 1초와 3초에 뽑은 두 frame이 sequence에서 이웃해도, 위치 표현에는 시간 차이 2초가 담긴다.
+Qwen3-VL은 시간을 텍스트로 알려 준다.[^qwen3vl]
+Qwen3-VL은 인접 frame들을 묶은 시간 patch마다 앞에 `<3.0 seconds>` 같은 시간 표시 token을 넣는다.
+GLM-V도 각 frame의 visual token 뒤에 시각을 문자열로 나타낸 token을 넣고, vision encoder의 3D convolution으로 시간 방향 표현 수를 절반으로 줄인다.[^glmv]
+
+<Figure src="https://arxiv.org/html/2507.01006v6/glm-4v-thinking.png" alt="GLM-V의 이미지와 비디오 처리 구조. 아래에 크기가 다른 이미지 두 장과 여러 frame으로 구성된 20초 비디오가 있다. ViT encoder가 이를 처리하며 비디오는 시간 방향으로 두 배 압축한다. MLP projector의 출력을 언어 decoder의 입력 sequence에 넣으며, 비디오 표현 사이에 0, 2, 4, 6과 같은 시간 index token이 표시되어 있다. 이미지와 비디오 뒤에는 질문과 생성할 답변 token이 이어진다." caption="GLM-V의 입력 경로. 이미지와 비디오를 ViT와 projector로 표현하고, 비디오에는 시간 index를 함께 넣어 언어 decoder가 질문에 답한다. 그림의 token 수는 표시된 입력에 대한 예다." source="GLM-V Team (2026), Figure 2 · CC BY 4.0" wide />
+
+다만 구조만으로는 모델이 시간 관계를 배우지 못한다.
+“먼저 무엇을 했나”, “어느 구간에서 문이 열리나” 같은 task에는 그 관계를 담은 학습 데이터가 필요하다.
+
+**비디오 이해의 평가.**
+마지막 frame 하나만 보고도 답할 수 있는 질문으로는 모델이 시간 관계를 이용했는지 알 수 없다.
+TemporalBench는 사건의 순서, 동작 횟수, 움직임의 크기처럼 세밀한 시간 차이를 묻는다.[^temporalbench]
+Video-MME는 길이와 주제가 다른 비디오로 모델을 평가하고, 자막이나 audio를 추가하는 설정도 둔다.[^videomme]
+자막에 정답 단서가 있으면 모델은 시각 정보 없이도 맞힐 수 있다.
+GLM-V 보고서에서 GLM-4.5V thinking 설정의 Video-MME 점수는 자막 없이 74.6, 자막을 넣으면 80.7이었다.[^glmv]
+그래서 결과를 비교할 때는 frame 수, 해상도, 자막 제공 여부가 같은지 먼저 확인해야 한다.
+
+</Details>
+
 [^survey]: Caffagni, D., Cocchi, F., Barsellotti, L., et al. (2024). The Revolution of Multimodal Large Language Models: A Survey. *Findings of the Association for Computational Linguistics: ACL 2024*, 13590–13618. [논문](https://aclanthology.org/2024.findings-acl.807/).
 [^vlmsurvey]: Zhang, J., Huang, J., Jin, S., & Lu, S. (2024). Vision-Language Models for Vision Tasks: A Survey. *IEEE Transactions on Pattern Analysis and Machine Intelligence*. [논문](https://arxiv.org/abs/2304.00685).
 [^vit]: Dosovitskiy, A., Beyer, L., Kolesnikov, A., et al. (2021). An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2010.11929).
@@ -666,21 +578,16 @@ Anthropic의 Claude 3.5 Sonnet computer use가 이런 화면 기반 agent의 사
 [^llavaonevision]: Li, B., Zhang, Y., Guo, D., et al. (2024). LLaVA-OneVision: Easy Visual Task Transfer. *arXiv*. [논문](https://arxiv.org/abs/2408.03326).
 [^llava]: Liu, H., Li, C., Wu, Q., & Lee, Y. J. (2023). Visual Instruction Tuning. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2304.08485).
 [^vicuna]: Chiang, W.-L., et al. (2023). Vicuna: An Open-Source Chatbot Impressing GPT-4 with 90%\* ChatGPT Quality. *LMSYS Org Blog*. [글](https://lmsys.org/blog/2023-03-30-vicuna/).
+[^flamingo]: Alayrac, J.-B., Donahue, J., Luc, P., et al. (2022). Flamingo: a Visual Language Model for Few-Shot Learning. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2204.14198).
 [^blip2]: Li, J., Li, D., Savarese, S., & Hoi, S. (2023). BLIP-2: Bootstrapping Language-Image Pre-training with Frozen Image Encoders and Large Language Models. *International Conference on Machine Learning*. [논문](https://arxiv.org/abs/2301.12597).
 [^qwen2vl]: Wang, P., Bai, S., Tan, S., et al. (2024). Qwen2-VL: Enhancing Vision-Language Model's Perception of the World at Any Resolution. *arXiv*. [논문](https://arxiv.org/abs/2409.12191).
-[^flamingo]: Alayrac, J.-B., Donahue, J., Luc, P., et al. (2022). Flamingo: a Visual Language Model for Few-Shot Learning. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2204.14198).
-[^mmc4]: Zhu, W., Hessel, J., Awadalla, A., et al. (2023). Multimodal C4: An Open, Billion-scale Corpus of Images Interleaved with Text. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2304.06939).
 [^osworld]: Xie, T., Zhang, D., Chen, J., et al. (2024). OSWorld: Benchmarking Multimodal Agents for Open-Ended Tasks in Real Computer Environments. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2404.07972).
 [^screenspotpro]: Li, K., Meng, Z., Lin, H., et al. (2025). ScreenSpot-Pro: GUI Grounding for Professional High-Resolution Computer Use. *Proceedings of the 33rd ACM International Conference on Multimedia*. [논문](https://arxiv.org/abs/2504.07981).
 [^kanana-v]: Kakao. (2024). 이미지도 찰떡같이 이해하는 카카오의 멀티모달 언어모델 Kanana-v 알아보기. *kakao tech*. [글](https://tech.kakao.com/posts/667).
 [^kanana-v-hybrid]: Kakao. (2026). “생각하고 답변하는” 카카오의 하이브리드 멀티모달 언어모델, Kanana-v-4b-hybrid 개발기. *kakao tech*. [글](https://tech.kakao.com/posts/806).
 
-[^llama4]: Meta. (2025). The Llama 4 herd: The beginning of a new era of natively multimodal AI innovation. *Meta AI Blog*. [글](https://ai.meta.com/blog/llama-4-multimodal-intelligence/).
-[^qwen35]: Qwen Team. (2026). Qwen3.5: Towards Native Multimodal Agents. *Qwen Blog*. [글](https://qwen.ai/blog?id=qwen3.5), [공식 모델 카드](https://huggingface.co/Qwen/Qwen3.5-2B/blob/15ca0cd00746aeb7169597b091a016e468301bca/README.md).
-[^lfm3vl]: Liquid AI. (2026). LFM3-VL-2B. *Hugging Face model card*. [모델 카드](https://huggingface.co/LiquidAI/LFM3-VL-2B).
 [^qwen3vl]: Bai, S., Cai, Y., Chen, R., et al. (2025). Qwen3-VL Technical Report. *arXiv*. [논문](https://arxiv.org/abs/2511.21631).
 [^claude-cu]: Anthropic. (2024). Developing a computer use model. *Anthropic*. [글](https://www.anthropic.com/news/developing-computer-use).
-[^naver-vision3b]: NAVER Cloud. (2025). HyperCLOVAX-SEED-Vision-Instruct-3B. *Hugging Face model card*. [모델 카드](https://huggingface.co/naver-hyperclovax/HyperCLOVAX-SEED-Vision-Instruct-3B).
 [^honeybee]: Cha, J., et al. (2024). Honeybee: Locality-enhanced Projector for Multimodal LLM. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2312.06742).
 [^chameleon]: Chameleon Team. (2024). Chameleon: Mixed-Modal Early-Fusion Foundation Models. *arXiv*. [논문](https://arxiv.org/abs/2405.09818).
 [^vqvae]: van den Oord, A., Vinyals, O., & Kavukcuoglu, K. (2017). Neural Discrete Representation Learning. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/1711.00937).
@@ -699,6 +606,7 @@ Anthropic의 Claude 3.5 Sonnet computer use가 이런 화면 기반 agent의 사
 [^kanana-encoder-blog]: Kakao. (2026). 글로벌 최고 수준의 자체 비전 인코더, Kanana-2-vision-encoder 개발기. *kakao tech*. [글](https://tech.kakao.com/posts/840).
 [^groundingdino]: Liu, S., Zeng, Z., Ren, T., et al. (2024). Grounding DINO: Marrying DINO with Grounded Pre-Training for Open-Set Object Detection. *European Conference on Computer Vision*. [논문](https://arxiv.org/abs/2303.05499).
 [^sam3]: Carion, N., Gustafson, L., Hu, Y.-T., et al. (2026). SAM 3: Segment Anything with Concepts. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2511.16719).
+[^navit]: Dehghani, M., Mustafa, B., Djolonga, J., et al. (2023). Patch n' Pack: NaViT, a Vision Transformer for any Aspect Ratio and Resolution. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2307.06304).
 [^qwen25vl]: Bai, S., Chen, K., Liu, X., et al. (2025). Qwen2.5-VL Technical Report. *arXiv*. [논문](https://arxiv.org/abs/2502.13923).
 [^lisa]: Lai, X., Tian, Z., Chen, Y., et al. (2024). LISA: Reasoning Segmentation via Large Language Model. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2308.00692).
 

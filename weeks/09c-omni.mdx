@@ -69,20 +69,20 @@ Video-LLaMA는 영상과 audio를 encoder의 연속 벡터로 LLM에 넣었다.
 LLM의 Transformer 층은 token ID가 아니라 embedding 벡터를 받으므로, 다른 modality를 넣는 방법은 두 가지다.
 하나는 encoder의 연속 벡터를 그대로 넣는 것이고, 다른 하나는 codebook(학습되는 벡터들의 집합)으로 만든 이산 ID를 어휘에 추가해 넣는 것이다.
 Omni 모델은 modality마다 다른 방법을 고를 수 있고, 한 modality에 두 표현을 함께 쓰기도 한다.
-입력을 연속 표현으로 받으면 codebook 양자화에 따른 오차는 생기지 않는다.
+입력을 continuous representation으로 받으면 codebook 양자화에 따른 오차는 생기지 않는다.
 다만 encoder가 입력을 압축하는 정도와 학습 목표에 따라 원본 정보가 일부 사라질 수 있다.
 
 어려움은 출력에서 생긴다.
 LLM의 출력층은 어휘별 logit을 만들고, softmax로 token 확률을 계산한다.
-Decoding은 이 분포에서 이산 token ID를 고르므로, LLM은 이 출력층만으로는 연속 벡터를 내보내지 못한다.
+Decoding은 이 분포에서 discrete token ID를 고르므로, LLM은 이 출력층만으로는 연속 벡터를 내보내지 못한다.
 그래서 이미지나 음성을 출력하는 길은 크게 둘이다.
 첫째, 이미지·음성의 codebook ID를 어휘에 추가한다.
 LLM은 텍스트와 같은 방식으로 이 ID를 고르고, 해당 decoder가 ID를 픽셀이나 파형으로 되돌린다.
 둘째, LLM이 만든 hidden state를 별도의 생성기에 연속 조건으로 넘긴다.
 그러면 생성기가 이미지나 음성을 만든다.
-음성 출력에서는 마지막 단계에서 codec의 이산 token을 예측하고, codec decoder가 이 token을 파형으로 바꾸는 경우가 많다.
+음성 출력에서는 마지막 단계에서 codec의 discrete token을 예측하고, codec decoder가 이 token을 파형으로 바꾸는 경우가 많다.
 이 token은 LLM이 어휘에서 직접 고르기도 하고(첫째 길), Thinker–Talker 구조처럼 LLM의 hidden state를 받은 별도 음성 모델이 고르기도 한다(두 길의 결합).
-그래서 Omni 모델에서는 입력을 연속 표현으로 받고 음성 출력은 이산 token으로 내는 비대칭 구성이 자주 보인다.
+그래서 Omni 모델에서는 입력을 continuous representation으로 받고 음성 출력은 discrete token으로 내는 비대칭 구성이 자주 보인다.
 
 사진을 보여 주며 음성으로 질문하고 음성으로 답을 듣는 대화를 개념적으로 쓰면 다음과 같다.
 대괄호는 데이터의 종류를 나타낸 표시이며 개수는 가상의 값이다.
@@ -102,13 +102,13 @@ Google DeepMind의 Gemini 4 Argon 모델 카드는 텍스트·이미지·audio·
 비디오는 입력으로만 받고 생성하지는 않는다.
 
 8B Omni는 한 modality에 두 표현을 함께 쓰는 예다.
-이 모델은 vision·audio encoder의 연속 표현과 이산 image·audio token을 모두 언어 모델에 연결한다.[^naver-omni-report]
-연속 feature는 입력을 세밀하게 이해하는 데 쓰이고, 이산 token은 입력과 출력 양쪽에 쓰인다.
-언어 모델이 이산 image token을 생성하면, diffusion 기반 이미지 decoder가 이 token을 조건으로 이미지를 만든다.
+이 모델은 vision·audio encoder의 continuous representation과 discrete image·audio token을 모두 언어 모델에 연결한다.[^naver-omni-report]
+연속 feature는 입력을 세밀하게 이해하는 데 쓰이고, discrete token은 입력과 출력 양쪽에 쓰인다.
+언어 모델이 discrete image token을 생성하면, diffusion 기반 이미지 decoder가 이 token을 조건으로 이미지를 만든다.
 언어 모델이 이산 audio token을 생성하면, 음성 decoder가 이 token과 화자 정보로 waveform을 만든다.
 이처럼 하나의 언어 모델이 입력과 출력을 모두 맡아도, 그 앞뒤에는 modality마다 encoder와 tokenizer, decoder가 따로 붙는다.
 
-<Figure src="https://arxiv.org/html/2601.01792v1/Overview_model_main.png" alt="HyperCLOVA X 8B Omni의 전체 구조. 가운데의 단일 언어 모델 아래쪽에 입력 경로가 있다. 이미지는 연속 표현을 내는 vision encoder와 이산 token을 내는 vision tokenizer를 모두 거치고, 음성도 연속 audio encoder와 이산 audio tokenizer를 모두 거친다. 위쪽에는 출력 경로가 있어, 생성된 vision token은 diffusion 기반 vision decoder로, audio token은 화자 embedding과 함께 audio decoder로 들어간다." caption="HyperCLOVA X 8B Omni의 입력과 출력. 아래쪽 입력에서는 vision과 audio 각각에 연속 encoder와 이산 tokenizer를 함께 쓰고, 위쪽 출력에서는 모델이 생성한 이산 token을 modality별 decoder가 이미지와 음성으로 바꾼다." source="NAVER Cloud HyperCLOVA X Team (2026), Figure 2 · CC BY 4.0" wide />
+<Figure src="https://arxiv.org/html/2601.01792v1/Overview_model_main.png" alt="HyperCLOVA X 8B Omni의 전체 구조. 가운데의 단일 언어 모델 아래쪽에 입력 경로가 있다. 이미지는 continuous representation을 내는 vision encoder와 discrete token을 내는 vision tokenizer를 모두 거치고, 음성도 연속 audio encoder와 이산 audio tokenizer를 모두 거친다. 위쪽에는 출력 경로가 있어, 생성된 vision token은 diffusion 기반 vision decoder로, audio token은 화자 embedding과 함께 audio decoder로 들어간다." caption="HyperCLOVA X 8B Omni의 입력과 출력. 아래쪽 입력에서는 vision과 audio 각각에 연속 encoder와 discrete tokenizer를 함께 쓰고, 위쪽 출력에서는 모델이 생성한 discrete token을 modality별 decoder가 이미지와 음성으로 바꾼다." source="NAVER Cloud HyperCLOVA X Team (2026), Figure 2 · CC BY 4.0" wide />
 
 ### 1-4. 여러 형태의 출력
 
@@ -116,14 +116,14 @@ Video-LLaMA가 다루는 출력은 텍스트다.
 사용자가 설명을 읽는 대신 이미지나 소리 자체를 만들어 달라고 하면 앞에서 본 두 출력 경로 중 하나가 필요하다.
 NExT-GPT는 둘째 길을, AnyGPT는 첫째 길을 택한 대표 사례다.
 
-NExT-GPT는 사전학습된 입력 encoder인 ImageBind의 연속 표현을 LLM에 넣고, LLM 뒤에 이미지·audio·비디오용 생성 decoder를 연결한다.[^nextgpt]
+NExT-GPT는 사전학습된 입력 encoder인 ImageBind의 continuous representation을 LLM에 넣고, LLM 뒤에 이미지·audio·비디오용 생성 decoder를 연결한다.[^nextgpt]
 이를 위해 NExT-GPT는 LLM 어휘에 이미지·audio·비디오를 알리는 특수 token(modality signal token)을 추가한다.
 예를 들어 사용자가 이미지를 요청하면 LLM이 이미지 signal token을 출력한다.
 그러면 출력 projection이 그 위치의 hidden representation을 이미지 생성기의 조건으로 바꾸고, 생성기가 이미지를 만든다.
 이 방식은 기존 생성기를 그대로 쓸 수 있지만, LLM의 출력을 각 생성기가 이해하는 조건에 맞추는 학습이 필요하다.
 
-AnyGPT는 이미지·음성·음악을 각각 이산 token으로 바꾸고, 텍스트 token과 함께 하나의 sequence로 모델링한다.[^anygpt]
-그래서 입력과 출력이 모두 이산 token이다.
+AnyGPT는 이미지·음성·음악을 각각 discrete token으로 바꾸고, 텍스트 token과 함께 하나의 sequence로 모델링한다.[^anygpt]
+그래서 입력과 출력이 모두 discrete token이다.
 음성은 SpeechTokenizer의 내용 중심 token으로, 이미지는 이미지 표현을 quantization해 얻은 token으로 나타낸다.
 Quantization은 연속적인 표현을 codebook의 유한한 선택지 중 하나로 바꾸는 과정이다.
 내용 중심 token에 담기지 않은 음향 정보는 음성을 출력할 때 voice cloning 모델이 보완한다.
@@ -178,7 +178,7 @@ ID 숫자는 설명을 위한 가상 값이다.
 
 HyperCLOVA X SEED 8B Omni의 기술 보고서는 학습 단계를 다음과 같이 설명한다.[^naver-omni-report]
 먼저 텍스트 언어 모델을 학습한다.
-그다음 어휘에 image와 audio의 이산 token을 추가하고, 여러 modality 데이터로 언어 모델을 함께 학습한다.
+그다음 어휘에 image와 audio의 discrete token을 추가하고, 여러 modality 데이터로 언어 모델을 함께 학습한다.
 이후 연속 vision encoder와 audio encoder를 연결해 입력 표현을 정렬한다.
 이때 vision encoder와 언어 모델은 고정하고 그 사이의 adapter를 먼저 학습한 뒤, vision을 중심으로 추가 학습한다.
 Audio encoder는 사전학습된 것을 가져와 고정한다.
@@ -321,7 +321,7 @@ Qwen2.5-Omni는 Qwen2.5 언어 모델과 사전학습된 시각·audio encoder�
 
 카카오의 Kanana-o는 이미지·음성·텍스트를 함께 다루고 텍스트나 음성으로 답하도록 설계된 Omni 모델이다.[^kanana-o]
 예를 들어 사진을 보여 주며 음성으로 “이 물건은 무엇인가?”라고 물으면, 모델은 사진과 질문을 함께 조건으로 답을 만든다.
-2025년 개발 글에 따르면 Kanana-o는 이미지와 음성을 각각 encoder의 연속 표현으로 언어 모델에 넣고, 음성으로 답할 때는 이산 음성 token을 생성한다.
+2025년 개발 글에 따르면 Kanana-o는 이미지와 음성을 각각 encoder의 continuous representation으로 언어 모델에 넣고, 음성으로 답할 때는 음성의 discrete token을 생성한다.
 
 카카오는 Kanana-o를 처음부터 하나로 학습하지 않고, 두 모델을 합쳐 만들었다.
 Kanana-v와 Kanana-a는 같은 언어 모델에서 출발해 각각 시각과 음성을 다루도록 학습되었다.
@@ -335,7 +335,7 @@ Kanana-o는 두 모델의 parameter를 결합하는 model merging으로 시각�
 입력을 이해하고 답의 내용을 정하는 일과 음성을 생성하는 일은 계산의 성격이 다르다.
 그래서 두 역할을 나누는 설계가 가능하다.
 
-Qwen2.5-Omni의 Thinker는 텍스트와, vision·audio encoder가 이미지·audio·비디오에서 만든 연속 표현을 입력으로 받는다.[^qwen25]
+Qwen2.5-Omni의 Thinker는 텍스트와, vision·audio encoder가 이미지·audio·비디오에서 만든 continuous representation을 입력으로 받는다.[^qwen25]
 Thinker는 이 입력으로 응답 텍스트와 내부 표현을 만든다.
 Talker는 Thinker의 내부 표현과 텍스트를 조건으로 음성 token을 생성한다.
 Flow matching 모델이 이 음성 token을 Mel spectrogram으로 바꾸고, vocoder가 Mel spectrogram을 파형으로 복원한다.
@@ -343,7 +343,7 @@ Flow matching 모델이 이 음성 token을 Mel spectrogram으로 바꾸고, voc
 <Figure src="https://arxiv.org/html/2503.20215v1/figures/overview.png" alt="Qwen2.5-Omni 구조. 아래쪽에서 시간 순서로 놓인 영상 frame과 audio 파형이 vision encoder와 audio encoder를 거쳐 텍스트 token과 함께 Thinker에 들어간다. Thinker는 응답 텍스트 token을 차례로 sample하고, 그 위의 Talker는 Thinker의 hidden 표현과 sample된 텍스트 token을 받아 codec token을 생성한다. 맨 위의 streaming codec decoder가 codec token을 파형으로 바꾼다." caption="Qwen2.5-Omni의 Thinker–Talker 구조. Thinker가 입력을 이해해 텍스트를 생성하고, Talker는 Thinker의 hidden 표현과 생성된 텍스트를 받아 codec token을 낸다. 맨 위의 decoder가 이를 파형으로 바꾼다." source="Xu et al. (2025), Figure 2 · CC BY 4.0" />
 
 Qwen3-Omni는 Thinker–Talker를 유지하면서 음성 출력을 여러 codebook의 token으로 구성한다.[^qwen3]
-Qwen3-Omni도 Qwen2.5-Omni처럼 입력은 encoder의 연속 표현으로 받고, 음성 출력은 이산 token으로 낸다.
+Qwen3-Omni도 Qwen2.5-Omni처럼 입력은 encoder의 continuous representation으로 받고, 음성 출력은 discrete token으로 낸다.
 Qwen2.5와 달리 Qwen3의 Talker는 Thinker의 고수준 텍스트 hidden representation 대신 텍스트 token과 Thinker의 audio·visual feature를 조건으로 쓴다.
 다만 기술 보고서 안에서도 Talker의 조건은 audio·visual feature만 언급하는 곳과 텍스트 token까지 언급하는 곳으로 엇갈린다.
 앞 문장은 두 설명을 합친 것이다.
@@ -439,7 +439,7 @@ Vision encoder와 audio encoder가 입력을 언어 모델에 연결한다.
 
 ## 6. 다른 modality로의 확장
 
-연속 표현과 이산 token 사이의 선택은 이미지와 음성에만 있는 문제가 아니다.
+Continuous representation과 discrete token 사이의 선택은 이미지와 음성에만 있는 문제가 아니다.
 시계열·표·분자처럼 텍스트가 아닌 데이터를 다루는 foundation model에서도 같은 두 갈래가 나타난다.
 
 시계열 모델 Chronos는 먼저 값의 크기를 맞춘다.
@@ -456,7 +456,7 @@ TimesFM은 지난 patch들을 바탕으로 이어지는 시간 구간의 값을 
 표 데이터의 TabPFN은 셀 값을 어휘로 바꾸지 않고 실수 그대로 벡터로 넣는 연속 방식이다.
 사전 분포에서 뽑은 합성 데이터로 미리 학습한 Transformer가 학습용 행과 label을 문맥으로 받아, 가중치 갱신 없이 in-context learning으로 test 행의 label을 예측한다.[^tabpfn]
 분자에서는 두 방식이 함께 쓰인다.
-MolT5는 원자와 결합을 한 줄의 문자로 적는 SMILES 표기를 텍스트와 같은 이산 token으로 다룬다.[^molt5]
+MolT5는 원자와 결합을 한 줄의 문자로 적는 SMILES 표기를 텍스트와 같은 discrete token으로 다룬다.[^molt5]
 MolCA는 분자 graph를 graph encoder로 표현한 뒤, Q-Former로 언어 모델에 연결하는 연속 방식을 쓴다.[^molca]
 
 어느 쪽을 고를지는 이미지·음성에서와 마찬가지로, 데이터가 원래 유한한 기호에 가까운지와 출력을 어떤 형태로 만들어야 하는지에 따라 달라진다.
