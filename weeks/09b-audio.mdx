@@ -12,7 +12,6 @@ import astArchitecture from "./assets/week09-ast-architecture.png";
 Audio에는 사람의 speech뿐 아니라 음악, 동물 소리, 환경음도 포함된다.
 Speech는 그중 발화 내용과 화자, 발화 방식이 중요한 경우다.
 언어 모델에 소리를 연결하는 방법은 텍스트로 바꾸어 전달하는 방식, 연속적인 audio 표현을 입력하는 방식, 이산 audio token을 사용하는 방식으로 나눌 수 있다.[^survey]
-이 노트는 소리의 표현에서 출발해 세 방식을 차례로 보고, 음성 생성과 실시간 대화, 평가로 이어 간다.
 
 ## 1. 소리의 표현
 
@@ -22,24 +21,93 @@ Speech는 그중 발화 내용과 화자, 발화 방식이 중요한 경우다.
 Waveform은 그 진폭이 시간에 따라 어떻게 변하는지를 나타낸다.
 디지털 녹음은 연속 신호를 일정한 시간 간격으로 측정한 sample의 수열로 표현한다.
 Sampling rate가 16 kHz라면 1초에 16,000개의 sample을 얻으므로, 10초짜리 단일 채널 녹음에는 160,000개의 값이 있다.
-이 값 하나는 텍스트의 단어처럼 독립된 의미 단위가 아니라 한 시점의 진폭이다.
+이 값 하나는 한 시점의 진폭이다.
 따라서 긴 waveform을 sample 단위로 그대로 Transformer에 넣으면 sequence가 매우 길어진다.
 
 ### 1-2. 시간과 주파수
 
 사람의 발화는 한 음 높이만 가진 순수한 파형이 아니다.
-입 모양이 변하면 성도(vocal tract)의 공명이 바뀌어, 소리의 주파수 성분도 시간에 따라 달라진다.
-Waveform을 짧은 구간으로 나누고 각 구간에서 주파수별 성분을 계산하면 그 변화를 볼 수 있다.
-이 계산을 STFT(short-time Fourier transform)라 한다.
-음성 처리에서 흔한 설정은 25 ms 길이의 창(window)을 10 ms씩 옮기는 것이다.[^slp3]
-창 하나에 해당하는 시간 위치를 frame이라 하며, 이 설정에서 frame rate는 초당 100개다.
-STFT의 결과는 주파수 성분의 크기와 위상을 함께 담는다.
-Spectrogram은 그 가운데 크기를 그린 시간–주파수 표현으로, 가로축은 시간, 세로축은 주파수, 밝기는 그 시간과 주파수에서의 크기다.
+목소리는 후두의 성대가 떨리면서 시작된다.
+성대가 1초에 떨리는 횟수가 기본 주파수이고, 이것이 목소리의 높이로 들린다.
+성대의 떨림은 기본 주파수뿐 아니라 그 정수배의 주파수 성분인 배음(harmonics)도 함께 만든다.
+이 소리는 목, 입, 코로 이어지는 통로를 지나 밖으로 나오는데, 이 통로를 성도(vocal tract)라 한다.
+성도는 혀, 입술, 턱의 위치에 따라 모양이 바뀌고, 모양에 따라 특정 주파수 부근을 더 크게 울린다.
+그래서 같은 높이로 말해도 입 모양이 바뀌면 어떤 배음이 커지는지가 달라지고, “이”와 “아”처럼 다른 모음으로 들린다.
+결국 발화의 주파수 성분은 시간에 따라 계속 달라진다.
 
-<Figure src="https://upload.wikimedia.org/wikipedia/commons/7/77/Spectrogram_-iua-.png" alt="세 모음 i, u, ɑ의 spectrogram. 가로축은 시간, 세로축은 주파수이고 각 모음에서 진한 가로 띠가 서로 다른 높이에 나타난다." caption="세 모음의 spectrogram. 각 모음에서 주파수별 에너지가 모이는 띠의 높이가 다르고, 시간에 따라 띠의 모양도 변한다." source="Ish ishwar (2005), Wikimedia Commons (2007년 업로드 판) · CC BY 2.0" wide />
+그런데 waveform은 이 성분들이 모두 더해진 값 하나를 시점마다 기록한 것이다.
+그래서 어떤 배음이 커졌는지가 waveform에는 직접 드러나지 않고, “이”와 “아”의 차이도 파형 모양의 미묘한 차이로만 남는다.
+모음의 차이를 보려면 소리를 주파수 성분으로 나눠, 주파수마다 얼마나 센지를 따로 봐야 한다.
+
+Fourier transform은 신호를 여러 주파수의 sine파의 합으로 나타낸다.
+주파수가 정해진 sine파 하나는 두 값으로 정해진다.
+**하나는 얼마나 크게 진동하는지를 나타내는 크기(magnitude)이고, 다른 하나는 주기의 어느 지점에서 시작하는지를 나타내는 위상(phase)이다.**
+예를 들어 100 Hz 성분이 진폭 0.3으로, 한 주기의 4분의 1 지점에서 시작한다면 크기는 0.3, 위상은 90°다.
+Fourier transform은 주파수마다 이 두 값을 구한다.
+계산에서는 두 값을 복소수 하나로 묶어 다루며, 그 복소수의 절댓값이 크기, 각도가 위상이다.
+
+다만 녹음 전체를 한 번에 Fourier transform하면, 결과는 녹음 전체에 걸친 각 주파수의 세기가 된다.
+예를 들어 앞 0.5초에 “이”, 뒤 0.5초에 “아”를 말한 1초 녹음을 변환하면 두 모음의 주파수 성분이 한 결과에 섞여 나온다.
+언제 어떤 성분이 나왔는지는 크기가 아니라 여러 주파수의 위상에 흩어져 담기므로, 크기만 봐서는 어느 모음이 먼저였는지 알기 어렵다.
+그래서 **waveform을 짧은 구간으로 나누고 구간마다 Fourier transform을 계산한다.**
+이 계산을 STFT(short-time Fourier transform)라 한다.
+구간이 충분히 짧으면 그 안에서는 입 모양이 거의 바뀌지 않으므로, 구간마다의 결과가 그 순간의 소리를 나타낸다.
+
+음성 처리에서 흔한 설정은 25 ms 길이의 창(window)을 10 ms씩 옮기는 것이다.[^slp3]
+창 길이 25 ms는 입 모양이 거의 그대로일 만큼 짧으면서도, 1초에 100–200번 떨리는 성대의 한 주기(5–10 ms)를 여러 번 담을 만큼 길다.
+창을 창 길이보다 짧은 10 ms씩 옮기므로 이웃한 창은 15 ms씩 겹치고, 창 경계에서 일어난 변화도 어느 한 창에는 온전히 담긴다.
+16 kHz 녹음은 1초에 진폭 값을 16,000번 기록하므로, 1 ms 창 하나에는 진폭 값 16개, 25 ms 창 하나에는 진폭 값 400개가 들어 있다.
+창 하나의 STFT는 이 400개 값으로 0부터 8 kHz까지 40 Hz 간격의 주파수 201개마다 크기와 위상을 구한다.<Sidenote>진동 하나를 알아보려면 한 주기에 적어도 두 번은 값을 기록해야 한다. 그래서 1초에 16,000번 기록한 값으로는 1초에 8,000번 진동하는 8 kHz까지만 구별할 수 있다. 또 STFT는 창 길이 동안 정확히 0번, 1번, 2번, … 진동하는 sine파들과 창 안의 신호를 비교한다. 25 ms 동안 정확히 한 번 진동하는 sine파가 1 ÷ 0.025초 = 40 Hz이므로, 주파수는 40 Hz 간격으로 놓인다. 그래서 0, 40, 80, …, 8,000 Hz의 201개 주파수가 나온다.</Sidenote>
+
+창 하나에 해당하는 시간 위치를 frame이라 한다.
+창을 10 ms씩 옮기므로 1초 녹음에서는 frame이 100개 나오며, 이처럼 1초에 나오는 frame의 수를 frame rate라 한다.
+
+Sampling rate와 창 길이, 이동 간격에 따라 STFT 결과의 모양이 달라진다.
+
+| sampling rate | 창 길이 | 최대 주파수 | 주파수 간격 | 주파수 개수 | 이동 간격 | frame rate |
+| --- | --- | --- | --- | --- | --- | --- |
+| 16 kHz | 25 ms (400개) | 8 kHz | 40 Hz | 201 | 10 ms (160개) | 초당 100개 |
+| 16 kHz | 50 ms (800개) | 8 kHz | 20 Hz | 401 | 10 ms (160개) | 초당 100개 |
+| 16 kHz | 10 ms (160개) | 8 kHz | 100 Hz | 81 | 5 ms (80개) | 초당 200개 |
+| 32 kHz | 25 ms (800개) | 16 kHz | 40 Hz | 401 | 10 ms (320개) | 초당 100개 |
+| 32 kHz | 50 ms (1,600개) | 16 kHz | 20 Hz | 801 | 10 ms (320개) | 초당 100개 |
+
+괄호 안은 창과 이동 간격에 들어가는 진폭 값의 수다.
+표의 값은 아래 식으로 차례로 구하며, 괄호 안은 첫 줄의 계산이다.
+
+- 창 안의 진폭 값 수 = sampling rate × 창 길이 (16,000 × 0.025초 = 400개)
+- 최대 주파수 = sampling rate ÷ 2 (16,000 ÷ 2 = 8,000 Hz)
+- 주파수 간격 = 1 ÷ 창 길이 (1 ÷ 0.025초 = 40 Hz)
+- 주파수 개수 = 최대 주파수 ÷ 주파수 간격 + 1 (8,000 ÷ 40 + 1 = 201개)
+- 이동 간격의 진폭 값 수 = sampling rate × 이동 간격 (16,000 × 0.01초 = 160개)
+- frame rate = 1 ÷ 이동 간격 (1 ÷ 0.01초 = 초당 100개)
+
+창 길이를 정하면 시간과 주파수 가운데 한쪽은 흐려진다.
+50 ms 창은 주파수를 20 Hz 간격으로 촘촘히 나누지만, 50 ms 동안의 소리를 한 결과로 합치므로 그 안에서 짧은 소리가 언제 났는지는 알 수 없다.
+10 ms 창은 소리가 난 시점을 10 ms 안으로 좁히지만, 주파수 간격이 100 Hz로 넓어 100 Hz 간격으로 늘어선 낮은 목소리의 배음을 잘 구별하지 못한다.
+
+흔한 설정인 표의 첫 줄이라면, STFT의 결과는 frame마다 주파수 201개의 크기와 위상이 놓인 시간 × 주파수의 표(행렬)가 된다.
+Spectrogram은 이 표에서 **크기만 그린 그림**으로, 가로축은 시간, 세로축은 주파수이고, 색으로 그 시간과 주파수에서의 크기를 나타낸다.
+아래 그림은 흰 바탕에서 검을수록 크기가 크다.
+
+<Figure src="https://upload.wikimedia.org/wikipedia/commons/7/77/Spectrogram_-iua-.png" alt="세 모음 i, u, ɑ를 차례로 발음한 spectrogram. 가로축은 0초부터 2.9초까지의 시간, 세로축은 0부터 7,000 Hz까지의 주파수다. 각 모음 왼쪽의 빨간 화살표가 아래부터 F1과 F2를 가리킨다. [i]는 F1이 약 350 Hz, F2가 약 2,500 Hz이고, [u]는 F1이 약 350 Hz, F2가 약 1,000 Hz이며, [ɑ]는 F1이 약 800 Hz, F2가 약 1,100 Hz다." caption="세 모음 [i], [u], [ɑ]의 spectrogram. 검을수록 그 주파수 성분이 세다. 빨간 화살표는 아래에서부터 첫째 formant(F1)와 둘째 formant(F2)를 가리킨다. 5.5–6.4 kHz의 흰 띠는 모음 이름을 쓰려고 비워 둔 자리다." source="Ish ishwar (2005), Wikimedia Commons" wide />
 
 그림에서 진한 띠의 위치가 모음에 따라 달라진다.
-성도의 공명으로 특정 주파수 부근의 에너지가 커진 영역을 formant라 하며, formant의 위치는 모음을 구별하는 단서가 된다.
+성도의 공명으로 특정 주파수 부근의 에너지가 커진 영역을 formant라 하며, 낮은 주파수부터 차례로 F1, F2, …라 부른다.
+모음은 주로 F1과 F2의 위치로 구별된다.
+그림에서 [i]는 F1이 낮고 F2가 높아 두 띠가 멀리 떨어져 있고, [ɑ]는 F1이 높고 F2가 낮아 두 띠가 붙어 있다.
+[u]는 [i]와 F1이 비슷하지만 F2가 훨씬 낮다.
+
+크기와 위상은 담는 정보가 다르다.
+**모음, 음높이, 음색처럼 사람이 듣고 구별하는 정보는 대부분 크기에 담긴다.**
+위상은 각 sine파가 어떻게 맞물려 waveform의 모양을 이루는지를 정한다.
+그래서 크기가 같고 위상만 다른 두 신호는 waveform 모양이 달라도 비슷하게 들리는 경우가 많다.
+또 위상은 −π와 π 사이를 감아 돌아, 그려 보면 잡음처럼 불규칙하고 모델이 배우기도 어렵다.
+**이런 이유로 소리를 분석하거나 인식할 때는 위상을 버리고 크기만 쓰는 경우가 많다.**
+
+크기만 남긴 시간–주파수 표현의 장점은 소리의 구조가 드러난다는 것이다.
+Waveform에서는 같은 모음도 sample 값이 계속 오르내려 규칙이 잘 보이지 않지만, spectrogram에서는 formant와 배음이 일정한 높이의 띠로 나타난다.
+Transformer에 넣을 **sequence의 길이도 sample 수가 아니라 frame 수**가 되어, 1초에 16,000개에서 100개로 줄어든다.
 
 ### 1-3. Mel spectrogram과 MFCC
 
@@ -47,9 +115,9 @@ Spectrogram은 그 가운데 크기를 그린 시간–주파수 표현으로, �
 Mel 척도는 이 지각에 맞춰 주파수 축을 다시 나눈 것으로, 낮은 주파수를 촘촘하게, 높은 주파수를 성기게 나눈다.
 Mel spectrogram은 spectrogram의 주파수 구간들을 Mel 척도에 맞춰 묶어 만들고, 여기에 로그를 취한 것이 log-Mel spectrogram이다.
 지금의 신경망 audio encoder는 대개 log-Mel spectrogram을 입력으로 받는다.[^whisper]
-MFCC(mel-frequency cepstral coefficient)는 log-Mel spectrogram을 frame마다 13개 정도의 계수로 한 번 더 압축한 것으로, 고전적인 음성 인식의 입력으로 오래 쓰였다.[^mfcc]
+MFCC(mel-frequency cepstral coefficient)는 log-Mel spectrogram을 frame마다 13개 정도의 계수로 한 번 더 압축한 것으로, 고전적인 음성 인식의 입력으로 오래 쓰였다.[^mfcc]<Sidenote>Python의 audio 분석 라이브러리 librosa는 녹음 불러오기와 resampling, STFT, Mel spectrogram, MFCC를 각각 함수 하나로 계산해 준다.[^librosa]</Sidenote>
 
-<Figure src={audioRepresentations.src} alt="같은 발화 this is a test sentence의 네 가지 표현을 시간축을 맞춰 위아래로 놓은 그림. 맨 위는 16 kHz waveform으로 sample이 37,333개다. 둘째는 234 frame, 201개 주파수 구간의 spectrogram으로 모음 구간에서 낮은 주파수에 촘촘한 가로 줄무늬가 보인다. 셋째는 80개 Mel 구간의 log-Mel spectrogram으로 낮은 주파수 대역이 넓게 펼쳐지고 높은 주파수 대역이 눌려 있다. 맨 아래는 frame마다 계수 13개인 MFCC다." caption="같은 2.3초 발화의 네 표현. Waveform은 sample 37,333개이고, 25 ms 창과 10 ms 이동으로 만든 spectrogram은 234 frame × 201 구간, log-Mel spectrogram은 234 × 80, MFCC는 234 × 13이다. Spectrogram부터는 아래로 갈수록 frame당 차원이 줄어든다. Spectrogram의 모음 구간에 보이는 촘촘한 가로 줄무늬는 목소리 높이에서 생기는 배음(harmonics)이고, MFCC에서는 사라진다." source="자작 · 음성은 Foobarista2, Wikimedia Commons, CC0" wide />
+<Figure src={audioRepresentations.src} alt="같은 발화 this is a test sentence의 네 가지 표현을 시간축을 맞춰 위아래로 놓은 그림. 맨 위는 16 kHz waveform으로 sample이 37,333개다. 둘째는 234 frame, 201개 주파수 구간의 spectrogram으로 모음 구간에서 낮은 주파수에 촘촘한 가로 줄무늬가 보인다. 셋째는 80개 Mel 구간의 log-Mel spectrogram으로 낮은 주파수 대역이 넓게 펼쳐지고 높은 주파수 대역이 눌려 있다. 맨 아래는 frame마다 계수 13개인 MFCC다." caption="같은 2.3초 발화의 네 표현. Waveform은 sample 37,333개이고, 25 ms 창과 10 ms 이동으로 만든 spectrogram은 234 frame × 201 구간, log-Mel spectrogram은 234 × 80, MFCC는 234 × 13이다. Spectrogram부터는 아래로 갈수록 frame당 차원이 줄어든다. 앞의 그림과 달리 spectrogram과 log-Mel spectrogram은 검은 바탕에서 밝을수록 세다. Spectrogram의 모음 구간에 보이는 촘촘한 가로 줄무늬는 목소리 높이에서 생기는 배음(harmonics)이고, MFCC에서는 사라진다." source="자작 · 음성은 Foobarista2, Wikimedia Commons, CC0" wide />
 
 <figure class="lecture-figure">
 <audio controls preload="none" src="https://upload.wikimedia.org/wikipedia/commons/9/95/LL-Q1860_%28eng%29-Foobarista2-this_is_a_test_sentence.wav" aria-label="영어 문장 this is a test sentence를 읽은 2.3초 녹음"></audio>
@@ -63,8 +131,7 @@ MFCC(mel-frequency cepstral coefficient)는 log-Mel spectrogram을 frame마다 1
 | Log-Mel spectrogram | 234 × 80 | 위상, 높은 주파수의 세밀한 구분 | 신경망 audio encoder의 입력, 음성 합성의 중간 표현 |
 | MFCC | 234 × 13 | 위의 것에 더해 음높이 같은 세부 | 고전적인 음성 인식의 입력 |
 
-버린 정보는 소리를 다시 만들 때 문제가 된다.
-Mel spectrogram은 위상을 버렸으므로 그것만으로는 waveform을 되돌릴 수 없다.
+Mel spectrogram도 위상을 버렸으므로, 소리를 생성할 때는 waveform으로 되돌리는 단계가 따로 필요하다.
 Mel spectrogram에서 waveform을 합성하는 모델을 vocoder라 하며, 음성 생성 모델이 Mel spectrogram을 출력하면 마지막에 vocoder가 이를 waveform으로 바꾼다.
 
 ## 2. 텍스트로 바꾸어 연결
@@ -492,6 +559,7 @@ Full-Duplex-Bench는 사용자의 쉼을 기다리는지, 맞장구(backchannel)
 [^survey]: Yang, Z., Shimizu, S., Yu, Y., & Chu, C. (2025). When Large Language Models Meet Speech: A Survey on Integration Approaches. *Findings of the Association for Computational Linguistics: ACL 2025*, 20298–20315. [논문](https://aclanthology.org/2025.findings-acl.1041/).
 [^slp3]: Jurafsky, D., & Martin, J. H. (2026). Speech and Language Processing (3rd ed. draft), Chapter 15: Phonetics and Speech Feature Extraction. [교재](https://web.stanford.edu/~jurafsky/slp3/15.pdf).
 [^mfcc]: Davis, S., & Mermelstein, P. (1980). Comparison of parametric representations for monosyllabic word recognition in continuously spoken sentences. *IEEE Transactions on Acoustics, Speech, and Signal Processing*. 28(4), 357–366. [논문](https://doi.org/10.1109/TASSP.1980.1163420).
+[^librosa]: McFee, B., Raffel, C., Liang, D., Ellis, D. P. W., McVicar, M., Battenberg, E., & Nieto, O. (2015). librosa: Audio and Music Signal Analysis in Python. *Proceedings of the 14th Python in Science Conference*, 18–24. [논문](https://doi.org/10.25080/Majora-7b98e3ed-003), [문서](https://librosa.org/doc/latest/).
 [^wav2vec2]: Baevski, A., Zhou, H., Mohamed, A., & Auli, M. (2020). wav2vec 2.0: A Framework for Self-Supervised Learning of Speech Representations. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2006.11477).
 [^laionclap]: Wu, Y., Chen, K., Zhang, T., et al. (2023). Large-scale Contrastive Language-Audio Pretraining with Feature Fusion and Keyword-to-Caption Augmentation. *ICASSP*. [논문](https://arxiv.org/abs/2211.06687).
 [^audioldm]: Liu, H., Chen, Z., Yuan, Y., et al. (2023). AudioLDM: Text-to-Audio Generation with Latent Diffusion Models. *International Conference on Machine Learning*. [논문](https://arxiv.org/abs/2301.12503).
