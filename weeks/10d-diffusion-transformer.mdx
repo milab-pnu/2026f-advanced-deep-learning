@@ -196,6 +196,22 @@ OpenAI는 Sora를 이미지와 video latent의 spacetime patch를 처리하는 d
 그래서 원래 DiT의 block, conditioning, sampler가 Sora에서도 같다고 결론 내릴 수 없다.
 생성된 video가 현실과 비슷해 보여도, 물리적 일관성이나 장면의 정확성이 보장되지는 않는다.
 
+### 5-3. Text-to-video와 image-to-video
+
+Text-to-video는 텍스트로 장면과 움직임을 지정하고 영상을 생성하는 task다.
+예를 들어 “눈 내리는 숲을 카메라가 천천히 지나간다”라는 요청에는 숲의 모습과 시간에 따른 변화가 함께 담긴다.
+모델은 영상 latent의 noise에서 출발해 텍스트 조건에 맞는 시공간 표현을 만들고, decoder는 이를 프레임들로 변환한다.
+이때 diffusion의 denoising 단계와 영상 속 시간은 별개다.
+Denoising 한 단계가 영상 한 프레임을 뜻하지는 않는다.
+
+Text + image → video에서는 입력 이미지가 장면의 구체적인 모습을 제공하고, 텍스트가 원하는 움직임이나 변화를 지정한다.
+같은 요청에 숲 사진을 함께 주면, 사용자는 숲의 생김새를 글로 모두 설명하지 않아도 된다.
+모델은 정지 이미지에 없는 움직임과 새로 드러나는 영역을 생성해야 하므로, 입력 이미지만으로 결과 영상이 하나로 결정되지는 않는다.
+
+2024년 Sora 기술 보고는 텍스트만으로 영상을 만드는 예와 이미지·prompt를 함께 주어 정지 이미지를 움직이게 만드는 예를 모두 보여 준다.[^sora]
+이는 입력·출력 조합의 차이를 보여 주지만, 보고서만으로 이미지 조건을 내부에 주입하는 구체적인 구조까지 확정할 수는 없다.
+이미지 입력을 지원한다는 이유만으로 ControlNet을 사용하거나, 입력 이미지를 매 프레임 그대로 복사한다고 해석해서는 안 된다.
+
 [^survey]: Yang, L., Zhang, Z., Song, Y., et al. (2024). Diffusion Models: A Comprehensive Survey of Methods and Applications. *ACM Computing Surveys*, 56(4), 105:1–105:39. [논문](https://arxiv.org/abs/2209.00796).
 [^dit]: Peebles, W., & Xie, S. (2023). Scalable Diffusion Models with Transformers. *ICCV*. [논문](https://arxiv.org/abs/2212.09748).
 [^sd3]: Esser, P., Kulal, S., Blattmann, A., et al. (2024). Scaling Rectified Flow Transformers for High-Resolution Image Synthesis. *ICML*. [논문](https://arxiv.org/abs/2403.03206).

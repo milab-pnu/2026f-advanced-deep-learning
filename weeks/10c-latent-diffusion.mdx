@@ -10,6 +10,22 @@ Latent diffusion은 이미지를 먼저 작은 표현으로 압축한다.[^surve
 이 노트는 Stable Diffusion의 초기 text-to-image 모델을 기준으로, autoencoder, text encoder, U-Net이 학습과 생성에서 어떻게 연결되는지 살펴본다.[^ldm]
 이어서 이 구조를 바탕으로 기존 이미지에 noise를 더해 편집하는 방법과, 원본 이미지와 편집 지시를 조건으로 학습하는 InstructPix2Pix를 다룬다.
 
+생성 task는 **조건으로 주는 정보와 새로 만들 출력**을 나누어 보면 연결된다.
+Omni 모델의 출력 쪽 생성기를 이해할 때도 이 구분이 필요하다.
+다음은 task를 구분하기 위한 가상 요청이며, 한 모델이 이 조합을 모두 지원한다는 뜻은 아니다.
+
+| 입력 조건 → 출력 | 가상 요청 | 생성할 대상 |
+|---|---|---|
+| text → image | “눈 내리는 숲을 그려 줘” | 이미지 한 장 |
+| text + image → image | 사진을 주고 “낮을 밤으로 바꿔 줘” | 편집된 이미지 |
+| text + 공간 조건 → image | pose를 주고 “이 자세의 무용수를 그려 줘” | 구조 조건을 따르는 이미지 |
+| text → video | “눈 내리는 숲을 카메라가 지나가는 영상” | 시간에 따라 이어지는 프레임 |
+| text + image → video | 숲 사진을 주고 “눈이 내리고 카메라가 앞으로 이동하게 해 줘” | 입력 장면을 바탕으로 한 영상 |
+| text → audio | “숲에서 바람이 불고 새가 우는 소리” | 소리의 waveform |
+
+같은 text 조건이라도 출력이 바뀌면 생성할 데이터의 표현과 decoder가 달라진다.
+이미지가 입력에 포함되어도, 원본의 내용을 편집할지, 그 구조만 따를지, 움직이는 영상으로 확장할지에 따라 조건의 역할이 달라진다.
+
 ## 1. Pixel에서 latent로
 
 ### 1-1. 압축 표현
@@ -265,7 +281,28 @@ $s_I$와 $s_T$가 모두 1이면 두 차이 항이 이어져 결합 결과는 $\
 텍스트 guidance scale $s_T$는 지시를 얼마나 강하게 반영할지 조절한다.
 두 값의 영향은 서로 얽혀 있다.
 그래서 어느 한 값을 키워도 원하는 속성만 보존하거나 바꾼다는 보장은 없다.
-ControlNet처럼 edge나 pose를 공간 조건으로 제공하는 방법은 제어할 정보를 보태는 다른 접근이다.
+
+### 4-5. ControlNet의 공간 조건
+
+편집 지시만으로는 인물의 팔과 다리가 놓일 위치를 정확하게 지정하기 어렵다.
+ControlNet은 edge map, depth map, pose 같은 공간 조건을 pretrained text-to-image diffusion 모델에 전달한다.[^controlnet]
+예를 들어 사람 사진에서 pose를 추출하고 “무대 위의 발레 무용수”라는 prompt를 함께 주면, 그 자세를 따르는 새 이미지를 생성하도록 조건을 줄 수 있다.
+Pose에는 원본 인물의 얼굴이나 옷 정보가 없으므로, 그 사람의 정체성까지 보존하는 조건은 아니다.
+
+ControlNet은 기존 모델을 고정하고, 복사한 encoder block을 포함하는 별도 학습 경로에서 공간 조건을 처리한다.
+이 경로를 0으로 초기화한 convolution으로 연결해 학습 초기에는 추가 경로의 영향이 0에서 출발하게 한다.
+학습하면서 공간 조건이 denoising에 영향을 주도록 연결 가중치와 조건 처리 경로를 갱신한다.[^controlnet]
+
+세 방법에서 입력 이미지가 맡는 역할을 구분하면 다음과 같다.
+
+| 방법 | 이미지 정보의 역할 | 요청의 예 |
+|---|---|---|
+| Image-to-image | 원본 latent에 noise를 더해 생성의 출발점으로 사용 | 원래 구도를 남기며 화풍 변경 |
+| InstructPix2Pix | 원본 이미지와 편집 지시를 denoising의 조건으로 사용 | “이 사진을 밤으로 바꿔 줘” |
+| ControlNet | edge·depth·pose 등 위치별 구조를 추가 조건으로 사용 | “이 자세로 무용수를 그려 줘” |
+
+ControlNet은 CFG와 함께 쓸 수 있다.
+공간 조건을 추가하는 선택과 조건부·무조건부 예측을 결합하는 선택은 서로 다른 역할을 한다.
 
 [^survey]: Yang, L., Zhang, Z., Song, Y., et al. (2024). Diffusion Models: A Comprehensive Survey of Methods and Applications. *ACM Computing Surveys*, 56(4), 105:1–105:39. [논문](https://arxiv.org/abs/2209.00796).
 [^ldm]: Rombach, R., Blattmann, A., Lorenz, D., Esser, P., & Ommer, B. (2022). High-Resolution Image Synthesis with Latent Diffusion Models. *CVPR*. [논문](https://arxiv.org/abs/2112.10752).
@@ -279,3 +316,5 @@ ControlNet처럼 edge나 pose를 공간 조건으로 제공하는 방법은 제�
 [^instructpix-code]: Brooks, T. (2023). instruct-pix2pix. *GitHub*. [데이터 생성 코드](https://github.com/timothybrooks/instruct-pix2pix/blob/0dffd1eeb02611c35088462d1df88714ce2b52f4/dataset_creation/generate_img_dataset.py), [attention 구현](https://github.com/timothybrooks/instruct-pix2pix/blob/0dffd1eeb02611c35088462d1df88714ce2b52f4/stable_diffusion/ldm/modules/attention.py).
 [^instructpix-implementation]: Hugging Face. (v0.35.1). InstructPix2Pix. *Diffusers documentation*. [문서](https://huggingface.co/docs/diffusers/v0.35.1/training/instructpix2pix).
 [^prompt2prompt]: Hertz, A., Mokady, R., Tenenbaum, J., et al. (2023). Prompt-to-Prompt Image Editing with Cross Attention Control. *ICLR*. [논문](https://arxiv.org/abs/2208.01626).
+
+[^controlnet]: Zhang, L., Rao, A., & Agrawala, M. (2023). Adding Conditional Control to Text-to-Image Diffusion Models. *ICCV*. [논문](https://arxiv.org/abs/2302.05543).
