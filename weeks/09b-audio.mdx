@@ -173,6 +173,9 @@ Convolution 층의 weight는 학습되므로, waveform에서 어떤 성분을 �
 
 ### 2-1. AST
 
+Encoder를 학습하는 목표는 사용할 데이터와 task에 따라 달라진다.
+AST는 소리 범주 라벨로 분류를 배우고, wav2vec 2.0과 HuBERT는 전사 없는 음성에서 표현을 배우며, Whisper는 대량의 음성과 전사로 음성 인식을 배운다.
+
 Spectrogram은 가로축이 시간, 세로축이 주파수인 2차원 배열이어서 이미지처럼 다룰 수 있다.
 AST(Audio Spectrogram Transformer)는 ViT가 이미지를 patch로 나누듯, log-Mel spectrogram을 시간과 주파수 두 축에서 작은 patch로 자른다.[^ast]
 그리고 각 patch를 일렬로 펴 선형 투영한 patch embedding에 위치 embedding을 더해 Transformer encoder에 넣는다.
@@ -184,7 +187,7 @@ AST는 **AudioSet의 소리 범주 라벨**로 학습한다.
 
 ### 2-2. wav2vec 2.0
 
-AST는 사람이 붙인 소리 범주 라벨이 있어야 학습할 수 있지만, 라벨이 없는 녹음이 훨씬 많다.
+AST처럼 소리 범주 라벨로 학습하는 방법과 달리, 전사 없는 음성에서 표현을 배우는 방법도 있다.
 wav2vec 2.0은 BERT의 MLM이나 MAE처럼 입력 일부를 가리고 그 자리를 맞히게 해서, 라벨 없는 음성으로 encoder를 학습한다.[^wav2vec2]
 
 음성에서는 **가린 자리의 정답을 무엇으로 둘지**가 문제다.
@@ -401,9 +404,14 @@ HuBERT는 학습 전에 학습 데이터 전체에서 20 ms 구간마다 MFCC를
 <figcaption>HuBERT의 학습. 정답이 학습 전에 정해진 번호여서, 후보를 뽑아 비교하지 않고 번호를 바로 분류한다.</figcaption>
 </figure>
 
+첫 번째 학습에서는 MFCC로 정답 번호를 만든다.
+두 번째 학습에서는 먼저 학습한 HuBERT의 중간 feature를 다시 k-means로 묶어 새 정답 번호를 만든다.
+정답은 각 학습 라운드 안에서는 고정되지만, 다음 라운드에서는 학습된 표현을 이용해 개선된다.
+
 ### 2-4. Whisper
 
-wav2vec 2.0과 HuBERT는 feature를 글로 바꾸는 decoder를 학습하지 않아서, 음성 인식에 쓰려면 전사가 붙은 데이터셋으로 fine-tuning해야 한다.[^whisper]
+wav2vec 2.0과 HuBERT가 전사 없는 음성으로 표현을 배우는 쪽이라면, Whisper는 전사가 붙은 데이터를 크게 늘리는 쪽이다.[^whisper]
+wav2vec 2.0과 HuBERT는 사전학습에서 전사를 예측하지 않으므로, 음성 인식에 쓰려면 전사가 붙은 데이터셋으로 fine-tuning해야 한다.
 이렇게 fine-tuning한 모델은 녹음 환경이 다른 데이터에서 성능이 크게 떨어지곤 한다.
 Whisper는 **전사가 붙은 음성을 대량으로 모아 처음부터 음성 인식을 학습한다.**
 데이터는 인터넷에서 모은 68만 시간의 음성과 전사이고, 사람이 검수하지 않은 전사를 쓰므로 이런 학습을 약한 지도(weak supervision)라고 부른다.
@@ -514,7 +522,7 @@ Projector가 feature를 LLM의 hidden dimension에 맞추고, 그 벡터를 텍�
 | 원래 신호 | 2차원 공간의 RGB | 1차원 시간의 진폭 |
 | 축의 순서 | 없음 | 앞에서 뒤로 |
 | 이해할 때 encoder가 보는 범위 | 이미지 전체 | 녹음된 구간 전체 (실시간이면 지금까지 들어온 부분) |
-| **생성 방법** | 한 번에 | 자기 회귀 |
+| **생성 방식** | 모든 위치를 함께 생성 | codec token을 자기 회귀로 생성 |
 
 이해하는 쪽에서는 위치가 공간이냐 시간이냐만 다를 뿐 구조가 같다.
 Vision encoder가 이미지 전체를 한꺼번에 보듯, Whisper는 녹음을 30초 구간으로 나누고 구간 하나를 통째로 encoder에 넣는다.[^whisper]
@@ -524,9 +532,8 @@ Vision encoder가 이미지 전체를 한꺼번에 보듯, Whisper는 녹음을 
 다만 사용자가 말하는 도중에 처리해야 하면, 아직 들어오지 않은 뒷부분은 볼 수 없다.
 그래서 실시간 대화 모델 Moshi는 음성을 token으로 바꾸는 encoder의 convolution과 Transformer를 모두 causal로 만들어, 지금까지 들어온 소리만으로 계산한다.[^moshi]
 
-생성하는 쪽에서는 축의 순서가 차이를 만든다.
-이미지는 위치 사이에 정해진 순서가 없으므로, 모든 위치를 한 번에 만들어도 된다.
-음성은 텍스트처럼 앞에서 뒤로 이어지므로, 앞선 token을 보고 다음 token을 고르는 LLM과 같다.
+음성은 시간에 따라 이어지므로, 앞선 소리를 조건으로 다음 소리를 생성하는 방식이 자연스럽다.
+여기서 다루는 codec 언어 모델은 이 구조를 이용해, 텍스트 LLM처럼 앞선 token을 보고 다음 token을 예측한다.
 
 ### 4-3. Encoder와 projector
 
@@ -773,7 +780,7 @@ SpeechTokenizer는 codec 하나가 두 역할을 하도록, HuBERT를 teacher로
 <Figure src="https://arxiv.org/html/2308.16692v2/model_structure.png" alt="SpeechTokenizer 구조. 음성 입력이 encoder와 여러 단계의 residual vector quantizer를 거쳐 decoder로 전달되고, 첫 quantizer에 semantic teacher의 학습 신호가 제공된다." caption="SpeechTokenizer의 학습 구조. VQ1부터 VQ8이 RVQ의 codebook 한 단계씩이다. ⊖는 잔차를 구하는 빼기이고, ⊕는 각 단계가 고른 벡터를 더하는 것이다. VQ1이 고른 벡터는 HuBERT의 feature를 따라가도록 학습하고, 모두 더한 벡터는 decoder가 음성을 복원하는 데 쓴다." source="Zhang et al. (2024), Figure 2 · CC BY-SA 4.0" wide />
 
 <Callout type="note">
-[음성 언어모델은 어디서부터 시작될까? LM-SPT 개발 및 모델 적용기](https://if.kakao.com/2026/session/time-table?sessionId=77)는 LM-SPT의 개발과 모델 적용을 다루는 카카오 기술 세션이다.
+[음성 언어모델은 어디서부터 시작될까? LM-SPT 개발 및 모델 적용기](https://if.kakao.com/2026/session/time-table?sessionId=77)는 LM-SPT의 개발과 모델 적용을 다루는 카카오 기술 세션이다.[^lmspt][^lmspt-code]
 </Callout>
 
 ## 6. 음성 생성
@@ -813,6 +820,53 @@ CosyVoice의 언어 모델은 텍스트와 화자 embedding을 조건으로 내�
 다른 방법은 시간 순서를 맡는 큰 모델과 한 시간 칸 안의 codebook 순서를 맡는 작은 모델을 나누는 것이다.
 Moshi는 시간 방향의 문맥을 만드는 Temporal Transformer와, 그 문맥을 받아 한 시간 칸의 여러 codebook을 차례로 예측하는 작은 Depth Transformer를 쓴다.[^moshi]
 이렇게 나누면 큰 Transformer는 시간 칸마다 한 번만 계산하고, codebook 수만큼 반복되는 계산은 작은 Transformer가 맡는다.
+Voila의 Audio Transformer도 큰 언어 모델의 hidden state를 받아 codebook ID들을 차례로 예측한다.[^voila]
+작은 Transformer가 예측하는 것은 파형이 아니라 codec token이며, 파형은 codec decoder가 만든다.
+
+<figure class="lecture-figure wide">
+<svg viewBox="0 0 600 340" role="img" aria-label="시간 두 칸과 codebook 두 개의 생성 예. 큰 Transformer가 시간 1의 문맥 h1을 만들면 작은 Transformer가 ID 3과 7을 차례로 예측한다. 생성한 ID들의 embedding을 모아 큰 Transformer의 다음 입력으로 넣는다. 큰 Transformer가 시간 2의 문맥 h2를 만들면 작은 Transformer가 ID 5와 2를 차례로 예측한다. 생성한 두 묶음은 codec decoder를 거쳐 파형이 된다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<defs><marker id="audio-depth-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#64748b"/></marker></defs>
+<text x="145" y="22" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">시간 1</text>
+<text x="455" y="22" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">시간 2</text>
+<rect x="45" y="38" width="200" height="40" rx="6" fill="#e2e8f0" stroke="#94a3b8"/>
+<rect x="355" y="38" width="200" height="40" rx="6" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="145" y="64" text-anchor="middle" font-size="15" fill="#0f172a">큰 Transformer</text>
+<text x="455" y="64" text-anchor="middle" font-size="15" fill="#0f172a">큰 Transformer</text>
+<path d="M145 78 V125 M455 78 V125" stroke="#64748b" stroke-width="1.5" marker-end="url(#audio-depth-arrow)"/>
+<text x="157" y="106" font-size="14" fill="#2a78d6">문맥 h₁</text>
+<text x="467" y="106" font-size="14" fill="#2a78d6">문맥 h₂</text>
+<rect x="25" y="128" width="240" height="112" rx="8" fill="#fff7ed" stroke="#eb6834"/>
+<rect x="335" y="128" width="240" height="112" rx="8" fill="#fff7ed" stroke="#eb6834"/>
+<text x="145" y="152" text-anchor="middle" font-size="15" fill="#0f172a">작은 Transformer</text>
+<text x="455" y="152" text-anchor="middle" font-size="15" fill="#0f172a">작은 Transformer</text>
+<text x="85" y="175" text-anchor="middle" font-size="13" fill="#64748b">codebook 1</text>
+<text x="205" y="175" text-anchor="middle" font-size="13" fill="#64748b">codebook 2</text>
+<text x="395" y="175" text-anchor="middle" font-size="13" fill="#64748b">codebook 1</text>
+<text x="515" y="175" text-anchor="middle" font-size="13" fill="#64748b">codebook 2</text>
+<rect x="55" y="184" width="60" height="36" rx="5" fill="#ffffff" stroke="#eb6834"/>
+<rect x="175" y="184" width="60" height="36" rx="5" fill="#ffffff" stroke="#eb6834"/>
+<rect x="365" y="184" width="60" height="36" rx="5" fill="#ffffff" stroke="#eb6834"/>
+<rect x="485" y="184" width="60" height="36" rx="5" fill="#ffffff" stroke="#eb6834"/>
+<text x="85" y="208" text-anchor="middle" font-size="15" fill="#0f172a">3</text>
+<text x="205" y="208" text-anchor="middle" font-size="15" fill="#0f172a">7</text>
+<text x="395" y="208" text-anchor="middle" font-size="15" fill="#0f172a">5</text>
+<text x="515" y="208" text-anchor="middle" font-size="15" fill="#0f172a">2</text>
+<path d="M115 202 H172 M425 202 H482" stroke="#64748b" stroke-width="1.5" marker-end="url(#audio-depth-arrow)"/>
+<path d="M265 202 H298 V58 H352" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#audio-depth-arrow)"/>
+<text x="300" y="33" text-anchor="middle" font-size="13" fill="#64748b">생성한 ID들의</text>
+<text x="300" y="82" text-anchor="middle" font-size="13" fill="#64748b">embedding</text>
+<path d="M145 240 V272 H300 V291 M455 240 V272 H300" fill="none" stroke="#64748b" stroke-width="1.5"/>
+<rect x="213" y="292" width="174" height="36" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<text x="300" y="316" text-anchor="middle" font-size="14" fill="#0f172a">codec decoder</text>
+<path d="M387 310 H435" stroke="#64748b" stroke-width="1.5" marker-end="url(#audio-depth-arrow)"/>
+<text x="447" y="316" font-size="14" fill="#0f172a">파형</text>
+</svg>
+<figcaption>시간 방향과 codebook 방향을 나눈 생성. 본문의 가상 ID를 사용했으며, 텍스트 token과 모델별 delay 설정은 생략했다. 같은 큰 Transformer와 같은 작은 Transformer를 시간마다 다시 사용한다.</figcaption>
+</figure>
+
+첫 시간 칸에서는 큰 모델이 만든 문맥을 조건으로 작은 모델이 `3`을 고르고, 그 문맥과 `3`을 함께 보고 `7`을 고른다.
+완성한 `(3, 7)`의 embedding을 모아 큰 모델의 다음 입력으로 넣으면, 큰 모델이 다음 시간 칸의 문맥을 만든다.
+작은 모델은 새 문맥을 받아 `(5, 2)`를 같은 방식으로 생성한다.
 Qwen3-Omni의 음성 생성 모듈도 같은 방식으로, 시간 칸마다 첫 codebook만 큰 모델이 예측하고 작은 MTP(multi-token prediction) 모듈이 나머지 codebook을 채운다.[^qwen3]
 이 MTP 모듈은 미래 시점의 token 여러 개를 예측하는 MTP와 달리, 같은 시간 칸의 나머지 codebook을 예측한다.
 
