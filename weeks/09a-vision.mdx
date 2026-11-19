@@ -203,7 +203,7 @@ VLM에서 LLM이 읽는 것은 encoder의 patch feature이므로, 여기서 빠�
 주어진 후보 가운데 가장 비슷한 문장은 고를 수 있지만, “표지판에 적힌 글을 읽고 경로를 설명하라” 같은 질문에 답을 써 내지는 못한다.
 답을 생성하려면 encoder의 patch feature를 LLM에 넣어야 하며, 이것이 VLM의 구조다.
 
-## 3. 시각 표현과 언어 생성의 연결
+## 3. VLM 구성 요소 및 학습
 
 ### 3-1. Discrete token과 Continuous representation
 
@@ -314,22 +314,34 @@ BLIP-2의 Q-Former(Querying Transformer)는 학습 가능한 query 벡터 32개�
 하지만 Honeybee 원논문은 이런 query 방식의 attention이 몇몇 영역에 몰려 나머지 세부를 놓치므로, 위치 관계를 묻는 task에서 선형 projector보다 약하다고 보고한다.[^honeybee]
 그림 (c)의 C-Abstractor는 그 대안으로, convolution으로 이웃한 patch의 정보를 섞은 뒤 adaptive average pooling으로 격자를 정해진 크기로 줄인다.
 예를 들어 16×16 격자를 8×8로 줄이면 visual token은 256개에서 64개가 되고, 격자 위치가 유지되므로 위치 관계도 남는다.
-어느 방식이든 요약에서 빠진 정보는 LLM이 다시 확인할 수 없다.
 
-### 3-3. Vision encoder의 선택
+### 3-3. Vision encoder
  
 VLM의 vision encoder로는 CLIP과 SigLIP 계열이 널리 쓰여 왔다.
-그런데 global 정렬로 학습한 encoder는 local 정보가 약할 수 있다.
-이 약점을 메우는 한 가지 방법은 local 정보에 강한 다른 encoder를 함께 쓰는 것이다.
-Prismatic VLMs는 같은 이미지에서 얻은 DINOv2와 SigLIP의 patch feature를 위치마다 이어 붙여 projector에 넣는다.[^prismatic]
-DINOv2는 patch 단위 목표로 학습한 encoder라서 local 정보를 보탠다.
-원논문은 이렇게 하면 위치를 찾는 task에서 성능이 오른다고 보고한다.
+이들은 이미지 전체와 문장을 맞추는 global 정렬로 학습했기 때문에, 위치별 세부인 local 정보가 약할 수 있다.
+그래서 local 정보를 보태려는 시도가 이어졌다.
+예를 들어 patch 단위 목표를 더해 학습한 DINOv2의 feature를 SigLIP의 feature와 함께 넣으면, 위치를 찾는 task의 성능이 오른다.[^prismatic]
+Meta의 Perception Encoder(PE)는 다른 encoder를 함께 넣지 않는다.[^pe]
+PE 원논문은 contrastive 학습만 한 encoder에도 local 정보가 있지만 마지막 층이 아닌 중간 층에 있다고 보고, 이 정보를 꺼내 쓰도록 encoder를 용도별로 한 번 더 정렬한다.
 
-다른 방법은 vision encoder의 학습 목표를 바꾸는 것이다.
-Vision encoder를 contrastive 학습 대신 LLM처럼 다음 token 예측으로 학습할 수 있다.
-카카오의 Kanana-2 vision encoder는 contrastive 학습을 쓰지 않는다.[^kanana-encoder-blog]
-대신 Kanana-2 LLM의 가중치로 초기화한 Transformer에 이미지와 상세한 설명을 넣고, **다음 설명 token을 예측**하게 학습한다.
-설명에 메뉴판의 글자와 가격까지 들어 있으면, 모델은 그 token을 맞히기 위해 이미지의 세부를 읽어야 한다.
+다른 흐름은 학습 목표 자체를 LLM에 맞추는 것이다.
+VLM 안의 LLM은 encoder가 넘긴 feature를 읽고 다음 token을 생성한다.
+그런데 contrastive 학습은 encoder가 이미지와 문장의 짝이 맞는지 구별하도록 학습한다.
+GenLIP 원논문은 이 차이 때문에 contrastive encoder가 LLM과 덜 맞을 수 있다고 보고, encoder도 처음부터 이미지 설명을 생성하며 학습하자고 제안한다.[^genlip]
+
+<Figure src="https://arxiv.org/html/2605.00809v3/figures/fig1-update.png" alt="Vision encoder의 세 가지 사전학습 구조와 perplexity 비교. 왼쪽은 이미지 encoder와 텍스트 encoder를 따로 두고 contrastive loss로 학습하는 CLIP, SigLIP 계열이다. 가운데는 이미지 encoder의 출력을 별도의 텍스트 모델에 넘겨 다음 token 예측으로 학습하는 CapPa, AIMv2 계열이다. 셋째는 이미지 V와 텍스트 T를 Transformer 하나에 함께 넣어 다음 token 예측으로 학습하는 GenLIP이다. 오른쪽 그래프는 SigLIP, AIMv2, OpenVision2, SigLIP2, GenLIP을 LLM에 붙였을 때의 perplexity로, 대체로 오른쪽으로 갈수록 낮아진다." caption="Vision encoder의 사전학습 구조 및 성능." source="Fang et al. (2026), Figure 1 · CC BY-SA 4.0" wide />
+
+그림의 왼쪽 CLIP 계열은 이미지 encoder와 텍스트 encoder를 따로 두고, 두 출력이 짝끼리 가까워지도록 학습한다.
+가운데 AIMv2 계열은 이미지 encoder 뒤에 decoder를 따로 붙여, encoder의 출력으로 이미지 설명을 생성하게 한다.
+이때 loss는 decoder의 출력에서 계산되므로, 이미지 encoder는 decoder를 거쳐 간접적으로만 학습된다.
+GenLIP은 이미지 patch를 prefix로 둔 **prefix LM** 하나만 둔다.
+이미지 token끼리는 ViT처럼 서로 모두 보고, 설명 token은 이미지 전체와 앞선 설명 token만 보며 다음 token을 생성한다.
+설명을 맞히려면 이미지 patch에서 필요한 정보를 꺼내야 하므로, 같은 Transformer가 이미지를 읽는 법을 직접 배운다.
+VLM에서는 이 Transformer에 이미지만 넣어 vision encoder로 쓴다.
+
+카카오의 Kanana-2 vision encoder는 이 방식을 따른다.[^kanana-encoder-blog]
+카카오는 이 Transformer를 Kanana-2 LLM의 가중치로 초기화해, 문장 생성 능력을 갖춘 상태에서 학습을 시작한다.
+그리고 메뉴판의 글자와 가격까지 담은 상세한 설명을 예측하게 해, 작은 한글과 이미지의 세부를 읽는 encoder를 만들려 했다.
 
 <Callout type="note">
 [Kanana Vision Encoder: 글로벌 최고 수준에 도전하는 자체 비전 인코더 개발기](https://if.kakao.com/2026/session/time-table?sessionId=86)는 카카오가 자체 vision encoder를 개발한 과정을 소개하는 기술 세션이다.
@@ -337,126 +349,103 @@ Vision encoder를 contrastive 학습 대신 LLM처럼 다음 token 예측으로 
 
 ### 3-4. 단계별 학습
 
-LLaVA는 두 단계로 학습한다.
-첫 단계에서는 vision encoder와 LLM을 고정하고 projector만 학습한다.
-학습 데이터는 이미지–캡션 쌍이고, 모델은 이미지를 보고 캡션의 다음 token을 예측한다.
-LLM을 고정해도 gradient는 LLM의 연산을 거슬러 흐른다.
-고정은 LLM의 가중치를 갱신하지 않는다는 뜻일 뿐이므로, gradient는 LLM을 지나 projector까지 전달된다.
-Projector는 고정된 LLM이 이미지에 관한 단어를 잘 맞히도록 시각 feature를 바꾸는 법을 배운다.
-두 번째 단계에서는 vision encoder를 계속 고정하고, projector와 LLM을 함께 조정한다.
-이 단계의 학습 데이터는 이미지와 지시·응답의 예시다.
-예를 들어 같은 사진에 “무엇이 보이나?”와 “왼쪽 물체는 무슨 색인가?”처럼 서로 다른 질문을 주고, 모델이 각 질문에 맞는 답을 생성하게 한다.
-손실은 응답 token 위치에서만 계산한다.
+다음은 카카오의 Kanana-v 개발기에 따른 학습 과정이다.[^kanana15v-blog][^kanana-v-hybrid]
 
-초기 LLaVA의 instruction 데이터 15만 8천 건은 GPT-4가 만들었다.[^llava]
-연구진은 텍스트만 입력받는 GPT-4에 이미지 대신 COCO의 캡션과 상자(bounding box) 정보를 주고 대화를 생성하게 했다.
-GPT-4는 사진을 직접 보지 못했다.
-그래서 캡션과 상자 정보에 컵의 색이 없다면, 대화에 나오는 컵의 색이 실제 사진과 맞는다는 보장이 없다.
+| 단계 | 학습하는 부분 | 학습 데이터 |
+| --- | --- | --- |
+| Projector 사전학습 | projector | 이미지 캡션, OCR |
+| 추가 사전학습 | 모델 전체 | 상세 캡션, grounding, OCR, 문서, 이미지·텍스트 interleaved 문서 |
+| 질의응답 학습 | 모델 전체 | 여러 task의 이미지 질의응답 |
+| 지시 이행 | 모델 전체 | 한국어 지시 이행, 시스템 프롬프트 지시 이행 |
+| Long CoT SFT | 모델 전체 | 합성한 뒤 검수한 추론 과정과 답 |
+| Offline RL | 모델 전체 | 선호·비선호 추론 응답 쌍 |
+| Online RL | 모델 전체 | 정답을 규칙으로 확인할 수 있는 문제 |
 
-### 3-5. 후속 학습
+## 4. VLM 벤치마크
 
-VLM의 학습은 projector 정렬과 instruction tuning으로 끝나지 않는다.
-최근 VLM은 텍스트 LLM처럼 SFT(supervised fine-tuning) 뒤에 강화학습을 더한다.
+VLM은 사진에 대한 질문에 답하는 일 말고도 많은 일을 한다.
+VLM은 문서와 차트의 글자를 읽어 내용을 해석하고, 도형이 든 수학 문제를 풀고, 지시한 형식에 맞춰 답을 쓴다.
+그래서 VLM 하나를 평가할 때도 능력별로 여러 벤치마크를 함께 쓴다.
+예를 들어, STEM·퍼즐, 일반 시각 질의응답, 지시 이행·정렬, 영어 OCR·문서 이해, 세밀한 인식(fine-grained perception), visual grounding, 한국어 OCR·문서 이해, 한국어 시험, 한국 문화 이해가 있다.
 
-카카오의 Kanana-v-4b-hybrid는 vision encoder, C-Abstractor, 언어 모델을 결합한 VLM이다.[^kanana-v][^kanana-v-hybrid]
-이 모델은 간단한 질문에는 짧게 답하고, 복잡한 시각 문제에는 추론 과정을 거쳐 답한다.
-카카오는 이 모델을 네 단계로 학습했다.
-첫 단계는 기초 멀티모달 학습으로, 모델이 이미지 이해와 지시 이행을 익힌다.
-이어지는 세 단계는 긴 추론 과정에 대한 SFT, offline RL(reinforcement learning), online RL이다.
-Online RL 단계에서는 현재 모델이 문제마다 새로 응답을 생성하고, 그 응답에서 얻은 검증 보상으로 모델을 갱신한다.
-검증 보상은 규칙으로 정답을 확인할 수 있는 문제에서만 얻을 수 있다.
-그래프에서 값을 찾아 계산하는 문제는 생성한 답을 정답과 비교할 수 있지만, 정답을 하나로 정하기 어려운 시각 질문에는 이 보상을 쓰기 어렵다.
+| 영역 | 묻는 능력 | 대표 벤치마크 |
+| --- | --- | --- |
+| 일반 시각 질의응답 | 사진 속 물체와 속성, 관계를 알아보고 상식과 엮어 답하기 | MMBench[^mmbench], MMStar[^mmstar], RealWorldQA[^realworldqa] |
+| OCR·문서 이해 | 이미지 속 글자를 읽고 문서와 차트의 내용을 해석하기 | DocVQA[^docvqa], ChartQA[^chartqa], OCRBench[^ocrbench], CharXiv[^charxiv] |
+| STEM·퍼즐 | 도형이나 그래프가 든 전공 문제와 수학 문제 풀기 | MMMU[^mmmu], MathVista[^mathvista], MathVerse[^mathverse] |
+| 세밀한 인식 | 고해상도 이미지에서 작은 세부의 속성과 위치 찾기 | V*Bench[^vstar], HR-Bench[^hrbench] |
+| Visual grounding | 지시 표현이 가리키는 물체를 상자로 찾기 | RefCOCO·RefCOCO+[^refcoco], RefCOCOg[^refcocog] |
+| 지시 이행·정렬 | 이미지에 없는 내용을 지어내지 않고, 지시한 조건을 지키기 | HallusionBench[^hallusionbench], MIA-Bench[^miabench], WildVision-Bench[^wildvision] |
+| 한국어 시험 | 이미지로 주어진 한국어 시험 문제 풀기 | KoNET[^konet] |
 
-### 3-6. Early fusion
+벤치마크마다 자료와 질문을 만드는 방식이 다르다.
+DocVQA는 실제 산업 문서 이미지 12,767장에 질문 50,000개를 붙였다.
+ChartQA는 사람이 직접 쓴 질문 약 9,600개를 담고 있으며, 많은 질문이 차트에서 값을 읽은 뒤 더하거나 비교하는 계산을 요구한다.
+CharXiv는 arXiv 논문에서 고른 실제 차트 2,323개로 만들었다.
+CharXiv의 질문은 차트의 요소를 묻는 기술형과 여러 요소를 종합해야 하는 추론형으로 나뉜다.
+추론형 질문에서 GPT-4o의 정확도는 47.1%로, 사람의 80.5%에 크게 못 미쳤다.
+V*Bench는 평균 해상도 2246×1582의 이미지에서 물체의 속성이나 두 물체의 위치 관계를 묻는다.
+이런 이미지를 encoder의 입력 해상도로 줄이면 질문이 묻는 세부가 잘 보이지 않는다.
+HallusionBench는 원본 이미지와 사람이 일부를 고친 이미지에 같은 질문을 던진다.
+이미지를 제대로 보지 않고 아는 지식으로 답하는 모델은 고친 이미지에서 틀린다.
+RefCOCO 계열은 COCO 이미지 속 물체와 그 물체를 가리키는 “왼쪽에서 두 번째 남자” 같은 지시 표현을 짝지어, 모델이 찾은 상자가 정답 상자와 맞는지 채점한다.
+MIA-Bench는 이미지와 지시 400쌍으로, 길이 제한이나 특정 대상 언급, 문체 같은 조건이 겹친 지시를 모델이 모두 지키는지 본다.
 
-지금까지 본 VLM은 따로 사전학습한 encoder와 LLM을 나중에 잇는다.
-반대로 처음부터 텍스트와 시각 입력을 한 모델에 함께 넣어 사전학습하는 방식을 **early fusion**이라 한다.
-Chameleon은 VQ 계열 tokenizer가 만든 discrete token과 텍스트 token을 한 Transformer로 처음부터 함께 학습한다.[^chameleon]
-Chameleon 원논문은 이 방식을 early fusion이라 부르고, 이미지와 텍스트를 따로 인코딩한 뒤 결합하는 Flamingo·LLaVA류를 late fusion으로 분류한다.[^flamingo]
-이미지도 텍스트와 같은 token이므로, Chameleon은 텍스트와 이미지가 섞인 sequence를 입력으로 받고 출력으로도 생성한다.
+## 5. Grounding과 CUA
 
-## 4. Grounding과 컴퓨터 사용
-
-### 4-1. 이미지의 visual grounding
+### 5-1. Visual grounding
 
 VLM이 “탁자 위에 컵이 있다”고 답해도, 그 답만으로는 컵이 이미지의 어디에 있는지 알 수 없다.
-로봇이 컵을 집거나 사진에서 특정 물체만 편집하려면, 모델이 그 위치를 상자나 픽셀 영역으로 내놓아야 한다.
-**Visual grounding**은 “왼쪽 사자” 같은 표현을 이미지 속의 영역과 연결하는 일이다.
+**Visual grounding**은 “왼쪽 사자” 같은 표현을 이미지 속의 상자나 픽셀 영역과 연결하는 일이다.
 
-출발점은 object detector다.
-보통의 detector는 이미지 속 물체마다 상자와 범주를 예측하지만, 학습 때 정한 범주만 찾을 수 있다.
-Grounding DINO는 CLIP의 open-vocabulary 분류처럼 찾을 대상을 텍스트로 받는다.[^groundingdino]
-그래서 학습 때 없던 범주나 “The left lion” 같은 지시 표현에 해당하는 상자도 찾는다.
-Grounding DINO는 텍스트 feature와 이미지 feature를 여러 층에서 cross-attention으로 섞고, 상자마다 텍스트의 어느 부분에 해당하는지 점수를 낸다.
-이름의 DINO는 Grounding DINO가 바탕으로 삼은 detector의 이름이며, self-distillation 방법 DINO와는 관계없다.
+보통의 object detector는 학습 때 정한 범주의 물체만 찾는다.
+Grounding DINO는 찾을 대상을 텍스트로 받아, 학습 때 없던 범주나 “The left lion” 같은 지시 표현에 해당하는 상자도 찾는다.[^groundingdino]
 
-<Figure src={groundingDino.src} alt="Grounding DINO의 입력과 출력 예. 왼쪽 (a)는 정해진 범주만 찾는 기존 detector로 bench, person 같은 COCO 범주에 상자를 그린다. 가운데 (b)는 사람이 입력한 새 범주 ear, lion, bench, worldcup에 상자를 그리는 경우와, The left lion, The bottom man with his head up 같은 지시 문장에 해당하는 물체 하나에만 상자를 그리는 경우다. 오른쪽 (c)는 찾은 영역을 Stable Diffusion으로 편집해 왼쪽 사자를 개로 바꾸는 응용이다." caption="Grounding DINO의 입력과 출력. (a) 정해진 범주만 찾는 기존 detector, (b) 새 범주 이름이나 “The left lion” 같은 지시 표현으로 상자를 찾는 open-set detection, (c) 찾은 영역을 Stable Diffusion으로 편집하는 응용." source="Liu et al. (2024), Figure 1 · IDEA-Research/GroundingDINO 저장소 · Apache-2.0 · 아래쪽 논문 캡션을 잘라냄" wide />
+<Figure src={groundingDino.src} alt="Grounding DINO의 입력과 출력 예. 왼쪽 (a)는 정해진 범주만 찾는 기존 detector로 bench, person 같은 COCO 범주에 상자를 그린다. 가운데 (b)는 사람이 입력한 새 범주 ear, lion, bench, worldcup에 상자를 그리는 경우와, The left lion, The bottom man with his head up 같은 지시 문장에 해당하는 물체 하나에만 상자를 그리는 경우다. 오른쪽 (c)는 찾은 영역을 Stable Diffusion으로 편집해 왼쪽 사자를 개로 바꾸는 응용이다." caption="Grounding DINO의 입력과 출력. (a) 정해진 범주만 찾는 기존 detector, (b) 새 범주 이름이나 “The left lion” 같은 지시 표현으로 상자를 찾는 open-set detection, (c) 찾은 영역을 Stable Diffusion으로 편집하는 응용." source="Liu et al. (2024), Figure 1" wide />
 
-상자는 물체의 경계를 따르지 않으므로, 물체만 오려 내려면 픽셀 단위의 영역인 segmentation mask가 필요하다.
-이 mask는 MAE에서 patch를 가리는 mask와는 다른 뜻이다.
-SAM(Segment Anything Model)은 점이나 상자로 위치를 알려 주면 그 물체의 mask를 그리는 promptable segmentation 모델이다.[^sam]
-SAM에서는 MAE로 사전학습한 ViT encoder가 이미지 feature를 한 번만 계산해 둔다.
-그다음 가벼운 mask decoder가 prompt마다 mask를 낸다.
-점 하나는 셔츠를 가리키는지 셔츠를 입은 사람을 가리키는지 모호하므로, decoder는 mask 후보 여러 개와 각각의 품질 점수를 함께 낸다.
+물체의 경계를 따라 오려 내려면 상자 대신 픽셀 단위의 segmentation mask가 필요하다.
+SAM(Segment Anything Model)은 점이나 상자로 위치를 알려 주면 그 물체의 mask를 그린다.[^sam]
+SAM 3는 “노란 스쿨버스” 같은 짧은 명사구를 직접 받아, 해당하는 모든 물체의 mask를 찾는다.[^sam3]
 
-<Figure src={samDiagram.src} alt="SAM의 구조. 가위 사진이 큰 image encoder를 거쳐 image embedding이 된다. 점, 상자, 텍스트 prompt는 prompt encoder가, mask prompt는 convolution이 받아 embedding에 더한다. 가벼운 mask decoder가 이를 받아 가위 전체, 손잡이, 날 부분처럼 서로 다른 mask 세 개와 각각의 점수를 낸다." caption="SAM의 구조. 무거운 image encoder가 이미지 embedding을 한 번 만들면, 가벼운 mask decoder가 prompt마다 mask 후보 여러 개와 점수를 낸다. 그림의 text prompt는 원논문에서 실험으로만 다룬 입력이다." source="Kirillov et al. (2023), Figure 4 · facebookresearch/segment-anything 저장소 · Apache-2.0" wide />
-
-공개된 SAM은 텍스트를 받지 않는다.
-그래서 Grounding DINO가 텍스트로 찾은 상자를 SAM의 prompt로 넣으면, 텍스트로 지정한 물체의 mask를 얻을 수 있다.
-SAM 3는 “노란 스쿨버스” 같은 짧은 명사구를 직접 받아, 해당하는 모든 물체의 mask를 찾도록 확장했다.[^sam3]
-다만 SAM 3는 긴 지시나 추론이 필요한 질의를 다루도록 설계되지 않았다.
+<Figure src={samDiagram.src} alt="SAM의 구조. 가위 사진이 큰 image encoder를 거쳐 image embedding이 된다. 점, 상자, 텍스트 prompt는 prompt encoder가, mask prompt는 convolution이 받아 embedding에 더한다. 가벼운 mask decoder가 이를 받아 가위 전체, 손잡이, 날 부분처럼 서로 다른 mask 세 개와 각각의 점수를 낸다." caption="SAM의 구조." source="Kirillov et al. (2023), Figure 4" wide />
 
 “비타민 C가 많은 음식”처럼 추론이 필요한 질의는 LLM이 먼저 해석해야 한다.
 LLM이 해석한 결과를 위치로 내놓는 방식은 세 가지다.
 
 - **도구로 호출**: LLM이 질의를 짧은 명사구로 바꾸어 SAM 3를 호출하고, 돌아온 mask 가운데 필요한 것을 고른다.
-  예를 들어 “왼쪽에서 두 번째 컵”이라는 질의를 받으면, LLM은 “컵”으로 모든 컵의 mask를 받은 뒤 위치를 비교해 하나를 고른다.
   SAM 3 원논문은 이런 구성을 SAM 3 Agent라 부른다.
-- **좌표를 텍스트로 출력**: Qwen2.5-VL은 상자의 좌표를 `[120, 45, 210, 160]`처럼 입력 이미지의 픽셀 기준 숫자로 생성한다.[^qwen25vl]
-  이 방식은 별도 모듈이 필요 없지만, 복잡한 모양의 mask를 숫자 몇 개로 나타내기는 어렵다.
-- **Hidden state를 mask decoder에 전달**: discrete token 하나로는 픽셀별 mask를 담을 수 없다.
-  그래서 LISA(large language instructed segmentation assistant)는 어휘에 `<SEG>` token을 추가한다.[^lisa]
-  LLM이 이 token을 생성하면, LISA는 그 위치의 hidden state를 투영해 SAM 구조의 mask decoder에 넘기고, decoder가 mask를 그린다.
-  Hidden state는 질의를 해석한 결과가 담긴 continuous representation이므로, token ID 하나보다 훨씬 많은 정보를 decoder에 전달한다.
+- **좌표를 텍스트로 출력**: Qwen2.5-VL은 상자의 좌표를 `[120, 45, 210, 160]` 같은 숫자로 생성한다.[^qwen25vl]
 
-### 4-2. 화면 grounding과 행동
+여기까지는 찾은 위치가 최종 답이다.
+**Visual grounded reasoning**은 위치를 추론의 중간 단계로 쓴다.
+즉, 모델이 추론 문장 사이사이에 상자 좌표를 적어, 이미지의 어느 영역을 근거로 삼는지 밝히게 한다.[^grit]
+DeepEyes는 모델이 추론 중에 좌표를 생성하면 그 영역을 잘라 다시 입력으로 넣어, 작은 세부를 확대해 보고 추론을 이어 가게 한다.[^deepeyes]
+DeepEyes 원논문은 이를 “이미지로 생각하기(thinking with images)”라 부른다.
+
+<Figure src="https://arxiv.org/html/2505.15879v2/Figure1.png" alt="둥지 속 달걀 사진과 “둥지에 달걀이 몇 개인가?”라는 질문에 대한 두 추론 비교. 위쪽은 기존 visual reasoning 모델의 텍스트만으로 된 추론으로, 둥지 안 일곱 개와 밖 두 개를 합쳐 아홉 개라고 잘못 답한다. 아래쪽은 GRIT의 grounded reasoning으로, 추론 중에 둥지 안 달걀마다 상자 좌표 여섯 개를 적고, 그 영역을 잘라 보인 뒤 여섯 개라고 답한다." caption="텍스트만으로 하는 추론(위)과 visual grounded reasoning(아래)." source="Fan et al. (2025), Figure 1" wide />
+
+### 5-2. Computer Usage Agent (CUA)
 
 화면도 이미지다.
 “저장 버튼을 눌러라”를 수행하려면 모델이 화면에서 저장 버튼의 위치를 찾아야 한다.
-그래서 이것도 visual grounding이다.
 다른 점은 찾은 위치가 답에서 끝나지 않고 **클릭할 좌표**가 된다는 것이다.
 모델이 “저장 버튼 중심은 (320, 80)”이라고 예측하면, 시스템이 이 값을 클릭 도구에 넘겨 실제로 클릭한다.
 
 화면 grounding이 어려운 이유는 화면은 크고 목표는 작기 때문이다.
 고해상도의 전문 소프트웨어 화면에서는 목표 요소가 평균적으로 화면 면적의 0.07%만 차지하고, 화면 구성도 복잡하다.[^screenspotpro]
 
-<Figure src="https://arxiv.org/html/2504.07981v1/screenspot-pro-example.png" alt="고해상도 음악 편집 소프트웨어 화면. 위에 지시 Add a new pattern이 있고, 2560×1440 화면 위쪽 툴바의 작은 더하기 버튼이 빨간 상자로 표시되어 있다. 가운데에는 그 부분을 확대한 창이 겹쳐 있다." caption="화면 grounding의 예. 지시 “Add a new pattern”에 해당하는 작은 버튼(빨간 상자)을 2560×1440 화면 전체에서 찾아야 한다. 가운데 확대 창은 설명을 위해 덧붙인 것이다." source="Li et al. (2025), Figure 3 · CC BY 4.0 · 오른쪽 패널만" />
+<Figure src="https://arxiv.org/html/2504.07981v1/screenspot-pro-example.png" alt="고해상도 음악 편집 소프트웨어 화면. 위에 지시 Add a new pattern이 있고, 2560×1440 화면 위쪽 툴바의 작은 더하기 버튼이 빨간 상자로 표시되어 있다. 가운데에는 그 부분을 확대한 창이 겹쳐 있다." caption="화면 grounding의 예. 지시 “Add a new pattern”에 해당하는 작은 버튼(빨간 상자)을 2560×1440 화면 전체에서 찾아야 한다." source="Li et al. (2025), Figure 3 · CC BY 4.0" />
 
-화면을 꼭 좌표로만 다룰 필요는 없다.
-Accessibility tree는 화면의 버튼·입력창 같은 요소와 그 이름·역할을 프로그램이 읽을 수 있게 나타낸 구조다.
-이를 쓰면 agent는 좌표 대신 이름이 “저장”인 버튼 요소를 고를 수 있다.
-CUA(computer-using agent)는 스크린샷이나 accessibility tree를 관찰하고, 클릭·키 입력·스크롤 같은 행동을 tool calling으로 요청하는 agent다.
-Tool calling은 모델이 함수와 인자를 적어 실행 환경에 요청하는 인터페이스다.
-앞의 SAM 3 Agent도 같은 방식으로 SAM 3를 부른다.
-
-### 4-3. 관찰과 실행의 반복
+CUA(computer usage agent)는 화면 관찰하고, 클릭·키 입력·스크롤 같은 행동을 tool calling으로 요청하는 agent다.
 
 “스프레드시트에서 매출 합계를 계산하고 파일을 저장하라”는 클릭 한 번으로 끝나지 않는다.
 Agent는 앱을 확인하고, 셀을 골라 수식을 넣고, 결과를 보고, 저장 대화상자의 경로를 확인해야 한다.
 행동할 때마다 화면이 바뀌므로, 이전 스크린샷의 좌표는 더 이상 맞지 않을 수 있다.
 그래서 CUA는 **관찰, 행동, 실행, 새 관찰**을 반복한다.
 
-<Figure src="https://arxiv.org/html/2404.07972v2/task_demostration_new.png" alt="OSWorld의 구성. 위 두 줄은 실제 task를 수행하는 과정으로, 스프레드시트와 영수증 이미지를 오가며 장부를 갱신하는 task와 코드 편집기에서 snake 게임 코드를 고치는 task의 화면이 이어지고, 마우스가 움직인 경로가 점선으로 그려져 있다. 아래는 agent가 스크린샷과 accessibility tree를 관찰해 마우스와 키보드 행동을 예측하면, 여러 운영체제와 앱이 돌아가는 가상 머신에서 실행하고, 최종 상태를 가져와 실행 결과로 평가하는 흐름도다." caption="OSWorld의 구성. 위는 실제 task를 수행하며 마우스가 움직인 경로이고, 아래는 agent가 스크린샷과 accessibility tree를 관찰해 마우스·키보드 행동을 예측하고, 가상 머신에서 실행한 뒤 최종 상태로 성공을 판정하는 흐름이다." source="Xie et al. (2024), Figure 1 · CC BY 4.0" wide />
-
 OSWorld는 이런 반복을 실제 운영체제와 앱이 돌아가는 가상 머신에서 평가한다.[^osworld]
 OSWorld는 agent가 “저장했다”고 말하는 것만으로 성공을 인정하지 않는다.
 파일이 실제로 원하는 위치와 내용으로 저장되었는지를 실행 결과로 판정한다.
-
-Anthropic의 Claude 3.5 Sonnet computer use가 이런 화면 기반 agent의 사례다.[^claude-cu]
-모델은 화면을 보고 커서 이동·클릭·키 입력을 요청할 뿐이고, 실제 입력은 실행 환경이 수행한다.
-그래서 모델은 실행 결과를 알려면 바뀐 화면을 다시 관찰해야 한다.
-
-<Video src="https://www.youtube.com/watch?v=ODaHJzOyVCQ" caption="Anthropic, Claude | Computer use for automating operations. Claude 3.5 Sonnet이 여러 탭을 오가며 필요한 정보를 모으고 양식을 채우는 데모로, 화면의 모든 조작을 모델이 생성했다." />
 
 <Details summary="더 보기: 고해상도 이미지와 비디오 입력">
 
@@ -535,18 +524,15 @@ GLM-V 보고서에서 GLM-4.5V thinking 설정의 Video-MME 점수는 자막 없
 [^llava15]: Liu, H., Li, C., Li, Y., & Lee, Y. J. (2024). Improved Baselines with Visual Instruction Tuning. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2310.03744).
 [^llavaonevision]: Li, B., Zhang, Y., Guo, D., et al. (2024). LLaVA-OneVision: Easy Visual Task Transfer. *arXiv*. [논문](https://arxiv.org/abs/2408.03326).
 [^llava]: Liu, H., Li, C., Wu, Q., & Lee, Y. J. (2023). Visual Instruction Tuning. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2304.08485).
-[^flamingo]: Alayrac, J.-B., Donahue, J., Luc, P., et al. (2022). Flamingo: a Visual Language Model for Few-Shot Learning. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2204.14198).
 [^blip2]: Li, J., Li, D., Savarese, S., & Hoi, S. (2023). BLIP-2: Bootstrapping Language-Image Pre-training with Frozen Image Encoders and Large Language Models. *International Conference on Machine Learning*. [논문](https://arxiv.org/abs/2301.12597).
 [^qwen2vl]: Wang, P., Bai, S., Tan, S., et al. (2024). Qwen2-VL: Enhancing Vision-Language Model's Perception of the World at Any Resolution. *arXiv*. [논문](https://arxiv.org/abs/2409.12191).
 [^osworld]: Xie, T., Zhang, D., Chen, J., et al. (2024). OSWorld: Benchmarking Multimodal Agents for Open-Ended Tasks in Real Computer Environments. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2404.07972).
 [^screenspotpro]: Li, K., Meng, Z., Lin, H., et al. (2025). ScreenSpot-Pro: GUI Grounding for Professional High-Resolution Computer Use. *Proceedings of the 33rd ACM International Conference on Multimedia*. [논문](https://arxiv.org/abs/2504.07981).
-[^kanana-v]: Kakao. (2024). 이미지도 찰떡같이 이해하는 카카오의 멀티모달 언어모델 Kanana-v 알아보기. *kakao tech*. [글](https://tech.kakao.com/posts/667).
 [^kanana-v-hybrid]: Kakao. (2026). “생각하고 답변하는” 카카오의 하이브리드 멀티모달 언어모델, Kanana-v-4b-hybrid 개발기. *kakao tech*. [글](https://tech.kakao.com/posts/806).
+[^kanana15v-blog]: Kakao. (2025). 카카오의 경량 멀티모달 언어모델 ‘Kanana-1.5-v-3b’ 개발부터 공개까지. *kakao tech*. [글](https://tech.kakao.com/posts/714).
 
 [^qwen3vl]: Bai, S., Cai, Y., Chen, R., et al. (2025). Qwen3-VL Technical Report. *arXiv*. [논문](https://arxiv.org/abs/2511.21631).
-[^claude-cu]: Anthropic. (2024). Developing a computer use model. *Anthropic*. [글](https://www.anthropic.com/news/developing-computer-use).
 [^honeybee]: Cha, J., et al. (2024). Honeybee: Locality-enhanced Projector for Multimodal LLM. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2312.06742).
-[^chameleon]: Chameleon Team. (2024). Chameleon: Mixed-Modal Early-Fusion Foundation Models. *arXiv*. [논문](https://arxiv.org/abs/2405.09818).
 [^vqvae]: van den Oord, A., Vinyals, O., & Kavukcuoglu, K. (2017). Neural Discrete Representation Learning. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/1711.00937).
 [^qwenvl]: Bai, J., Bai, S., Yang, S., et al. (2023). Qwen-VL: A Versatile Vision-Language Model for Understanding, Localization, Text Reading, and Beyond. *arXiv*. [논문](https://arxiv.org/abs/2308.12966).
 [^mae]: He, K., Chen, X., Xie, S., et al. (2022). Masked Autoencoders Are Scalable Vision Learners. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2111.06377).
@@ -558,12 +544,33 @@ GLM-V 보고서에서 GLM-4.5V thinking 설정의 Video-MME 점수는 자막 없
 [^continualclip]: Thengane, V., Khan, S., Hayat, M., & Khan, F. (2022). CLIP model is an Efficient Continual Learner. *arXiv*. [논문](https://arxiv.org/abs/2210.03114).
 [^siglip2]: Tschannen, M., Gritsenko, A., Wang, X., et al. (2025). SigLIP 2: Multilingual Vision-Language Encoders with Improved Semantic Understanding, Localization, and Dense Features. *arXiv*. [논문](https://arxiv.org/abs/2502.14786).
 [^prismatic]: Karamcheti, S., Nair, S., Balakrishna, A., et al. (2024). Prismatic VLMs: Investigating the Design Space of Visually-Conditioned Language Models. *International Conference on Machine Learning*. [논문](https://arxiv.org/abs/2402.07865).
+[^pe]: Bolya, D., Huang, P.-Y., Sun, P., et al. (2025). Perception Encoder: The best visual embeddings are not at the output of the network. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2504.13181).
+[^genlip]: Fang, Y., Lan, M., Huang, Z., et al. (2026). Let ViT Speak: Generative Language-Image Pre-training. *European Conference on Computer Vision*. [논문](https://arxiv.org/abs/2605.00809).
 [^kanana-encoder-blog]: Kakao. (2026). 글로벌 최고 수준의 자체 비전 인코더, Kanana-2-vision-encoder 개발기. *kakao tech*. [글](https://tech.kakao.com/posts/840).
+[^mmbench]: Liu, Y., Duan, H., Zhang, Y., et al. (2024). MMBench: Is Your Multi-modal Model an All-around Player? *European Conference on Computer Vision*. [논문](https://arxiv.org/abs/2307.06281).
+[^mmstar]: Chen, L., Li, J., Dong, X., et al. (2024). Are We on the Right Way for Evaluating Large Vision-Language Models? *arXiv*. [논문](https://arxiv.org/abs/2403.20330).
+[^realworldqa]: xAI. (2024). Grok-1.5 Vision Preview. *xAI News*. [글](https://x.ai/news/grok-1.5v).
+[^docvqa]: Mathew, M., Karatzas, D., & Jawahar, C. V. (2021). DocVQA: A Dataset for VQA on Document Images. *IEEE/CVF Winter Conference on Applications of Computer Vision*. [논문](https://arxiv.org/abs/2007.00398).
+[^chartqa]: Masry, A., Long, D. X., Tan, J. Q., et al. (2022). ChartQA: A Benchmark for Question Answering about Charts with Visual and Logical Reasoning. *Findings of the Association for Computational Linguistics: ACL 2022*. [논문](https://arxiv.org/abs/2203.10244).
+[^ocrbench]: Liu, Y., Li, Z., Huang, M., et al. (2024). OCRBench: On the Hidden Mystery of OCR in Large Multimodal Models. *Science China Information Sciences*. [논문](https://arxiv.org/abs/2305.07895).
+[^charxiv]: Wang, Z., Xia, M., He, L., et al. (2024). CharXiv: Charting Gaps in Realistic Chart Understanding in Multimodal LLMs. *arXiv*. [논문](https://arxiv.org/abs/2406.18521).
+[^mmmu]: Yue, X., Ni, Y., Zhang, K., et al. (2024). MMMU: A Massive Multi-discipline Multimodal Understanding and Reasoning Benchmark for Expert AGI. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2311.16502).
+[^mathvista]: Lu, P., Bansal, H., Xia, T., et al. (2024). MathVista: Evaluating Mathematical Reasoning of Foundation Models in Visual Contexts. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2310.02255).
+[^mathverse]: Zhang, R., Jiang, D., Zhang, Y., et al. (2024). MathVerse: Does Your Multi-modal LLM Truly See the Diagrams in Visual Math Problems? *European Conference on Computer Vision*. [논문](https://arxiv.org/abs/2403.14624).
+[^vstar]: Wu, P., & Xie, S. (2023). V*: Guided Visual Search as a Core Mechanism in Multimodal LLMs. *arXiv*. [논문](https://arxiv.org/abs/2312.14135).
+[^hrbench]: Wang, W., Ding, L., Zeng, M., et al. (2024). Divide, Conquer and Combine: A Training-Free Framework for High-Resolution Image Perception in Multimodal Large Language Models. *arXiv*. [논문](https://arxiv.org/abs/2408.15556).
+[^refcoco]: Yu, L., Poirson, P., Yang, S., et al. (2016). Modeling Context in Referring Expressions. *European Conference on Computer Vision*. [논문](https://arxiv.org/abs/1608.00272).
+[^refcocog]: Mao, J., Huang, J., Toshev, A., et al. (2016). Generation and Comprehension of Unambiguous Object Descriptions. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/1511.02283).
+[^hallusionbench]: Guan, T., Liu, F., Wu, X., et al. (2024). HallusionBench: An Advanced Diagnostic Suite for Entangled Language Hallucination and Visual Illusion in Large Vision-Language Models. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2310.14566).
+[^miabench]: Qian, Y., Ye, H., Fauconnier, J.-P., et al. (2025). MIA-Bench: Towards Better Instruction Following Evaluation of Multimodal LLMs. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2407.01509).
+[^wildvision]: Lu, Y., Jiang, D., Chen, W., et al. (2024). WildVision: Evaluating Vision-Language Models in the Wild with Human Preferences. *arXiv*. [논문](https://arxiv.org/abs/2406.11069).
+[^konet]: Park, S., & Kim, G. (2025). Evaluating Multimodal Generative AI with Korean Educational Standards. *Proceedings of the Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics*. [논문](https://arxiv.org/abs/2502.15422).
 [^groundingdino]: Liu, S., Zeng, Z., Ren, T., et al. (2024). Grounding DINO: Marrying DINO with Grounded Pre-Training for Open-Set Object Detection. *European Conference on Computer Vision*. [논문](https://arxiv.org/abs/2303.05499).
 [^sam3]: Carion, N., Gustafson, L., Hu, Y.-T., et al. (2026). SAM 3: Segment Anything with Concepts. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2511.16719).
 [^navit]: Dehghani, M., Mustafa, B., Djolonga, J., et al. (2023). Patch n' Pack: NaViT, a Vision Transformer for any Aspect Ratio and Resolution. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2307.06304).
 [^qwen25vl]: Bai, S., Chen, K., Liu, X., et al. (2025). Qwen2.5-VL Technical Report. *arXiv*. [논문](https://arxiv.org/abs/2502.13923).
-[^lisa]: Lai, X., Tian, Z., Chen, Y., et al. (2024). LISA: Reasoning Segmentation via Large Language Model. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2308.00692).
+[^grit]: Fan, Y., He, X., Yang, D., et al. (2025). GRIT: Teaching MLLMs to Think with Images. *arXiv*. [논문](https://arxiv.org/abs/2505.15879).
+[^deepeyes]: Zheng, Z., Yang, M., Hong, J., et al. (2026). DeepEyes: Incentivizing "Thinking with Images" via Reinforcement Learning. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2505.14362).
 
 [^videollama]: Zhang, H., Li, X., & Bing, L. (2023). Video-LLaMA: An Instruction-tuned Audio-Visual Language Model for Video Understanding. *Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing: System Demonstrations*, 543–553. [논문](https://aclanthology.org/2023.emnlp-demo.49/).
 [^videomme]: Fu, C., Dai, Y., Luo, Y., et al. (2025). Video-MME: The First-Ever Comprehensive Evaluation Benchmark of Multi-modal LLMs in Video Analysis. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2405.21075).
