@@ -357,6 +357,23 @@ Kanana-o의 음성 생성 모델도 이 방식을 쓴다.[^lmspt-kanana]
 ### 5-3. 음성 이해와 생성의 결합
 
 듣는 모델과 말하는 모델을 따로 두는 대신, 한 언어 모델이 음성과 텍스트를 입력과 출력 양쪽에서 처리하도록 학습할 수도 있다.
+Voila는 codec token을 텍스트 어휘 뒤에 붙여 이 구성을 만든다.[^voila]
+Voila의 tokenizer는 초당 25개 frame마다 2,048개짜리 codebook 4개에서 ID를 하나씩 고른다.[^voila-code]
+텍스트 어휘는 0번부터 128,255번까지이고, codec token은 그 뒤에 codebook별 구간을 차지한다.
+
+| codebook | 어휘 ID 구간 |
+| --- | --- |
+| 1 | 128,256–130,303 |
+| 2 | 130,304–132,351 |
+| 3 | 132,352–134,399 |
+| 4 | 134,400–136,447 |
+
+예를 들어 한 시간 위치에서 네 codebook이 각각 134, 1195, 2000, 957번 항목을 고르면, 어휘 ID는 128,390, 131,499, 134,352, 135,357이 된다.
+입력할 때 Voila는 이 ID 4개를 각각 embedding으로 바꾼 뒤 평균해, 언어 모델의 한 위치에 벡터 하나로 넣는다.
+텍스트 token은 같은 ID를 네 번 반복해 같은 방식으로 넣는다.
+출력할 때는 언어 모델의 hidden state를 받은 작은 Audio Transformer가 첫 codebook부터 넷째 codebook까지 차례로 ID를 생성한다.
+이 Audio Transformer는 Moshi의 Depth Transformer와 같은 역할을 한다.
+
 다만 codec은 한 초에도 많은 token을 내므로, 긴 대화를 그대로 넣으면 sequence가 길어진다.
 이 부담을 다루는 선택은 크게 세 가지이며, 한 모델에서 함께 쓸 수도 있다.
 
@@ -499,6 +516,8 @@ Full-Duplex-Bench는 사용자의 쉼을 기다리는지, 맞장구(backchannel)
 [^moshi]: Défossez, A., Mazaré, L., Orsini, M., Royer, A., Pérez, P., Jégou, H., Grave, E., & Zeghidour, N. (2024). Moshi: a speech-text foundation model for real-time dialogue. *arXiv preprint arXiv:2410.00037*. [논문](https://arxiv.org/abs/2410.00037).
 [^audiolm]: Borsos, Z., et al. (2023). AudioLM: a Language Modeling Approach to Audio Generation. *IEEE/ACM Transactions on Audio, Speech, and Language Processing*. [논문](https://arxiv.org/abs/2209.03143).
 [^cosyvoice]: Du, Z., et al. (2024). CosyVoice: A Scalable Multilingual Zero-shot Text-to-speech Synthesizer based on Supervised Semantic Tokens. *arXiv preprint arXiv:2407.05407*. [논문](https://arxiv.org/abs/2407.05407).
+[^voila]: Shi, Y., Shu, Y., Dong, S., Liu, G., Sesay, J., Li, J., & Hu, Z. (2025). Voila: Voice-Language Foundation Models for Real-Time Autonomous Interaction and Voice Role-Play. *arXiv preprint arXiv:2505.02707*. [논문](https://arxiv.org/abs/2505.02707).
+[^voila-code]: Maitrix.org. (2025). Voila. *GitHub repository*. [코드](https://github.com/maitrix-org/Voila).
 [^mimo]: Xiaomi LLM-Core Team. (2025). MiMo-Audio: Audio Language Models are Few-Shot Learners. *arXiv preprint arXiv:2512.23808*. [논문](https://arxiv.org/abs/2512.23808).
 [^kanana-a]: Kakao. (2025). 이미지와 음성을 아우르는 카카오의 멀티모달 언어모델 Kanana-o 알아보기. *kakao tech*. [글](https://tech.kakao.com/posts/702).
 [^lmspt]: Jo, D., Yun, J., Roh, B., & Kim, S. (2026). LM-SPT: LM-Aligned Semantic Distillation for Speech Tokenization. *IEEE Transactions on Audio, Speech and Language Processing*, 34, 3714–3727. [논문](https://arxiv.org/abs/2506.16738).
