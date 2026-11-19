@@ -115,7 +115,6 @@ Transformer에 넣을 **sequence의 길이도 sample 수가 아니라 frame 수*
 Mel 척도는 이 사실에 맞춰 주파수 축을 다시 나눈 것으로, 낮은 주파수를 촘촘하게, 높은 주파수를 성기게 나눈다.<Sidenote>mel은 melody에서 따온 단위로, 1,000 Hz를 1,000 mel로 두고 사람이 두 배 높게 느끼는 음이 두 배의 mel 값이 되도록 정했다.[^melscale] 2,000 mel은 2,000 Hz가 아니라 약 3,400 Hz다.</Sidenote>
 Mel spectrogram은 spectrogram의 주파수 구간들을 Mel 척도에 맞춰 묶어 만들고, 여기에 로그를 취한 것이 log-Mel spectrogram이다.
 Whisper처럼 audio를 이해하는 encoder는 흔히 log-Mel spectrogram을 입력으로 받는다.[^whisper]
-사용자는 녹음 파일을 그대로 넣지만, 모델 앞의 전처리 단계가 waveform에서 log-Mel spectrogram을 계산해 encoder에 넘긴다.
 MFCC(mel-frequency cepstral coefficient)는 log-Mel spectrogram을 frame마다 13개 정도의 계수로 한 번 더 압축한 것으로, 고전적인 음성 인식의 입력으로 오래 쓰였다.[^mfcc]<Sidenote>Python의 audio 분석 라이브러리 librosa는 녹음 불러오기와 resampling, STFT, Mel spectrogram, MFCC를 각각 함수 하나로 계산해 준다.[^librosa]</Sidenote>
 
 <Figure src={audioRepresentations.src} alt="같은 발화 this is a test sentence의 네 가지 표현을 시간축을 맞춰 위아래로 놓은 그림. 맨 위는 16 kHz waveform으로 sample이 37,333개다. 둘째는 234 frame, 201개 주파수 구간의 spectrogram으로 모음 구간에서 낮은 주파수에 촘촘한 가로 줄무늬가 보인다. 셋째는 80개 Mel 구간의 log-Mel spectrogram으로 낮은 주파수 대역이 넓게 펼쳐지고 높은 주파수 대역이 눌려 있다. 맨 아래는 frame마다 계수 13개인 MFCC다." caption="같은 2.3초 발화의 네 표현. Waveform은 sample 37,333개이고, 25 ms 창과 10 ms 이동으로 만든 spectrogram은 234 frame × 201 구간, log-Mel spectrogram은 234 × 80, MFCC는 234 × 13이다. Spectrogram의 모음 구간에 보이는 촘촘한 가로 줄무늬는 목소리 높이에서 생기는 배음(harmonics)이고, MFCC에서는 사라진다." source="음성 Foobarista2, Wikimedia Commons, CC0" wide />
@@ -134,6 +133,119 @@ MFCC(mel-frequency cepstral coefficient)는 log-Mel spectrogram을 frame마다 1
 
 Mel spectrogram도 위상을 버렸으므로, 소리를 생성할 때는 waveform으로 되돌리는 단계가 따로 필요하다.
 Mel spectrogram에서 waveform을 합성하는 모델을 vocoder라 하며, 음성 생성 모델이 Mel spectrogram을 출력하면 마지막에 vocoder가 이를 waveform으로 바꾼다.
+
+### 1-4. Audio Spectrogram Transformer
+
+Spectrogram은 가로축이 시간, 세로축이 주파수인 2차원 배열이어서 이미지처럼 다룰 수 있다.
+AST(Audio Spectrogram Transformer)는 ViT가 이미지를 patch로 나누듯, log-Mel spectrogram을 시간과 주파수 두 축에서 작은 patch로 자른다.[^ast]
+그리고 각 patch를 일렬로 펴 선형 투영한 patch embedding에 위치 embedding을 더해 Transformer encoder에 넣는다.
+
+<Figure src={astArchitecture.src} alt="AST 구조. 왼쪽 아래의 입력 spectrogram을 서로 겹치는 patch 여덟 개로 자르고, 각 patch를 선형 투영해 patch embedding을 만든 뒤 위치 embedding을 더한다. 맨 앞에 CLS embedding을 붙여 Transformer encoder에 넣고, 그 위치의 출력을 선형층에 넣어 결과를 낸다." caption="AST의 입력 구성. Spectrogram을 이미지처럼 patch로 잘라 ViT와 같은 방식으로 Transformer encoder에 넣는다." source="Gong et al. (2021), Figure 1" />
+
+분류할 때는 ViT처럼 맨 앞에 CLS embedding을 붙이고, 그 위치의 출력 하나로 녹음 전체의 범주를 고른다.
+AST는 AudioSet의 소리 범주 라벨로 이 분류를 학습한다.
+
+### 1-5. Audio encoder
+
+Audio encoder는 vision encoder처럼 입력을 위치별 feature 벡터의 sequence로 바꾸는 모델이다.
+Vision encoder가 patch마다 feature를 내듯, audio encoder는 일정한 시간 간격마다 feature를 낸다.
+입력은 waveform이고, 많은 encoder는 그 앞에 log-Mel spectrogram을 계산하는 전처리를 둔다.
+
+<figure>
+<svg viewBox="0 0 600 170" role="img" aria-label="Audio encoder의 입력과 출력. 왼쪽의 waveform이 점선 상자인 선택적 전처리(STFT, Mel, log)를 거쳐 log-Mel spectrogram이 되고, audio encoder에 들어간다. 오른쪽 끝에서 시간 위치마다 세로로 긴 feature 벡터가 하나씩 가로로 늘어선 sequence가 나온다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<defs><marker id="enc-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#64748b"/></marker></defs>
+<rect x="8" y="68" width="92" height="52" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<path d="M16 94 l6 -10 l6 20 l6 -24 l6 28 l6 -18 l6 12 l6 -8 l6 6 l6 -4 l6 2 l6 -2 l6 0" fill="none" stroke="#2a78d6" stroke-width="1.6"/>
+<text x="54" y="138" font-size="13" text-anchor="middle" fill="#0f172a">waveform</text>
+<rect x="124" y="30" width="150" height="128" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="5 4"/>
+<text x="199" y="52" font-size="13" text-anchor="middle" font-weight="600" fill="#64748b">전처리 (선택)</text>
+<rect x="138" y="77" width="122" height="34" rx="6" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="199" y="99" font-size="13" text-anchor="middle" fill="#0f172a">STFT · Mel · log</text>
+<text x="199" y="134" font-size="13" text-anchor="middle" fill="#0f172a">log-Mel</text>
+<text x="199" y="150" font-size="13" text-anchor="middle" fill="#0f172a">spectrogram</text>
+<rect x="298" y="70" width="150" height="48" rx="8" fill="#e2e8f0" stroke="#0f172a"/>
+<text x="373" y="99" font-size="14" text-anchor="middle" font-weight="600" fill="#0f172a">audio encoder</text>
+<rect x="478" y="70" width="12" height="48" rx="2" fill="#eb6834"/><rect x="496" y="70" width="12" height="48" rx="2" fill="#eb6834"/><rect x="514" y="70" width="12" height="48" rx="2" fill="#eb6834"/><rect x="532" y="70" width="12" height="48" rx="2" fill="#eb6834"/><rect x="550" y="70" width="12" height="48" rx="2" fill="#eb6834"/><rect x="568" y="70" width="12" height="48" rx="2" fill="#eb6834"/>
+<text x="529" y="138" font-size="13" text-anchor="middle" fill="#0f172a">시간 위치별 feature</text>
+<path d="M100 94 H136" stroke="#64748b" stroke-width="1.5" marker-end="url(#enc-arrow)"/>
+<path d="M260 94 H296" stroke="#64748b" stroke-width="1.5" marker-end="url(#enc-arrow)"/>
+<path d="M448 94 H475" stroke="#64748b" stroke-width="1.5" marker-end="url(#enc-arrow)"/>
+</svg>
+<figcaption>Audio encoder의 입력과 출력. 전처리는 학습하지 않는 정해진 계산이고 선택적으로 사용할 수 있다.</figcaption>
+</figure>
+
+전처리는 STFT와 Mel 척도로 정해진 계산이어서 학습하지 않는다.
+사용자는 녹음 파일을 그대로 넣지만, 모델 앞의 전처리 단계가 log-Mel spectrogram을 계산해 encoder에 넘긴다.
+예를 들어 Whisper의 encoder는 log-Mel spectrogram을 받아 20 ms마다 feature 하나를 낸다.[^whisper]
+wav2vec 2.0은 전처리 없이 waveform을 convolution 층에 직접 넣는다.[^wav2vec2]
+Convolution 층의 weight는 학습되므로, waveform에서 어떤 성분을 뽑을지를 사람이 아니라 학습이 정한다.
+
+Audio encoder의 feature를 LLM에 넣는 방법도 vision encoder의 feature와 같다.
+텍스트 LLM은 크기가 $V$인 어휘의 token ID를 입력으로 받아 embedding table에서 벡터를 꺼내고, 출력에서도 $V$개 token 가운데 하나를 고른다.
+그래서 feature를 텍스트처럼 번호로 바꾸는지에 따라 방법이 둘로 나뉜다.
+
+**Discrete token**은 feature를 미리 학습해 둔 $K$개 벡터 가운데 가장 가까운 것으로 바꾸고, 그 벡터의 번호를 token으로 쓴다.
+이 $K$개 벡터의 모음이 codebook이다.
+번호를 LLM의 어휘에 추가하면 audio도 텍스트처럼 ID sequence가 되고, 어휘 크기는 $V+K$가 된다.[^audiolm]
+**Continuous representation**은 codebook을 거치지 않는다.
+Projector가 feature를 LLM의 hidden dimension에 맞추고, 그 벡터를 텍스트 embedding 자리에 바로 넣는다.
+
+<figure>
+<svg viewBox="0 0 720 276" role="img" aria-label="같은 frame t가 LLM 입력이 되는 두 경로를 비교한 가상 예. 공통으로 frame t가 audio encoder를 거쳐 feature (0.8, 0.2)가 되고, 여기서 두 경로로 갈린다. 위쪽 discrete token 경로에서는 feature가 가장 가까운 codebook 벡터 #1 (1.0, 0.0)로 바뀌어 차이 (−0.2, 0.2)가 버려지고, 번호 1만 남는다. 이 번호는 LLM 어휘에서 V+1번이 되어, LLM이 학습한 embedding table의 V+1번 행이 소리 자리의 입력 벡터가 된다. 아래쪽 continuous representation 경로에서는 projector가 feature (0.8, 0.2)로부터 계산한 벡터가 소리 자리의 입력 벡터가 된다. 두 경로 모두 오른쪽 끝에서 소리 벡터 하나와 텍스트 token 벡터 둘이 이어진 LLM 입력 sequence로 끝난다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<rect x="8" y="112" width="72" height="36" rx="6" fill="#ffffff" stroke="#94a3b8"/><text x="44" y="135" font-size="14" text-anchor="middle" fill="#0f172a">frame t</text>
+<rect x="88" y="112" width="96" height="36" rx="6" fill="#ffffff" stroke="#94a3b8"/><text x="136" y="135" font-size="12.5" text-anchor="middle" fill="#0f172a">audio encoder</text>
+<text x="238" y="104" font-size="12.5" text-anchor="middle" fill="#64748b">feature</text>
+<rect x="192" y="112" width="92" height="36" rx="6" fill="#fff7ed" stroke="#eb6834"/><text x="238" y="135" font-size="14" text-anchor="middle" font-weight="600" fill="#eb6834">(0.8, 0.2)</text>
+<path d="M80 130 H84 M184 130 H186 M284 130 H298 V70 H306 M298 130 V190 H306" fill="none" stroke="#0f172a"/>
+<polygon points="88,130 82,126 82,134" fill="#0f172a"/><polygon points="192,130 186,126 186,134" fill="#0f172a"/>
+<polygon points="312,70 306,66 306,74" fill="#0f172a"/><polygon points="312,190 306,186 306,194" fill="#0f172a"/>
+<text x="312" y="34" font-size="14" font-weight="600" fill="#0f172a">Discrete token</text>
+<text x="682" y="34" font-size="13" font-weight="600" text-anchor="middle" fill="#0f172a">LLM 입력</text>
+<rect x="312" y="46" width="140" height="48" rx="6" fill="#ffffff" stroke="#2a78d6"/>
+<text x="382" y="65" font-size="12.5" text-anchor="middle" fill="#0f172a">가장 가까운 codebook</text>
+<text x="382" y="85" font-size="14" text-anchor="middle" font-weight="600" fill="#2a78d6">#1 = (1.0, 0.0)</text>
+<rect x="466" y="52" width="64" height="36" rx="6" fill="#dbeafe" stroke="#2a78d6"/><text x="498" y="75" font-size="14" text-anchor="middle" font-weight="600" fill="#2a78d6">번호 1</text>
+<rect x="544" y="46" width="100" height="48" rx="6" fill="#ffffff" stroke="#94a3b8"/>
+<text x="594" y="65" font-size="12.5" text-anchor="middle" fill="#0f172a">embedding table</text>
+<text x="594" y="85" font-size="14" text-anchor="middle" font-weight="600" fill="#0f172a">V+1번 행</text>
+<path d="M452 70 H460 M530 70 H538 M644 70 H650" stroke="#0f172a"/>
+<polygon points="466,70 460,66 460,74" fill="#0f172a"/><polygon points="544,70 538,66 538,74" fill="#0f172a"/><polygon points="656,70 650,66 650,74" fill="#0f172a"/>
+<rect x="656" y="46" width="16" height="48" rx="2" fill="#2a78d6"/>
+<rect x="674" y="46" width="16" height="48" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<rect x="692" y="46" width="16" height="48" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="312" y="158" font-size="14" font-weight="600" fill="#0f172a">Continuous representation</text>
+<rect x="312" y="170" width="140" height="40" rx="6" fill="#ffffff" stroke="#94a3b8"/><text x="382" y="195" font-size="14" text-anchor="middle" fill="#0f172a">projector</text>
+<path d="M452 190 H650" stroke="#0f172a"/><polygon points="656,190 650,186 650,194" fill="#0f172a"/>
+<rect x="656" y="166" width="16" height="48" rx="2" fill="#eb6834"/>
+<rect x="674" y="166" width="16" height="48" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<rect x="692" y="166" width="16" height="48" rx="2" fill="#e2e8f0" stroke="#94a3b8"/>
+<rect x="8" y="254" width="12" height="12" rx="2" fill="#eb6834"/><text x="26" y="265" font-size="13" fill="#0f172a">소리 feature에서 계산한 값</text>
+<rect x="240" y="254" width="12" height="12" rx="2" fill="#2a78d6"/><text x="258" y="265" font-size="13" fill="#0f172a">codebook 번호로 정해지는 값</text>
+<rect x="472" y="254" width="12" height="12" rx="2" fill="#e2e8f0" stroke="#94a3b8"/><text x="490" y="265" font-size="13" fill="#0f172a">텍스트 token의 embedding</text>
+</svg>
+<figcaption>같은 frame t의 feature가 LLM 입력이 되는 두 경로. 숫자는 설명을 위한 가상 값이다.</figcaption>
+</figure>
+
+이미지와 비교하면 오디오가 갖는 위치 축의 성격이 드러난다.
+
+| | 이미지 | 오디오 |
+|---|---|---|
+| 원래 신호 | 2차원 공간의 RGB | 1차원 시간의 진폭 |
+| 축의 순서 | 없음 | 앞에서 뒤로 |
+| 이해할 때 encoder가 보는 범위 | 이미지 전체 | 녹음된 구간 전체 (실시간이면 지금까지 들어온 부분) |
+| 생성 방법 | 한 번에 | 자기 회귀 |
+
+이해하는 쪽에서는 위치가 공간이냐 시간이냐만 다를 뿐 구조가 같다.
+Vision encoder가 이미지 전체를 한꺼번에 보듯, Whisper는 녹음을 30초 구간으로 나누고 구간 하나를 통째로 encoder에 넣는다.[^whisper]
+녹음이 이미 다 들어와 있으면 앞뒤를 함께 보는 편이 자연스럽다.
+앞부분의 소리를 해석하는 데 뒷부분이 단서가 되기 때문이다.
+예를 들어 “밥 먹었어”가 질문인지 평서인지는 마지막 음절의 억양이 올라가는지를 들어야 정해진다.
+다만 사용자가 말하는 도중에 처리해야 하면, 아직 들어오지 않은 뒷부분은 볼 수 없다.
+그래서 실시간 대화 모델 Moshi는 음성을 token으로 바꾸는 encoder의 convolution과 Transformer를 모두 causal로 만들어, 지금까지 들어온 소리만으로 계산한다.[^moshi]
+
+생성하는 쪽에서는 축의 순서가 차이를 만든다.
+이미지는 위치 사이에 정해진 순서가 없으므로, 모든 위치를 한 번에 만들어도 된다.
+음성은 텍스트처럼 앞에서 뒤로 이어지므로, 앞선 token을 보고 다음 token을 고르는 LLM과 같다.
 
 ## 2. 텍스트로 바꾸어 연결
 
@@ -156,28 +268,14 @@ Cascade에서는 각 구성 요소를 따로 바꾸거나 개선할 수 있고, 
 
 ## 3. 연속 표현으로 연결
 
-Audio를 텍스트로 확정하지 않고 LLM에 넘기려면, 너무 긴 waveform을 짧은 sequence로 줄여야 한다.
-가장 흔한 방법은 audio encoder가 짧은 구간마다 실수 벡터를 만들고, 이 벡터를 차원만 맞춰 LLM의 embedding 자리에 넣는 것이다.
-이 실수 벡터를 continuous representation이라 한다.
+Audio를 텍스트로 전사하지 않고 LLM에 넘기는 가장 흔한 방법은 audio encoder의 feature를 continuous representation으로 넣는 것이다.
 
 <Callout type="example">
 16 kHz로 녹음한 10초 음성은 sample 그대로라면 160,000개의 값이다.
 초당 12.5개의 벡터를 내는 audio encoder를 쓰면 125개의 연속 벡터가 된다.
 </Callout>
 
-### 3-1. Audio encoder
-
-Audio encoder는 waveform이나 spectrogram을 입력받아 task에 쓸 수 있는 feature를 만든다.
-어떤 encoder는 spectrogram 같은 feature를 뽑는 단계까지 학습해, waveform을 직접 받는다.[^wav2vec2]
-AST(Audio Spectrogram Transformer)는 spectrogram을 시간과 주파수 두 축에서 작은 patch로 나누어, ViT와 같은 방식으로 Transformer encoder에 넣는다.[^ast]
-
-<Figure src={astArchitecture.src} alt="AST 구조. 왼쪽 아래의 입력 spectrogram을 서로 겹치는 patch 여덟 개로 자르고, 각 patch를 선형 투영해 patch embedding을 만든 뒤 위치 embedding을 더한다. 맨 앞에 CLS embedding을 붙여 Transformer encoder에 넣고, 그 위치의 출력을 선형층에 넣어 결과를 낸다." caption="AST의 입력 구성. Spectrogram을 이미지처럼 patch로 잘라 ViT와 같은 방식으로 Transformer encoder에 넣는다." source="Gong et al. (2021), Figure 1 · YuanGongND/ast 저장소 · BSD-3-Clause · Copyright (c) 2021, Yuan Gong" />
-
-구조는 이미지의 patch와 비슷하지만, audio의 patch에서는 한 축이 시간이다.
-그래서 사건의 순서나 길이가 바뀌면 의미가 달라진다.
-그림의 AST는 CLS 위치의 출력 하나로 녹음 전체를 분류한다.
-
-### 3-2. Audio–text 정렬
+### 3-1. Audio–text 정렬
 
 “빗소리”, “개가 짖는다”처럼 자연어는 같은 녹음을 여러 방식으로 설명할 수 있다.
 반면 AST처럼 고정된 label 집합으로 학습한 분류기는 정해 둔 범주만 고를 수 있다.
@@ -197,7 +295,7 @@ AudioLDM은 학습할 때 CLAP의 audio embedding을 조건으로 쓰고, 생성
 그래서 설명 문장이 없는 소리 자료로도 텍스트로 소리를 만드는 모델을 학습할 수 있다.
 다만 CLAP이 내는 것은 녹음 전체를 요약한 벡터 하나여서, 소리를 시간 순서대로 받아쓰거나 열린 질문에 답하려면 다른 출력과 학습 목표가 필요하다.
 
-### 3-3. Encoder와 projector
+### 3-2. Encoder와 projector
 
 CLAP과 달리 언어 모델에 연결하는 encoder는 녹음 전체를 벡터 하나로 요약하지 않고, 각 시간 위치에서 낸 벡터를 이어진 sequence로 넘긴다.
 이 sequence는 흔히 audio encoder → projector → LLM으로 이어진다.
@@ -216,7 +314,7 @@ Projector는 feature의 차원을 LLM에 맞추고, 긴 sequence를 더 짧게 �
 SALMONN은 음성 인식에 학습된 Whisper encoder와 일반 소리의 의미를 학습한 BEATs encoder의 feature를 이어 붙인다.[^salmonn]
 그리고 짧은 window마다 학습 가능한 query로 정해진 수의 벡터를 뽑아, 출력 길이가 녹음 길이에 비례하고 시간 순서도 남게 한다.
 
-### 3-4. 학습 데이터와 목표
+### 3-3. 학습 데이터와 목표
 
 Audio encoder의 출력을 LLM 입력에 연결했다고 해서 LLM이 곧바로 소리를 이해하는 것은 아니다.
 Projector와 필요한 모델 구성 요소를 audio와 텍스트 답변이 짝지어진 데이터로 학습해야 한다.
@@ -230,12 +328,7 @@ SALMONN은 이를 완화하려고 LoRA의 영향을 줄이는 activation tuning 
 
 ## 4. 이산 token으로 연결
 
-이산 token 방식은 audio feature를 codebook 항목의 번호 같은 이산 ID로 바꾼다.
-이 ID들을 어휘에 추가하면 audio도 텍스트처럼 ID sequence가 된다.[^audiolm]
-Discrete token은 codebook으로 근사하는 과정에서 음색 같은 세부를 잃을 수 있어서, 음성을 이해하는 입력 쪽에는 continuous representation이 더 흔하다.
-반면 음성을 생성하는 출력 쪽에서는 최근 discrete token이 널리 쓰인다.
-
-그 까닭은 연속값을 출력하던 기존 방식에 있다.
+Discrete token이 음성을 생성하는 출력 쪽에서 널리 쓰이는 까닭은 연속값을 출력하던 기존 방식에 있다.
 초기 신경망 TTS는 Mel spectrogram을 frame마다 연속값으로 회귀해 예측하고, vocoder로 파형을 만들었다.
 그런데 정답 소리는 하나로 정해지지 않는다.
 같은 문장도 빠르게 또는 느리게, 높은 목소리로 또는 낮은 목소리로 읽을 수 있다.
@@ -338,7 +431,7 @@ AudioLM은 먼저 semantic token을 이어 생성하고, 이를 조건으로 aco
 ### 4-4. 내용과 음향을 함께 담는 tokenizer
 
 AudioLM처럼 내용과 음향을 서로 다른 tokenizer로 얻으면, 두 표현을 결합하고 정보가 겹치는 문제를 함께 관리해야 한다.
-SpeechTokenizer는 사전학습된 speech 모델 HuBERT를 teacher로 둔다.[^speechtokenizer]
+SpeechTokenizer는 사전학습된 speech 모델 HuBERT를 teacher로 둔다.[^speechtokenizer][^hubert]
 학습할 때 RVQ의 첫 quantizer 출력이 teacher의 내용 표현을 따라가도록 증류(distillation)한다.
 그 결과 하나의 RVQ 안에서 첫 단계는 내용을, 나머지 단계는 남은 음향 정보를 담는다.
 실시간 대화 모델 Moshi의 codec인 Mimi도 같은 방식으로 내용 표현을 증류하되, 내용용 quantizer를 음향용 RVQ와 나란히 두어 둘을 분리한다.[^moshi]
@@ -566,6 +659,7 @@ Full-Duplex-Bench는 사용자의 쉼을 기다리는지, 맞장구(backchannel)
 [^wav2vec2]: Baevski, A., Zhou, H., Mohamed, A., & Auli, M. (2020). wav2vec 2.0: A Framework for Self-Supervised Learning of Speech Representations. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2006.11477).
 [^laionclap]: Wu, Y., Chen, K., Zhang, T., et al. (2023). Large-scale Contrastive Language-Audio Pretraining with Feature Fusion and Keyword-to-Caption Augmentation. *ICASSP*. [논문](https://arxiv.org/abs/2211.06687).
 [^audioldm]: Liu, H., Chen, Z., Yuan, Y., et al. (2023). AudioLDM: Text-to-Audio Generation with Latent Diffusion Models. *International Conference on Machine Learning*. [논문](https://arxiv.org/abs/2301.12503).
+[^hubert]: Hsu, W.-N., Bolte, B., Tsai, Y.-H. H., Lakhotia, K., Salakhutdinov, R., & Mohamed, A. (2021). HuBERT: Self-Supervised Speech Representation Learning by Masked Prediction of Hidden Units. *IEEE/ACM Transactions on Audio, Speech, and Language Processing*, 29, 3451–3460. [논문](https://arxiv.org/abs/2106.07447).
 [^ast]: Gong, Y., Chung, Y.-A., & Glass, J. (2021). AST: Audio Spectrogram Transformer. *Interspeech 2021*, 571–575. [논문](https://arxiv.org/abs/2104.01778).
 [^qwen3]: Xu, J., et al. (2025). Qwen3-Omni Technical Report. *arXiv preprint arXiv:2509.17765*. [논문](https://arxiv.org/abs/2509.17765).
 [^clap]: Elizalde, B., Deshmukh, S., Al Ismail, M., & Wang, H. (2023). CLAP: Learning Audio Concepts From Natural Language Supervision. *ICASSP*, 1–5. [논문](https://arxiv.org/abs/2206.04769).
