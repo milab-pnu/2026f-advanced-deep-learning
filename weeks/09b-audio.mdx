@@ -561,30 +561,64 @@ SALMONN 원논문은 모델이 학습에서 자주 본 음성 인식이나 소�
 
 ## 5. Audio tokenizer
 
-Discrete token이 음성을 생성하는 출력 쪽에서 널리 쓰이는 까닭은 연속값을 출력하던 기존 방식에 있다.
+Discrete token이 음성 생성의 출력에 널리 쓰이는 까닭은 연속값을 출력하던 기존 방식의 문제에 있다.
 초기 신경망 TTS는 Mel spectrogram을 frame마다 연속값으로 회귀해 예측하고, vocoder로 파형을 만들었다.
-그런데 정답 소리는 하나로 정해지지 않는다.
-같은 문장도 빠르게 또는 느리게, 높은 목소리로 또는 낮은 목소리로 읽을 수 있다.
+그런데 같은 문장도 빠르게 또는 느리게, 높은 목소리로 또는 낮은 목소리로 읽을 수 있어서, 정답 소리가 하나로 정해지지 않는다.
 Mel spectrogram을 MSE(mean squared error) 손실로 맞히면, 이 손실을 가장 작게 만드는 출력은 가능한 정답들의 평균이다.
 예를 들어 같은 음절을 높은 목소리로 읽은 녹음과 낮은 목소리로 읽은 녹음이 섞여 있으면, 두 spectrogram을 반씩 섞은 출력이 손실을 가장 작게 만든다.
 그 출력은 어느 녹음과도 닮지 않은 흐린 소리가 된다.
 
 이 문제를 피하는 한 방법은 출력을 discrete token으로 바꾸는 것이다.
-Discrete token에서는 softmax가 여러 후보에 확률을 나눠 주므로, 모델이 그 확률에 따라 하나를 뽑아(sampling) 한 가지 또렷한 소리를 낼 수 있다.
-WaveNet은 sample 값을 256단계로 줄인 뒤, 앞선 sample들을 보고 다음 sample 값을 softmax로 고르는 방식으로 waveform을 생성했다.[^wavenet]
+Softmax가 여러 후보에 확률을 나눠 주므로, 모델은 그 확률에 따라 하나를 뽑아(sampling) 한 가지 또렷한 소리를 낼 수 있다.
+Flow matching처럼 noise에서 출발해 조건에 맞는 출력으로 조금씩 바꿔 가는 생성 모델도 연속값의 분포 자체를 배우므로, 연속값을 내면서 이 문제를 피한다.
+
+Discrete token을 쓴 초기 모델인 WaveNet은 sample 값을 256단계로 줄인 뒤, 앞선 sample들을 보고 다음 sample 값을 softmax로 고르는 방식으로 waveform을 생성했다.[^wavenet]
 하지만 16 kHz 음성은 1초에 sample이 16,000개이므로, sample 단위 token은 언어 모델이 다루기에 너무 길다.
 그래서 짧은 구간을 묶어 하나의 시간 위치로 만드는 neural audio codec이 쓰인다.
-평균 문제를 피하는 길이 이것만은 아니다.
-Flow matching처럼 noise에서 출발해 조건에 맞는 출력으로 조금씩 바꿔 가는 생성 모델은 연속값의 분포 자체를 배우므로, 연속값을 내면서도 이 문제를 피한다.
 
 ### 5-1. Neural audio codec
 
-Neural audio codec은 waveform을 압축된 표현으로 바꾸는 encoder와 그 표현으로 waveform을 복원하는 decoder를 학습한다.[^encodec]
-Encoder는 가까운 sample들을 묶어 더 낮은 시간 해상도의 벡터 sequence로 바꾸고, vector quantization이 각 벡터에 가장 가까운 codebook 항목의 번호를 고른다.
-Decoder는 선택한 codebook 벡터들로 파형을 재구성한다.
-Codec이 내는 이 번호를 codec token이라 한다.
+Neural audio codec은 waveform을 짧은 token sequence로 압축하고, 그 token으로 waveform을 복원하는 모델이다.[^encodec]
+
+1. **Encoder**: 가까운 sample들을 묶어, waveform을 시간 해상도가 낮은 벡터 sequence로 바꾼다.
+2. **양자화**: 각 벡터를 가장 가까운 codebook 벡터로 바꾸고 그 번호를 기록한다. 이 번호가 codec token이다.
+3. **Decoder**: 번호가 가리키는 codebook 벡터들로 waveform을 복원한다.
+
+<figure>
+<svg viewBox="0 0 720 132" role="img" aria-label="Neural audio codec의 세 단계. 왼쪽의 waveform이 encoder를 거쳐 시간 해상도가 낮은 벡터 sequence가 되고, 양자화가 각 벡터를 codebook 벡터의 번호 12, 7, 301, 45로 바꾼다. 이 번호들이 codec token이다. Decoder는 번호가 가리키는 codebook 벡터들로 오른쪽의 waveform을 복원한다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<defs><marker id="codec-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#64748b"/></marker></defs>
+<rect x="8" y="34" width="84" height="48" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<path d="M14 58 l6 -9 l6 18 l6 -22 l6 26 l6 -17 l6 11 l6 -8 l6 6 l6 -4 l6 2 l6 -3 l6 0" fill="none" stroke="#2a78d6" stroke-width="1.6"/>
+<text x="50" y="100" font-size="13" text-anchor="middle" fill="#0f172a">waveform</text>
+<rect x="116" y="38" width="84" height="40" rx="8" fill="#e2e8f0" stroke="#0f172a"/><text x="158" y="63" font-size="14" text-anchor="middle" font-weight="600" fill="#0f172a">encoder</text>
+<rect x="226" y="38" width="10" height="40" rx="2" fill="#eb6834"/><rect x="242" y="38" width="10" height="40" rx="2" fill="#eb6834"/><rect x="258" y="38" width="10" height="40" rx="2" fill="#eb6834"/><rect x="274" y="38" width="10" height="40" rx="2" fill="#eb6834"/>
+<text x="255" y="100" font-size="13" text-anchor="middle" fill="#0f172a">벡터 sequence</text>
+<rect x="310" y="38" width="84" height="40" rx="8" fill="#ffffff" stroke="#16a34a"/><text x="352" y="63" font-size="14" text-anchor="middle" font-weight="600" fill="#0f172a">양자화</text>
+<text x="352" y="100" font-size="13" text-anchor="middle" fill="#0f172a">codebook</text>
+<rect x="420" y="44" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="435" y="63" font-size="13" text-anchor="middle" fill="#0f172a">12</text>
+<rect x="454" y="44" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="469" y="63" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<rect x="488" y="44" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="503" y="63" font-size="13" text-anchor="middle" fill="#0f172a">301</text>
+<rect x="522" y="44" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="537" y="63" font-size="13" text-anchor="middle" fill="#0f172a">45</text>
+<text x="486" y="100" font-size="13" text-anchor="middle" fill="#0f172a">codec token</text>
+<rect x="578" y="38" width="60" height="40" rx="8" fill="#e2e8f0" stroke="#0f172a"/><text x="608" y="63" font-size="14" text-anchor="middle" font-weight="600" fill="#0f172a">decoder</text>
+<rect x="656" y="34" width="58" height="48" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+<path d="M661 58 l4 -9 l4 18 l4 -22 l4 26 l4 -17 l4 11 l4 -8 l4 6 l4 -4 l4 2 l4 -3 l4 0" fill="none" stroke="#2a78d6" stroke-width="1.6"/>
+<text x="672" y="100" font-size="13" text-anchor="middle" fill="#0f172a">복원한 waveform</text>
+<path d="M92 58 H114" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
+<path d="M200 58 H223" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
+<path d="M286 58 H308" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
+<path d="M394 58 H417" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
+<path d="M554 58 H576" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
+<path d="M638 58 H654" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
+</svg>
+<figcaption>Neural audio codec의 구조. 번호는 설명을 위해 임의로 넣었다.</figcaption>
+</figure>
+
+Encoder, codebook, decoder는 복원한 소리가 원래 소리와 비슷해지도록 라벨 없이 함께 학습한다.
+wav2vec 2.0의 codebook은 가린 자리의 정답을 만드는 데만 쓰였고, 그 정답으로 소리를 복원할 수는 없었다.
+Codec token은 decoder가 소리로 되돌릴 수 있으므로 음성 생성의 출력으로 쓸 수 있다.
 음성을 생성할 때는 생성 모델이 codec token을 예측하고, codec decoder가 token을 파형으로 바꾼다.
-그래서 codec이 녹음을 잘 복원하더라도, 질문에 맞는 응답의 token을 만드는 능력은 생성 모델이 따로 배워야 한다.
+Codec은 녹음을 복원하는 법만 배우므로, 질문에 맞는 응답의 token을 만드는 능력은 생성 모델이 따로 배워야 한다.
 
 ### 5-2. Residual vector quantization
 
@@ -637,6 +671,7 @@ RVQ는 첫 codebook에서 가장 가까운 벡터를 고르고, 원래 벡터에
 </figure>
 
 1,024개짜리 codebook 8개를 이어 쓰면 저장하는 벡터는 $8\times1024=8{,}192$개뿐이지만, frame마다 고를 수 있는 조합은 $1024^8=2^{80}$가지다.[^encodec]
+wav2vec 2.0이 320개짜리 codebook 두 개로 102,400가지 정답을 만든 것과 같은 원리다.
 **저장할 벡터는 덧셈으로 늘고 표현할 수 있는 조합은 곱셈으로 늘어나는 것이 RVQ의 핵심이다.**
 첫 codebook이 원래 벡터를 대략 근사하고 뒤의 codebook들은 남은 작은 차이를 채우므로, 뒤쪽 codebook을 덜 쓰면 bitrate(초당 쓰는 bit 수)는 낮아지고 소리는 거칠어진다.
 
@@ -650,31 +685,35 @@ RVQ는 첫 codebook에서 가장 가까운 벡터를 고르고, 원래 벡터에
 ### 5-3. Semantic token과 acoustic token
 
 음성을 discrete token으로 바꾸면 텍스트 LLM과 같은 다음 token 예측을 audio에도 적용할 수 있다.
-다만 모든 이산 단위가 같은 정보를 담지는 않는다.
-발화 내용과 관련된 차이를 잘 보존하도록 학습한 단위를 semantic token이라 부른다.
-예를 들어 AudioLM은 self-supervised 음성 모델 w2v-BERT의 중간 feature를 k-means로 묶고, 각 frame이 속한 묶음의 번호를 semantic token으로 쓴다.[^audiolm]
-원래의 소리를 정밀하게 재구성하는 데 필요한 정보를 담는 codec token은 acoustic token이라고도 부른다.
+다만 token을 어떻게 만들었는지에 따라 담는 정보가 다르다.
+Codec token은 소리를 정밀하게 복원하도록 학습되어 화자의 음색과 녹음 환경까지 담으며, acoustic token이라고도 부른다.
+발화 내용을 주로 담는 token은 semantic token이라 부른다.
+Semantic token은 HuBERT가 MFCC를 k-means로 묶어 정답 번호를 만든 것과 같은 방법으로 얻는다.
+wav2vec 2.0이나 HuBERT처럼 라벨 없이 학습한 음성 encoder의 중간 feature를 k-means로 묶고, 각 frame이 속한 묶음의 번호를 token으로 쓴다.
+이런 encoder의 feature는 발음이 비슷한 frame끼리 가깝게 모이므로, 묶음 번호가 발화 내용을 주로 나타낸다.
+예를 들어 AudioLM은 wav2vec 2.0 계열의 모델 w2v-BERT의 중간 feature에서 semantic token을 얻는다.[^audiolm]
 이 구분은 설계 목표에 관한 것이어서, 두 token이 담는 정보가 깨끗이 나뉘지는 않는다.
 
 모델이 acoustic token만 예측하면 음향의 세부는 복원할 수 있지만, 높은 token rate에서 긴 시간의 내용까지 함께 모델링해야 한다.
-반대로 semantic token은 긴 범위를 다루기에 유리하지만, 그것만으로는 원래 목소리를 복원하기 어렵다.
-AudioLM은 먼저 semantic token을 이어 생성하고, 이를 조건으로 acoustic token을 생성한 뒤 codec decoder로 파형을 만든다.
-그래서 AudioLM은 짧은 발화를 들으면 내용이 이어지고 음색도 일관된 후속 소리를 만든다.
+반대로 semantic token은 긴 범위의 내용을 다루기에 유리하지만, 그것만으로는 원래 목소리를 복원하기 어렵다.
+그래서 AudioLM은 둘을 차례로 생성한다.
+먼저 semantic token을 이어 생성하고, 이를 조건으로 acoustic token을 생성한 뒤 codec decoder로 파형을 만든다.
+짧은 발화를 들려주면 AudioLM은 내용이 이어지고 음색도 일관된 후속 소리를 만든다.
 
 ### 5-4. Semantic distillation
 
-AudioLM처럼 내용과 음향을 서로 다른 tokenizer로 얻으면, 두 표현을 결합하고 정보가 겹치는 문제를 함께 관리해야 한다.
-SpeechTokenizer는 사전학습된 speech 모델 HuBERT를 teacher로 둔다.[^speechtokenizer][^hubert]
-학습할 때 RVQ의 첫 quantizer 출력이 teacher의 내용 표현을 따라가도록 증류(distillation)한다.
-그 결과 하나의 RVQ 안에서 첫 단계는 내용을, 나머지 단계는 남은 음향 정보를 담는다.
-실시간 대화 모델 Moshi의 codec인 Mimi도 같은 방식으로 내용 표현을 증류하되, 내용용 quantizer를 음향용 RVQ와 나란히 두어 둘을 분리한다.[^moshi]
+AudioLM처럼 내용과 음향을 서로 다른 tokenizer로 얻으면, tokenizer를 둘 두어야 하고 두 token에 겹치는 정보도 생긴다.
+SpeechTokenizer는 codec 하나가 두 역할을 하도록, HuBERT를 teacher로 두고 학습한다.[^speechtokenizer][^hubert]
+학습할 때 RVQ의 첫 codebook이 낸 벡터가 HuBERT의 feature를 따라가도록 증류(distillation)한다.
+그 결과 하나의 RVQ 안에서 첫 codebook은 내용을, 나머지 codebook은 남은 음향 정보를 담는다.
+실시간 대화 모델 Moshi의 codec인 Mimi도 같은 방식으로 내용 표현을 증류하되, 내용용 codebook을 음향용 RVQ와 나란히 두어 둘을 분리한다.[^moshi]
 
-<Figure src="https://arxiv.org/html/2308.16692v2/model_structure.png" alt="SpeechTokenizer 구조. 음성 입력이 encoder와 여러 단계의 residual vector quantizer를 거쳐 decoder로 전달되고, 첫 quantizer에 semantic teacher의 학습 신호가 제공된다." caption="SpeechTokenizer의 학습 구조. 첫 quantizer는 semantic teacher(HuBERT)의 지도를 받고, 전체 양자화 표현은 음성 복원에 쓰인다." source="Zhang et al. (2024), Figure 2 · CC BY-SA 4.0" wide />
+<Figure src="https://arxiv.org/html/2308.16692v2/model_structure.png" alt="SpeechTokenizer 구조. 음성 입력이 encoder와 여러 단계의 residual vector quantizer를 거쳐 decoder로 전달되고, 첫 quantizer에 semantic teacher의 학습 신호가 제공된다." caption="SpeechTokenizer의 학습 구조. 그림의 quantizer는 RVQ의 codebook 한 단계다. 첫 quantizer는 semantic teacher(HuBERT)의 지도를 받고, 전체 양자화 표현은 음성 복원에 쓰인다." source="Zhang et al. (2024), Figure 2 · CC BY-SA 4.0" wide />
 
 Codec이 초당 내는 frame 수도 줄어 왔다.
 EnCodec은 24 kHz 음성에서 초당 75개 frame을 내지만, Mimi는 초당 12.5개만 낸다.[^encodec][^moshi]
 10초 음성이라면 시간 위치가 750개에서 125개로 줄어든다.
-다만 teacher 증류 방식은 quantizer의 출력을 teacher feature와 시점마다 맞추므로, token 수를 줄이려 frame rate를 낮추면 teacher feature도 함께 뭉개야 한다.
+다만 teacher 증류 방식은 codebook이 낸 벡터를 teacher feature와 시점마다 맞추므로, token 수를 줄이려 frame rate를 낮추면 teacher feature도 함께 뭉개야 한다.
 카카오의 LM-SPT는 token으로 음성을 다시 합성한 뒤 원본과 재합성 음성의 표현을 비교해, 시간 해상도가 달라도 발화 내용이 보존되도록 학습한다.[^lmspt][^lmspt-code]
 카카오는 통합 멀티모달 모델 Kanana-o의 tokenizer를 LM-SPT로 바꾸어, 생성할 시간 위치를 초당 25개에서 12.5개로 줄였다.[^lmspt-kanana]
 
@@ -695,6 +734,8 @@ VALL-E는 텍스트와 함께 처음 듣는 화자의 3초짜리 음성을 promp
 같은 입력에서도 sampling에 따라 다른 결과를 낸다고 보고한다.
 CosyVoice는 내용과 음향을 나눈다.
 CosyVoice의 언어 모델은 텍스트와 화자 embedding을 조건으로 내용 중심의 speech token을 예측한다.[^cosyvoice]
+이 speech token은 음성 인식 모델의 encoder 중간에 양자화를 넣어 얻는다.
+전사를 맞히도록 학습된 encoder에서 나오므로 발화 내용을 주로 담는다.
 그 뒤 flow matching 모델이 speech token과 화자 정보로 Mel spectrogram을 만들고, vocoder가 이를 파형으로 바꾼다.
 
 | 모델 | 입력과 중간 표현 | 출력 경로 |
@@ -818,11 +859,12 @@ Speech token에 속도나 억양 같은 음향 특성을 담을 수 있다고 �
 
 ### 7-1. Streaming과 지연
 
-Streaming은 입력이나 출력을 전체가 끝날 때까지 기다리지 않고 작은 구간 단위로 처리하는 방식이다.
+Streaming은 입력이나 출력을 전체가 끝날 때까지 기다리지 않고 작은 구간(chunk) 단위로 처리하는 방식이다.
 Streaming 시스템은 사용자 발화가 길어도 이미 들어온 구간부터 처리하고, 응답 전체가 완성되기 전에 첫 소리를 낼 수 있다.
-이때 현재 출력을 미래 입력에 의존하지 않게 만드는 causal 구조가 유용하다.
-작은 chunk는 빨리 전달할 수 있지만 경계에서 문맥이 부족해지거나 너무 잦은 처리로 비용이 늘 수 있다.
-지연은 모델의 계산 시간 하나로 결정되지 않고, 입력 chunk를 모으는 시간, 모델 계산, 출력 codec과 재생 버퍼가 모두 영향을 준다.
+이때 현재 출력이 미래 입력에 의존하지 않는 causal 구조가 유용하다.
+녹음된 구간 전체를 보는 encoder는 그 구간이 끝나야 feature를 낼 수 있지만, causal encoder는 소리가 들어오는 대로 feature를 낸다.
+Chunk가 작으면 빨리 전달할 수 있지만, 경계에서 문맥이 부족해지고 처리 횟수가 늘어 비용이 커질 수 있다.
+지연은 모델의 계산 시간만으로 정해지지 않고, 입력 chunk를 모으는 시간, 모델 계산, 출력 codec과 재생 버퍼의 시간이 모두 더해진다.
 예를 들어 Moshi는 frame 하나(80 ms)와 acoustic token의 지연(80 ms)을 합쳐 이론상 160 ms, 실제로는 약 200 ms의 지연을 보고한다.[^moshi]
 
 ### 7-2. Full duplex
