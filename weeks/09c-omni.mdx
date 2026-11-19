@@ -60,62 +60,88 @@ Q-Former는 학습 가능한 query 벡터들이 cross-attention으로 입력 fea
 
 ## 2. 영상과 소리의 시간 정렬
 
-### 2-1. 같은 순간의 두 신호
+### 2-1. 실제 시간에 맞춘 위치
 
-영상과 audio는 보통 서로 다른 간격으로 뽑힌다.
-예를 들어 0초와 1초에 영상 frame을 뽑고 audio를 0.5초 구간으로 나누면, 0.7초의 박수는 두 번째 audio 구간에 들어가지만 그 순간의 화면은 입력에 없다.
+한 사람이 요리를 하다가 나중에 책을 읽는 영상에서 “초인종이 울릴 때 이 사람은 무엇을 하고 있었는가?”를 묻는다고 하자.
+소리는 초인종이 울린 시각만 알려 주고, 그때 무엇을 하고 있었는지는 그 시각의 화면에 있다.
+그래서 모델은 초인종 소리가 든 audio 표현과 같은 순간의 영상 표현을 찾아야 한다.
 
-<figure class="lecture-figure" aria-label="0초와 1초에 영상 frame을 뽑고 audio를 0초부터 0.5초까지와 0.5초부터 1초까지 두 구간으로 나눈 가상 예시. 0.7초 박수는 두 번째 audio 구간에 있지만 같은 시각의 영상 frame은 없다.">
-<svg viewBox="0 0 480 180" role="img" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
-  <text x="14" y="47" font-size="15" fill="#0f172a">영상</text>
-  <text x="14" y="103" font-size="15" fill="#0f172a">audio</text>
-  <line x1="96" y1="45" x2="434" y2="45" stroke="#94a3b8" stroke-width="2" />
-  <circle cx="100" cy="45" r="7" fill="#2a78d6" />
-  <circle cx="430" cy="45" r="7" fill="#2a78d6" />
-  <rect x="100" y="78" width="165" height="34" fill="#dbeafe" stroke="#2a78d6" />
-  <rect x="265" y="78" width="165" height="34" fill="#dbeafe" stroke="#2a78d6" />
-  <line x1="331" y1="32" x2="331" y2="122" stroke="#eb6834" stroke-width="2" stroke-dasharray="5 4" />
-  <circle cx="331" cy="95" r="6" fill="#eb6834" />
-  <text x="100" y="140" text-anchor="middle" font-size="14" fill="#0f172a">0초</text>
-  <text x="265" y="140" text-anchor="middle" font-size="14" fill="#0f172a">0.5초</text>
-  <text x="430" y="140" text-anchor="middle" font-size="14" fill="#0f172a">1초</text>
-  <text x="331" y="166" text-anchor="middle" font-size="14" fill="#eb6834">박수 0.7초</text>
+경로마다 표현에 순번을 매기면 이 일을 할 수 없다.
+영상 encoder와 audio encoder가 서로 다른 간격으로 표현을 만들기 때문이다.
+아래 가상의 예에서 영상은 0.5초마다, audio는 0.25초마다 표현을 하나씩 만든다.
+0.7초의 초인종 소리는 audio 2번에 들어 있고, 같은 순간에 가장 가까운 화면은 영상 1번이다.
+그런데 순번은 2번과 1번이어서, 둘이 같은 순간이라는 단서가 없다.
+
+**해법은 위치 번호에 순번 대신 실제 시각을 쓰는 것이다.**
+시간 번호 한 칸을 0.25초로 정하면, 0.5초의 영상 1번과 0.5–0.75초의 audio 2번은 모두 시간 번호 2를 받는다.
+이제 모델은 번호만 보고도 초인종 소리와 같은 순간의 화면을 찾을 수 있다.
+
+<figure class="lecture-figure" aria-label="0초부터 1초까지의 가상 예시. 영상 frame은 0초, 0.5초, 1초에 있어 순번 0, 1, 2를 받고, 시간 번호는 0, 2, 4를 받는다. Audio는 0.25초 구간 네 개로 나뉘어 순번 0, 1, 2, 3과 시간 번호 0, 1, 2, 3을 받는다. 0.7초의 초인종 소리는 audio 2번에 들어 있다. 순번으로는 영상 1번과 audio 2번이 다르지만, 시간 번호로는 둘 다 2다.">
+<svg viewBox="0 0 480 200" role="img" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <text x="14" y="60" font-size="15" fill="#0f172a">영상</text>
+  <text x="14" y="112" font-size="15" fill="#0f172a">audio</text>
+  <line x1="96" y1="56" x2="434" y2="56" stroke="#94a3b8" stroke-width="2" />
+  <circle cx="100" cy="56" r="8" fill="#2a78d6" />
+  <circle cx="265" cy="56" r="9" fill="#eb6834" />
+  <circle cx="430" cy="56" r="8" fill="#2a78d6" />
+  <text x="100" y="20" text-anchor="middle" font-size="12" fill="#0f172a">순번 0</text>
+  <text x="100" y="36" text-anchor="middle" font-size="12" fill="#0f172a">시간 0</text>
+  <text x="265" y="20" text-anchor="middle" font-size="12" fill="#0f172a">순번 1</text>
+  <text x="265" y="36" text-anchor="middle" font-size="12" font-weight="700" fill="#eb6834">시간 2</text>
+  <text x="430" y="20" text-anchor="middle" font-size="12" fill="#0f172a">순번 2</text>
+  <text x="430" y="36" text-anchor="middle" font-size="12" fill="#0f172a">시간 4</text>
+  <rect x="100" y="84" width="82.5" height="40" fill="#dbeafe" stroke="#2a78d6" />
+  <rect x="182.5" y="84" width="82.5" height="40" fill="#dbeafe" stroke="#2a78d6" />
+  <rect x="265" y="84" width="82.5" height="40" fill="#fde7dc" stroke="#eb6834" stroke-width="2" />
+  <rect x="347.5" y="84" width="82.5" height="40" fill="#dbeafe" stroke="#2a78d6" />
+  <text x="141.25" y="101" text-anchor="middle" font-size="12" fill="#0f172a">순번 0</text>
+  <text x="141.25" y="117" text-anchor="middle" font-size="12" fill="#0f172a">시간 0</text>
+  <text x="223.75" y="101" text-anchor="middle" font-size="12" fill="#0f172a">순번 1</text>
+  <text x="223.75" y="117" text-anchor="middle" font-size="12" fill="#0f172a">시간 1</text>
+  <text x="306.25" y="101" text-anchor="middle" font-size="12" fill="#0f172a">순번 2</text>
+  <text x="306.25" y="117" text-anchor="middle" font-size="12" font-weight="700" fill="#eb6834">시간 2</text>
+  <text x="388.75" y="101" text-anchor="middle" font-size="12" fill="#0f172a">순번 3</text>
+  <text x="388.75" y="117" text-anchor="middle" font-size="12" fill="#0f172a">시간 3</text>
+  <line x1="331" y1="46" x2="331" y2="134" stroke="#eb6834" stroke-width="2" stroke-dasharray="5 4" />
+  <text x="100" y="154" text-anchor="middle" font-size="13" fill="#0f172a">0초</text>
+  <text x="182.5" y="154" text-anchor="middle" font-size="13" fill="#64748b">0.25</text>
+  <text x="265" y="154" text-anchor="middle" font-size="13" fill="#0f172a">0.5초</text>
+  <text x="347.5" y="154" text-anchor="middle" font-size="13" fill="#64748b">0.75</text>
+  <text x="430" y="154" text-anchor="middle" font-size="13" fill="#0f172a">1초</text>
+  <text x="331" y="184" text-anchor="middle" font-size="14" fill="#eb6834">초인종 0.7초</text>
 </svg>
-<figcaption>가상의 표본 추출. 박수는 두 번째 audio 구간에 있지만, 그 시각의 영상 frame은 입력에 없다.</figcaption>
+<figcaption>순번과 시간 번호의 비교 (가상 예, 시간 번호 한 칸 = 0.25초). 순번으로는 영상 1번과 audio 2번이 다른 번호를 받지만, 시간 번호로는 둘 다 2를 받아 같은 순간임이 드러난다.</figcaption>
 </figure>
 
-두 신호를 강하게 압축할수록 입력은 짧아지지만, 입 모양과 음절이 맞는지 같은 두 신호 사이의 대응이 사라질 수 있다.
-
-### 2-2. 실제 시간에 맞춘 위치
-
-Audio encoder는 영상 encoder와 다른 속도로 표현을 만든다.
-그래서 입력에 순번만 매기면, 서로 다른 modality의 두 표현이 실제 시간에서 얼마나 떨어져 있는지 알 수 없다.
-Qwen2.5-Omni의 TMRoPE(time-aligned multimodal rotary position embedding)는 시간 성분을 실제 시각에 맞춘 M-RoPE를 audio까지 넓힌다.[^qwen25]
-시간 번호 하나는 40 ms에 해당한다.
+Qwen2.5-Omni의 TMRoPE(time-aligned multimodal rotary position embedding)가 이 방식을 쓴다.[^qwen25]
+TMRoPE는 시간 성분을 실제 시각에 맞춘 M-RoPE를 audio까지 넓힌 것으로, 시간 번호 한 칸이 40 ms에 해당한다.
 Audio는 공간 위치가 없으므로 세 성분에 같은 시간 번호를 쓴다.
 
-<Figure src="https://arxiv.org/html/2503.20215v1/figures/ATMRoPE.png" alt="TMRoPE의 위치 부여. 영상 frame의 patch마다 (시간, 높이, 너비) 세 숫자가 붙어 있다. 첫 frame의 patch는 (0, 0, 0)부터 (0, 2, 2)까지이고 다음 frame은 시간 성분이 25, 그다음은 50, 75로 늘어난다. 아래의 audio 파형에는 (0, 0, 0), (25, 25, 25), (50, 50, 50)처럼 세 성분이 같은 값으로 붙고, 2초마다 구간이 나뉜다." caption="TMRoPE의 위치 ID (시간, 높이, 너비). 한 frame의 patch는 시간 ID를 공유하고 높이·너비가 다르며, audio는 세 성분이 같은 시간 ID로 함께 늘어난다. 시간 ID 25칸이 1초이므로, 같은 순간의 영상 patch와 audio 표현은 시간 ID가 같다." source="Xu et al. (2025), Figure 3 · CC BY 4.0" wide />
+<Figure src="https://arxiv.org/html/2503.20215v1/figures/ATMRoPE.png" alt="TMRoPE의 위치 부여. 영상 frame의 patch마다 (시간, 높이, 너비) 세 숫자가 붙어 있다. 첫 frame의 patch는 (0, 0, 0)부터 (0, 2, 2)까지이고 다음 frame은 시간 성분이 25, 그다음은 50, 75로 늘어난다. 아래의 audio 파형에는 (0, 0, 0), (25, 25, 25), (50, 50, 50)처럼 세 성분이 같은 값으로 붙고, 2초마다 구간이 나뉜다." caption="TMRoPE의 위치 ID (시간, 높이, 너비). 한 frame의 patch는 시간 ID를 공유하고 높이·너비가 다르며, audio는 세 성분이 같은 시간 ID로 함께 늘어난다." source="Xu et al. (2025), Figure 3 · CC BY 4.0" wide />
 
 그래서 같은 순간의 영상과 audio는 sequence 안에서 멀리 떨어져 있어도 같은 시간 번호를 받는다.
 다만 위치 번호가 뽑히지 않은 frame을 채워 주지는 않는다.
-앞의 예에서 0.7초의 화면은 여전히 없다.
-모델이 위치 번호로 알 수 있는 것은 박수가 든 0.5–1초 audio 구간이 0초 frame보다 1초 frame에 가깝다는 사실까지다.
+앞의 예에서 0.7초의 화면은 여전히 입력에 없고, 모델은 가장 가까운 0.5초의 화면으로 짐작해야 한다.
 
-Sequence 안의 배치는 따로 정한다.
+### 2-2. 입력 배치와 streaming
+
+Sequence 안에서 영상과 audio를 어떤 순서로 놓을지는 위치 번호와 따로 정한다.
 Qwen2.5-Omni는 영상과 audio를 실제 시간 기준 2초 구간(chunk)으로 나누고, 구간마다 영상 표현 다음에 audio 표현을 둔다.
+후속 모델인 Qwen3-Omni는 고정된 2초 chunk 대신, 실제 시각에 맞춘 시간 번호로 영상과 audio를 바로 정렬한다.[^qwen3]
 
-```text
-[영상: 0–2초] [audio: 0–2초] [영상: 2–4초] [audio: 2–4초] … [질문] [답변]
-```
+MiniCPM-o 4.5는 입력뿐 아니라 모델의 출력까지 같은 시간축에 맞춘다.[^minicpmo45]
+아래 그림처럼 시간축을 1초 구간으로 나누고, 구간마다 그 1초의 영상 표현과 audio 표현을 묶어 LLM에 차례로 넣는다.
+LLM은 구간마다 말을 할지 정한다.
+말하지 않을 때는 `[silent]` token을 내고, 말할 때는 텍스트 token을 낸다.
+텍스트 token과 hidden state는 speech token decoder로 넘어가 음성이 된다.
+Speech token decoder는 텍스트와 speech token을 번갈아 생성하고, flow matching decoder가 reference audio의 목소리로 파형을 만든다.
+그래서 모델은 사용자의 영상과 음성을 계속 받으면서 필요한 순간에 음성으로 응답할 수 있다.
 
-후속 모델인 Qwen3-Omni는 고정된 2초 chunk를 없애고 시간 번호만으로 영상과 audio를 정렬해, 길이에 제한 없는 streaming 입력을 받을 수 있게 했다.[^qwen3]
-MiniCPM-o 4.5는 입력뿐 아니라 모델의 텍스트·음성 출력까지 같은 시간축에 맞춘다.[^minicpmo45]
-이 모델은 동시에 흐르는 영상·audio 입력과 출력을 짧은 주기의 시간 구간마다 묶어 LLM에 차례로 넣는다.
-그래서 사용자의 영상과 음성을 계속 받으면서 음성으로 응답할 수 있다.
+<Figure src="https://raw.githubusercontent.com/OpenBMB/MiniCPM-V/28632248d5d9b2a8376351fcda57d47d3a019fda/assets/minicpm-o-45-framework.png" alt="MiniCPM-o 4.5의 full-duplex 처리. 가로축은 0초부터 7초까지의 시간이다. 맨 아래 Video Stream과 Audio Stream이 계속 들어오고, 0초 무렵 사용자가 Remind me when you see MiniCPM-Omni라고 묻는다. Multimodal Encoders는 1초 구간마다 영상 embedding V 세 개와 audio embedding A 두 개를 만들어 Full-Duplex Omnimodal LLM에 넣는다. LLM 출력 줄에는 0–1초와 1–2초 구간에 [silent] token이 있고, 2–4초 구간에는 Look, this is MiniCPM Omni. 텍스트 token이, 4–5초에는 다시 [silent]가, 5–7초에는 How do you like it?이 나온다. 텍스트 token과 hidden state는 Interleaved Speech Token Decoder를 거쳐 25 Hz speech token이 되고, Streaming Flow Matching Decoder가 맨 위의 Audio Output 파형을 만든다." caption="MiniCPM-o 4.5의 시간 분할 처리. 1초 구간마다 영상(V)과 audio(A) 표현이 LLM에 들어가고, LLM은 구간마다 [silent] 또는 텍스트 token을 낸다. 사용자가 “MiniCPM-Omni가 보이면 알려 줘”라고 요청한 뒤, 모델은 두 구간 동안 [silent]를 내다가 2초 구간부터 말을 시작한다." source="OpenBMB, MiniCPM-V GitHub repo · Apache-2.0" wide />
 
-## 3. 여러 modality의 학습
+## 3. 학습
 
-### 3-1. 함께 쓰는 데이터
+### 3-1. 데이터
 
 여러 modality를 각각 다루는 데이터를 섞는 것과, 한 예제에서 여러 modality를 **함께 사용하도록 요구하는 것**은 다르다.
 모델이 이미지 질문과 audio 질문을 각각 잘 푼다고 해서, 화면의 특정 인물과 동시에 들리는 목소리를 연결할 수 있다고 결론 낼 수는 없다.
@@ -126,31 +152,26 @@ MiniCPM-o 4.5는 입력뿐 아니라 모델의 텍스트·음성 출력까지 �
 
 <Video src="https://www.youtube.com/watch?v=3qJooAWnk8M" caption="kakao tech, Omni-modal 학습 데이터셋 예시 (2025)" />
 
-### 3-2. 함께 학습과 model merging
+### 3-2. From scratch
 
-여러 modality를 한 모델에 담는 방법은 처음부터 함께 학습하는 쪽과, 따로 학습한 모델을 나중에 합치는 쪽으로 나뉜다.
-여기서 “함께”는 학습의 순서를 말한다.
-한 예제 안에서 여러 modality를 함께 쓰게 하는 데이터는 어느 쪽에서든 따로 필요하다.
-
-**처음부터 함께 학습.**
-Modality를 하나씩 차례로 학습하는 대신, 처음부터 모든 modality의 데이터를 섞어 학습할 수 있다.
-카카오는 이렇게 함께 학습(joint training)할 때 최종 성능이 더 좋다는 EMOVA의 결과를 근거로, 이 방식을 기본 전략으로 삼았다.[^kanana-o]
-함께 학습에서 흔히 걱정하는 것은 새 modality를 배우는 동안 텍스트 같은 기존 능력이 떨어지는 것이다.
+텍스트로 먼저 사전학습한 LLM에 다른 modality를 나중에 붙이는 대신, 사전학습의 초기 단계부터 여러 modality의 데이터를 함께 넣을 수도 있다.
+이때 흔히 걱정하는 것은 여러 modality를 함께 배우는 동안 텍스트 같은 기존 능력이 떨어지는 것이다.
 Qwen3-Omni는 텍스트 사전학습의 초기 단계부터 단일 modality 데이터와 여러 modality가 섞인 데이터를 함께 넣었다.[^qwen3]
-Qwen3-Omni 보고서는 같은 크기로 학습한 텍스트 전용, 시각 포함, audio 포함의 세 모델을 비교해, audio를 더해도 텍스트와 시각 성능이 떨어지지 않았다고 보고한다.
+Qwen3-Omni 보고서는 같은 크기로 사전학습한 텍스트 전용, 시각 포함, audio 포함의 세 모델을 비교해, audio를 더해도 텍스트와 시각 성능이 떨어지지 않았다고 보고한다.
 다만 일부 텍스트 점수는 조금 낮았고, 모든 모델 크기에서 실험하지는 못했다고 함께 밝힌다.
-학습 순서뿐 아니라 표현까지 하나로 합칠 수도 있다.
-AnyGPT는 이미지·음성·음악을 모두 discrete token으로 바꾸어, 텍스트 token과 하나의 sequence로 학습한다.[^anygpt]
-모든 modality가 처음부터 하나의 token 공간을 공유하는 셈이다.
 
-**따로 학습한 뒤 합치기.**
-함께 학습은 모든 단계에서 모든 modality의 데이터를 쓰므로 학습이 길다.
+### 3-3. Model merging
+
+사전학습된 LLM에서 출발하더라도, modality를 하나씩 차례로 학습할지 모든 modality의 데이터를 한꺼번에 섞어 학습할지 정해야 한다.
+카카오는 한꺼번에 학습(joint training)할 때 최종 성능이 더 좋다는 EMOVA의 결과를 근거로, Kanana-o의 기본 전략을 joint training으로 정했다.[^kanana-o]
+그런데 joint training은 모든 단계에서 모든 modality의 데이터를 쓰므로 학습이 길다.
 그래서 학습률이나 데이터 비율을 바꿔 보는 실험을 여러 번 하기 어렵고, 시각이나 음성 한쪽의 학습 방법이 좋아지면 통합 모델을 처음부터 다시 학습해야 한다.
-Kanana-o는 이 문제를 model merging으로 풀었다.[^kanana-o]
+
+Kanana-o는 이 문제를 model merging으로 풀었다.
 Model merging은 따로 학습한 여러 모델의 parameter를 합쳐 하나의 모델을 만드는 방법이며, 보통 같은 모델에서 출발한 모델들을 합친다.
 가장 단순한 형태는 대응하는 parameter를 평균하는 것이다.[^modelsoups]
 카카오의 시각 모델 Kanana-v와 음성 모델 Kanana-a는 같은 LLM에서 출발했으므로 parameter를 합칠 수 있다.
-카카오는 두 모델을 병합한 뒤 마지막 학습 단계만 추가로 진행해, 처음부터 함께 학습한 모델과 비슷한 성능을 얻었다고 보고한다.
+카카오는 두 모델을 병합한 뒤 마지막 학습 단계만 추가로 진행해, joint training으로 처음부터 학습한 모델과 비슷한 성능을 얻었다고 보고한다.
 그래서 시각과 음성 모델을 각자 실험하고 개선하다가, 필요할 때 빠르게 합쳐 통합 모델을 만들 수 있다.
 
 ## 4. Thinker와 Talker
@@ -185,8 +206,8 @@ OmniBench에서는 이미지나 소리를 텍스트 설명으로 바꿔 줘도 �
 AV-Odyssey 원논문은 벤치마크에 앞선 예비 실험에서, 두 소리 가운데 어느 쪽이 더 크거나 높은지처럼 사람에게는 쉬운 문제도 모델들이 어려워한다고 보고한다.
 
 한 modality만 보고도 맞힐 수 있는 지름길도 확인해야 한다.
-예를 들어 같은 영상에서 A가 먼저 말하고 B가 나중에 말할 때, 박수를 A의 발화 구간에서 B의 발화 구간으로 옮기면 정답도 A에서 B로 바뀌어야 한다.
-모델이 두 경우에 같은 답을 낸다면, 시간 위치를 입력받고도 박수와 발화의 시간 관계를 쓰지 못한 것이다.
+예를 들어 요리를 하다가 책을 읽는 영상에서 초인종 소리를 요리하는 구간에서 책을 읽는 구간으로 옮기면, 정답도 요리에서 책 읽기로 바뀌어야 한다.
+모델이 두 경우에 같은 답을 낸다면, 시간 위치를 입력받고도 초인종 소리와 화면의 시간 관계를 쓰지 못한 것이다.
 
 [^survey]: Jiang, S., Liang, J., Wang, J., Dong, X., Chang, H., Yu, W., Du, J., Liu, M., & Qin, B. (2025). From Specific-MLLMs to Omni-MLLMs: A Survey on MLLMs Aligned with Multi-modalities. *Findings of the Association for Computational Linguistics: ACL 2025*, 8617–8652. [논문](https://aclanthology.org/2025.findings-acl.453/).
 [^imagebind]: Girdhar, R., El-Nouby, A., Liu, Z., Singh, M., Alwala, K. V., Joulin, A., & Misra, I. (2023). ImageBind: One Embedding Space To Bind Them All. *IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2305.05665).
@@ -195,7 +216,6 @@ AV-Odyssey 원논문은 벤치마크에 앞선 예비 실험에서, 두 소리 �
 [^qwen3]: Xu, J., et al. (2025). Qwen3-Omni Technical Report. *arXiv*. [논문](https://arxiv.org/abs/2509.17765).
 [^minicpmo45]: OpenBMB. (2026). MiniCPM-o 4.5. *GitHub documentation*. [문서](https://github.com/OpenBMB/MiniCPM-V/blob/main/docs/minicpm_o4dot5_en.md).
 [^kanana-o]: Kakao. (2025). 이미지와 음성을 아우르는 카카오의 멀티모달 언어모델 Kanana-o 알아보기. *kakao tech*. [글](https://tech.kakao.com/posts/702).
-[^anygpt]: Zhan, J., et al. (2024). AnyGPT: Unified Multimodal LLM with Discrete Sequence Modeling. *Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics*, 9637–9662. [논문](https://aclanthology.org/2024.acl-long.521/).
 [^modelsoups]: Wortsman, M., et al. (2022). Model soups: averaging weights of multiple fine-tuned models improves accuracy without increasing inference time. *International Conference on Machine Learning*. [논문](https://proceedings.mlr.press/v162/wortsman22a.html).
 [^omnibench]: Li, Y., Ma, Y., Zhang, G., et al. (2025). OmniBench: Towards The Future of Universal Omni-Language Models. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2409.15272).
 [^worldsense]: Hong, J., Yan, S., Cai, J., et al. (2026). WorldSense: Evaluating Real-world Omnimodal Understanding for Multimodal LLMs. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2502.04326).
