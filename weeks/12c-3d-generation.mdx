@@ -1,0 +1,58 @@
+---
+title: "3D Generation"
+week: 12
+order: 2
+---
+
+<Callout type="note">
+작성 예정 노트다. 아래는 담을 내용의 계획이며, 모델·논문 이름은 노트를 쓸 때 원논문으로 확인한다.
+</Callout>
+
+{/* 작성 메모 (사이트에 보이지 않음)
+- 참고문헌 1 후보: Li et al. (2024) Advances in 3D Generation: A Survey.
+- 앞 주차에서 이미 다룬 것
+  - 10a 4절: score. 10b 1절: CFG. Score distillation의 식에서 개념 이름으로 받는다.
+  - 10c 1절: 압축한 latent에서 생성하는 두 단계 학습. 5절의 3D latent 생성을 같은 틀로 설명한다.
+  - 10d: DiT, spacetime patch와 비디오 생성. 3절의 비디오 모델 활용과 5절의 backbone에서 받는다.
+  - Flow matching 노트: 5절의 학습 목표.
+  - Consistency model 노트: teacher의 score를 학습 신호로 쓰는 distillation을 먼저 소개했다. 이 노트에서 score distillation을 식으로 다룬다.
+- 마지막에 world model·비디오 생성으로 넘어가는 연결을 둔다(주차 번호는 쓰지 않는다).
+- 그림 후보: DreamFusion의 최적화 과정 그림, TRELLIS의 구조 그림. 라이선스를 확인한다.
+*/}
+
+## 1. 3D 데이터의 부족
+
+- 이미지·텍스트 쌍은 수십억 개지만, 3D 자산은 훨씬 적고 품질도 고르지 않다
+- 그래서 3D 생성은 2D 생성 모델의 지식을 빌리는 방법에서 출발했다
+
+## 2. Score distillation
+
+- 3D 표현(NeRF나 Gaussian)을 여러 시점에서 렌더링하고, 2D diffusion 모델이 그 이미지를 그럴듯하게 여기는 방향으로 3D 표현을 최적화한다(DreamFusion)
+- 3D 데이터 없이 텍스트만으로 3D를 만든다
+- 한계: 물체마다 긴 최적화, 큰 CFG scale로 인한 과포화, 시점마다 앞면이 생기는 문제
+
+## 3. Multi-view diffusion
+
+- 문제: 2D 모델은 시점 사이의 일관성을 모른다
+- 2D diffusion 모델에 카메라 조건을 넣어 다른 시점의 이미지를 생성하게 한다(Zero-1-to-3)
+- 여러 시점을 한 번에 생성한다. 비디오 생성 모델을 여러 시점 생성기로 쓰기도 한다(SV3D, CAT3D)
+- 생성한 여러 시점 이미지는 NeRF나 Gaussian Splatting으로 복원한다
+
+## 4. Feed-forward 복원
+
+- 문제: 물체마다 최적화하면 느리다
+- 이미지 한 장이나 몇 장에서 3D 표현을 한 번의 추론으로 예측한다
+- LRM: 이미지 한 장에서 radiance field를 바로 예측하는 대형 Transformer
+
+## 5. 3D latent에서의 생성
+
+- 이미지의 latent diffusion과 같은 두 단계: 3D 형상을 latent로 압축하는 autoencoder를 학습하고, 그 latent에서 생성 모델을 학습한다
+- TRELLIS: 구조화된 3D latent 하나에서 radiance field, 3D Gaussian, mesh를 모두 decoding한다
+- Hunyuan3D 2.0: flow 기반 DiT로 형상을 만들고, 별도 모델로 texture를 입힌다
+- 이미지·비디오 생성의 flow matching과 DiT가 3D latent에도 그대로 쓰인다
+
+## 6. 평가와 남은 문제
+
+- 3D 생성은 정답이 없어 평가가 어렵다: 렌더링한 이미지의 품질과 텍스트 일치, 사람 평가
+- 남은 문제: texture와 topology의 품질, 물체를 넘어 장면 전체의 생성
+- 정리 표: 방식, 3D 데이터 필요 여부, 생성 시간, 출력 표현

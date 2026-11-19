@@ -1,0 +1,53 @@
+---
+title: "Consistency Model"
+week: 11
+order: 2
+---
+
+<Callout type="note">
+작성 예정 노트다. 아래는 담을 내용의 계획이며, 모델·논문 이름은 노트를 쓸 때 원논문으로 확인한다.
+</Callout>
+
+{/* 작성 메모 (사이트에 보이지 않음)
+- 참고문헌 1 후보: Luo (2023) A Comprehensive Survey on Knowledge Distillation of Diffusion Models. 2023년 것이라 더 최근 서베이가 있는지 먼저 찾는다.
+- 앞 주차에서 이미 다룬 것
+  - 10b 2절: DDIM과 DPM-Solver로 step을 줄이는 방법. 이 노트는 그 한계에서 출발한다.
+  - 10b 1절: CFG는 단계마다 예측을 두 번 구한다. 이를 줄이는 guidance distillation은 step 수가 아니라 step당 호출 수를 줄이는 다른 계보라 다루지 않는다.
+  - 10b 3절: velocity 예측은 progressive distillation 논문에서 인용했다.
+  - 05e: LLM의 distillation. Teacher, student 용어를 같게 쓴다.
+- 10주차에 생성 모델의 평가 지표가 없다. FID와 모델 호출 횟수(NFE)를 이 노트에서 처음 정의한다.
+- 표기: consistency model 원논문은 t=0이 데이터인 diffusion 방향을 쓴다. Flow matching 노트의 방향으로 통일하거나, 다르다는 점을 한 번 밝힌다.
+- Score distillation은 3D 생성 노트에서 식으로 다룬다. 여기서는 teacher의 score를 학습 신호로 쓴다는 수준으로만 쓴다.
+- 모델 사례(LCM, SDXL-Turbo)는 따로 절을 두지 않고 해당 기법의 예로만 쓴다.
+*/}
+
+## 1. Solver와 reflow의 한계
+
+- 더 좋은 ODE solver로 step을 줄여도, 10~20 step 아래에서는 품질이 빠르게 떨어진다
+- Reflow는 궤적을 펴지만 쌍 생성과 반복 학습의 비용이 크다
+- 그래서 적은 step에 맞게 모델을 다시 학습한다
+
+## 2. Progressive distillation
+
+- Teacher의 두 step을 student의 한 step으로 배우고, 이를 반복해 step 수를 절반씩 줄인다
+- 한계: 줄일 때마다 다시 학습해야 하고, step이 아주 적어지면 품질이 떨어진다
+
+## 3. Consistency model
+
+- 같은 ODE 궤적 위의 모든 점을 같은 끝점(데이터)으로 보내는 함수를 배운다
+- Consistency distillation: teacher의 ODE solver 한 step으로 이웃한 두 점을 만들어 출력을 맞춘다
+- Consistency training: teacher 없이 처음부터 학습한다
+- 한 step으로 생성하고, 품질이 필요하면 noise를 다시 더해 몇 step 더 돈다
+- 예: 대형 text-to-image 모델의 latent 공간에 적용한 latent consistency model(LCM)
+
+## 4. 분포를 맞추는 distillation
+
+- 궤적의 점 하나하나를 맞추지 않고, student가 만든 이미지의 분포를 teacher의 분포에 맞춘다
+- Adversarial distillation: discriminator로 실제 이미지와 구별되지 않게 한다(예: SDXL-Turbo)
+- Distribution matching distillation: teacher의 score를 학습 신호로 쓴다
+
+## 5. 평가와 정리
+
+- 지표: FID, 모델 호출 횟수(NFE), 텍스트와의 일치(CLIP score)
+- 정리 표: 방법, teacher 필요 여부, 학습 비용, step 수, 품질과 다양성
+- Teacher 없이 처음부터 few-step 모델을 학습하는 최근 시도는 한 문장으로만 언급한다
