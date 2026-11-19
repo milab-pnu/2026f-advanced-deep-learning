@@ -347,7 +347,31 @@ VLM에서는 이 Transformer에 이미지만 넣어 vision encoder로 쓴다.
 [Kanana Vision Encoder: 글로벌 최고 수준에 도전하는 자체 비전 인코더 개발기](https://if.kakao.com/2026/session/time-table?sessionId=86)는 카카오가 자체 vision encoder를 개발한 과정을 소개하는 기술 세션이다.
 </Callout>
 
-### 3-4. 단계별 학습
+아예 vision encoder 없이, LLM 하나가 이미지 patch를 직접 읽는 **vision encoder-free** VLM도 연구되고 있다.[^eve][^sail]
+이 방식은 구조가 단순하고 encoder가 정한 해상도에 묶이지 않지만, 시각을 처음부터 배워야 해서 많은 학습 데이터가 필요하다.
+성능 격차는 빠르게 줄고 있으나, 아직은 vision encoder를 쓰는 구조가 일반적이다.[^neo]
+
+<Figure src="https://arxiv.org/html/2504.10462v1/model.png" alt="SAIL의 구조. (A) 이미지 patch와 텍스트 token을 SAIL이라는 Transformer 하나에 함께 넣고 language modeling 손실로 학습한다. (B) attention mask로, multimodal sequence에서 이미지 patch끼리는 서로 모두 보고 텍스트는 이미지 전체와 앞선 텍스트만 본다. 텍스트만 있는 sequence는 일반 causal mask다. (C) 위치 번호로, 이미지 patch에는 행과 열 두 성분의 번호를 주고 텍스트에는 두 성분에 같은 번호를 준다." caption="Vision encoder-free VLM." source="Lei et al. (2025), Figure 2 · CC BY 4.0" wide />
+
+### 3-4. 고해상도 이미지
+
+VLM의 vision encoder는 보통 학습할 때의 해상도에 맞춘 이미지를 받는다.
+그래서 큰 이미지를 그 해상도로 줄이면 전체 배치는 남지만 작은 글자가 읽히지 않을 수 있다.
+반대로 해상도를 높이면 patch가 늘어나, 높이와 너비를 두 배로 늘리면 visual token도 네 배가 된다.
+
+해법은 크게 두 가지다.
+첫째는 이미지를 encoder의 해상도에 맞는 조각들로 나눠 조각마다 인코딩하고, 전체를 줄인 이미지도 함께 넣는 방식이다.[^llava15]
+
+<Figure src="https://arxiv.org/html/2310.03744v2/high_res_arch_v2.png" alt="LLaVA-1.5의 고해상도 입력 처리. 위쪽 경로에서는 원본 이미지를 네 조각으로 나누어 각각 인코딩하고, 아래쪽 경로에서는 전체 이미지를 줄여 인코딩한다. 두 경로의 feature를 펼쳐 이어 붙여 LLM에 넣는다." caption="이미지를 조각으로 나누어 각각 인코딩하고(위), 전체를 줄인 이미지의 feature(아래)를 함께 LLM에 넣는다. Encoder의 입력 해상도는 그대로 두고 조각 수로 해상도를 높인다." source="Liu et al. (2024), Figure 2 · CC BY 4.0" wide />
+
+이 방식에서 모델은 전체 배치와 세부를 함께 보지만, 조각 사이에 걸친 관계는 스스로 이어야 하고 visual token도 조각 수만큼 늘어난다.
+둘째는 이미지를 원래 크기와 종횡비대로 넣고, 입력마다 patch 수를 달리하는 **native resolution** 방식이다.[^navit]
+격자 크기가 입력마다 달라지므로 patch의 행과 열 위치를 나타내는 2D RoPE를 쓰고, 이웃한 patch feature를 합쳐 visual token 수를 줄인다.[^qwen2vl]
+다만 native resolution도 원본 픽셀을 제한 없이 처리하지는 않으며, 실제 시스템은 최소·최대 픽셀 수에 맞춰 이미지 크기를 조정한다.
+
+<Figure src="https://arxiv.org/html/2409.12191v2/images/qwen2_vl_frame.jpg" alt="Native resolution 입력의 예. 아래에 크기와 종횡비가 다른 입력 네 개가 있다. 높이 8204, 너비 1092의 긴 웹 페이지 캡처, 높이 28, 너비 224의 가는 수식 이미지, 높이 700, 너비 1260의 풍경 사진, 높이 336, 너비 644에 16초 길이인 비디오다. 이들을 크기를 바꾸지 않고 vision encoder에 넣으면, 각각 11427, 8, 1125, 2208개의 visual token이 되어 텍스트 token 사이에 놓이고 언어 모델 decoder로 들어간다." caption="Native resolution 입력의 예. 크기와 종횡비가 다른 이미지와 비디오를 원래 크기대로 넣으면, 입력마다 visual token 수가 달라진다." source="Wang et al. (2024), Figure 2" wide />
+
+### 3-5. 단계별 학습
 
 다음은 카카오의 Kanana-v 개발기에 따른 학습 과정이다.[^kanana15v-blog][^kanana-v-hybrid]
 
@@ -447,82 +471,55 @@ OSWorld는 이런 반복을 실제 운영체제와 앱이 돌아가는 가상 �
 OSWorld는 agent가 “저장했다”고 말하는 것만으로 성공을 인정하지 않는다.
 파일이 실제로 원하는 위치와 내용으로 저장되었는지를 실행 결과로 판정한다.
 
-<Details summary="더 보기: 고해상도 이미지와 비디오 입력">
+## 6. 비디오 입력
 
-**고정 해상도의 한계.**
-ViT의 위치 embedding은 학습할 때의 patch 격자 크기에 맞춰져 있다.
-보간으로 늘릴 수는 있지만, VLM은 보통 encoder가 학습한 해상도로 이미지를 resize하거나 crop해서 넣는다.
-책 페이지를 작은 정사각형으로 줄이면 전체 배치는 남지만 작은 글자가 읽히지 않을 수 있다.
-반대로 해상도를 높이면 patch가 늘어난다.
-Patch 한 변을 그대로 두고 높이와 너비를 각각 두 배로 늘리면 patch 수는 네 배가 되고, LLM의 문맥도 그만큼 길어진다.
+### 6-1. Frame과 시간 정보
 
-**AnyRes.**
-한 가지 해법은 전체 이미지를 줄인 그림과 고해상도 crop들을 함께 넣는 것이다.
-LLaVA-1.5의 고해상도 확장이 이 방식을 썼고,[^llava15] 후속 LLaVA 계열은 이를 AnyRes라 부른다.[^llavaonevision]
-AnyRes는 이미지를 encoder가 학습한 해상도의 조각들로 나누어 조각마다 인코딩하고, 전체 이미지를 줄여 인코딩한 feature를 덧붙인다.
-
-<Figure src="https://arxiv.org/html/2310.03744v2/high_res_arch_v2.png" alt="LLaVA-1.5의 고해상도 입력 처리. 위쪽 경로에서는 원본 이미지를 네 조각으로 나누어 각각 인코딩하고, 아래쪽 경로에서는 전체 이미지를 줄여 인코딩한다. 두 경로의 feature를 펼쳐 이어 붙여 LLM에 넣는다." caption="이미지를 조각으로 나누어 각각 인코딩하고(위), 전체를 줄인 이미지의 feature(아래)를 함께 LLM에 넣는다. Encoder의 입력 해상도는 그대로 두고 조각 수로 해상도를 높인다." source="Liu et al. (2024), Figure 2 · CC BY 4.0" wide />
-
-이 방식으로 모델은 전체 배치와 국소 세부를 함께 볼 수 있다.
-하지만 모델이 crop 사이에 걸친 관계를 스스로 연결해야 하고, visual token도 crop 수에 비례해 늘어난다.
-LLaVA-OneVision에서는 crop 하나가 729 token이어서, 3×3 crop에 전체 이미지를 더하면 7,290 token이 된다.[^llavaonevision]
-
-**Native resolution.**
-다른 해법은 이미지를 원래 크기와 종횡비에 가깝게 넣고, 입력마다 patch 수를 다르게 쓰는 것이다.
-이를 native resolution이라 한다.
-NaViT(Native Resolution ViT)는 해상도와 종횡비가 다른 이미지들의 patch를 한 sequence에 이어 담는 packing으로 ViT를 학습했다.[^navit]
-Qwen2-VL은 이 방식을 VLM에 가져와, 이전 Qwen-VL이 쓰던 고정 해상도 입력과 query 256개로 길이를 고정한 adapter를 버렸다.[^qwenvl][^qwen2vl]
-격자 크기가 입력마다 달라지므로, Qwen2-VL은 ViT의 학습된 절대 위치 embedding을 없애고 patch의 행과 열 위치를 attention 안에서 회전으로 표현하는 2D RoPE를 쓴다.
-그리고 인접한 2×2 patch feature를 MLP로 합쳐 visual token 수를 줄인다.
-예컨대 224×224 이미지는 14×14 patch 16×16개가 되고, 2×2씩 합치면 visual token 64개가 남는다.
-Qwen2.5-VL은 native resolution으로 동작하는 ViT를 처음부터 학습하고, 대부분의 층에 window attention을 써서 계산량이 patch 수에 선형으로 늘게 했다.[^qwen25vl]
-다만 native resolution이 원본 픽셀을 제한 없이 처리한다는 뜻은 아니다.
-실제 시스템은 최소·최대 픽셀 수에 맞춰 이미지 크기를 조정하기도 한다.
-
-**비디오 입력.**
 비디오는 시간 순서가 있는 frame들의 연속이다.
-비디오가 VLM에 들어가는 경로는 여러 이미지를 넣을 때와 같다.
-전처리기가 영상에서 frame과 각 frame의 시각을 추출하고, vision encoder와 projector가 frame마다 visual token을 만든다.
-언어 모델은 시간 순서로 놓인 visual token과 질문을 받아 답을 생성한다.
-이미지 여러 장과 다른 점은 두 가지다.
+여기서는 영상의 소리를 빼고 frame만 입력으로 다룬다.
+VLM은 영상에서 frame을 골라 뽑고, frame마다 visual token을 만들어 시간 순서대로 LLM에 넣는다.
+이때 이미지 한 장을 넣을 때와 다른 문제가 두 가지 생긴다.
+
 첫째, frame이 늘수록 visual token이 문맥을 빠르게 채운다.
-Frame마다 visual token이 256개라면 다섯 frame은 1,280개, 30 frame은 7,680개다.
-Frame을 듬성듬성 고르면 잠깐 나타났다 사라진 물체를 놓치고, frame마다 token을 줄이면 작은 물체나 글자가 사라진다.
+Frame마다 visual token이 256개라면 30 frame은 7,680개다.
+그래서 여러 frame을 정해진 수의 벡터로 요약하거나, 이웃한 frame을 합쳐 시간 방향의 표현 수를 줄인다.[^glmv]
+하지만 frame을 듬성듬성 고르거나 표현을 많이 줄이면, 잠깐 나타난 물체나 작은 글자를 놓친다.
+
 둘째, frame의 순서뿐 아니라 실제 시간 간격도 의미를 가진다.
 연속된 두 frame이 0.1초 간격인지 10초 간격인지에 따라 같은 위치 변화도 다른 속도를 뜻한다.
+초기 모델은 frame의 순서만 위치 정보로 알려 주었다.[^videollama]
+이후 모델은 `Second{3.0}` 같은 시각을 텍스트 token으로 frame 옆에 넣는 방식들을 채택한다.[^timemarker]
 
-**시간을 알려 주는 방법.**
-초기 비디오 언어 모델인 Video-LLaMA는 frame별 feature에 frame 순서의 위치 embedding을 더하고, Video Q-Former로 고정 개수의 비디오 표현으로 요약했다.[^videollama]
-그래서 영상이 길어져도 언어 모델이 받는 길이는 늘지 않지만, 어떤 frame의 어떤 정보가 남을지는 학습된 query에 달려 있다.
-Qwen2-VL의 MRoPE(multimodal rotary position embedding)는 LLM의 위치 번호를 시간·높이·너비 세 성분으로 나눈다.[^qwen2vl]
-텍스트 token은 세 성분에 같은 번호를 받으므로, 텍스트에서 MRoPE는 기존 1차원 RoPE와 같다.
-이미지의 visual token은 높이·너비 성분으로 격자 위치를 나타내고, 비디오에서는 frame이 바뀔 때마다 시간 성분이 커진다.
-Qwen2.5-VL은 이 시간 성분의 간격을 실제 시간 간격에 맞춘다.[^qwen25vl]
-예를 들어 1초와 3초에 뽑은 두 frame이 sequence에서 이웃해도, 위치 표현에는 시간 차이 2초가 담긴다.
-Qwen3-VL은 시간을 텍스트로 알려 준다.[^qwen3vl]
-Qwen3-VL은 인접 frame들을 묶은 시간 patch마다 앞에 `<3.0 seconds>` 같은 시간 표시 token을 넣는다.
-GLM-V도 각 frame의 visual token 뒤에 시각을 문자열로 나타낸 token을 넣고, vision encoder의 3D convolution으로 시간 방향 표현 수를 절반으로 줄인다.[^glmv]
+<Figure src="https://arxiv.org/html/2411.18211v1/framework.png" alt="비디오 입력 경로의 예. 아래에서 뽑은 비디오 frame들이 vision encoder와 projector를 거쳐 frame마다 visual token 묶음이 되고, adaptive token merge가 각 묶음의 token 수를 줄인다. 줄어든 visual token 묶음 사이사이에는 Second{0.0}부터 Second{8.0}까지 각 frame의 시각을 나타내는 분홍색 temporal separator token이 들어간다. 이 sequence와 질문 What are the colors of the two teams' jerseys?가 LLM에 들어가 답 Red and white를 생성한다. 오른쪽 아래에는 비디오와 함께 여러 이미지, 단일 이미지 데이터로 함께 학습한다는 표시가 있다." caption="비디오 입력 경로의 예. Frame마다 만든 visual token을 줄인 뒤, 각 frame 앞에 그 시각을 나타내는 token(Second{0.0} 등)을 넣어 LLM에 전달한다." source="Chen et al. (2024), Figure 3" wide />
 
-<Figure src="https://arxiv.org/html/2507.01006v6/glm-4v-thinking.png" alt="GLM-V의 이미지와 비디오 처리 구조. 아래에 크기가 다른 이미지 두 장과 여러 frame으로 구성된 20초 비디오가 있다. ViT encoder가 이를 처리하며 비디오는 시간 방향으로 두 배 압축한다. MLP projector의 출력을 언어 decoder의 입력 sequence에 넣으며, 비디오 표현 사이에 0, 2, 4, 6과 같은 시간 index token이 표시되어 있다. 이미지와 비디오 뒤에는 질문과 생성할 답변 token이 이어진다." caption="GLM-V의 입력 경로. 이미지와 비디오를 ViT와 projector로 표현하고, 비디오에는 시간 index를 함께 넣어 언어 decoder가 질문에 답한다. 그림의 token 수는 표시된 입력에 대한 예다." source="GLM-V Team (2026), Figure 2 · CC BY 4.0" wide />
+### 6-2. 비디오 이해의 평가
 
-다만 구조만으로는 모델이 시간 관계를 배우지 못한다.
-“먼저 무엇을 했나”, “어느 구간에서 문이 열리나” 같은 task에는 그 관계를 담은 학습 데이터가 필요하다.
+비디오 벤치마크도 묻는 능력에 따라 나뉜다.
 
-**비디오 이해의 평가.**
-마지막 frame 하나만 보고도 답할 수 있는 질문으로는 모델이 시간 관계를 이용했는지 알 수 없다.
-TemporalBench는 사건의 순서, 동작 횟수, 움직임의 크기처럼 세밀한 시간 차이를 묻는다.[^temporalbench]
-Video-MME는 길이와 주제가 다른 비디오로 모델을 평가하고, 자막이나 audio를 추가하는 설정도 둔다.[^videomme]
-자막에 정답 단서가 있으면 모델은 시각 정보 없이도 맞힐 수 있다.
-GLM-V 보고서에서 GLM-4.5V thinking 설정의 Video-MME 점수는 자막 없이 74.6, 자막을 넣으면 80.7이었다.[^glmv]
+| 영역 | 묻는 능력 | 대표 벤치마크 |
+| --- | --- | --- |
+| 종합 이해 | 길이와 주제가 다양한 영상에 대해 질문에 답하기 | Video-MME[^videomme], MVBench[^mvbench] |
+| 세밀한 시간 이해 | 사건의 순서, 동작 횟수, 움직임의 크기 구별하기 | TemporalBench[^temporalbench] |
+| 긴 영상 이해 | 수 분에서 한 시간 길이의 영상에서 필요한 장면을 찾아 답하기 | EgoSchema[^egoschema], LongVideoBench[^longvideobench] |
+| 시간 구간 찾기 | 문장이 가리키는 사건의 시작과 끝 시각 찾기 | Charades-STA[^charadessta] |
+
+비디오 벤치마크를 만들 때 가장 신경 쓰는 점은 frame 하나만 보고도 풀리는 질문을 줄이는 것이다.
+TemporalBench 원논문은 기존 비디오 벤치마크가 대부분 정지 이미지 벤치마크와 비슷해, 시간 이해를 제대로 평가하지 못한다고 지적한다.
+그래서 TemporalBench는 사건의 순서나 동작 횟수처럼 frame 사이의 변화를 묻고, 이 벤치마크에서 GPT-4o의 정확도는 38.5%로 사람보다 약 30%p 낮았다.
+MVBench는 정지 이미지 task를 시간이 필요한 task로 바꾸는 방식으로, frame 하나로는 풀기 어려운 task 20개를 만들었다.
+EgoSchema는 3분 길이 영상에 대한 5지선다 질문으로 이루어지며, 영상 전체 길이 대신 답을 확인하는 데 실제로 봐야 하는 구간의 길이로 task의 시간 난이도를 잰다.
+Charades-STA는 영상 속 사건을 묘사한 문장마다 그 사건의 시간 구간을 붙여, 모델이 낸 구간이 정답 구간과 맞는지 채점한다.
+
+반대로 영상 밖의 정보가 답을 알려 줄 수도 있다.
+Video-MME는 11초에서 1시간까지의 영상 900개에 질문 2,700개를 붙였고, 자막을 함께 주는 설정도 둔다.
+자막에 정답 단서가 있으면 모델은 영상을 보지 않고도 맞힐 수 있다.
+한 보고서에서는 같은 모델의 Video-MME 점수가 자막 없이 74.6, 자막을 넣으면 80.7이었다.[^glmv]
 그래서 결과를 비교할 때는 frame 수, 해상도, 자막 제공 여부가 같은지 먼저 확인해야 한다.
-
-</Details>
 
 [^survey]: Caffagni, D., Cocchi, F., Barsellotti, L., et al. (2024). The Revolution of Multimodal Large Language Models: A Survey. *Findings of the Association for Computational Linguistics: ACL 2024*, 13590–13618. [논문](https://aclanthology.org/2024.findings-acl.807/).
 [^vit]: Dosovitskiy, A., Beyer, L., Kolesnikov, A., et al. (2021). An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2010.11929).
 [^clip]: Radford, A., Kim, J. W., Hallacy, C., et al. (2021). Learning Transferable Visual Models From Natural Language Supervision. *International Conference on Machine Learning*. [논문](https://arxiv.org/abs/2103.00020).
 [^llava15]: Liu, H., Li, C., Li, Y., & Lee, Y. J. (2024). Improved Baselines with Visual Instruction Tuning. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2310.03744).
-[^llavaonevision]: Li, B., Zhang, Y., Guo, D., et al. (2024). LLaVA-OneVision: Easy Visual Task Transfer. *arXiv*. [논문](https://arxiv.org/abs/2408.03326).
 [^llava]: Liu, H., Li, C., Wu, Q., & Lee, Y. J. (2023). Visual Instruction Tuning. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2304.08485).
 [^blip2]: Li, J., Li, D., Savarese, S., & Hoi, S. (2023). BLIP-2: Bootstrapping Language-Image Pre-training with Frozen Image Encoders and Large Language Models. *International Conference on Machine Learning*. [논문](https://arxiv.org/abs/2301.12597).
 [^qwen2vl]: Wang, P., Bai, S., Tan, S., et al. (2024). Qwen2-VL: Enhancing Vision-Language Model's Perception of the World at Any Resolution. *arXiv*. [논문](https://arxiv.org/abs/2409.12191).
@@ -531,10 +528,8 @@ GLM-V 보고서에서 GLM-4.5V thinking 설정의 Video-MME 점수는 자막 없
 [^kanana-v-hybrid]: Kakao. (2026). “생각하고 답변하는” 카카오의 하이브리드 멀티모달 언어모델, Kanana-v-4b-hybrid 개발기. *kakao tech*. [글](https://tech.kakao.com/posts/806).
 [^kanana15v-blog]: Kakao. (2025). 카카오의 경량 멀티모달 언어모델 ‘Kanana-1.5-v-3b’ 개발부터 공개까지. *kakao tech*. [글](https://tech.kakao.com/posts/714).
 
-[^qwen3vl]: Bai, S., Cai, Y., Chen, R., et al. (2025). Qwen3-VL Technical Report. *arXiv*. [논문](https://arxiv.org/abs/2511.21631).
 [^honeybee]: Cha, J., et al. (2024). Honeybee: Locality-enhanced Projector for Multimodal LLM. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2312.06742).
 [^vqvae]: van den Oord, A., Vinyals, O., & Kavukcuoglu, K. (2017). Neural Discrete Representation Learning. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/1711.00937).
-[^qwenvl]: Bai, J., Bai, S., Yang, S., et al. (2023). Qwen-VL: A Versatile Vision-Language Model for Understanding, Localization, Text Reading, and Beyond. *arXiv*. [논문](https://arxiv.org/abs/2308.12966).
 [^mae]: He, K., Chen, X., Xie, S., et al. (2022). Masked Autoencoders Are Scalable Vision Learners. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2111.06377).
 [^sam]: Kirillov, A., Mintun, E., Ravi, N., et al. (2023). Segment Anything. *Proceedings of the IEEE/CVF International Conference on Computer Vision*. [논문](https://arxiv.org/abs/2304.02643).
 [^dino]: Caron, M., Touvron, H., Misra, I., et al. (2021). Emerging Properties in Self-Supervised Vision Transformers. *Proceedings of the IEEE/CVF International Conference on Computer Vision*. [논문](https://arxiv.org/abs/2104.14294).
@@ -546,6 +541,9 @@ GLM-V 보고서에서 GLM-4.5V thinking 설정의 Video-MME 점수는 자막 없
 [^prismatic]: Karamcheti, S., Nair, S., Balakrishna, A., et al. (2024). Prismatic VLMs: Investigating the Design Space of Visually-Conditioned Language Models. *International Conference on Machine Learning*. [논문](https://arxiv.org/abs/2402.07865).
 [^pe]: Bolya, D., Huang, P.-Y., Sun, P., et al. (2025). Perception Encoder: The best visual embeddings are not at the output of the network. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2504.13181).
 [^genlip]: Fang, Y., Lan, M., Huang, Z., et al. (2026). Let ViT Speak: Generative Language-Image Pre-training. *European Conference on Computer Vision*. [논문](https://arxiv.org/abs/2605.00809).
+[^eve]: Diao, H., Cui, Y., Li, X., et al. (2024). Unveiling Encoder-Free Vision-Language Models. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2406.11832).
+[^sail]: Lei, W., Wang, J., Wang, H., et al. (2025). The Scalability of Simplicity: Empirical Analysis of Vision-Language Learning with a Single Transformer. *arXiv*. [논문](https://arxiv.org/abs/2504.10462).
+[^neo]: Diao, H., Li, M., Wu, S., et al. (2026). From Pixels to Words: Towards Native Vision-Language Primitives at Scale. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2510.14979).
 [^kanana-encoder-blog]: Kakao. (2026). 글로벌 최고 수준의 자체 비전 인코더, Kanana-2-vision-encoder 개발기. *kakao tech*. [글](https://tech.kakao.com/posts/840).
 [^mmbench]: Liu, Y., Duan, H., Zhang, Y., et al. (2024). MMBench: Is Your Multi-modal Model an All-around Player? *European Conference on Computer Vision*. [논문](https://arxiv.org/abs/2307.06281).
 [^mmstar]: Chen, L., Li, J., Dong, X., et al. (2024). Are We on the Right Way for Evaluating Large Vision-Language Models? *arXiv*. [논문](https://arxiv.org/abs/2403.20330).
@@ -576,5 +574,10 @@ GLM-V 보고서에서 GLM-4.5V thinking 설정의 Video-MME 점수는 자막 없
 [^videomme]: Fu, C., Dai, Y., Luo, Y., et al. (2025). Video-MME: The First-Ever Comprehensive Evaluation Benchmark of Multi-modal LLMs in Video Analysis. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2405.21075).
 
 [^glmv]: GLM-V Team. (2026). GLM-4.5V and GLM-4.1V-Thinking: Towards Versatile Multimodal Reasoning with Scalable Reinforcement Learning. *arXiv*, v6. [논문](https://arxiv.org/abs/2507.01006v6).
+[^timemarker]: Chen, S., Lan, X., Yuan, Y., et al. (2024). TimeMarker: A Versatile Video-LLM for Long and Short Video Understanding with Superior Temporal Localization Ability. *arXiv*. [논문](https://arxiv.org/abs/2411.18211).
 
 [^temporalbench]: Cai, M., Tan, R., Zhang, J., et al. (2024). TemporalBench: Benchmarking Fine-grained Temporal Understanding for Multimodal Video Models. *arXiv*. [논문](https://arxiv.org/abs/2410.10818).
+[^mvbench]: Li, K., Wang, Y., He, Y., et al. (2024). MVBench: A Comprehensive Multi-modal Video Understanding Benchmark. *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2311.17005).
+[^egoschema]: Mangalam, K., Akshulakov, R., & Malik, J. (2023). EgoSchema: A Diagnostic Benchmark for Very Long-form Video Language Understanding. *arXiv*. [논문](https://arxiv.org/abs/2308.09126).
+[^longvideobench]: Wu, H., Li, D., Chen, B., et al. (2024). LongVideoBench: A Benchmark for Long-context Interleaved Video-Language Understanding. *arXiv*. [논문](https://arxiv.org/abs/2407.15754).
+[^charadessta]: Gao, J., Sun, C., Yang, Z., & Nevatia, R. (2017). TALL: Temporal Activity Localization via Language Query. *IEEE International Conference on Computer Vision*. [논문](https://arxiv.org/abs/1705.02101).
