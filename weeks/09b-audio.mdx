@@ -44,12 +44,13 @@ STFT는 각 구간에 짧은 창(window)을 씌우고, 창이 서로 겹치도�
 
 음성 처리에서 흔한 설정은 25 ms 길이의 창을 10 ms씩 옮기는 것이다.[^slp3]
 창 하나에 해당하는 시간 위치를 frame이라 한다.
-16 kHz 음성이라면 창 하나가 sample 400개이고 160개씩 이동하므로 1초에 frame 100개가 나온다.
-Sample 400개를 변환하면 0 Hz부터 sampling rate의 절반인 8 kHz까지를 $400/2 + 1 = 201$개 구간으로 나눈 값을 얻는다.
+16 kHz 음성이라면 창 하나가 sample 400개이고 160개씩 이동하므로 frame rate는 초당 100개다.
+유한한 녹음에서 실제 frame 수는 양 끝에 값을 덧붙이는 padding 방식에 따라 달라진다.
+변환 길이도 400으로 두면, 실수 신호의 중복되는 음의 주파수를 제외하고 0 Hz부터 sampling rate의 절반인 8 kHz까지 $400/2 + 1 = 201$개 주파수 위치의 값을 얻는다.
 이 주파수 구간 하나를 bin이라 한다.
 STFT의 결과는 복소수여서 주파수 성분의 크기와 위상을 함께 담는다.
-크기와 위상이 모두 있으면 역변환으로 waveform을 되돌릴 수 있다.
-Spectrogram은 그 가운데 크기만 그린 시간–주파수 표현이다.
+크기와 위상을 유지하고 창과 이동 간격이 역변환 조건을 만족하면 waveform을 되돌릴 수 있다.
+Spectrogram은 그 가운데 크기나 크기의 제곱인 power를 그린 시간–주파수 표현이다.
 가로축은 시간, 세로축은 주파수이며 색이나 밝기는 해당 시간과 주파수에서의 크기를 나타낸다.
 세로로 한 열이 frame 하나의 주파수 성분이고, 가로로 읽으면 소리가 변하는 과정이 보인다.
 
@@ -79,7 +80,7 @@ MFCC는 frame마다 Mel 구간들의 로그 값에 DCT(discrete cosine transform
 버려지는 뒤쪽 계수는 성대 진동이 만드는 촘촘한 줄무늬를 담는다.
 그래서 MFCC는 음높이보다 어떤 소리를 발음했는지에 가까운 정보를, 서로 상관이 낮은 적은 수의 값으로 요약한다.
 
-<Figure src={audioRepresentations.src} alt="같은 발화 this is a test sentence의 네 가지 표현을 시간축을 맞춰 위아래로 놓은 그림. 맨 위는 16 kHz waveform으로 sample이 37,333개다. 둘째는 234 frame, 201개 주파수 구간의 spectrogram으로 모음 구간에서 낮은 주파수에 촘촘한 가로 줄무늬가 보인다. 셋째는 80개 Mel 구간의 log-Mel spectrogram으로 낮은 주파수 대역이 넓게 펼쳐지고 높은 주파수 대역이 눌려 있다. 맨 아래는 frame마다 계수 13개인 MFCC다." caption="같은 2.3초 발화의 네 표현. 아래로 갈수록 값의 수가 줄어든다. Waveform은 sample 37,333개이고, 25 ms 창과 10 ms 이동으로 만든 spectrogram은 234 frame × 201 구간, log-Mel spectrogram은 234 × 80, MFCC는 234 × 13이다. Spectrogram의 모음 구간에 보이는 촘촘한 가로 줄무늬는 MFCC에서 사라진다." source="자작 · 음성은 Foobarista2, Wikimedia Commons, CC0" wide />
+<Figure src={audioRepresentations.src} alt="같은 발화 this is a test sentence의 네 가지 표현을 시간축을 맞춰 위아래로 놓은 그림. 맨 위는 16 kHz waveform으로 sample이 37,333개다. 둘째는 234 frame, 201개 주파수 구간의 spectrogram으로 모음 구간에서 낮은 주파수에 촘촘한 가로 줄무늬가 보인다. 셋째는 80개 Mel 구간의 log-Mel spectrogram으로 낮은 주파수 대역이 넓게 펼쳐지고 높은 주파수 대역이 눌려 있다. 맨 아래는 frame마다 계수 13개인 MFCC다." caption="같은 2.3초 발화의 네 표현. Waveform은 sample 37,333개이고, 25 ms 창과 10 ms 이동으로 만든 spectrogram은 234 frame × 201 구간, log-Mel spectrogram은 234 × 80, MFCC는 234 × 13이다. Spectrogram부터는 아래로 갈수록 frame당 차원이 줄어든다. Spectrogram의 모음 구간에 보이는 촘촘한 가로 줄무늬는 MFCC에서 사라진다." source="자작 · 음성은 Foobarista2, Wikimedia Commons, CC0" wide />
 
 <figure class="lecture-figure">
 <audio controls preload="none" src="https://upload.wikimedia.org/wikipedia/commons/9/95/LL-Q1860_%28eng%29-Foobarista2-this_is_a_test_sentence.wav" aria-label="영어 문장 this is a test sentence를 읽은 2.3초 녹음"></audio>
@@ -88,7 +89,11 @@ MFCC는 frame마다 Mel 구간들의 로그 값에 DCT(discrete cosine transform
 
 녹음을 들으며 그림을 따라가 보자.
 모음 구간에서는 낮은 주파수에 촘촘한 가로 줄무늬가 보이고, “s” 소리가 나는 구간에서는 4 kHz 위쪽에 에너지가 넓게 퍼진다.
-네 표현은 뒤로 갈수록 작아지는 대신 버리는 정보가 늘어난다.
+Waveform을 spectrogram으로 바꾸는 목적은 시간에 따른 주파수 구조를 드러내는 것이다.
+이 예에서 spectrogram의 값은 $234\times201=47{,}034$개로, waveform의 sample 37,333개보다 오히려 많다.
+창을 겹쳐 계산하므로 값의 수가 늘어날 수 있다.
+그 뒤 Mel filter와 MFCC는 각 frame의 차원을 201 → 80 → 13으로 줄이면서 세부 정보를 덜어 낸다.
+값의 개수와 보존하는 정보량은 같은 것이 아니며, 저장 용량을 비교하려면 각 값을 몇 bit로 저장하는지도 알아야 한다.
 
 | 표현 | 2.3초 발화의 크기 | 버리는 정보 | 주로 쓰이는 곳 |
 | --- | --- | --- | --- |
@@ -143,10 +148,11 @@ Sample마다 65,536개 값에 softmax를 계산하기는 너무 크므로, WaveN
 그래서 audio를 언어 모델에 연결할 때는 먼저 waveform을 훨씬 짧은 sequence로 압축한다.
 연결 방법은 압축한 결과의 형식에 따라 두 갈래로 나뉜다.
 
-- **Continuous representation**: audio encoder가 짧은 구간마다 실수 벡터를 만들고, 작은 변환 모듈인 connector가 이를 LLM의 입력 차원에 맞춰 embedding 자리에 바로 넣는다.
+- **Continuous representation**: audio encoder가 짧은 구간마다 실수 벡터를 만들고, 작은 변환 모듈인 projector가 이를 LLM의 입력 차원에 맞춰 embedding 자리에 바로 넣는다.
   이 벡터는 어휘나 embedding table을 거치지 않는다.
-- **Discrete token**: neural audio codec(waveform을 번호 sequence로 압축하는 encoder와 번호에서 waveform을 되살리는 decoder를 함께 학습한 모델)이 구간마다 codebook(학습되는 벡터들의 집합)에서 가장 가까운 항목의 번호를 고른다.
-  이 번호를 어휘에 추가하면 audio도 텍스트처럼 ID sequence가 되고, LLM은 embedding table에서 각 ID의 벡터를 꺼낸다.
+- **Discrete token**: audio feature를 codebook(대표 벡터들의 집합)의 항목 번호 같은 이산 ID로 바꾼다.
+  소리의 복원을 목표로 학습한 neural audio codec의 ID도 있고, 발화 내용을 잘 담는 사전학습 feature를 군집화해 얻은 ID도 있다.[^audiolm]
+  이 ID들을 어휘에 추가하면 audio도 텍스트처럼 ID sequence가 되고, LLM은 embedding table에서 각 ID의 벡터를 꺼낸다.
 
 <Callout type="example">
 16 kHz로 녹음한 10초 음성은 sample 그대로라면 160,000개의 값이다.
@@ -242,17 +248,17 @@ TTS는 그 문장을 음성으로 읽어 전달한다.
 각 단계가 끝나기를 기다리는 구현에서는 응답도 늦어진다.
 단계별 streaming이나 별도의 음향 정보 전달로 이를 줄일 수는 있지만, 텍스트로 확정하는 순간 버려진 정보는 뒤 단계에서 되살릴 수 없다.
 
-### 3-2. Encoder와 connector
+### 3-2. Encoder와 projector
 
 Audio를 텍스트로 확정하기 전에 LLM에 전달하려면, encoder가 만든 feature sequence를 LLM이 처리할 수 있는 형태로 바꿔야 한다.
-흔한 구성은 audio encoder → connector → LLM이다.
-Connector는 선형층이나 작은 신경망으로 feature 차원을 맞출 수 있고, 긴 sequence를 더 짧게 줄일 수도 있다.
+흔한 구성은 audio encoder → projector → LLM이다.
+Projector는 선형층이나 작은 신경망으로 feature 차원을 맞출 수 있고, 긴 sequence를 더 짧게 줄일 수도 있다.
 변환된 연속 벡터를 텍스트 token embedding과 같은 sequence에 배치하면, LLM은 질문의 text embedding과 audio feature를 함께 조건으로 답을 생성한다.
 
 예를 들어 10초의 audio에서 초당 50개의 feature가 나오면 LLM에 넣기 전에 500개의 벡터가 생긴다.
 이 벡터를 그대로 쓰면 소리가 길수록 계산과 메모리 비용이 늘어난다.
 반대로 500개를 단 하나의 벡터로 줄이면 전체 분위기는 남더라도 두 사건의 순서나 특정 시점의 짧은 말이 빠질 수 있다.
-Connector는 차원을 맞추는 문제와 함께 시간 정보와 token 수 사이의 균형을 다룬다.
+Projector는 차원을 맞추는 문제와 함께 시간 정보와 token 수 사이의 균형을 다룬다.
 
 Qwen3-Omni의 AuT는 음성 인식과 일반 audio 이해 데이터로 학습한 encoder–decoder 모델이다.[^qwen-audio]
 Qwen3-Omni는 이 가운데 encoder만 audio 입력 처리에 쓴다.
@@ -286,7 +292,7 @@ Activation tuning은 LoRA의 영향을 줄인 상태로 생성한 긴 응답으�
 ### 3-3. 학습 데이터와 목표
 
 Audio encoder의 출력을 LLM 입력에 연결했다고 해서 LLM이 곧바로 소리를 이해하는 것은 아니다.
-Connector와 필요한 모델 구성 요소를 audio와 텍스트 답변이 짝지어진 데이터로 학습해야 한다.
+Projector와 필요한 모델 구성 요소를 audio와 텍스트 답변이 짝지어진 데이터로 학습해야 한다.
 예를 들어 “이 녹음에서 무엇이 들리는가?”라는 질문, 실제 녹음, “비가 내린다”라는 답을 하나의 예로 만들 수 있다.
 모델은 정답 문장의 다음 token을 예측하는 손실을 통해 audio feature를 답변에 활용하도록 배운다.
 전사 데이터와 일반 audio 설명, 질문·답변 데이터를 섞으면 여러 task를 배울 수 있지만, 학습 데이터의 coverage와 품질이 결과를 제한한다.
@@ -321,6 +327,7 @@ Codec 학습에서는 녹음 → encoder → codebook 선택 → decoder → 복
 생성 모델을 학습할 때는 학습된 codec으로 녹음에서 codebook ID를 얻고, 생성 모델이 조건에 맞는 ID를 예측하도록 학습한다.
 새 음성을 생성할 때는 원본 녹음을 encoder에 넣는 대신 생성 모델이 ID를 만들고, codec decoder가 해당 codebook 벡터를 읽어 파형을 만든다.
 따라서 codec의 복원 학습과 생성 모델의 다음 ID 예측은 서로 다른 학습 목표다.
+Codec이 녹음을 잘 복원하더라도, 생성 모델이 질문에 맞는 응답의 ID를 만드는 능력은 별도로 학습해야 한다.
 
 ### 4-3. Residual vector quantization
 
@@ -499,7 +506,8 @@ Token 뒤에 flow matching과 vocoder를 따로 두는 CosyVoice와 달리, toke
 
 Audio를 듣고 텍스트로 답하는 모델과 텍스트를 음성으로 바꾸는 모델을 별도로 두는 대신, 한 언어 모델이 음성과 텍스트를 입력과 출력 양쪽에서 처리하도록 학습할 수도 있다.
 다만 codec은 한 초에도 많은 token을 내므로, 긴 대화를 그대로 언어 모델에 넣으면 sequence가 길어진다.
-이 길이를 줄이는 방법에 따라 설계가 세 갈래로 나뉜다.
+계산 부담을 다루는 선택은 무엇을 묶을지, codebook을 몇 개 쓸지, 입력과 출력에 어떤 표현을 쓸지로 나누어 볼 수 있다.
+이 선택들은 서로 배타적이지 않아 한 모델에서 함께 사용할 수 있다.
 
 첫째는 여러 codebook을 유지한 채 여러 시점을 묶는 것이다.
 MiMo-Audio는 여러 시점의 codec token을 patch로 묶어 언어 모델의 한 위치로 전달한다.[^mimo]
@@ -534,7 +542,7 @@ Kanana-o의 2026년 후속 개발에서는 tokenizer를 LM-SPT로 바꾸어, Voi
 대신 frame마다 semantic token 하나와 acoustic token 여러 개를 예측한다.
 또 decoder가 Mel spectrogram을 거치지 않고 파형을 바로 복원하게 했다.
 
-| 모델 | LLM이 받는 음성 입력 | LLM이 내는 음성 token | 파형 복원 |
+| 모델 | LLM이 받는 음성 입력 | 음성 생성 경로의 token 구성 | 파형 복원 |
 | --- | --- | --- | --- |
 | Moshi | Mimi의 discrete token | 12.5 Hz, codebook 8개 | Mimi decoder |
 | MiMo-Audio | discrete token의 patch | 25 Hz, codebook 8개를 네 frame씩 patch | patch decoder → audio decoder → vocoder |

@@ -23,8 +23,8 @@ Omni-modal large language model(Omni-MLLM)은 여러 종류의 입력을 함께 
 
 이미지와 텍스트를 맞추는 CLIP과 audio와 텍스트를 맞추는 CLAP은 입력마다 encoder로 표현 벡터를 만든다.
 그리고 서로 대응하는 입력의 표현이 가까워지도록 encoder를 학습한다.
-이 원리를 더 많은 modality로 넓히려면 modality 쌍마다 대응 자료가 필요하다.
-Audio–텍스트, audio–깊이 영상, 깊이 영상–텍스트처럼 조합마다 자료를 모아야 하므로, 필요한 데이터가 빠르게 늘어난다.
+이 원리를 더 많은 modality로 넓히면서 모든 쌍을 직접 정렬하려 하면, modality 쌍마다 대응 자료가 필요하다.
+Audio–텍스트, audio–깊이 영상, 깊이 영상–텍스트처럼 조합마다 자료를 모으는 방식에서는 필요한 데이터의 종류가 빠르게 늘어난다.
 
 ImageBind는 이미지를 공통 연결점으로 삼아 이 문제를 푼다.[^imagebind]
 ImageBind는 이미지와 텍스트가 이미 정렬된 표현 공간에서 출발한다.
@@ -35,7 +35,7 @@ ImageBind 원논문은 이처럼 직접 학습하지 않은 조합에서 나타�
 
 <Callout type="warning">
 공통 공간은 각 표현의 **유사도를 비교할 수 있는 공간**이다.
-이 공간에서는 가까운 표현을 찾을 수 있을 뿐, 시간 관계를 추론하거나 문장으로 답할 수는 없다.
+표현을 같은 공간에 놓았다는 사실만으로 시간 관계를 추론하거나 문장으로 답하는 기능까지 생기는 것은 아니다.
 ImageBind는 공통 공간을 만들 뿐이고, 답을 만드는 일은 그 표현을 입력으로 받는 생성형 모델이 맡는다.
 </Callout>
 
@@ -43,7 +43,7 @@ ImageBind는 공통 공간을 만들 뿐이고, 답을 만드는 일은 그 표�
 
 생성형 모델은 표현을 비교하는 데서 그치지 않고 사용자의 질문에 답해야 한다.
 이미지 encoder와 audio encoder가 만든 벡터는 LLM의 입력과 차원이 같더라도, LLM이 그 의미를 바로 해석하지는 못한다.
-그래서 connector가 modality 표현을 LLM이 처리할 수 있는 입력 표현으로 바꾼다.
+그래서 projector가 modality 표현을 LLM이 처리할 수 있는 입력 표현으로 바꾼다.
 그리고 모델은 이 입력을 조건으로 다음 token을 예측하도록 학습한다.
 
 초기 audio-visual 모델인 Video-LLaMA는 영상 frame과 audio에 서로 다른 경로를 둔다.[^videollama]
@@ -149,8 +149,8 @@ ID 숫자는 설명을 위한 가상 값이다.
 서로 다른 encoder를 LLM에 붙였다고 해서, 모델이 곧바로 모든 입력 조합에 답하지는 못한다.
 각 입력을 어떻게 쓸지는 학습 데이터와 목적함수가 가르쳐야 한다.
 대표적인 출발점은 이미지–텍스트나 audio–텍스트처럼 대응 관계가 있는 자료다.
-모델은 입력 표현을 보고 대응 텍스트를 생성하도록 학습하고, 이 과정에서 connector가 encoder와 LLM을 잇는 법을 배운다.
-어떤 접근은 앞서 학습한 encoder와 LLM을 고정하고 connector만 학습한다.
+모델은 입력 표현을 보고 대응 텍스트를 생성하도록 학습하고, 이 과정에서 projector가 encoder와 LLM을 잇는 법을 배운다.
+어떤 접근은 앞서 학습한 encoder와 LLM을 고정하고 projector만 학습한다.
 다른 접근은 더 많은 parameter를 함께 갱신한다.
 
 이후 instruction tuning에서는 사용자 지시, 입력, 원하는 응답을 갖춘 자료로 학습한다.
@@ -240,7 +240,9 @@ Audio encoder는 사전학습된 것을 가져와 고정한다.
 
 모델은 보통 원본 영상의 모든 frame을 넣지 않는다.
 Frame은 표본을 추출하고, audio는 일정 길이로 나누어 encoder에 통과시킨다.
-Frame을 촘촘히 추출하면 빠른 움직임과 짧은 소리를 포착할 가능성은 커지지만, 입력 feature와 계산량도 늘어난다.
+영상 frame을 촘촘히 추출하면 빠른 움직임을 포착할 가능성이 커진다.
+짧은 소리의 위치를 보존하려면 audio 경로의 시간 해상도와 압축 방식도 따로 살펴야 한다.
+두 경로의 시간 해상도를 높이면 입력 feature와 계산량도 늘어난다.
 반대로 압축과 표본 추출을 강하게 하면 LLM에 넣는 길이는 줄지만, 입 모양과 음절이 맞는지 같은 세부 관계가 사라질 수 있다.
 
 ## 3. 시간 동기화
@@ -287,7 +289,9 @@ HyperCLOVA X SEED 8B Omni의 연속 audio encoder는 초당 25개 feature를 만
 이 모델은 비디오의 audio에 MambaMia compressor를 적용해 이를 초당 1개로 줄인다.
 10초라면 약 250개 feature가 약 10개가 된다.
 HyperCLOVA X SEED 4B도 audio feature를 초당 10개에서 평균 pooling으로 2개로 줄여, 긴 비디오의 audio까지 입력할 수 있게 한다.[^naver-omni4b]
-압축이 강할수록 긴 비디오를 넣을 수 있지만, 소리가 난 정확한 시점은 그만큼 흐려진다.
+표현 수를 줄이면 같은 입력 길이 예산으로 더 긴 비디오를 넣을 수 있다.
+다만 여러 시점을 하나로 요약하므로, 압축된 표현이 구간 안의 순서와 짧은 사건을 얼마나 보존하는지 확인해야 한다.
+초당 feature 수만으로 모델이 구별할 수 있는 사건의 시간 간격을 단정할 수는 없다.
 
 MiniCPM-o 4.5는 시간 분할 다중화(time-division multiplexing, TDM)를 쓴다.[^minicpmo45]
 TDM은 동시에 흐르는 입력과 출력을 짧은 시간 구간별 묶음으로 바꾸어, 언어 모델이 함께 처리할 수 있게 한다.
@@ -441,8 +445,11 @@ Vision encoder와 audio encoder가 입력을 언어 모델에 연결한다.
 
 ## 6. 다른 modality로의 확장
 
+<Details summary="시계열·표·분자에서의 표현 선택">
+
 Continuous representation과 discrete token 사이의 선택은 이미지와 음성에만 있는 문제가 아니다.
 시계열·표·분자처럼 텍스트가 아닌 데이터를 다루는 foundation model에서도 같은 두 갈래가 나타난다.
+다음 예시는 여러 modality를 동시에 처리하는 Omni 모델의 목록이 아니라, 각 데이터 분야에서 표현과 출력 목표를 어떻게 연결하는지 비교하는 사례다.
 
 시계열 모델 Chronos는 먼저 값의 크기를 맞춘다.
 그다음 값의 범위를 일정한 구간(bin)으로 나누고, 시점마다의 값을 구간 번호로 바꾼다.
@@ -463,6 +470,8 @@ MolCA는 분자 graph를 graph encoder로 표현한 뒤, Q-Former로 언어 모�
 
 어느 쪽을 고를지는 이미지·음성에서와 마찬가지로, 데이터가 원래 유한한 기호에 가까운지와 출력을 어떤 형태로 만들어야 하는지에 따라 달라진다.
 Chronos처럼 원래 연속인 데이터라도, 출력을 어휘 위의 확률분포로 다루려고 일부러 이산화하기도 한다.
+
+</Details>
 
 [^survey]: Jiang, S., Liang, J., Wang, J., Dong, X., Chang, H., Yu, W., Du, J., Liu, M., & Qin, B. (2025). From Specific-MLLMs to Omni-MLLMs: A Survey on MLLMs Aligned with Multi-modalities. *Findings of the Association for Computational Linguistics: ACL 2025*, 8617–8652. [논문](https://aclanthology.org/2025.findings-acl.453/).
 [^imagebind]: Girdhar, R., El-Nouby, A., Liu, Z., Singh, M., Alwala, K. V., Joulin, A., & Misra, I. (2023). ImageBind: One Embedding Space To Bind Them All. *IEEE/CVF Conference on Computer Vision and Pattern Recognition*. [논문](https://arxiv.org/abs/2305.05665).
