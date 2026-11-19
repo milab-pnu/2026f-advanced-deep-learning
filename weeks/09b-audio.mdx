@@ -28,57 +28,29 @@ Sampling rate가 16 kHz라면 1초에 16,000개의 sample을 얻으므로, 10초
 이 값 하나는 텍스트의 단어처럼 독립된 의미 단위가 아니라 한 시점의 진폭이다.
 따라서 긴 waveform을 sample 단위로 그대로 Transformer에 넣으면 sequence가 매우 길어진다.
 
-Sample 하나의 값을 얼마나 정밀하게 저장할지는 quantization bit 수가 정한다.
-Quantization은 연속적인 신호 값을 제한된 수의 값으로 나타내는 과정이다.
-압축하지 않은 단일 채널 16 kHz, 16-bit 녹음은 1초당 $16{,}000 \times 16 = 256{,}000$ bit가 필요하다.
-
 ### 1-2. 시간과 주파수
 
 사람의 발화는 한 음 높이만 가진 순수한 파형이 아니다.
-성대 진동으로 만들어진 소리는 성도에서 공명을 거친다.
-입 모양이 변하면 그 공명이 바뀌어, 소리의 주파수 성분도 시간에 따라 달라진다.
+입 모양이 변하면 성도의 공명이 바뀌어, 소리의 주파수 성분도 시간에 따라 달라진다.
 Waveform을 짧은 구간으로 나누고 각 구간에서 주파수별 성분을 계산하면 그 변화를 볼 수 있다.
 이 계산을 STFT(short-time Fourier transform)라 한다.
-STFT는 각 구간에 짧은 창(window)을 씌우고, 창이 서로 겹치도록 조금씩 옮기며 시간 변화를 촘촘히 살핀다.
-창이 길면 가까운 주파수를 구별하기 쉬워지지만, 빠른 시간 변화를 구별하기는 어려워진다.
-
-음성 처리에서 흔한 설정은 25 ms 길이의 창을 10 ms씩 옮기는 것이다.[^slp3]
-창 하나에 해당하는 시간 위치를 frame이라 한다.
-16 kHz 음성이라면 창 하나가 sample 400개이고 160개씩 이동하므로 frame rate는 초당 100개다.
-유한한 녹음에서 실제 frame 수는 양 끝에 값을 덧붙이는 padding 방식에 따라 달라진다.
-변환 길이도 400으로 두면, 실수 신호의 중복되는 음의 주파수를 제외하고 0 Hz부터 sampling rate의 절반인 8 kHz까지 $400/2 + 1 = 201$개 주파수 위치의 값을 얻는다.
-이 주파수 구간 하나를 bin이라 한다.
-STFT의 결과는 복소수여서 주파수 성분의 크기와 위상을 함께 담는다.
-크기와 위상을 유지하고 창과 이동 간격이 역변환 조건을 만족하면 waveform을 되돌릴 수 있다.
-Spectrogram은 그 가운데 크기나 크기의 제곱인 power를 그린 시간–주파수 표현이다.
-가로축은 시간, 세로축은 주파수이며 색이나 밝기는 해당 시간과 주파수에서의 크기를 나타낸다.
-세로로 한 열이 frame 하나의 주파수 성분이고, 가로로 읽으면 소리가 변하는 과정이 보인다.
+음성 처리에서 흔한 설정은 25 ms 길이의 창(window)을 10 ms씩 옮기는 것이다.[^slp3]
+창 하나에 해당하는 시간 위치를 frame이라 하며, 이 설정에서 frame rate는 초당 100개다.
+STFT의 결과는 주파수 성분의 크기와 위상을 함께 담는다.
+Spectrogram은 그 가운데 크기를 그린 시간–주파수 표현으로, 가로축은 시간, 세로축은 주파수, 밝기는 그 시간과 주파수에서의 크기다.
 
 <Figure src="https://upload.wikimedia.org/wikipedia/commons/7/77/Spectrogram_-iua-.png" alt="세 모음 i, u, ɑ의 spectrogram. 가로축은 시간, 세로축은 주파수이고 각 모음에서 진한 가로 띠가 서로 다른 높이에 나타난다." caption="세 모음의 spectrogram. 각 모음에서 주파수별 에너지가 모이는 띠의 높이가 다르고, 시간에 따라 띠의 모양도 변한다." source="Ish ishwar (2005), Wikimedia Commons (2007년 업로드 판) · CC BY 2.0" wide />
 
-그림의 출처는 [Wikimedia Commons 파일 페이지](https://commons.wikimedia.org/wiki/File:Spectrogram_-iua-.png)이며 [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/)을 따른다.
-그림에서 진한 띠의 위치가 모음에 따라 달라지는 것을 볼 수 있다.
-성도의 공명으로 특정 주파수 부근의 에너지가 커진 넓은 영역을 formant라고 한다.
-혀와 입의 모양이 바뀌면 공명 주파수도 달라지므로, formant의 위치는 모음을 구별하는 단서가 된다.
+그림에서 진한 띠의 위치가 모음에 따라 달라진다.
+성도의 공명으로 특정 주파수 부근의 에너지가 커진 영역을 formant라 하며, formant의 위치는 모음을 구별하는 단서가 된다.
 
 ### 1-3. Mel spectrogram과 MFCC
 
 사람의 귀는 낮은 주파수의 차이에는 민감하고 높은 주파수의 차이에는 둔하다.
-같은 100 Hz 차이라도 100 Hz와 200 Hz는 크게 다른 높이로 들리지만, 7,000 Hz와 7,100 Hz는 거의 같은 높이로 들린다.
-Mel 척도는 이 지각에 맞춰 주파수 축을 다시 나눈 것으로, 주파수 $f$ Hz를 $m = 1127\ln(1 + f/700)$으로 옮긴다.
-이 변환은 낮은 주파수에서 거의 선형이고 높은 주파수에서 로그에 가깝다.
-그래서 Mel 척도는 낮은 주파수를 촘촘하게, 높은 주파수를 성기게 나눈다.
-Mel spectrogram은 spectrogram의 bin들을 Mel 척도에서 같은 간격으로 놓인 삼각형 filter로 묶어 만든다.
-앞의 설정이라면 bin 201개가 80개 정도의 Mel 구간으로 줄어든다.
-여기에 로그를 취해 큰 값과 작은 값의 차이를 압축한 것이 log-Mel spectrogram이다.
-Whisper의 입력이 바로 이 설정이다.[^whisper]
-원논문의 Whisper는 16 kHz 음성에서 25 ms 창과 10 ms 이동으로 계산한 80채널 log-Mel spectrogram을 받는다(후속 large-v3는 128채널).
-
-MFCC(mel-frequency cepstral coefficient)는 log-Mel spectrogram을 한 번 더 압축한다.[^mfcc]
-MFCC는 frame마다 Mel 구간들의 로그 값에 DCT(discrete cosine transform)를 적용하고, 앞쪽 계수 13개 정도만 남긴다.
-앞쪽 계수는 주파수 축을 따라 천천히 변하는 윤곽, 즉 성도의 공명이 만드는 모양을 담는다.
-버려지는 뒤쪽 계수는 성대 진동이 만드는 촘촘한 줄무늬를 담는다.
-그래서 MFCC는 음높이보다 어떤 소리를 발음했는지에 가까운 정보를, 서로 상관이 낮은 적은 수의 값으로 요약한다.
+Mel 척도는 이 지각에 맞춰 주파수 축을 다시 나눈 것으로, 낮은 주파수를 촘촘하게, 높은 주파수를 성기게 나눈다.
+Mel spectrogram은 spectrogram의 주파수 구간들을 Mel 척도에 맞춰 묶어 만들고, 여기에 로그를 취한 것이 log-Mel spectrogram이다.
+지금의 신경망 audio encoder는 대개 log-Mel spectrogram을 입력으로 받는다.[^whisper]
+MFCC(mel-frequency cepstral coefficient)는 log-Mel spectrogram을 frame마다 13개 정도의 계수로 한 번 더 압축한 것으로, 고전적인 음성 인식의 입력으로 오래 쓰였다.[^mfcc]
 
 <Figure src={audioRepresentations.src} alt="같은 발화 this is a test sentence의 네 가지 표현을 시간축을 맞춰 위아래로 놓은 그림. 맨 위는 16 kHz waveform으로 sample이 37,333개다. 둘째는 234 frame, 201개 주파수 구간의 spectrogram으로 모음 구간에서 낮은 주파수에 촘촘한 가로 줄무늬가 보인다. 셋째는 80개 Mel 구간의 log-Mel spectrogram으로 낮은 주파수 대역이 넓게 펼쳐지고 높은 주파수 대역이 눌려 있다. 맨 아래는 frame마다 계수 13개인 MFCC다." caption="같은 2.3초 발화의 네 표현. Waveform은 sample 37,333개이고, 25 ms 창과 10 ms 이동으로 만든 spectrogram은 234 frame × 201 구간, log-Mel spectrogram은 234 × 80, MFCC는 234 × 13이다. Spectrogram부터는 아래로 갈수록 frame당 차원이 줄어든다. Spectrogram의 모음 구간에 보이는 촘촘한 가로 줄무늬는 MFCC에서 사라진다." source="자작 · 음성은 Foobarista2, Wikimedia Commons, CC0" wide />
 
@@ -87,14 +59,6 @@ MFCC는 frame마다 Mel 구간들의 로그 값에 DCT(discrete cosine transform
 <figcaption>위 그림의 원본 녹음. “this is a test sentence”를 읽은 2.3초 음성이다. 음성 Foobarista2 · <a href="https://commons.wikimedia.org/wiki/File:LL-Q1860_(eng)-Foobarista2-this_is_a_test_sentence.wav">Wikimedia Commons</a> · CC0</figcaption>
 </figure>
 
-녹음을 들으며 그림을 따라가 보자.
-모음 구간에서는 낮은 주파수에 촘촘한 가로 줄무늬가 보이고, “s” 소리가 나는 구간에서는 4 kHz 위쪽에 에너지가 넓게 퍼진다.
-Waveform을 spectrogram으로 바꾸는 목적은 시간에 따른 주파수 구조를 드러내는 것이다.
-이 예에서 spectrogram의 값은 $234\times201=47{,}034$개로, waveform의 sample 37,333개보다 오히려 많다.
-창을 겹쳐 계산하므로 값의 수가 늘어날 수 있다.
-그 뒤 Mel filter와 MFCC는 각 frame의 차원을 201 → 80 → 13으로 줄이면서 세부 정보를 덜어 낸다.
-값의 개수와 보존하는 정보량은 같은 것이 아니며, 저장 용량을 비교하려면 각 값을 몇 bit로 저장하는지도 알아야 한다.
-
 | 표현 | 2.3초 발화의 크기 | 버리는 정보 | 주로 쓰이는 곳 |
 | --- | --- | --- | --- |
 | Waveform | 37,333 | 없음 | codec의 입력과 출력, waveform을 직접 받는 encoder |
@@ -102,199 +66,110 @@ Waveform을 spectrogram으로 바꾸는 목적은 시간에 따른 주파수 구
 | Log-Mel spectrogram | 234 × 80 | 위상, 높은 주파수의 세밀한 구분 | 신경망 audio encoder의 입력, 음성 합성의 중간 표현 |
 | MFCC | 234 × 13 | 위의 것에 더해 음높이 같은 세부 | 고전적인 음성 인식의 입력 |
 
-MFCC는 1980년 Davis와 Mermelstein의 비교 연구로 널리 쓰이기 시작해 음성 인식의 입력으로 오래 쓰였다.
-신경망은 상관된 고차원 입력을 직접 다룰 수 있으므로, 지금의 encoder는 대개 DCT에서 버리던 정보까지 담긴 log-Mel spectrogram을 그대로 받는다.
-더 나아가 어떤 encoder는 feature를 뽑는 단계까지 학습한다.
-wav2vec 2.0은 waveform을 convolution 일곱 층으로 직접 받아 약 20 ms마다 벡터 하나를 낸다.[^wav2vec2]
-
-Mel spectrogram은 주파수를 묶고 위상을 버렸으므로 그것만으로는 waveform을 되돌릴 수 없다.
-Mel spectrogram에서 waveform을 합성하는 모델을 vocoder라 한다.
-음성 생성 모델이 Mel spectrogram을 출력하면, 마지막에 vocoder가 이를 waveform으로 바꾼다.
+어떤 encoder는 이런 feature를 뽑는 단계까지 학습해, waveform을 직접 받는다.[^wav2vec2]
+반대로 Mel spectrogram은 위상을 버렸으므로 그것만으로는 waveform을 되돌릴 수 없다.
+Mel spectrogram에서 waveform을 합성하는 모델을 vocoder라 하며, 음성 생성 모델이 Mel spectrogram을 출력하면 마지막에 vocoder가 이를 waveform으로 바꾼다.
 
 ### 1-4. Audio encoder
 
 Audio encoder는 waveform이나 spectrogram을 입력받아 task에 쓸 수 있는 feature를 만든다.
-Convolution은 짧은 시간 구간이나 시간–주파수의 국소 패턴을 처리하고, Transformer의 self-attention은 멀리 떨어진 구간 사이의 관계를 모델링할 수 있다.
-Encoder가 convolution이나 pooling으로 입력 길이를 줄이면 뒷단의 계산량이 준다.
-하지만 너무 많이 압축하면 짧은 사건의 위치나 발화의 세부가 사라질 수 있다.
-
-AST(Audio Spectrogram Transformer)는 spectrogram을 시간과 주파수 두 축에서 작은 patch로 나누고, 각 patch를 벡터로 투영한 뒤 위치 정보를 더해 Transformer encoder에 넣는다.[^ast]
-AST의 patch는 시간축 frame 16개와 128개 Mel 구간 가운데 16개로 이루어지고, 이웃한 patch끼리 6칸씩 겹친다.
-AST는 분류용 token의 출력으로 녹음 전체의 label을 예측한다.
+Encoder가 convolution이나 pooling으로 입력 길이를 줄이면 뒷단의 계산량이 줄지만, 너무 많이 압축하면 짧은 사건의 위치나 발화의 세부가 사라질 수 있다.
+AST(Audio Spectrogram Transformer)는 spectrogram을 시간과 주파수 두 축에서 작은 patch로 나누어, ViT와 같은 방식으로 Transformer encoder에 넣는다.[^ast]
 
 <Figure src={astArchitecture.src} alt="AST 구조. 왼쪽 아래의 입력 spectrogram을 서로 겹치는 patch 여덟 개로 자르고, 각 patch를 선형 투영해 patch embedding을 만든 뒤 위치 embedding을 더한다. 맨 앞에 CLS embedding을 붙여 Transformer encoder에 넣고, 그 위치의 출력을 선형층에 넣어 결과를 낸다." caption="AST의 입력 구성. Spectrogram을 이미지처럼 patch로 잘라 ViT와 같은 방식으로 Transformer encoder에 넣는다." source="Gong et al. (2021), Figure 1 · YuanGongND/ast 저장소 · BSD-3-Clause · Copyright (c) 2021, Yuan Gong" />
 
 구조는 이미지의 patch와 비슷하지만, audio의 patch에서는 한 축이 시간이다.
 그래서 사건의 순서나 길이가 바뀌면 의미가 달라진다.
-AST의 분류 출력은 녹음 전체에 대한 하나의 예측이지만, 언어 모델에 연결하는 encoder는 각 시간 위치에서 낸 벡터를 이어진 sequence로 넘긴다.
-
-Audio를 이해하는 모델의 feature는 대개 실수 벡터이고, sequence의 각 위치에 여러 차원의 값을 담는다.
-이 벡터가 무엇을 보존하는지는 encoder의 학습 목표와 데이터에 따라 달라진다.
+언어 모델에 연결하는 encoder는 녹음 전체를 하나로 요약하지 않고, 각 시간 위치에서 낸 벡터를 이어진 sequence로 넘긴다.
 
 ### 1-5. Continuous representation과 discrete token
 
 텍스트 LLM(large language model)의 Transformer 층은 token ID가 아니라 embedding 벡터의 sequence를 받는다.
 그래서 audio도 벡터로 만들 수만 있으면 텍스트와 한 sequence에 넣을 수 있다.
 반대로 audio를 텍스트처럼 ID의 sequence로 만드는 길도 있다.
+WaveNet은 sample 값을 256단계로 줄인 뒤, 앞선 sample들을 보고 다음 sample 값을 softmax로 고르는 방식으로 waveform을 생성했다.[^wavenet]
+하지만 sample 단위는 언어 모델에 넣기에 너무 잘다.
+그래서 audio를 언어 모델에 연결할 때는 먼저 waveform을 훨씬 짧은 sequence로 압축하고, 압축한 결과의 형식에 따라 두 갈래로 나뉜다.
 
-디지털 녹음은 그 자체로 이미 유한한 값의 수열이다.
-16-bit sample은 65,536가지 값 가운데 하나이므로 sample 하나를 token처럼 볼 수도 있다.
-실제로 WaveNet은 앞선 sample들을 보고 다음 sample 하나를 예측하는 autoregressive 방식으로 waveform을 생성했다.[^wavenet]
-Sample마다 65,536개 값에 softmax를 계산하기는 너무 크므로, WaveNet은 μ-law 변환(작은 진폭은 촘촘히, 큰 진폭은 성기게 나누는 로그형 변환)으로 sample 값을 256단계로 줄였다.
-그리고 다음 sample의 256개 값에 대한 확률을 softmax로 계산하고, 그 분포에서 값을 골랐다.
-이는 텍스트 LLM이 어휘에서 다음 token을 고르는 것과 같은 형태다.
-하지만 이 단위는 언어 모델에 넣기에 너무 잘고, sample 하나는 단어처럼 독립된 의미를 갖지 않는다.
-
-그래서 audio를 언어 모델에 연결할 때는 먼저 waveform을 훨씬 짧은 sequence로 압축한다.
-연결 방법은 압축한 결과의 형식에 따라 두 갈래로 나뉜다.
-
-- **Continuous representation**: audio encoder가 짧은 구간마다 실수 벡터를 만들고, 작은 변환 모듈인 projector가 이를 LLM의 입력 차원에 맞춰 embedding 자리에 바로 넣는다.
-  이 벡터는 어휘나 embedding table을 거치지 않는다.
+- **Continuous representation**: audio encoder가 짧은 구간마다 실수 벡터를 만들고, projector가 이를 LLM의 입력 차원에 맞춰 embedding 자리에 바로 넣는다.
 - **Discrete token**: audio feature를 codebook(대표 벡터들의 집합)의 항목 번호 같은 이산 ID로 바꾼다.
-  소리의 복원을 목표로 학습한 neural audio codec의 ID도 있고, 발화 내용을 잘 담는 사전학습 feature를 군집화해 얻은 ID도 있다.[^audiolm]
-  이 ID들을 어휘에 추가하면 audio도 텍스트처럼 ID sequence가 되고, LLM은 embedding table에서 각 ID의 벡터를 꺼낸다.
+  이 ID들을 어휘에 추가하면 audio도 텍스트처럼 ID sequence가 된다.[^audiolm]
 
 <Callout type="example">
 16 kHz로 녹음한 10초 음성은 sample 그대로라면 160,000개의 값이다.
 초당 12.5개의 벡터를 내는 audio encoder를 쓰면 125개의 연속 벡터가 된다.
 초당 12.5개 frame을 내고 frame마다 codebook 8개의 ID를 내는 codec이라면, 125개 시간 위치마다 ID가 8개씩 모두 1,000개의 이산 ID가 나온다.
-두 설정은 각각 Qwen3-Omni의 audio encoder인 AuT(Audio Transformer)와 실시간 음성 대화 모델 Moshi의 codec인 Mimi의 frame rate에 맞춘 것이다.
-Frame rate는 waveform의 sampling rate와 다른 값이다.
-Mimi는 24 kHz 음성을 입력받아 초당 12.5개 frame을 낸다.
 </Callout>
 
-음성을 이해하는 입력 쪽에는 음성 인식(automatic speech recognition, ASR) 등으로 미리 학습한 encoder의 continuous representation이 흔하다.
+음성을 이해하는 입력 쪽에는 미리 학습한 encoder의 continuous representation이 흔하다.
 음성을 생성하는 출력 쪽에는 discrete token이 흔하다.
-LLM이 softmax로 확률을 계산해 discrete token을 고를 수 있고, codec decoder가 그 token을 소리로 되돌릴 수 있기 때문이다.
+LLM이 softmax로 discrete token을 고를 수 있고, codec decoder가 그 token을 소리로 되돌릴 수 있기 때문이다.
 대신 discrete token은 codebook으로 근사하는 과정에서 음색 같은 세부를 잃을 수 있다.
-또 codebook이 여러 개면 모델이 초당 예측할 값이 frame 수의 몇 배로 늘어난다.
-입력에도 discrete token을 쓰거나 출력을 continuous representation으로 생성하는 설계도 있으므로, 모델마다 입력과 출력의 표현을 따로 확인해야 한다.
 
 ## 2. Audio와 언어의 연결
 
 ### 2-1. Audio–text 정렬
 
-“빗소리”, “개가 짖는다”, “차가 지나간다”처럼 자연어는 같은 녹음을 여러 방식으로 설명할 수 있다.
-반면 고정된 label 집합으로 학습한 분류기는 정해 둔 범주만 고를 수 있고, 범주를 바꾸려면 출력층을 다시 학습해야 한다.
+“빗소리”, “개가 짖는다”처럼 자연어는 같은 녹음을 여러 방식으로 설명할 수 있다.
+반면 고정된 label 집합으로 학습한 분류기는 정해 둔 범주만 고를 수 있다.
 CLAP(Contrastive Language-Audio Pretraining)은 CLIP의 방법을 이미지 대신 소리에 적용한다.[^clap]
-CLAP은 audio와 text를 각각 encoder로 처리하고, 두 출력을 같은 차원의 공간으로 투영해 비교한다.
-원논문의 audio encoder는 log-Mel spectrogram을 받는 CNN이고, text encoder는 BERT다.
-학습 데이터는 소리와 그 소리를 설명하는 텍스트 약 12만 8천 쌍이다.
+CLAP은 audio와 text를 각각 encoder로 처리하고, 실제 짝의 유사도가 다른 후보보다 높아지도록 contrastive loss로 학습한다.
 
 <Figure src="https://arxiv.org/html/2206.04769v1/figures/clap_diagram_v2.png" alt="CLAP의 두 단계. 왼쪽에서 audio와 설명을 각각 인코딩해 쌍별 유사도를 계산하고, 오른쪽에서 새 audio와 후보 문장의 유사도를 비교해 종류를 고른다." caption="왼쪽은 audio–텍스트 쌍을 이용한 정렬 학습이고, 오른쪽은 새 audio와 후보 설명을 비교하는 zero-shot 분류다." source="Elizalde et al. (2022), Figure 1 · CC BY 4.0" wide />
 
-학습 목표는 CLIP과 같은 대칭 contrastive loss다.
-예를 들어 한 batch에 개 짖는 소리, 빗소리, 박수 소리와 각각의 설명이 있으면 3 × 3 유사도 표가 생긴다.
-CLAP은 대각선의 실제 짝이 다른 후보보다 높아지도록, audio에서 text를 고르는 방향과 text에서 audio를 고르는 방향의 손실을 함께 줄인다.
-같은 사건을 설명하는 다른 문장이 batch에 있으면, 손실은 그 문장을 의미상 맞는 짝인데도 대각선 밖에 있다는 이유로 오답 후보(negative)로 취급한다.
-이런 경우를 false negative라 한다.
-
-학습한 CLAP은 새로운 녹음과 후보 문장 “비가 내린다”, “박수를 친다”를 각각 인코딩해 유사도를 비교한다.
-이 방식이 zero-shot classification이다.
-원논문은 범주 이름을 “This is a sound of [범주]” 꼴의 문장으로 바꾸어 후보로 썼다.
-후보마다 전용 분류기를 다시 학습할 필요는 없지만, 선택 결과는 **제공한 후보와 문구**에 영향을 받는다.
-
+학습한 CLAP은 새로운 녹음과 “비가 내린다”, “박수를 친다” 같은 후보 문장을 비교해 범주를 고른다.
+이 방식이 zero-shot classification이며, 결과는 **제공한 후보와 문구**에 영향을 받는다.
 CLAP의 한계는 데이터에서 온다.
 이미지–텍스트 쌍은 웹에서 수억 개를 모을 수 있지만, 소리에 설명이 붙은 자료는 훨씬 적다.
-LAION-CLAP은 공개 웹 자료에서 63만 쌍, 약 4,300시간을 모으고 두 가지 장치를 더했다.[^laionclap]
-하나는 keyword-to-caption이다.
-AudioSet처럼 소리에 범주 label만 붙은 자료에서, 언어 모델이 label을 문장으로 바꾸어 캡션으로 쓴다.
-다른 하나는 feature fusion이다.
-이미지는 크기를 하나로 맞춰 줄일 수 있지만 소리는 길이가 제각각이어서 그렇게 맞추기 어렵다.
-그래서 LAION-CLAP은 긴 녹음에서 전체를 줄인 입력과 앞·중간·뒤에서 뽑은 구간들을 함께 인코딩해 합친다.
-
-공유 공간은 분류와 검색 말고 생성의 조건으로도 쓰인다.
-텍스트로 소리를 만드는 AudioLDM은 학습할 때 CLAP의 audio embedding을 조건으로 주고, 생성할 때는 같은 공간에 있는 text embedding을 대신 넣는다.[^audioldm]
-AudioLDM은 두 embedding이 같은 공간에서 가깝다는 점에 기대어, 생성 모델(latent diffusion model) 자체는 텍스트 설명이 붙지 않은 소리만으로 학습했다.
-다만 CLAP은 audio–텍스트 쌍으로 미리 학습한 것이다.
-
-CLAP이 내는 것은 녹음 전체를 요약한 벡터 하나다.
-소리를 시간 순서대로 받아쓰거나 열린 질문에 문장으로 답하려면 다른 출력과 학습 목표가 필요하다.
+그래서 범주 label만 붙은 소리 자료에서 언어 모델로 설명 문장을 만들어 쓰기도 한다.[^laionclap]
+같은 공간은 생성의 조건으로도 쓰인다.
+텍스트로 소리를 만드는 모델은 학습할 때 소리의 embedding을 조건으로 주고, 생성할 때 같은 공간의 text embedding을 대신 넣을 수 있다.[^audioldm]
+다만 CLAP이 내는 것은 녹음 전체를 요약한 벡터 하나여서, 소리를 시간 순서대로 받아쓰거나 열린 질문에 답하려면 다른 출력과 학습 목표가 필요하다.
 
 ### 2-2. Speech recognition
 
-ASR은 음성에 대응하는 발화 내용을 텍스트로 옮긴다.
-예를 들어 모델이 “문을 열어 줘”를 인식하려면 음절의 순서와 발음의 시간적 변화를 살펴야 한다.
-이는 녹음 전체와 한 문장의 의미를 비교하는 CLAP의 task와 목표가 다르다.
-
+ASR(automatic speech recognition)은 음성에 대응하는 발화 내용을 텍스트로 옮긴다.
+이는 녹음 전체와 한 문장의 의미를 비교하는 CLAP과 목표가 다르다.
 Whisper는 log-Mel spectrogram을 Transformer encoder로 처리하고, decoder가 encoder의 출력을 참조하면서 텍스트 token을 순서대로 예측한다.[^whisper]
-Whisper는 음성을 30초 단위로 잘라 넣는다.
-30초의 log-Mel spectrogram은 10 ms 간격의 frame 3,000개다.
-Encoder 앞단의 convolution 두 층 가운데 둘째가 stride 2이므로, Transformer는 20 ms 간격의 위치 1,500개를 처리한다.
-Whisper는 인터넷에서 모은 68만 시간의 음성과 전사로 학습했다.
-학습 데이터에는 전사뿐 아니라 언어 식별과 번역 등 여러 task의 형식이 함께 들어 있다.
-Whisper는 decoder 입력 앞에 넣는 특수 token으로 수행할 task를 정한다.
+Whisper는 인터넷에서 모은 68만 시간의 음성과 전사로 학습했고, decoder 입력 앞에 넣는 특수 token으로 전사, 번역, 언어 식별 같은 task를 정한다.
 
-Qwen3-ASR은 이미지·음성·영상을 함께 다루는 Qwen3-Omni를 기반으로 언어 식별과 음성 인식에 특화한 모델 계열이다.[^qwen3-asr]
-여러 modality를 다루는 모델에서 출발했지만 이 계열이 내는 것은 전사 텍스트다.
-
-ASR 결과는 발화 내용을 다루는 데 편리하지만 “네”라는 글에는 그것이 망설이며 말한 것인지, 비명을 지르며 말한 것인지 표시되지 않을 수 있다.
-배경에서 경보음이 울렸다는 정보도 일반 전사에 포함되지 않을 수 있다.
-이 손실을 줄이려면 전사를 더 풍부하게 작성하거나, 모델이 음성 feature를 직접 다루게 할 수 있다.
+ASR 결과는 발화 내용을 다루기 편리하지만, “네”라는 글에는 그것이 망설이며 말한 것인지 비명을 지르며 말한 것인지 표시되지 않는다.
+배경에서 경보음이 울렸다는 정보도 일반 전사에는 남지 않는다.
+이 손실을 줄이려면 모델이 음성 feature를 직접 다루게 해야 한다.
 
 ## 3. Audio를 듣는 언어 모델
 
 ### 3-1. Text cascade
 
 음성 질문에 응답하는 가장 직관적인 구성은 ASR → LLM → TTS(text-to-speech)다.
-ASR이 음성을 텍스트로 만들고, LLM이 답을 작성한 뒤, TTS가 답을 음성으로 읽는다.
 이처럼 따로 학습한 모델을 텍스트로 이어 붙인 구성을 cascade라고 한다.
-Cascade에서는 각 구성 요소를 따로 바꾸거나 개선할 수 있고, 이미 있는 텍스트용 tool calling도 쉽게 쓸 수 있다.
-예를 들어 사용자가 “내일 날씨 알려 줘”라고 말하면, LLM은 인식한 텍스트를 바탕으로 날씨 도구를 호출하고 그 결과를 문장으로 쓴다.
-TTS는 그 문장을 음성으로 읽어 전달한다.
-
+Cascade에서는 각 구성 요소를 따로 바꾸거나 개선할 수 있고, 텍스트용 tool calling도 그대로 쓸 수 있다.
 하지만 인식 단계에서 지명이나 숫자를 잘못 들으면 다음 단계는 잘못된 입력을 받는다.
-중간에 전사만 전달한다면 배경음, 화자의 억양과 같은 정보도 LLM에 전달되지 않을 수 있다.
-각 단계가 끝나기를 기다리는 구현에서는 응답도 늦어진다.
-단계별 streaming이나 별도의 음향 정보 전달로 이를 줄일 수는 있지만, 텍스트로 확정하는 순간 버려진 정보는 뒤 단계에서 되살릴 수 없다.
+전사만 전달하면 배경음이나 억양 같은 정보도 LLM에 전달되지 않고, 텍스트로 확정하는 순간 버려진 정보는 뒤 단계에서 되살릴 수 없다.
 
 ### 3-2. Encoder와 projector
 
-Audio를 텍스트로 확정하기 전에 LLM에 전달하려면, encoder가 만든 feature sequence를 LLM이 처리할 수 있는 형태로 바꿔야 한다.
-흔한 구성은 audio encoder → projector → LLM이다.
-Projector는 선형층이나 작은 신경망으로 feature 차원을 맞출 수 있고, 긴 sequence를 더 짧게 줄일 수도 있다.
-변환된 연속 벡터를 텍스트 token embedding과 같은 sequence에 배치하면, LLM은 질문의 text embedding과 audio feature를 함께 조건으로 답을 생성한다.
+Audio를 텍스트로 확정하기 전에 LLM에 전달하려면, 흔히 audio encoder → projector → LLM으로 잇는다.
+Projector는 feature의 차원을 LLM에 맞추고, 긴 sequence를 더 짧게 줄이기도 한다.
+예를 들어 10초 audio에서 초당 50개의 feature가 나오면 500개의 벡터가 생긴다.
+그대로 쓰면 소리가 길수록 비용이 늘고, 하나로 줄이면 두 사건의 순서나 짧은 말이 빠질 수 있다.
+그래서 projector는 차원을 맞추는 일과 함께 시간 정보와 token 수 사이의 균형을 다룬다.
 
-예를 들어 10초의 audio에서 초당 50개의 feature가 나오면 LLM에 넣기 전에 500개의 벡터가 생긴다.
-이 벡터를 그대로 쓰면 소리가 길수록 계산과 메모리 비용이 늘어난다.
-반대로 500개를 단 하나의 벡터로 줄이면 전체 분위기는 남더라도 두 사건의 순서나 특정 시점의 짧은 말이 빠질 수 있다.
-Projector는 차원을 맞추는 문제와 함께 시간 정보와 token 수 사이의 균형을 다룬다.
-
-Qwen3-Omni의 AuT는 음성 인식과 일반 audio 이해 데이터로 학습한 encoder–decoder 모델이다.[^qwen-audio]
-Qwen3-Omni는 이 가운데 encoder만 audio 입력 처리에 쓴다.
-이 encoder는 Mel spectrogram을 convolution으로 줄인 다음 attention 층으로 처리한다.
-논문에서 입력의 시간 간격은 10 ms이고, 8배 downsampling한 feature의 rate는 초당 12.5개다.
-따라서 10초 입력의 출력은 대략 125개 feature이고, LLM은 audio 10초를 텍스트 token 125개만큼의 길이로 받는다.
+많은 모델은 음성 인식 같은 task로 미리 학습한 encoder를 가져와 쓴다.
+예를 들어 Qwen3-Omni는 음성 인식과 일반 audio 이해 데이터로 학습한 encoder–decoder 모델에서 encoder만 떼어 audio 입력에 쓰고, 이 encoder는 audio를 초당 12.5개의 feature로 줄인다.[^qwen-audio]
 
 <Figure src="https://arxiv.org/html/2509.17765v1/figures/aut.png" alt="AuT의 encoder–decoder 구조. Mel spectrogram이 convolution과 Transformer encoder를 거치고, decoder가 텍스트 출력을 예측한다." caption="AuT의 학습 구조. 학습 후 Omni 모델은 audio 입력의 표현을 만들기 위해 encoder를 사용한다." source="Xu et al. (2025), Figure 3 · CC BY 4.0" wide />
 
-HyperCLOVA X SEED 4B는 비디오 속 음성을 이해하는 audio encoder를 사용한다.[^naver-audio4b]
-이 encoder는 음성과 전사를 연결하는 CTC(connectionist temporal classification) 목표로 학습하고, 모델은 encoder가 만든 audio feature를 LLM에 전달한다.
-CTC는 각 글자가 음성의 어느 frame에 해당하는지 정답으로 지정하지 않아도, 전체 음성과 전사를 연결해 학습할 수 있는 목표다.
-모델은 평균 pooling으로 audio feature를 초당 10개에서 2개로 줄인다.
-그래서 1분 분량의 feature는 약 600개에서 120개가 되고, 긴 비디오의 음성도 입력에 넣을 수 있다.
-
-SALMONN은 음성 인식에 학습된 Whisper encoder와 일반 audio의 의미를 학습한 BEATs encoder를 함께 사용한다.[^salmonn]
-SALMONN의 언어 모델은 LLaMA 계열의 대화 모델인 Vicuna다.
-SALMONN은 두 encoder의 시간별 feature를 이어 붙인 뒤, 짧은 window마다 BLIP-2의 Q-Former 구조를 적용한다.
-Window마다 학습 가능한 query가 cross-attention으로 정해진 수의 벡터를 뽑고, 이 벡터들이 LLM에 들어간다.
-녹음 전체를 고정 개수의 벡터로 요약하면 시간 순서가 뭉개진다.
-반면 window마다 Q-Former를 적용하면 출력 길이가 녹음 길이에 비례하고 시간 순서도 남는다.
-SALMONN은 이러한 연결을 학습할 때 Q-Former와 언어 모델의 LoRA(low-rank adaptation) parameter를 조정한다.
-SALMONN은 음성 인식과 일반 소리 설명처럼 서로 다른 task의 데이터로 학습해, 같은 질문 응답 형식으로 여러 종류의 소리를 다룬다.
-하지만 원논문은 task over-fitting도 관찰했다.
-Task over-fitting은 모델이 학습한 task의 출력 방식에 치우쳐 새로운 지시를 따르지 못하는 현상이다.
-예를 들어 소리를 바탕으로 이야기를 만들어 달라고 지시해도, 모델은 학습에서 자주 본 음성 인식이나 소리 설명 task처럼 답한다.
-연구진은 이를 줄이려고 activation tuning을 제안했다.
-Activation tuning은 LoRA의 영향을 줄인 상태로 생성한 긴 응답으로 모델을 추가 조정하는 방법이다.
-연구진은 이 조정 뒤 기존 task와 새로운 task의 성능 변화를 함께 평가했다.
+성격이 다른 encoder를 함께 쓰기도 한다.
+SALMONN은 음성 인식에 학습된 Whisper encoder와 일반 소리의 의미를 학습한 BEATs encoder의 feature를 이어 붙인다.[^salmonn]
+그리고 짧은 window마다 학습 가능한 query로 정해진 수의 벡터를 뽑아, 출력 길이가 녹음 길이에 비례하고 시간 순서도 남게 한다.
+또 SALMONN 원논문은 모델이 학습에서 자주 본 음성 인식이나 소리 설명 task처럼만 답하고 새 지시를 따르지 못하는 task over-fitting을 관찰했다.
 
 ### 3-3. 학습 데이터와 목표
 
 Audio encoder의 출력을 LLM 입력에 연결했다고 해서 LLM이 곧바로 소리를 이해하는 것은 아니다.
 Projector와 필요한 모델 구성 요소를 audio와 텍스트 답변이 짝지어진 데이터로 학습해야 한다.
 예를 들어 “이 녹음에서 무엇이 들리는가?”라는 질문, 실제 녹음, “비가 내린다”라는 답을 하나의 예로 만들 수 있다.
-모델은 정답 문장의 다음 token을 예측하는 손실을 통해 audio feature를 답변에 활용하도록 배운다.
 전사 데이터와 일반 audio 설명, 질문·답변 데이터를 섞으면 여러 task를 배울 수 있지만, 학습 데이터의 coverage와 품질이 결과를 제한한다.
 
 음성 질문을 직접 입력하는 모델도 실제로 소리를 듣는지 확인해야 한다.
@@ -306,43 +181,26 @@ Projector와 필요한 모델 구성 요소를 audio와 텍스트 답변이 짝�
 ### 4-1. Semantic token과 acoustic token
 
 음성을 discrete token으로 바꾸면 텍스트 LLM과 같은 다음 token 예측을 audio에도 적용할 수 있다.
-Speech tokenizer는 음성에서 이런 이산 단위를 얻는 방법을 가리키는 넓은 표현이다.
-같은 이름의 특정 모델인 SpeechTokenizer도 있으므로 문맥으로 구분한다.
-
-다만 모든 이산 단위가 동일한 정보를 담지는 않는다.
+다만 모든 이산 단위가 같은 정보를 담지는 않는다.
 발화 내용과 관련된 차이를 잘 보존하도록 학습한 단위를 semantic token이라 부른다.
 원래의 소리를 정밀하게 재구성하는 데 필요한 정보를 담는 단위는 acoustic token 또는 codec token이라 부른다.
 이 구분은 설계 목표에 관한 것이어서, 두 token이 담는 정보가 깨끗이 나뉘지는 않는다.
-같은 문장을 서로 다른 사람이 말해도 내용 중심 표현은 비슷하기를 바라지만, 그 표현만으로 각 사람의 목소리를 똑같이 복원하기는 어려울 수 있다.
 
 ### 4-2. Neural audio codec
 
 Neural audio codec은 waveform을 압축된 표현으로 바꾸는 encoder와 그 표현으로 waveform을 복원하는 decoder를 학습한다.[^encodec]
-Encoder는 가까운 sample들을 묶어 더 낮은 시간 해상도의 연속 벡터 sequence로 바꾼다.
-그다음 vector quantization은 각 벡터에 가장 가까운 codebook 항목을 선택하고, 그 항목의 번호를 저장한다.
-Decoder는 선택한 codebook 벡터들을 사용해 파형을 재구성한다.
-입력과 출력이 비슷한 소리로 들리도록 복원 손실 등을 이용해 codec을 학습한다.
-
-Codec 학습에서는 녹음 → encoder → codebook 선택 → decoder → 복원된 녹음 경로를 사용한다.
-생성 모델을 학습할 때는 학습된 codec으로 녹음에서 codebook ID를 얻고, 생성 모델이 조건에 맞는 ID를 예측하도록 학습한다.
-새 음성을 생성할 때는 원본 녹음을 encoder에 넣는 대신 생성 모델이 ID를 만들고, codec decoder가 해당 codebook 벡터를 읽어 파형을 만든다.
-따라서 codec의 복원 학습과 생성 모델의 다음 ID 예측은 서로 다른 학습 목표다.
-Codec이 녹음을 잘 복원하더라도, 생성 모델이 질문에 맞는 응답의 ID를 만드는 능력은 별도로 학습해야 한다.
+Encoder는 가까운 sample들을 묶어 더 낮은 시간 해상도의 벡터 sequence로 바꾸고, vector quantization이 각 벡터에 가장 가까운 codebook 항목의 번호를 고른다.
+Decoder는 선택한 codebook 벡터들로 파형을 재구성한다.
+음성을 생성할 때는 생성 모델이 이 번호를 예측하고, codec decoder가 번호를 파형으로 바꾼다.
+그래서 codec이 녹음을 잘 복원하더라도, 질문에 맞는 응답의 번호를 만드는 능력은 생성 모델이 따로 배워야 한다.
 
 ### 4-3. Residual vector quantization
 
 Codebook 하나로 음성을 충분히 복원하려면 codebook이 감당할 수 없을 만큼 커진다.
-EnCodec은 24 kHz 음성을 초당 75개 frame으로 바꾸고, 6 kbps 설정에서는 frame 하나에 80 bit를 쓴다.[^encodec]
-80 bit를 codebook 하나로 나타내려면 frame마다 $2^{80}$개 벡터 가운데 하나를 골라야 한다.
-이런 codebook은 저장할 수도 학습할 수도 없다.
-
 Residual vector quantization(RVQ)은 작은 codebook 여러 개를 이어 쓴다.[^soundstream]
-RVQ는 첫 codebook에서 가장 가까운 벡터를 고른다.
-그다음 원래 벡터에서 그 선택을 뺀 잔차를 두 번째 codebook에서 고른 벡터로 근사한다.
+RVQ는 첫 codebook에서 가장 가까운 벡터를 고르고, 원래 벡터에서 그 선택을 뺀 잔차를 두 번째 codebook으로 다시 근사한다.
 이 과정을 반복해 고른 벡터들을 더하면 원래 벡터에 가까워진다.
-예를 들어 실제 feature가 1.7인 1차원 교육용 예시에서 첫 codebook의 항목이 $\{0, 1, 2\}$이면 1.7에 가장 가까운 2를 고른다.
-두 번째 codebook의 항목이 $\{-0.5, 0, 0.5\}$라면 잔차 −0.3에 가장 가까운 −0.5를 골라 복원값은 1.5가 되고, 남은 오차 0.2는 다음 codebook이 더 줄일 수 있다.
-실제 codec은 스칼라가 아닌 고차원 벡터를 다루며, codebook도 데이터로부터 학습한다.
+예를 들어 실제 feature가 1.7이고 첫 codebook이 $\{0, 1, 2\}$이면 2를 고르고, 두 번째 codebook이 $\{-0.5, 0, 0.5\}$이면 잔차 −0.3에 가까운 −0.5를 골라 복원값은 1.5가 된다.
 
 <figure>
 <svg viewBox="0 0 600 352" role="img" aria-label="RVQ의 1차원 가상 예. 1단계에서 feature 1.7은 첫 codebook의 값 0, 1, 2 가운데 가장 가까운 2(번호 2)로 근사되고 남은 차이는 −0.3이다. 2단계에서 남은 차이 −0.3은 두 번째 codebook의 값 −0.5, 0, 0.5 가운데 가장 가까운 −0.5(번호 0)로 근사되어 복원값은 1.5, 남은 차이는 0.2가 된다. 3단계 codebook은 0.2를 다시 근사한다. 아래쪽은 시간 위치마다 codebook 수만큼 번호가 나와 audio token이 시간 × codebook의 배열이 되는 모습이다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
@@ -386,53 +244,23 @@ RVQ는 첫 codebook에서 가장 가까운 벡터를 고른다.
 <figcaption>RVQ의 1차원 가상 예. 위는 본문의 1.7 예를 두 단계로 근사하는 과정이고, 아래는 그 결과 시간 위치마다 codebook 수만큼 번호가 나오는 모습이다. t₂~t₄ 열의 번호는 설명을 위해 임의로 넣었다.</figcaption>
 </figure>
 
-EnCodec의 codebook은 하나에 1024개(10 bit) 벡터를 담는다.
-이런 codebook 8개를 이어 쓰면 frame당 80 bit가 된다.
-저장하는 벡터는 $8\times1024=8{,}192$개뿐이지만, frame마다 고를 수 있는 조합은 $1024^8=2^{80}$가지다.
+1,024개짜리 codebook 8개를 이어 쓰면 저장하는 벡터는 $8\times1024=8{,}192$개뿐이지만, frame마다 고를 수 있는 조합은 $1024^8=2^{80}$가지다.[^encodec]
 **저장할 벡터는 덧셈으로 늘고 표현할 수 있는 조합은 곱셈으로 늘어나는 것이 RVQ의 핵심이다.**
-
-RVQ의 codebook은 순서에 따라 맡는 정보가 다르다.
-첫 codebook이 원래 벡터를 대략 근사하고, 뒤의 codebook들은 남은 작은 차이를 채운다.
-그래서 뒤쪽 codebook을 덜 쓰면 bitrate는 낮아지고 소리는 거칠어진다.
-SoundStream은 학습 중에 쓰는 quantizer 수를 무작위로 줄이는 방식(quantizer dropout)으로, 한 모델이 3 kbps부터 18 kbps까지의 bitrate에서 동작하게 했다.[^soundstream]
-EnCodec도 학습 중에 codebook 수를 무작위로 골라 여러 bitrate를 한 모델로 다룬다.[^encodec]
+첫 codebook이 원래 벡터를 대략 근사하고 뒤의 codebook들은 남은 작은 차이를 채우므로, 뒤쪽 codebook을 덜 쓰면 bitrate는 낮아지고 소리는 거칠어진다.
 
 각 시간 위치에서 여러 codebook의 ID가 나오므로, audio token은 텍스트 token처럼 한 줄이 아니라 시간 × codebook의 배열이 된다.
-초당 frame이나 codebook이 많으면 세부를 더 표현할 수 있지만, 생성 모델이 예측해야 할 값도 늘어난다.
-반대로 token이 너무 적으면 화자 특성이나 고주파 음향이 손상될 수 있다.
 그래서 이 배열을 어떤 순서로 생성할지가 audio 생성 모델의 설계 문제가 된다.
 
-### 4-4. SpeechTokenizer
+### 4-4. 내용과 음향을 함께 담는 tokenizer
 
-내용과 음향을 서로 다른 tokenizer로 얻으면 두 표현을 결합하는 생성 단계와 정보 중복을 함께 관리해야 한다.
-SpeechTokenizer는 encoder–RVQ–decoder의 codec 구조에 내용 중심의 학습 신호를 더해, 하나의 RVQ 계층에서 내용에 유용한 표현과 복원에 필요한 나머지 정보를 함께 얻는다.[^speechtokenizer]
-SpeechTokenizer는 사전학습된 speech 모델 HuBERT의 표현을 teacher로 써서, 첫 번째 quantizer가 speech의 내용과 관련된 표현을 담게 한다.
-이후 quantizer들은 첫 단계에서 남은 정보를 보완하도록 학습된다.
-동시에 decoder가 원래 waveform을 복원하게 하므로 전체 codebook은 음향 재구성에도 기여한다.
-이렇게 하면 첫 단계의 내용을 활용하는 모델과 전체 codebook으로 소리를 복원하는 모델을 연결할 수 있다.
-Moshi의 codec인 Mimi도 사전학습된 speech 모델 WavLM의 표현을 같은 방식으로 증류하되, semantic용 quantizer 하나를 acoustic용 7단계 RVQ와 나란히 두어 둘을 분리한다.[^moshi]
+내용과 음향을 서로 다른 tokenizer로 얻으면, 두 표현을 결합하고 정보가 겹치는 문제를 함께 관리해야 한다.
+SpeechTokenizer는 RVQ codec의 첫 quantizer가 사전학습된 speech 모델의 내용 표현을 따라가도록 학습해, 하나의 RVQ 안에서 첫 단계는 내용을, 나머지 단계는 음향의 나머지 정보를 담게 한다.[^speechtokenizer]
+실시간 대화 모델 Moshi의 codec인 Mimi도 같은 방식으로 내용 표현을 증류하되, 내용용 quantizer를 음향용 RVQ와 나란히 두어 둘을 분리한다.[^moshi]
 
 <Figure src="https://arxiv.org/html/2308.16692v2/model_structure.png" alt="SpeechTokenizer 구조. 음성 입력이 encoder와 여러 단계의 residual vector quantizer를 거쳐 decoder로 전달되고, 첫 quantizer에 semantic teacher의 학습 신호가 제공된다." caption="SpeechTokenizer의 학습 구조. 첫 quantizer는 semantic teacher의 지도를 받고 전체 양자화 표현은 음성 복원에 쓰인다." source="Zhang et al. (2024), Figure 2 · CC BY-SA 4.0" wide />
 
-그림은 [원논문 공개본](https://arxiv.org/abs/2308.16692)의 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) 조건을 따른다.
-학습 목표는 정보의 배치를 유도할 뿐이어서, 첫 quantizer에 실제로 어떤 정보가 얼마나 남는지는 따로 측정해야 한다.
-
-### 4-5. LM-SPT
-
-SpeechTokenizer는 quantizer의 출력을 teacher feature와 시점마다 직접 맞춘다.
-Token 수를 줄이려고 frame rate를 낮추면, teacher feature도 평균 pooling으로 줄여 맞춰야 한다.
-이 과정에서 내용이 담긴 구간이 뭉개질 수 있다.
-카카오의 LM-SPT는 재합성한 음성을 거쳐 증류하는 방법으로 이 제약을 푼 speech tokenizer다.[^lmspt]
-공개 구현은 내용에 관련된 semantic 경로와 음향의 나머지 정보를 다루는 acoustic 경로를 둔다.
-LM-SPT는 semantic 경로를 학습할 때 semantic token만 받는 학습용 보조 decoder로 음성을 재합성한다.[^lmspt-code]
-그리고 원본과 재합성 음성에서 Whisper가 추출한 표현이 비슷해지도록 지도한다.
-Token과 teacher feature를 시점마다 대응시키지 않고 재합성 음성끼리 비교하므로, 두 표현의 시간 해상도가 달라도 발화 내용이 보존되도록 학습할 수 있다.
-별도의 주 decoder는 semantic과 acoustic token을 함께 받아 음성을 복원하도록 학습된다.
-생성한 token을 소리로 바꿀 때도 이 주 decoder를 쓴다.
-
-공개된 LM-SPT의 `12d5hz_v1` 설정은 24 kHz 음성에서 초당 12.5개의 frame을 만들고, 각 frame에 semantic codebook 하나와 acoustic codebook 일곱 개를 사용한다.[^lmspt-code]
-초당 12.5는 시간 위치의 수이므로, 2초라면 약 25개 frame에 codebook ID가 8개씩 모두 약 200개의 ID가 나온다.
-공개 가중치는 Emilia 음성 데이터로 학습되었다.
+다만 이 방식은 quantizer의 출력을 teacher feature와 시점마다 맞추므로, token 수를 줄이려 frame rate를 낮추면 teacher feature도 함께 뭉개야 한다.
+카카오의 LM-SPT는 token으로 음성을 다시 합성한 뒤 원본과 재합성 음성의 표현을 비교해, 시간 해상도가 달라도 발화 내용이 보존되도록 학습한다.[^lmspt][^lmspt-code]
 
 <Callout type="note">
 [음성 언어모델은 어디서부터 시작될까? LM-SPT 개발 및 모델 적용기](https://if.kakao.com/2026/session/time-table?sessionId=77)는 LM-SPT의 개발과 모델 적용을 다루는 카카오 기술 세션이다.
@@ -443,15 +271,11 @@ Token과 teacher feature를 시점마다 대응시키지 않고 재합성 음성
 ### 5-1. Audio token 생성
 
 Codec이 음성을 token으로 바꾸고 다시 파형으로 복원할 수 있다면, 생성 모델은 입력 조건에 맞는 codec token을 예측해 음성을 만들 수 있다.
-예를 들어 TTS에서는 텍스트 “안녕하세요”와 화자 조건을 주고, 모델이 그에 맞는 audio token들을 생성한다.
-Codec decoder는 생성된 token을 waveform으로 변환한다.
+예를 들어 TTS에서는 텍스트와 화자 조건을 주고, 모델이 그에 맞는 audio token들을 생성한다.
 Speech-to-speech에서는 모델이 사용자의 음성을 조건으로 응답 음성의 token을 생성한다.
-이 경우에도 텍스트를 함께 사용하거나 중간에 예측하는 설계가 가능하다.
 
-Autoregressive Transformer는 이전 token을 보고 다음 token의 확률을 예측한다.
-텍스트에서는 token 한 줄이 자연스럽지만 RVQ audio에서는 한 시간 위치에 여러 codebook의 token이 있어, 어떤 순서로 예측할지를 정해야 한다.
+RVQ audio에서는 한 시간 위치에 여러 codebook의 token이 있어, 어떤 순서로 예측할지를 정해야 한다.
 예를 들어 시간 두 칸과 codebook 두 개가 있고 각 칸의 ID가 아래와 같다고 하자.
-숫자는 음성 신호의 크기가 아니라 각 codebook에서 선택한 항목의 번호다.
 
 | 시간 | 첫 codebook ID | 둘째 codebook ID |
 | --- | --- | --- |
@@ -459,116 +283,56 @@ Autoregressive Transformer는 이전 token을 보고 다음 token의 확률을 �
 | 2 | 5 | 2 |
 
 한 가지 방법은 모두 한 줄로 펼쳐 `(3, 7, 5, 2)` 순서로 예측하는 것이다.
-이때 모델은 5를 예측하는 단계에서 앞에서 고른 3과 7을 조건으로 쓴다.
-이 방법은 시간 방향과 codebook 방향의 의존성을 모두 표현한다.
-하지만 sequence 길이가 codebook 수만큼 곱해져 예측 단계가 길어진다.
-다른 방법은 시간 순서를 맡는 모델과 한 시간 칸 안의 codebook 순서를 맡는 모델을 나누는 것이다.
-Moshi는 시간 방향의 이전 정보를 처리하는 Temporal Transformer와, 그 문맥을 받아 같은 생성 단계의 여러 출력을 순서대로 다루는 작은 Depth Transformer를 사용한다.[^moshi]
-예를 들어 두 번째 시간 칸을 만들 때 Temporal Transformer가 앞 시간의 정보를 요약한 문맥을 만든다.
-Depth Transformer는 그 문맥과 현재 칸에서 이미 선택한 출력을 이용해 다음 출력을 예측한다.
+이 방법은 시간과 codebook 방향의 의존성을 모두 표현하지만, sequence 길이가 codebook 수만큼 곱해진다.
+다른 방법은 시간 순서를 맡는 큰 모델과 한 시간 칸 안의 codebook 순서를 맡는 작은 모델을 나누는 것이다.
+Moshi는 시간 방향의 문맥을 만드는 Temporal Transformer와, 그 문맥을 받아 한 시간 칸의 여러 codebook을 차례로 예측하는 작은 Depth Transformer를 쓴다.[^moshi]
 이렇게 나누면 큰 Transformer는 시간 칸마다 한 번만 계산하고, codebook 수만큼 반복되는 계산은 작은 Transformer가 맡는다.
-
-실제 Moshi는 텍스트와 사용자 음성도 함께 다루므로 이 예보다 스트림 구성이 복잡하다.
-또한 Moshi는 acoustic token이 먼저 정한 semantic token을 참고하도록, acoustic token을 한두 단계 늦게 생성한다.
-그래서 같은 생성 단계에 놓인 token들이 원래 소리의 같은 시점에 해당하지는 않는다.
 
 ### 5-2. 소리 이어 생성과 텍스트 조건 음성 합성
 
-모델이 codec token만 예측하면 음향의 세부는 복원할 수 있다.
-하지만 높은 token rate에서 긴 시간의 내용과 구조까지 함께 모델링해야 한다.
-반대로 발화 내용에 관련된 semantic token은 긴 범위를 다루기에 유리할 수 있다.
-하지만 semantic token만으로는 원래 목소리와 세부 음향을 복원하기 어렵다.
-AudioLM은 두 표현을 조합해 이 문제를 다룬다.[^audiolm]
-AudioLM은 음성에서 사전학습한 w2v-BERT의 feature를 k-means로 이산화해 semantic token을 얻고, 별도의 SoundStream codec으로 acoustic token을 얻는다.
-생성할 때 AudioLM은 먼저 semantic token의 이어질 부분을 예측하고, 이를 조건으로 거친 acoustic token을 생성한다.
-다음 단계는 거친 acoustic token을 조건으로 세밀한 acoustic token을 생성하고, semantic token은 직접 받지 않는다.
-마지막에 codec decoder가 acoustic token을 파형으로 바꾼다.
-예를 들어 짧은 발화를 들려주면, AudioLM은 내용이 이어지고 음색도 일관된 후속 소리를 생성하는 것을 목표로 한다.
-원논문은 전사 없이 음성을 이어 생성한다.
-
-한편 원하는 문장을 읽어 주는 TTS는 audio 이어 생성과 입력 조건이 다르다.
-CosyVoice는 음성 인식 모델에 quantization을 넣어, 내용 관련 지도 신호를 받은 speech token을 만든다.[^cosyvoice]
-CosyVoice의 언어 모델은 입력 텍스트를 조건으로 이 speech token을 예측한다.
-그다음 conditional flow matching 모델이 token과 화자 정보를 이용해 Mel spectrogram을 만들고, vocoder가 waveform으로 바꾼다.
-여기서 flow matching 모델은 token과 화자 정보라는 조건을 참고하면서 잡음으로 시작한 표현을 여러 계산 단계를 거쳐 음성의 Mel spectrogram으로 바꾸는 생성 모델이다.
-예를 들어 “안녕하세요”와 참고 화자 정보가 주어지면 언어 모델은 해당 발화의 token을 만들고, 뒤의 음향 생성 단계는 그 조건에 맞는 소리를 구성한다.
+모델이 codec token만 예측하면 음향의 세부는 복원할 수 있지만, 높은 token rate에서 긴 시간의 내용까지 함께 모델링해야 한다.
+반대로 semantic token은 긴 범위를 다루기에 유리하지만, 그것만으로는 원래 목소리를 복원하기 어렵다.
+AudioLM은 먼저 semantic token을 이어 생성하고, 이를 조건으로 acoustic token을 생성한 뒤 codec decoder로 파형을 만든다.[^audiolm]
+그래서 짧은 발화를 들려주면 내용이 이어지고 음색도 일관된 후속 소리를 만든다.
+원하는 문장을 읽어 주는 TTS는 텍스트가 조건이라는 점이 다르다.
+CosyVoice의 언어 모델은 텍스트를 조건으로 내용 중심의 speech token을 예측하고, 그 뒤 flow matching 모델과 vocoder가 화자 정보를 반영해 파형을 만든다.[^cosyvoice]
 
 | task | 입력과 중간 표현 | 출력 경로 |
 | --- | --- | --- |
 | AudioLM의 음성 이어 생성 | 짧은 음성 → semantic token 예측 → acoustic token 예측 | codec decoder → 파형 |
 | CosyVoice의 TTS | 텍스트와 화자 조건 → speech token 예측 | flow matching → Mel spectrogram → vocoder → 파형 |
 
-Qwen3-TTS-12Hz-1.7B-Base도 텍스트를 음성으로 만드는 TTS 모델이다.[^qwen3-tts]
-이 모델은 읽을 문장과 참고 음성, 그 전사를 조건으로 음성 token을 생성하고, 전용 tokenizer의 decoder로 token을 파형으로 바꾼다.
-Token 뒤에 flow matching과 vocoder를 따로 두는 CosyVoice와 달리, token에서 바로 파형을 복원하는 경로다.
-
 ### 5-3. 음성 이해와 생성의 결합
 
-Audio를 듣고 텍스트로 답하는 모델과 텍스트를 음성으로 바꾸는 모델을 별도로 두는 대신, 한 언어 모델이 음성과 텍스트를 입력과 출력 양쪽에서 처리하도록 학습할 수도 있다.
-다만 codec은 한 초에도 많은 token을 내므로, 긴 대화를 그대로 언어 모델에 넣으면 sequence가 길어진다.
-계산 부담을 다루는 선택은 무엇을 묶을지, codebook을 몇 개 쓸지, 입력과 출력에 어떤 표현을 쓸지로 나누어 볼 수 있다.
-이 선택들은 서로 배타적이지 않아 한 모델에서 함께 사용할 수 있다.
+듣는 모델과 말하는 모델을 따로 두는 대신, 한 언어 모델이 음성과 텍스트를 입력과 출력 양쪽에서 처리하도록 학습할 수도 있다.
+다만 codec은 한 초에도 많은 token을 내므로, 긴 대화를 그대로 넣으면 sequence가 길어진다.
+이 부담을 다루는 선택은 크게 세 가지이며, 한 모델에서 함께 쓸 수도 있다.
 
-첫째는 여러 codebook을 유지한 채 여러 시점을 묶는 것이다.
-MiMo-Audio는 여러 시점의 codec token을 patch로 묶어 언어 모델의 한 위치로 전달한다.[^mimo]
-해당 논문의 설정에서 tokenizer는 초당 25개 frame을 내고, 연속된 네 frame을 하나로 묶으면 언어 모델은 초당 6.25개 audio patch를 처리한다.
-LLM에 쓰는 각 frame에는 8개 codebook의 ID가 있으므로, 한 patch는 네 시점의 ID 32개를 하나의 입력 표현으로 묶는다.
+- **여러 시점을 묶기**: 여러 시점의 codec token을 patch로 묶어 언어 모델의 한 위치로 전달한다.[^mimo]
+- **codebook 하나만 쓰기**: 한 시간 위치에 ID가 하나뿐이면 텍스트처럼 token을 한 줄로 예측할 수 있고, 줄어든 정보는 뒤의 decoder가 채운다.[^glm4voice]
+- **입력과 출력의 표현을 다르게 두기**: 이해에 쓰는 입력은 encoder의 연속 feature로 받고, 출력만 discrete token으로 낸다.
 
 <Figure src="https://arxiv.org/html/2512.23808v1/mimoaudio_new.svg" alt="MiMo-Audio 구조. 아래쪽에서 여러 시점의 audio codebook token을 patch encoder로 묶고, 가운데 언어 모델을 거쳐 위쪽 patch decoder가 다음 audio token을 생성한다. 오른쪽은 patch encoder와 decoder의 내부를 확대한다." caption="아래는 입력 audio patch를 하나의 표현으로 묶는 경로, 위는 언어 모델의 표현에서 다음 patch의 token을 생성하는 경로다. 그림은 설명을 위해 codebook 네 행을 그렸고, 본문에서 설명한 LLM 설정에는 여덟 개를 사용한다." source="Xiaomi LLM-Core Team (2025), Figure 3 · CC BY 4.0" wide />
 
-생성할 때 patch decoder는 언어 모델의 출력을 받아 다시 세부 audio token을 만들고, tokenizer의 audio decoder와 vocoder가 파형을 복원한다.
+카카오의 Kanana-a는 세 번째 구성이다.[^kanana-a]
+음성 입력은 Whisper encoder와 audio projector를 거쳐 continuous representation이 되고, 음성으로 답할 때는 별도의 Voice Token LM이 discrete token을 만든 뒤 decoder와 vocoder가 파형으로 바꾼다.
+Kanana-a는 세 단계로 학습한다.
 
-둘째는 codebook을 하나만 쓰는 것이다.
-GLM-4-Voice는 ASR 모델의 encoder 중간에 vector quantization 병목을 넣어 만든 tokenizer로 음성을 초당 12.5개의 단일 codebook token, 약 175 bps(bits per second)로 바꾼다.[^glm4voice]
-한 시간 위치에 ID가 하나뿐이므로, 여러 codebook을 나누어 예측하는 장치 없이 텍스트처럼 token을 한 줄로 예측할 수 있다.
-Token이 담는 정보가 적은 만큼, 생성한 token을 파형으로 되살리는 일은 flow matching 모델과 HiFi-GAN vocoder로 된 decoder가 맡는다.
+| 단계 | 학습하는 부분 | 학습 데이터 |
+| --- | --- | --- |
+| 정렬 | projector, Voice Token LM | ASR, TTS |
+| 추가 학습 | 모델 전체 | 음성 이해 데이터를 포함한 자료 |
+| SFT(supervised fine-tuning) | 모델 전체 | 음성 질의응답, 감정, 지시 이행 |
 
-셋째는 입력과 출력의 표현을 다르게 두는 것이다.
-모델은 이해에 쓰는 입력을 encoder의 연속 feature로 받고, 출력만 discrete token으로 낸다.
-Liquid AI의 LFM3-Audio-2B는 텍스트와 audio를 입력받아 텍스트, 음성 또는 둘을 번갈아 배치한 출력을 만든다.[^lfm3-audio]
-음성 입력은 미래 입력을 보지 않는 인과적(causal) audio encoder를 거쳐 연속 벡터로 언어 모델에 들어간다.
-음성을 출력할 때는 모델이 이산 audio token을 예측하고, LiquidCodec decoder가 이를 파형으로 바꾼다.
-LiquidCodec은 음성 80 ms를 12개 discrete token으로 표현한다.
-
-카카오가 2025년에 설명한 Kanana-a도 같은 비대칭 구성이다.[^kanana-a]
-음성 입력은 Mel spectrogram과 Whisper audio encoder, audio projector를 거쳐 continuous representation이 된다.
-Projector는 1차원 convolution과 pooling을 조합한 1D-C-Abstractor로 긴 feature sequence를 줄인다.
-음성으로 답할 때는 별도의 Voice Token LM이 LLM의 정보를 바탕으로 음성의 discrete token을 만든다.
-Token-Voicebox가 이 token을 Mel spectrogram으로 바꾸고, vocoder UnivNet이 파형으로 바꾼다.
-학습은 세 단계로 진행한다.
-먼저 ASR·TTS 자료로 projector와 Voice Token LM을 맞춘다.
-그다음 음성 이해 자료를 포함해 전체 모델을 계속 학습하고, 마지막으로 음성 질의응답·감정·지시 이행 자료로 전체 모델을 SFT(supervised fine-tuning)한다.
-Kanana-o의 2026년 후속 개발에서는 tokenizer를 LM-SPT로 바꾸어, Voice Token LM이 생성할 시간 위치를 초당 25개에서 12.5 frame으로 절반으로 줄였다.[^lmspt-kanana]
-대신 frame마다 semantic token 하나와 acoustic token 여러 개를 예측한다.
-또 decoder가 Mel spectrogram을 거치지 않고 파형을 바로 복원하게 했다.
-
-| 모델 | LLM이 받는 음성 입력 | 음성 생성 경로의 token 구성 | 파형 복원 |
-| --- | --- | --- | --- |
-| Moshi | Mimi의 discrete token | 12.5 Hz, codebook 8개 | Mimi decoder |
-| MiMo-Audio | discrete token의 patch | 25 Hz, codebook 8개를 네 frame씩 patch | patch decoder → audio decoder → vocoder |
-| GLM-4-Voice | 단일 codebook discrete token | 12.5 Hz, codebook 1개 | flow matching → HiFi-GAN |
-| LFM3-Audio-2B | encoder의 연속 feature | 80 ms마다 12개 | LiquidCodec decoder |
-| Kanana-a (2025) | Whisper encoder의 연속 feature | Voice Token LM의 discrete token | Token-Voicebox → UnivNet |
+이후 Kanana-o는 tokenizer를 LM-SPT로 바꾸어, 생성할 시간 위치를 초당 25개에서 12.5개로 절반으로 줄였다.[^lmspt-kanana]
 
 ### 5-4. 텍스트와 음성의 interleaving
 
-텍스트와 음성을 한 모델에서 다룰 때는 두 표현의 길이와 속도가 다르다는 점이 문제가 된다.
+텍스트와 음성을 한 모델에서 다룰 때는 두 표현의 길이와 속도가 다르다.
 글자 몇 개가 음성에서 수백 밀리초를 차지하고, 음성의 여러 frame이 단어 하나에 대응한다.
 텍스트 전체를 먼저 완성한 뒤 음성 전체를 생성하면 구조는 단순하지만 첫 소리를 내기까지 기다려야 한다.
 텍스트와 음성을 작은 단위로 번갈아 배치하는 interleaving은 일부를 먼저 생성할 수 있게 하면서, 사전학습된 텍스트 LLM의 지식을 음성 token으로 잇는 방법이기도 하다.
-
-서울대와 네이버 연구진의 USDM(Unified Spoken Dialog Model)은 음성 질문을 받아 음성으로 응답한다.[^naver-usdm]
-USDM은 입력 음성을 speech tokenizer로 discrete token으로 바꾼다.
-USDM의 언어 모델은 응답의 텍스트를 먼저 생성한 뒤 speech token을 생성한다.
-Token-Voicebox가 생성된 speech token을 Mel spectrogram으로 바꾸고, vocoder가 파형으로 복원한다.
-USDM은 사전학습된 텍스트 LLM(공개 구현은 Mistral-7B)에서 출발한다.
-먼저 speech와 text를 번갈아 배치한 interleaved sequence로 사전학습하고, 이후 음성 대화 데이터로 fine-tuning한다.
-가상의 sequence `[음성: 안녕] → [전사: 안녕] → [음성: 반가워]`를 생각해 보자.
-앞의 두 조각은 같은 내용의 서로 다른 표현이고, 뒤의 음성 조각은 발화가 시간에 따라 이어지는 부분이다.
-모델은 이런 sequence에서 다음 token을 예측하며 두 표현의 대응과 발화의 이어짐을 함께 배운다.
-네이버의 Speech X 소개 글은 Speech X가 USDM을 활용한다고 적는다.[^naver-speechx]
-
-GLM-4-Voice도 텍스트 언어 모델 GLM-4-9B-Base에서 출발해 음성과 텍스트를 번갈아 배치한 데이터로 사전학습을 이어 가고, 응답을 낼 때도 텍스트 조각과 음성 조각을 번갈아 생성한다.[^glm4voice]
+사전학습된 텍스트 LLM에서 출발해, 음성과 텍스트를 번갈아 배치한 데이터로 사전학습을 이어 가는 모델들이 이 방식을 쓴다.[^naver-usdm][^glm4voice]
 
 <Figure src="https://arxiv.org/html/2412.02612v1/overall-arch.png" alt="GLM-4-Voice의 학습 단계와 구조. 왼쪽 위는 텍스트 corpus에서 text-to-token 모델로 텍스트 token과 speech token이 번갈아 나오는 데이터를 합성해 사전학습하는 1단계, 왼쪽 아래는 음성 질문에 텍스트 답과 음성 답을 잇는 형식으로 fine-tuning하는 2단계다. 오른쪽은 speech tokenizer를 거친 사용자 음성을 받은 모델이 text와 speech 조각을 번갈아 출력하고 speech decoder가 음성을 만드는 구조다." caption="GLM-4-Voice는 텍스트 corpus로 합성한 interleaved 데이터로 사전학습하고(왼쪽 위), 응답에서도 텍스트와 speech token을 번갈아 낸다(오른쪽). 텍스트 조각을 먼저 내고 그에 맞는 음성을 이어 내므로 답 전체가 완성되기 전에 첫 소리가 나간다." source="Zeng et al. (2024), Figure 2 · CC BY 4.0" wide />
 
@@ -578,31 +342,17 @@ Streaming은 입력이나 출력을 전체가 끝날 때까지 기다리지 않�
 Streaming 시스템은 사용자 발화가 길어도 이미 들어온 구간부터 처리하고, 응답 전체가 완성되기 전에 첫 소리를 낼 수 있다.
 이때 현재 출력을 미래 입력에 의존하지 않게 만드는 causal 구조가 유용하다.
 작은 chunk는 빨리 전달할 수 있지만 경계에서 문맥이 부족해지거나 너무 잦은 처리로 비용이 늘 수 있다.
-
-Mistral의 Voxtral Realtime은 음성이 들어오는 동안 텍스트를 출력하는 streaming 음성 인식의 예다.[^voxtral]
-Whisper처럼 음성을 글자로 바꾸는 task를 실시간 입력에 맞게 구성한 것이다.
-
-지연은 모델의 계산 시간 하나로 결정되지 않는다.
-입력 chunk를 모으는 시간, encoder와 생성 모델의 계산, 출력 codec과 네트워크 재생 버퍼가 모두 영향을 준다.
-예를 들어 80 ms 길이의 입력 frame을 전부 모은 뒤 처리하는 구현이라면 그 frame을 받는 데만 80 ms가 필요하고, 여기에 모델 계산과 전송, 출력 재생의 시간이 더해진다.
-Frame 간격은 전체 응답 지연의 하한 가운데 한 조각일 뿐이다.
+지연은 모델의 계산 시간 하나로 결정되지 않고, 입력 chunk를 모으는 시간, 모델 계산, 출력 codec과 재생 버퍼가 모두 영향을 준다.
 
 ### 5-6. Full duplex
 
 Half duplex 대화에서는 한쪽 발화가 끝난 뒤 다른 쪽이 말하는 식으로 차례를 구분한다.
 Full duplex는 양쪽의 듣기와 말하기가 겹칠 수 있는 상호작용이다.
 사람은 상대의 설명 중 “네”라고 짧게 반응하거나, 잘못 알아들었을 때 끼어들 수 있다.
-Streaming은 데이터를 조금씩 처리한다는 뜻일 뿐이다.
-예를 들어 streaming TTS를 붙인 cascade 음성 비서는 답의 첫 소리를 빨리 내지만, 말하는 동안 사용자 음성을 처리하지 않는다면 half duplex다.
-Full duplex 시스템은 자신이 말하는 동안에도 사용자 입력을 계속 듣고 반영해야 한다.
+Streaming TTS를 붙인 cascade 음성 비서는 첫 소리를 빨리 내지만, 말하는 동안 사용자 음성을 처리하지 않는다면 half duplex다.
 
-Moshi는 사용자 음성과 모델의 음성을 별도의 병렬 스트림으로 표현하고, 두 스트림의 시간 관계를 모델링해 실시간 대화를 구성한다.[^moshi]
-Moshi는 사용자 음성 입력과 모델 음성 출력을 모두 Mimi라는 neural codec의 discrete token으로 표현한다.
-Mimi의 frame 간격이 80 ms이므로 모델은 80 ms마다 사용자 스트림의 새 frame을 받고 자기 스트림의 다음 frame을 낸다.
-Moshi는 여기에 응답 음성과 시간적으로 맞춘 텍스트 token을 함께 예측하는 Inner Monologue 방식을 더한다.
-Moshi는 speech-to-speech 모델이지만, 각 시간 칸에서 자기가 할 말의 텍스트 token을 음성 token보다 먼저 예측한다.
-
-다음은 겹치는 대화를 두 스트림으로 표현하는 이점을 보여 주는 가상 예다.
+Moshi는 사용자 음성과 모델의 음성을 별도의 병렬 스트림으로 표현해, 80 ms마다 사용자 스트림의 새 frame을 받고 자기 스트림의 다음 frame을 낸다.[^moshi]
+또 각 시간 칸에서 자기가 할 말의 텍스트 token을 음성 token보다 먼저 예측한다.
 
 | 시간 | 사용자 스트림 | 모델 스트림 |
 | --- | --- | --- |
@@ -610,24 +360,47 @@ Moshi는 speech-to-speech 모델이지만, 각 시간 칸에서 자기가 할 �
 | 1–2초 | “오늘로 바꿔”라고 끼어듦 | 발화가 아직 진행 중 |
 | 2초 이후 | 조용함 | 새 지시를 반영해 응답 전환 |
 
-두 번째 구간의 두 음성은 같은 시간에 존재한다.
-따라서 한쪽이 끝날 때까지 다른 쪽을 무시하는 처리만으로는 끼어든 시점과 내용을 제때 반영하기 어렵다.
+두 번째 구간의 두 음성은 같은 시간에 존재하므로, 한쪽이 끝날 때까지 다른 쪽을 무시하는 처리로는 끼어든 시점과 내용을 제때 반영하기 어렵다.
 병렬 스트림은 겹침을 표현할 수 있게 할 뿐이고, 끼어들기에 알맞게 반응하는지는 그런 대화를 담은 학습 데이터에 달려 있다.
-
-사용자가 모델의 말을 끊어 “아니, 내일 말고 오늘”이라고 하면, 시스템은 새 입력을 받는 동시에 이미 시작한 응답을 중단하거나 수정해야 한다.
 실제 제품에서는 마이크가 스피커에서 재생된 모델 음성까지 다시 받는 echo, 주변 잡음, 네트워크 지연도 처리해야 한다.
 
 ### 5-7. 음성과 도구
 
-Audio 모델이 도구를 호출할 수 있다면 사용자의 발화를 이해한 결과를 검색, 일정 조회 또는 기기 제어에 연결할 수 있다.
-도구 호출은 함수 이름과 인자 같은 구조화된 요청을 만들어 외부 시스템에 전달하고, 실행 결과를 다시 모델에 제공하는 절차다.
-LFM3-Audio-2B는 음성 요청으로부터 도구 호출을 생성하는 사용 예를 제공한다.[^lfm3-audio]
-예를 들어 조명을 켜 달라는 발화에서 기기 제어 요청을 만들 수 있지만, 실제 조명을 바꾸는 일은 연결된 외부 도구가 수행한다.
+Audio 모델이 도구를 호출할 수 있다면 사용자의 발화를 이해한 결과를 검색, 일정 조회, 기기 제어에 연결할 수 있다.
+실시간 대화에서는 도구의 응답이 오기 전에 말을 시작할지, 사용자가 중간에 지시를 바꾸면 기존 요청을 어떻게 다룰지도 정해야 한다.
+예를 들어 “서울 날씨를 알려 줘”를 듣고 조회하는 중 “부산으로 바꿔”라는 새 음성이 들어오면, 오래된 서울 결과를 현재 요청의 결과로 읽지 않도록 대화 상태를 관리해야 한다.
 
-실시간 대화에서는 도구의 응답이 오기 전에 모델이 말을 시작할지, 결과가 도착할 때까지 무엇을 말할지, 사용자가 중간에 지시를 바꾸면 기존 요청을 어떻게 다룰지도 결정해야 한다.
-예를 들어 “서울 날씨를 알려 줘”를 듣고 조회하는 중 “부산으로 바꿔”라는 새 음성이 들어오면, 오래된 서울 결과를 현재 요청의 결과로 읽지 않도록 문맥과 실행 상태를 관리해야 한다.
-이 문제는 audio encoder 하나의 성능으로 풀리지 않는다.
-음성 모델, 도구 실행기, 대화 상태 관리가 함께 맞물려야 한다.
+## 6. Audio 언어 모델의 평가
+
+Audio 언어 모델도 묻는 능력에 따라 여러 벤치마크로 평가한다.
+
+| 영역 | 묻는 능력 | 대표 벤치마크 |
+| --- | --- | --- |
+| 음성 인식 | 발화를 정확히 받아쓰기 | LibriSpeech[^librispeech] |
+| 소리 설명 | 환경음을 문장으로 설명하기 | AudioCaps[^audiocaps] |
+| Audio 이해와 추론 | 음성, 환경음, 음악에 대한 질문에 답하기 | MMAU[^mmau], AIR-Bench[^airbench] |
+| 음성 비서 | 화자와 환경이 다양한 음성 지시에 답하기 | VoiceBench[^voicebench] |
+| Full duplex 대화 | 쉼, 맞장구, 차례 넘기기, 끼어들기를 처리하기 | Full-Duplex-Bench[^fdbench] |
+
+LibriSpeech는 공개 오디오북에서 만든 약 1,000시간의 영어 낭독 음성이다.
+음성 인식은 보통 모델의 전사가 정답과 단어 단위로 얼마나 다른지를 나타내는 WER(word error rate)로 잰다.
+AudioCaps는 AudioSet의 소리 약 4만 6천 개에 사람이 쓴 설명을 붙였다.
+MMAU는 음성, 환경음, 음악 클립 1만 개에 질문과 답을 붙여 27가지 능력을 묻고, 발표 당시 가장 높은 모델의 정확도도 53% 정도였다.
+AIR-Bench는 19개 기초 task의 객관식 문제 약 1만 9천 개와 열린 질문 2천 개로, 소리를 이해하는 능력과 지시를 따르는 능력을 함께 본다.
+VoiceBench는 화자 특성, 주변 환경, 발화 내용이 다양한 실제 음성과 합성 음성으로 음성 비서를 평가한다.
+Full-Duplex-Bench는 사용자의 쉼을 기다리는지, 맞장구(backchannel)를 치는지, 차례를 넘기는지, 끼어들기에 대처하는지를 자동 지표로 잰다.
+
+<Details summary="더 보기: 다른 modality의 foundation model">
+
+큰 데이터로 사전학습한 foundation model은 텍스트, 이미지, 소리 말고도 여러 종류의 데이터에서 만들어지고 있다.
+
+- **표(tabular) 데이터**: TabPFN은 학습 데이터의 행들을 입력으로 받아, 추가 학습 없이 in-context learning으로 새 행의 label을 예측한다.[^tabpfn]
+- **시계열**: TimesFM은 큰 시계열 corpus로 사전학습한 decoder 모델로, 새 데이터에서도 추가 학습 없이 미래 값을 예측한다.[^timesfm]
+  Chronos는 시계열 값을 scaling과 quantization으로 고정된 어휘의 token으로 바꾸어 언어 모델 구조로 학습한다.[^chronos]
+- **음악**: MusicGen은 압축한 음악의 discrete token을 예측하는 언어 모델로, 텍스트 설명이나 멜로디를 조건으로 음악을 생성한다.[^musicgen]
+- **분자**: MolT5는 분자를 나타내는 문자열과 자연어를 함께 사전학습해, 분자를 설명하는 문장을 쓰거나 설명에 맞는 분자를 생성한다.[^molt5]
+
+</Details>
 
 [^survey]: Yang, Z., Shimizu, S., Yu, Y., & Chu, C. (2025). When Large Language Models Meet Speech: A Survey on Integration Approaches. *Findings of the Association for Computational Linguistics: ACL 2025*, 20298–20315. [논문](https://aclanthology.org/2025.findings-acl.1041/).
 [^slp3]: Jurafsky, D., & Martin, J. H. (2026). Speech and Language Processing (3rd ed. draft), Chapter 15: Phonetics and Speech Feature Extraction. [교재](https://web.stanford.edu/~jurafsky/slp3/15.pdf).
@@ -639,7 +412,6 @@ LFM3-Audio-2B는 음성 요청으로부터 도구 호출을 생성하는 사용 
 [^qwen-audio]: Xu, J., et al. (2025). Qwen3-Omni Technical Report. *arXiv preprint arXiv:2509.17765*. [논문](https://arxiv.org/abs/2509.17765).
 [^clap]: Elizalde, B., Deshmukh, S., Al Ismail, M., & Wang, H. (2023). CLAP: Learning Audio Concepts From Natural Language Supervision. *ICASSP*, 1–5. [논문](https://arxiv.org/abs/2206.04769).
 [^whisper]: Radford, A., Kim, J. W., Xu, T., Brockman, G., McLeavey, C., & Sutskever, I. (2023). Robust Speech Recognition via Large-Scale Weak Supervision. *Proceedings of the 40th International Conference on Machine Learning*. [논문](https://proceedings.mlr.press/v202/radford23a.html).
-[^qwen3-asr]: Qwen Team. (2026). Qwen3-ASR-1.7B. *Hugging Face model card*. [모델 카드](https://huggingface.co/Qwen/Qwen3-ASR-1.7B).
 [^salmonn]: Tang, C., Yu, W., Sun, G., Chen, X., Tan, T., Li, W., Lu, L., Ma, Z., & Zhang, C. (2024). SALMONN: Towards Generic Hearing Abilities for Large Language Models. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2310.13289).
 [^soundstream]: Zeghidour, N., Luebs, A., Omran, A., et al. (2022). SoundStream: An End-to-End Neural Audio Codec. *IEEE/ACM Transactions on Audio, Speech, and Language Processing*. [논문](https://arxiv.org/abs/2107.03312).
 [^encodec]: Défossez, A., Copet, J., Synnaeve, G., & Adi, Y. (2023). High Fidelity Neural Audio Compression. *Transactions on Machine Learning Research*. [논문](https://openreview.net/forum?id=ivCd8z8zR2), [공개본](https://arxiv.org/abs/2210.13438).
@@ -647,16 +419,22 @@ LFM3-Audio-2B는 음성 요청으로부터 도구 호출을 생성하는 사용 
 [^moshi]: Défossez, A., Mazaré, L., Orsini, M., Royer, A., Pérez, P., Jégou, H., Grave, E., & Zeghidour, N. (2024). Moshi: a speech-text foundation model for real-time dialogue. *arXiv preprint arXiv:2410.00037*. [논문](https://arxiv.org/abs/2410.00037).
 [^audiolm]: Borsos, Z., et al. (2023). AudioLM: a Language Modeling Approach to Audio Generation. *IEEE/ACM Transactions on Audio, Speech, and Language Processing*. [논문](https://arxiv.org/abs/2209.03143).
 [^cosyvoice]: Du, Z., et al. (2024). CosyVoice: A Scalable Multilingual Zero-shot Text-to-speech Synthesizer based on Supervised Semantic Tokens. *arXiv preprint arXiv:2407.05407*. [논문](https://arxiv.org/abs/2407.05407).
-[^qwen3-tts]: Qwen Team. (2026). Qwen3-TTS-12Hz-1.7B-Base. *Hugging Face model card*. [모델 카드](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base).
 [^mimo]: Xiaomi LLM-Core Team. (2025). MiMo-Audio: Audio Language Models are Few-Shot Learners. *arXiv preprint arXiv:2512.23808*. [논문](https://arxiv.org/abs/2512.23808).
-[^lfm3-audio]: Liquid AI. (2026). LFM3-Audio-2B. *Hugging Face model card*. [모델 카드](https://huggingface.co/LiquidAI/LFM3-Audio-2B).
-[^voxtral]: Mistral AI. (2026). Voxtral transcribes at the speed of sound. *Mistral AI*. [발표](https://mistral.ai/news/voxtral-transcribe-2/).
 [^kanana-a]: Kakao. (2025). 이미지와 음성을 아우르는 카카오의 멀티모달 언어모델 Kanana-o 알아보기. *kakao tech*. [글](https://tech.kakao.com/posts/702).
 [^lmspt]: Jo, D., Yun, J., Roh, B., & Kim, S. (2026). LM-SPT: LM-Aligned Semantic Distillation for Speech Tokenization. *IEEE Transactions on Audio, Speech and Language Processing*, 34, 3714–3727. [논문](https://arxiv.org/abs/2506.16738).
 [^lmspt-code]: Kakao Corp. (2026). LM-SPT: LM-Aligned Semantic Distillation for Speech Tokenization. *GitHub repository*. [코드](https://github.com/kakao/lmspt).
 [^lmspt-kanana]: Kakao. (2026). 잘 말하는 AI를 넘어, 원하는 대로 말하는 AI로: Kanana-o 음성 생성 고도화 과정. *kakao tech*. [글](https://tech.kakao.com/posts/827).
 [^naver-usdm]: Kim, H., et al. (2024). Paralinguistics-Aware Speech-Empowered Large Language Models for Natural Conversation. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2402.05706), [공개 구현](https://github.com/naver-ai/usdm).
-[^naver-speechx]: NAVER Cloud. (2024). Speech X: Combining audio and language the innovative way. *CLOVA Tech Blog*. [글](https://clova.ai/en/tech-blog/en-speech-x-combining-audio-and-language-the-innovative-way).
-[^naver-audio4b]: NAVER Cloud. (2026). Seeing and hearing the field for ourselves: Building our own encoders and HyperCLOVA X SEED 4B. *CLOVA Tech Blog*. [글](https://clova.ai/en/tech-blog/seeing-and-hearing-the-field-for-ourselves-building-our-own-encoders-and-hyperclova-x-seed-4b).
 [^wavenet]: van den Oord, A., Dieleman, S., Zen, H., et al. (2016). WaveNet: A Generative Model for Raw Audio. *arXiv preprint arXiv:1609.03499*. [논문](https://arxiv.org/abs/1609.03499).
 [^glm4voice]: Zeng, A., Du, Z., Liu, M., et al. (2024). GLM-4-Voice: Towards Intelligent and Human-Like End-to-End Spoken Chatbot. *arXiv preprint arXiv:2412.02612*. [논문](https://arxiv.org/abs/2412.02612).
+[^librispeech]: Panayotov, V., Chen, G., Povey, D., & Khudanpur, S. (2015). Librispeech: An ASR corpus based on public domain audio books. *ICASSP*. [데이터](https://www.openslr.org/12/).
+[^audiocaps]: Kim, C. D., Kim, B., Lee, H., & Kim, G. (2019). AudioCaps: Generating Captions for Audios in The Wild. *Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics*. [논문](https://aclanthology.org/N19-1011/).
+[^mmau]: Sakshi, S., Tyagi, U., Kumar, S., et al. (2024). MMAU: A Massive Multi-Task Audio Understanding and Reasoning Benchmark. *arXiv*. [논문](https://arxiv.org/abs/2410.19168).
+[^airbench]: Yang, Q., Xu, J., Liu, W., et al. (2024). AIR-Bench: Benchmarking Large Audio-Language Models via Generative Comprehension. *Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics*. [논문](https://arxiv.org/abs/2402.07729).
+[^voicebench]: Chen, Y., Yue, X., Zhang, C., et al. (2024). VoiceBench: Benchmarking LLM-Based Voice Assistants. *arXiv*. [논문](https://arxiv.org/abs/2410.17196).
+[^fdbench]: Lin, G.-T., Lian, J., Li, T., et al. (2025). Full-Duplex-Bench: A Benchmark to Evaluate Full-duplex Spoken Dialogue Models on Turn-taking Capabilities. *IEEE Automatic Speech Recognition and Understanding Workshop*. [논문](https://arxiv.org/abs/2503.04721).
+[^tabpfn]: Hollmann, N., Müller, S., Eggensperger, K., & Hutter, F. (2023). TabPFN: A Transformer That Solves Small Tabular Classification Problems in a Second. *International Conference on Learning Representations*. [논문](https://arxiv.org/abs/2207.01848).
+[^timesfm]: Das, A., Kong, W., Sen, R., & Zhou, Y. (2024). A decoder-only foundation model for time-series forecasting. *International Conference on Machine Learning*. [논문](https://arxiv.org/abs/2310.10688).
+[^chronos]: Ansari, A. F., Stella, L., Turkmen, C., et al. (2024). Chronos: Learning the Language of Time Series. *Transactions on Machine Learning Research*. [논문](https://arxiv.org/abs/2403.07815).
+[^musicgen]: Copet, J., Kreuk, F., Gat, I., et al. (2023). Simple and Controllable Music Generation. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2306.05284).
+[^molt5]: Edwards, C., Lai, T., Ros, K., et al. (2022). Translation between Molecules and Natural Language. *Conference on Empirical Methods in Natural Language Processing*. [논문](https://arxiv.org/abs/2204.11817).
