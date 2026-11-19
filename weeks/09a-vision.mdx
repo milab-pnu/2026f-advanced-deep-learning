@@ -488,9 +488,24 @@ Frame마다 visual token이 256개라면 30 frame은 7,680개다.
 둘째, frame의 순서뿐 아니라 실제 시간 간격도 의미를 가진다.
 연속된 두 frame이 0.1초 간격인지 10초 간격인지에 따라 같은 위치 변화도 다른 속도를 뜻한다.
 초기 모델은 frame의 순서만 위치 정보로 알려 주었다.[^videollama]
-이후 모델은 `Second{3.0}` 같은 시각을 텍스트 token으로 frame 옆에 넣는 방식들을 채택한다.[^timemarker]
+Qwen2-VL의 M-RoPE(multimodal rotary position embedding)도 마찬가지다.[^qwen2vl]
+M-RoPE는 위치 번호를 시간·높이·너비 세 성분으로 나눈다.
+텍스트는 세 성분에 같은 번호를 써서 보통의 1D RoPE와 같아진다.
+이미지는 시간 성분을 고정하고, patch의 행과 열 위치를 높이와 너비 성분에 준다.
+비디오는 frame마다 시간 성분이 하나씩 늘어난다.
+
+<Figure src="https://arxiv.org/html/2409.12191v2/images/mrope.png" alt="M-RoPE의 위치 번호. 왼쪽에 시바견 사진 frame 세 장이 시간 축을 따라 겹쳐 있고, 각 frame은 3행 4열의 patch로 나뉜다. 첫 frame의 patch에는 (0, 0, 0)부터 (0, 2, 3)까지, 둘째 frame에는 (1, 0, 0)부터, 셋째 frame에는 (2, 0, 0)부터 (시간, 높이, 너비) 번호가 붙는다. 오른쪽의 문장 This video features a dog, specifically a Shiba의 token에는 (4, 4, 4), (5, 5, 5)처럼 세 성분이 같은 번호가 이어진다." caption="M-RoPE의 위치 번호 (시간, 높이, 너비). Frame이 바뀔 때마다 시간 성분이 1씩 늘고, 한 frame 안의 patch는 높이·너비 성분으로 구분된다. 뒤따르는 텍스트 token은 세 성분에 같은 번호를 받는다." source="Wang et al. (2024), Figure 3" wide />
+
+여기서 시간 성분은 frame의 순번이다.
+그래서 frame을 0.5초 간격으로 뽑든 2초 간격으로 뽑든, 이웃한 두 frame의 시간 번호는 똑같이 1 차이가 난다.
+이 문제를 푸는 방법은 두 갈래로 나뉜다.
+
+한 갈래는 `Second{3.0}` 같은 시각을 텍스트 token으로 frame 옆에 넣는 것이다.[^timemarker]
 
 <Figure src="https://arxiv.org/html/2411.18211v1/framework.png" alt="비디오 입력 경로의 예. 아래에서 뽑은 비디오 frame들이 vision encoder와 projector를 거쳐 frame마다 visual token 묶음이 되고, adaptive token merge가 각 묶음의 token 수를 줄인다. 줄어든 visual token 묶음 사이사이에는 Second{0.0}부터 Second{8.0}까지 각 frame의 시각을 나타내는 분홍색 temporal separator token이 들어간다. 이 sequence와 질문 What are the colors of the two teams' jerseys?가 LLM에 들어가 답 Red and white를 생성한다. 오른쪽 아래에는 비디오와 함께 여러 이미지, 단일 이미지 데이터로 함께 학습한다는 표시가 있다." caption="비디오 입력 경로의 예. Frame마다 만든 visual token을 줄인 뒤, 각 frame 앞에 그 시각을 나타내는 token(Second{0.0} 등)을 넣어 LLM에 전달한다." source="Chen et al. (2024), Figure 3" wide />
+
+다른 갈래는 위치 번호 자체를 실제 시각에 맞추는 것이다.
+Qwen2.5-VL은 M-RoPE의 시간 성분을 실제 시각에 맞춰, 시간 번호 사이의 간격이 실제 시간 간격을 나타내게 했다.[^qwen25vl]
 
 ### 6-2. 비디오 이해의 평가
 
