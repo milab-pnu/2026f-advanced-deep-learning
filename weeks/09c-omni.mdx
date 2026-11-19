@@ -14,30 +14,55 @@ Omni-modal large language model(Omni-modal LLM)은 여러 종류의 입력을 �
 ### 1-1. 공통 표현 공간
 
 CLIP과 CLAP처럼 두 modality를 쌍으로 정렬하는 방식을 여러 modality로 넓히면, modality 쌍마다 대응 자료가 필요하다.
-ImageBind는 이미지를 공통 연결점으로 삼아 이 문제를 푼다.[^imagebind]
-이미지와 텍스트가 이미 정렬된 공간에서 출발해, audio·깊이·열영상 같은 다른 modality의 encoder를 각각 대응 이미지의 표현과 가까워지도록 학습한다.
-그러면 짖는 소리와 “개가 짖는다”라는 텍스트의 쌍을 직접 보지 않았더라도, 두 표현이 개 사진을 거쳐 가까워질 수 있다.
+ImageBind는 **이미지를 공통 연결점으로 삼아** 이 문제를 푼다.[^imagebind]
+학습은 CLIP과 같은 contrastive 학습이다.
+이미지와 텍스트의 encoder는 이미 정렬된 CLIP 계열 모델을 그대로 고정한다.
+Audio·깊이·열영상 같은 다른 modality는 웹 비디오의 화면과 소리, 깊이 센서의 사진과 깊이 지도처럼 **이미지와 자연스럽게 짝지어진 자료**만 쓴다.
+학습하는 것은 이 modality들의 encoder뿐이다.
+각 encoder는 짝지어진 이미지의 표현과는 가까워지고, 짝이 아닌 이미지의 표현과는 멀어지도록 학습한다.
+
+<Callout type="example">
+2차원 표현을 쓰는 가상의 예로 audio encoder의 학습을 따라가 보자.
+고정된 CLIP 공간에서 개 사진은 (0.9, 0.1), “개”라는 텍스트는 (0.8, 0.2)에 있어 서로 가깝다.
+자동차 사진은 (0.1, 0.9), “자동차”라는 텍스트는 (0.2, 0.8)에 있다.
+학습 자료는 웹 비디오에서 얻은 (개가 나오는 화면, 짖는 소리)와 (자동차가 나오는 화면, 엔진 소리)의 두 쌍뿐이고, 텍스트는 없다.
+학습 전의 audio encoder는 짖는 소리를 (0.5, 0.5)처럼 아무 곳에나 놓는다.
+학습은 짖는 소리의 표현을 짝인 개 화면 쪽으로 당기고, 짝이 아닌 자동차 화면에서는 밀어낸다.
+그러면 짖는 소리의 표현은 예를 들어 (0.85, 0.15) 근처로 옮겨 간다.
+이제 짖는 소리를 “개”와 “자동차” 두 텍스트와 비교하면 “개” 쪽이 훨씬 가깝다.
+Audio와 텍스트를 짝지어 보여 준 적이 없는데도, 이미지를 거쳐 소리를 텍스트로 분류할 수 있게 된 것이다.
+</Callout>
+
 ImageBind 원논문은 이처럼 직접 학습하지 않은 조합에서 나타나는 정렬을 emergent alignment라 부른다.
-다만 공통 공간은 표현의 유사도를 비교하게 해 줄 뿐, 시간 관계를 추론하거나 문장으로 답하는 기능까지 주지는 않는다.
+
+<Figure src="https://arxiv.org/html/2305.05665v2/v4_wide.png" alt="ImageBind 개요. 왼쪽부터 다섯 가지 자료가 있다. 웹 이미지–텍스트(풀밭의 양 사진과 Sheep basking in the sun 문장), 깊이 센서 자료(부엌 사진과 깊이 지도), 웹 비디오(서핑 영상과 소리), 열화상 자료(이미지와 열화상), 1인칭 비디오(설거지 영상과 IMU)다. 오른쪽 도식은 가운데의 이미지를 텍스트, 깊이, 열화상, 비디오, audio, IMU와 실선(naturally aligned)으로 잇고, 이미지 외의 modality끼리는 점선(emergent alignment)으로 잇는다." caption="ImageBind의 학습 자료와 정렬 구조. 각 modality는 이미지와 자연스럽게 짝지어진 자료(실선)로만 학습하고, 직접 짝지은 적 없는 modality끼리의 정렬(점선)은 이미지를 거쳐 생긴다." source="Girdhar et al. (2023), Figure 2" wide />
 
 ### 1-2. Modality별 경로
 
-질문에 답하려면 LLM이 각 modality의 표현을 읽어야 한다.
-초기 audio-visual 모델인 Video-LLaMA는 영상과 audio에 경로를 따로 두고, 경로마다 Q-Former로 frame이나 소리 구간의 정보를 정해진 수의 벡터로 요약해 LLM에 넣는다.[^videollama]
-Audio encoder로는 ImageBind를 쓴다.
+질문에 답하려면 표현을 비교하는 데서 그치지 않고, LLM이 각 modality의 표현을 읽어야 한다.
+초기 audio-visual 모델인 Video-LLaMA는 영상과 audio에 경로를 하나씩 둔다.[^videollama]
+영상 경로는 영상에서 frame $N$장을 뽑아 frame마다 feature를 만든다.
+Audio 경로는 같은 영상에서 2초짜리 소리 구간 $M$개를 고르게 뽑아 구간마다 feature를 만든다.
+$N$과 $M$은 따로 정해지므로, 같은 영상이라도 영상 feature와 audio feature의 개수가 다를 수 있다.
+Audio encoder로는 ImageBind를 쓰므로, audio feature는 처음부터 이미지와 같은 공간에 놓인다.
+각 경로는 feature에 경로 안의 순서를 나타내는 위치 embedding을 더한다.
+그다음 경로마다 Q-Former가 이 feature들을 정해진 수의 벡터로 요약하고, 요약된 벡터가 LLM에 들어간다.
+Q-Former는 학습 가능한 query 벡터들이 cross-attention으로 입력 feature를 섞어, 입력 개수와 상관없이 query 수만큼의 벡터를 내는 모듈이다.
 
-<Figure src="https://arxiv.org/html/2306.02858v4/video_llama_architecture_v7.png" alt="Video-LLaMA 구조. 왼쪽 vision-language branch에서는 고정된 visual encoder가 비디오 frame마다 feature를 내고, 시간 위치 embedding을 더한 뒤 Video Q-Former와 선형층을 거쳐 LLM으로 들어간다. 오른쪽 audio-language branch에서는 고정된 audio encoder가 소리 구간마다 feature를 내고, 시간 위치를 더한 뒤 Audio Q-Former와 선형층을 거친다. 맨 위의 LLM은 고정되어 있고 두 branch의 출력과 텍스트 지시를 받아 설명을 생성한다." caption="Video-LLaMA의 두 경로. 눈꽃 표시는 고정된 모델, 불꽃 표시는 학습하는 모듈이다. 영상과 audio가 각각 Q-Former로 요약되어 LLM에 들어가며, 두 경로는 LLM 안에서 처음 만난다." source="Zhang et al. (2023), Figure 1 · CC BY 4.0" />
+<Figure src="https://arxiv.org/html/2306.02858v4/video_llama_architecture_v7.png" alt="Video-LLaMA 구조. 왼쪽 vision-language branch에서는 고정된 visual encoder가 비디오 frame마다 feature를 내고, 시간 위치 embedding을 더한 뒤 Video Q-Former와 선형층을 거쳐 LLM으로 들어간다. 오른쪽 audio-language branch에서는 고정된 audio encoder가 소리 구간마다 feature를 내고, 시간 위치를 더한 뒤 Audio Q-Former와 선형층을 거친다. 맨 위의 LLM은 고정되어 있고 두 branch의 출력과 텍스트 지시를 받아 설명을 생성한다." caption="Video-LLaMA의 두 경로. 눈꽃 표시는 고정된 모델, 불꽃 표시는 학습하는 모듈이다. 영상과 audio가 각각 Q-Former로 요약되어 LLM에 들어가며, 두 경로는 LLM 안에서 처음 만난다." source="Zhang et al. (2023), Figure 1" wide />
 
-이 구조에서 영상과 audio는 각자 고정 개수의 벡터로 요약된 뒤 LLM 안에서야 처음 만난다.
-그래서 두 신호 사이의 세밀한 시간 관계가 LLM에 충분히 전달되지 않을 수 있다.
+이 구조에서 영상과 audio는 각자 요약된 뒤 LLM 안에서야 처음 만나고, 그 과정에서 두 신호의 시간 관계가 흐려진다.
+첫째, Q-Former의 출력 벡터 하나하나는 경로 안의 여러 frame이나 구간을 섞어 만든 요약이다.
+그래서 특정 순간의 화면이나 소리에 해당하는 벡터가 따로 남지 않는다.
+둘째, 두 경로는 위치 embedding을 각자 매긴다.
+영상의 위치 번호는 frame의 순번이고 audio의 위치 번호는 2초 구간의 순번이므로, 같은 번호가 같은 시각을 뜻하지 않는다.
+결국 LLM이 받는 것은 영상 요약 벡터의 묶음과 audio 요약 벡터의 묶음이 따로 놓인 sequence이고, 두 묶음 사이에는 공통된 시간 기준이 없다.
 
 ## 2. 영상과 소리의 시간 정렬
 
 ### 2-1. 같은 순간의 두 신호
 
-두 사람이 차례로 말하는 영상에서 “누가 박수가 들릴 때 말했는가?”를 묻는다고 하자.
-모델은 박수 소리 주변의 frame에서 입의 움직임을 보고 음성과 대조해야 하므로, 두 신호에서 같은 순간을 찾을 수 있어야 한다.
-그런데 영상과 audio는 보통 서로 다른 간격으로 뽑힌다.
+영상과 audio는 보통 서로 다른 간격으로 뽑힌다.
 예를 들어 0초와 1초에 영상 frame을 뽑고 audio를 0.5초 구간으로 나누면, 0.7초의 박수는 두 번째 audio 구간에 들어가지만 그 순간의 화면은 입력에 없다.
 
 <figure class="lecture-figure" aria-label="0초와 1초에 영상 frame을 뽑고 audio를 0초부터 0.5초까지와 0.5초부터 1초까지 두 구간으로 나눈 가상 예시. 0.7초 박수는 두 번째 audio 구간에 있지만 같은 시각의 영상 frame은 없다.">
