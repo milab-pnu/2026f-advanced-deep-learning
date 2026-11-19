@@ -561,19 +561,17 @@ SALMONN 원논문은 모델이 학습에서 자주 본 음성 인식이나 소�
 
 ## 5. Audio tokenizer
 
-Discrete token이 음성 생성의 출력에 널리 쓰이는 까닭은 연속값을 출력하던 기존 방식의 문제에 있다.
 초기 신경망 TTS는 Mel spectrogram을 frame마다 연속값으로 회귀해 예측하고, vocoder로 파형을 만들었다.
-그런데 같은 문장도 빠르게 또는 느리게, 높은 목소리로 또는 낮은 목소리로 읽을 수 있어서, 정답 소리가 하나로 정해지지 않는다.
-Mel spectrogram을 MSE(mean squared error) 손실로 맞히면, 이 손실을 가장 작게 만드는 출력은 가능한 정답들의 평균이다.
-예를 들어 같은 음절을 높은 목소리로 읽은 녹음과 낮은 목소리로 읽은 녹음이 섞여 있으면, 두 spectrogram을 반씩 섞은 출력이 손실을 가장 작게 만든다.
-그 출력은 어느 녹음과도 닮지 않은 흐린 소리가 된다.
+AudioLM과 VALL-E는 음성을 discrete token으로 바꾸고, **음성 생성을 텍스트 LLM과 같은 다음 token 예측으로 다룬다.**[^audiolm][^valle]
+Discrete token을 쓰면 다음 세 가지가 가능해진다.
 
-이 문제를 피하는 한 방법은 출력을 discrete token으로 바꾸는 것이다.
-Softmax가 여러 후보에 확률을 나눠 주므로, 모델은 그 확률에 따라 하나를 뽑아(sampling) 한 가지 또렷한 소리를 낼 수 있다.
-Flow matching처럼 noise에서 출발해 조건에 맞는 출력으로 조금씩 바꿔 가는 생성 모델도 연속값의 분포 자체를 배우므로, 연속값을 내면서 이 문제를 피한다.
+- **LLM의 방법을 그대로 쓴다**: 구조와 loss가 텍스트 LLM과 같으므로, 큰 데이터로 학습하고 prompt 뒤를 이어 생성하는 방법을 음성에도 쓸 수 있다.
+- **텍스트와 한 모델에서 다룬다**: Audio token을 텍스트 어휘 뒤에 붙이면, 한 언어 모델이 텍스트와 음성을 함께 입력받고 출력할 수 있다.
+- **여러 정답 가운데 하나를 낸다**: 같은 문장도 여러 높이와 속도로 읽을 수 있어서 정답 소리는 하나가 아니다.
+  연속값을 MSE(mean squared error)로 회귀하는 모델은 가능한 정답들의 평균에 가까운 흐린 출력을 내기 쉽다.[^oversmooth]
+  Softmax는 후보마다 확률을 내고 모델은 그 가운데 하나를 뽑으며(sampling), 뽑은 token이 다음 예측의 입력이 되므로 뒤의 token도 그에 맞게 이어진다.
 
-Discrete token을 쓴 초기 모델인 WaveNet은 sample 값을 256단계로 줄인 뒤, 앞선 sample들을 보고 다음 sample 값을 softmax로 고르는 방식으로 waveform을 생성했다.[^wavenet]
-하지만 16 kHz 음성은 1초에 sample이 16,000개이므로, sample 단위 token은 언어 모델이 다루기에 너무 길다.
+다만 waveform의 sample을 그대로 token으로 삼으면, 16 kHz 음성은 1초에 token이 16,000개여서 언어 모델이 다루기에 너무 길다.
 그래서 짧은 구간을 묶어 하나의 시간 위치로 만드는 neural audio codec이 쓰인다.
 
 ### 5-1. Neural audio codec
@@ -581,106 +579,123 @@ Discrete token을 쓴 초기 모델인 WaveNet은 sample 값을 256단계로 줄
 Neural audio codec은 waveform을 짧은 token sequence로 압축하고, 그 token으로 waveform을 복원하는 모델이다.[^encodec]
 
 1. **Encoder**: 가까운 sample들을 묶어, waveform을 시간 해상도가 낮은 벡터 sequence로 바꾼다.
-2. **양자화**: 각 벡터를 가장 가까운 codebook 벡터로 바꾸고 그 번호를 기록한다. 이 번호가 codec token이다.
-3. **Decoder**: 번호가 가리키는 codebook 벡터들로 waveform을 복원한다.
+2. **Quantize**: 각 벡터에 가장 가까운 codebook 벡터를 찾아 그 번호를 기록한다. 이 번호가 codec token이다.
+3. **Dequantize**: 번호를 그 번호의 codebook 벡터로 되돌린다. 이 벡터는 encoder가 낸 벡터와 조금 다르다.
+4. **Decoder**: codebook 벡터의 sequence로 waveform을 복원한다.
 
 <figure>
-<svg viewBox="0 0 720 132" role="img" aria-label="Neural audio codec의 세 단계. 왼쪽의 waveform이 encoder를 거쳐 시간 해상도가 낮은 벡터 sequence가 되고, 양자화가 각 벡터를 codebook 벡터의 번호 12, 7, 301, 45로 바꾼다. 이 번호들이 codec token이다. Decoder는 번호가 가리키는 codebook 벡터들로 오른쪽의 waveform을 복원한다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<svg viewBox="0 0 640 240" role="img" aria-label="Neural audio codec의 두 과정. 위쪽 압축 줄에서는 waveform이 encoder를 거쳐 벡터 sequence가 되고, 양자화가 각 벡터를 가장 가까운 codebook 벡터의 번호 12, 7, 301, 45로 바꾼다. 이 번호들이 codec token이다. 점선 화살표가 codec token만 아래쪽 복원 줄로 넘긴다. 아래쪽 복원 줄에서는 dequantize가 번호를 그 번호의 codebook 벡터로 되돌리고, decoder가 이 codebook 벡터 sequence로 waveform을 복원한다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
 <defs><marker id="codec-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#64748b"/></marker></defs>
-<rect x="8" y="34" width="84" height="48" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
-<path d="M14 58 l6 -9 l6 18 l6 -22 l6 26 l6 -17 l6 11 l6 -8 l6 6 l6 -4 l6 2 l6 -3 l6 0" fill="none" stroke="#2a78d6" stroke-width="1.6"/>
-<text x="50" y="100" font-size="13" text-anchor="middle" fill="#0f172a">waveform</text>
-<rect x="116" y="38" width="84" height="40" rx="8" fill="#e2e8f0" stroke="#0f172a"/><text x="158" y="63" font-size="14" text-anchor="middle" font-weight="600" fill="#0f172a">encoder</text>
-<rect x="226" y="38" width="10" height="40" rx="2" fill="#eb6834"/><rect x="242" y="38" width="10" height="40" rx="2" fill="#eb6834"/><rect x="258" y="38" width="10" height="40" rx="2" fill="#eb6834"/><rect x="274" y="38" width="10" height="40" rx="2" fill="#eb6834"/>
-<text x="255" y="100" font-size="13" text-anchor="middle" fill="#0f172a">벡터 sequence</text>
-<rect x="310" y="38" width="84" height="40" rx="8" fill="#ffffff" stroke="#16a34a"/><text x="352" y="63" font-size="14" text-anchor="middle" font-weight="600" fill="#0f172a">양자화</text>
-<text x="352" y="100" font-size="13" text-anchor="middle" fill="#0f172a">codebook</text>
-<rect x="420" y="44" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="435" y="63" font-size="13" text-anchor="middle" fill="#0f172a">12</text>
-<rect x="454" y="44" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="469" y="63" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
-<rect x="488" y="44" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="503" y="63" font-size="13" text-anchor="middle" fill="#0f172a">301</text>
-<rect x="522" y="44" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="537" y="63" font-size="13" text-anchor="middle" fill="#0f172a">45</text>
-<text x="486" y="100" font-size="13" text-anchor="middle" fill="#0f172a">codec token</text>
-<rect x="578" y="38" width="60" height="40" rx="8" fill="#e2e8f0" stroke="#0f172a"/><text x="608" y="63" font-size="14" text-anchor="middle" font-weight="600" fill="#0f172a">decoder</text>
-<rect x="656" y="34" width="58" height="48" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
-<path d="M661 58 l4 -9 l4 18 l4 -22 l4 26 l4 -17 l4 11 l4 -8 l4 6 l4 -4 l4 2 l4 -3 l4 0" fill="none" stroke="#2a78d6" stroke-width="1.6"/>
-<text x="672" y="100" font-size="13" text-anchor="middle" fill="#0f172a">복원한 waveform</text>
-<path d="M92 58 H114" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
-<path d="M200 58 H223" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
-<path d="M286 58 H308" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
-<path d="M394 58 H417" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
-<path d="M554 58 H576" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
-<path d="M638 58 H654" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
+<text x="12" y="49" font-size="14" font-weight="600" fill="#0f172a">압축</text>
+<rect x="70" y="22" width="84" height="44" rx="6" fill="#f8fafc" stroke="#94a3b8"/><path d="M76 44 l6 -9 l6 18 l6 -22 l6 26 l6 -17 l6 11 l6 -8 l6 6 l6 -4 l6 2 l6 -3 l6 0" fill="none" stroke="#2a78d6" stroke-width="1.6"/><text x="112" y="88" font-size="13" text-anchor="middle" fill="#0f172a">waveform</text>
+<rect x="184" y="22" width="84" height="44" rx="8" fill="#e2e8f0" stroke="#0f172a"/><text x="226" y="49" font-size="14" text-anchor="middle" font-weight="600" fill="#0f172a">encoder</text>
+<rect x="300" y="22" width="10" height="44" rx="2" fill="#eb6834"/><rect x="316" y="22" width="10" height="44" rx="2" fill="#eb6834"/><rect x="332" y="22" width="10" height="44" rx="2" fill="#eb6834"/><rect x="348" y="22" width="10" height="44" rx="2" fill="#eb6834"/><text x="329" y="88" font-size="13" text-anchor="middle" fill="#0f172a">벡터 sequence</text>
+<rect x="390" y="22" width="84" height="44" rx="8" fill="#ffffff" stroke="#16a34a"/><text x="432" y="49" font-size="14" text-anchor="middle" font-weight="600" fill="#0f172a">Quantize</text>
+<rect x="498" y="30" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="513" y="49" font-size="13" text-anchor="middle" fill="#0f172a">12</text><rect x="532" y="30" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="547" y="49" font-size="13" text-anchor="middle" fill="#0f172a">7</text><rect x="566" y="30" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="581" y="49" font-size="13" text-anchor="middle" fill="#0f172a">301</text><rect x="600" y="30" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="615" y="49" font-size="13" text-anchor="middle" fill="#0f172a">45</text><text x="564" y="88" font-size="13" text-anchor="middle" fill="#0f172a">codec token</text>
+<path d="M154 44 H182" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
+<path d="M268 44 H297" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
+<path d="M360 44 H388" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
+<path d="M474 44 H495" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
+<path d="M564 96 V114 H136 V152" fill="none" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#codec-arrow)"/>
+<text x="12" y="175" font-size="14" font-weight="600" fill="#0f172a">복원</text>
+<rect x="70" y="156" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="85" y="175" font-size="13" text-anchor="middle" fill="#0f172a">12</text><rect x="104" y="156" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="119" y="175" font-size="13" text-anchor="middle" fill="#0f172a">7</text><rect x="138" y="156" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="153" y="175" font-size="13" text-anchor="middle" fill="#0f172a">301</text><rect x="172" y="156" width="30" height="28" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="187" y="175" font-size="13" text-anchor="middle" fill="#0f172a">45</text><text x="136" y="214" font-size="13" text-anchor="middle" fill="#0f172a">codec token</text>
+<rect x="230" y="148" width="84" height="44" rx="8" fill="#ffffff" stroke="#16a34a"/><text x="272" y="175" font-size="14" text-anchor="middle" font-weight="600" fill="#0f172a">Dequantize</text>
+<rect x="346" y="148" width="10" height="44" rx="2" fill="#16a34a"/><rect x="362" y="148" width="10" height="44" rx="2" fill="#16a34a"/><rect x="378" y="148" width="10" height="44" rx="2" fill="#16a34a"/><rect x="394" y="148" width="10" height="44" rx="2" fill="#16a34a"/><text x="375" y="214" font-size="13" text-anchor="middle" fill="#0f172a">codebook 벡터</text>
+<rect x="436" y="148" width="84" height="44" rx="8" fill="#e2e8f0" stroke="#0f172a"/><text x="478" y="175" font-size="14" text-anchor="middle" font-weight="600" fill="#0f172a">decoder</text>
+<rect x="548" y="148" width="84" height="44" rx="6" fill="#f8fafc" stroke="#94a3b8"/><path d="M554 170 l6 -9 l6 18 l6 -22 l6 26 l6 -17 l6 11 l6 -8 l6 6 l6 -4 l6 2 l6 -3 l6 0" fill="none" stroke="#2a78d6" stroke-width="1.6"/><text x="590" y="214" font-size="13" text-anchor="middle" fill="#0f172a">복원한 waveform</text>
+<path d="M204 170 H228" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
+<path d="M314 170 H343" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
+<path d="M406 170 H434" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
+<path d="M520 170 H546" stroke="#64748b" stroke-width="1.5" marker-end="url(#codec-arrow)"/>
 </svg>
-<figcaption>Neural audio codec의 구조. 번호는 설명을 위해 임의로 넣었다.</figcaption>
+<figcaption>Neural audio codec의 압축과 복원.</figcaption>
 </figure>
 
+Decoder는 encoder를 거꾸로 뒤집은 구조다.
+EnCodec의 encoder는 convolution으로 길이를 줄여 24 kHz 음성에서 초당 75개의 벡터를 내고, decoder는 길이를 늘리는 convolution(transposed convolution)으로 waveform을 다시 만든다.[^encodec]
+손실 압축이어서, 복원한 waveform은 원래 waveform과 똑같지 않다.
 Encoder, codebook, decoder는 복원한 소리가 원래 소리와 비슷해지도록 라벨 없이 함께 학습한다.
-wav2vec 2.0의 codebook은 가린 자리의 정답을 만드는 데만 쓰였고, 그 정답으로 소리를 복원할 수는 없었다.
-Codec token은 decoder가 소리로 되돌릴 수 있으므로 음성 생성의 출력으로 쓸 수 있다.
-음성을 생성할 때는 생성 모델이 codec token을 예측하고, codec decoder가 token을 파형으로 바꾼다.
+
+Codec token은 decoder가 소리로 되돌릴 수 있어서 음성 생성의 출력으로 쓸 수 있다.
+음성을 생성할 때는 생성 모델이 codec token을 예측하고, 그림의 복원 과정이 그 token을 파형으로 바꾼다.
 Codec은 녹음을 복원하는 법만 배우므로, 질문에 맞는 응답의 token을 만드는 능력은 생성 모델이 따로 배워야 한다.
 
 ### 5-2. Residual vector quantization
 
-Codebook 하나로 음성을 충분히 복원하려면 codebook이 감당할 수 없을 만큼 커진다.
-Residual vector quantization(RVQ)은 작은 codebook 여러 개를 이어 쓴다.[^soundstream]
-RVQ는 첫 codebook에서 가장 가까운 벡터를 고르고, 원래 벡터에서 그 선택을 뺀 잔차를 두 번째 codebook으로 다시 근사한다.
-이 과정을 반복해 고른 벡터들을 더하면 원래 벡터에 가까워진다.
-예를 들어 실제 feature가 1.7이고 첫 codebook이 $\{0, 1, 2\}$이면 2를 고르고, 두 번째 codebook이 $\{-0.5, 0, 0.5\}$이면 잔차 −0.3에 가까운 −0.5를 골라 복원값은 1.5가 된다.
+Codebook 하나로 음성을 충분히 복원하려면 codebook이 감당할 수 없을 만큼 커진다.[^soundstream]
+Residual vector quantization(RVQ)은 작은 codebook 여러 개를 차례로 써서, 앞 codebook이 남긴 차이를 다음 codebook이 다시 근사한다.
+
+1. 첫 codebook에서 원래 벡터에 가장 가까운 벡터를 고른다.
+2. 원래 벡터에서 고른 벡터를 뺀 잔차(residual)를 구한다.
+3. 다음 codebook에서 잔차에 가장 가까운 벡터를 고르고, 남은 잔차로 같은 일을 반복한다.
+
+고른 벡터들을 모두 더한 것이 복원값이다.
+예를 들어 feature가 1.7이고 첫 codebook이 $\{0, 1, 2\}$이면 2를 고르고 잔차는 −0.3이다.
+둘째 codebook이 $\{-0.5, 0, 0.5\}$이면 −0.5를 골라, 복원값은 $2 + (-0.5) = 1.5$가 된다.
 
 <figure>
-<svg viewBox="0 0 600 352" role="img" aria-label="RVQ의 1차원 가상 예. 1단계에서 feature 1.7은 첫 codebook의 값 0, 1, 2 가운데 가장 가까운 2(번호 2)로 근사되고 남은 차이는 −0.3이다. 2단계에서 남은 차이 −0.3은 두 번째 codebook의 값 −0.5, 0, 0.5 가운데 가장 가까운 −0.5(번호 0)로 근사되어 복원값은 1.5, 남은 차이는 0.2가 된다. 3단계 codebook은 0.2를 다시 근사한다. 아래쪽은 시간 위치마다 codebook 수만큼 번호가 나와 audio token이 시간 × codebook의 배열이 되는 모습이다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
-<text x="13" y="22" font-size="15" font-weight="600" fill="#0f172a">① 남은 차이를 다음 codebook이 다시 근사한다</text>
-<text x="13" y="50" font-size="14" font-weight="600" fill="#0f172a">1단계</text>
-<path d="M40 80 H330" stroke="#94a3b8"/>
-<circle cx="88" cy="80" r="6" fill="#2a78d6"/><circle cx="185" cy="80" r="6" fill="#2a78d6"/><circle cx="282" cy="80" r="6" fill="#2a78d6"/>
-<text x="88" y="102" font-size="13" text-anchor="middle" fill="#2a78d6">0</text><text x="185" y="102" font-size="13" text-anchor="middle" fill="#2a78d6">1</text><text x="282" y="102" font-size="13" text-anchor="middle" fill="#2a78d6">2</text>
-<circle cx="253" cy="80" r="5" fill="#ffffff" stroke="#eb6834" stroke-width="2"/><text x="253" y="66" font-size="13" text-anchor="middle" font-weight="600" fill="#eb6834">1.7</text>
-<path d="M258 80 H275" stroke="#eb6834" stroke-width="1.5" stroke-dasharray="3 3"/>
-<text x="350" y="68" font-size="14" fill="#0f172a">1.7 → 가장 가까운 <tspan fill="#2a78d6" font-weight="600">2</tspan> (번호 2)</text>
-<text x="350" y="90" font-size="13" fill="#64748b">남은 차이 = 1.7 − 2 = −0.3</text>
-<text x="13" y="130" font-size="14" font-weight="600" fill="#0f172a">2단계</text>
-<path d="M40 160 H330" stroke="#94a3b8"/>
-<circle cx="112" cy="160" r="6" fill="#2a78d6"/><circle cx="185" cy="160" r="6" fill="#2a78d6"/><circle cx="258" cy="160" r="6" fill="#2a78d6"/>
-<text x="112" y="182" font-size="13" text-anchor="middle" fill="#2a78d6">−0.5</text><text x="185" y="182" font-size="13" text-anchor="middle" fill="#2a78d6">0</text><text x="258" y="182" font-size="13" text-anchor="middle" fill="#2a78d6">0.5</text>
-<circle cx="141" cy="160" r="5" fill="#ffffff" stroke="#eb6834" stroke-width="2"/><text x="141" y="146" font-size="13" text-anchor="middle" font-weight="600" fill="#eb6834">−0.3</text>
-<path d="M136 160 H119" stroke="#eb6834" stroke-width="1.5" stroke-dasharray="3 3"/>
-<text x="350" y="148" font-size="14" fill="#0f172a">−0.3 → 가장 가까운 <tspan fill="#2a78d6" font-weight="600">−0.5</tspan> (번호 0)</text>
-<text x="350" y="170" font-size="13" fill="#64748b">복원값 = 2 + (−0.5) = 1.5, 남은 차이 0.2</text>
-<text x="13" y="212" font-size="13" fill="#64748b">3단계 codebook은 0.2를 다시 근사한다. 단계가 늘수록 복원값이 1.7에 가까워진다.</text>
-<text x="13" y="248" font-size="15" font-weight="600" fill="#0f172a">② 한 시간 위치에서 번호가 codebook 수만큼 나온다</text>
-<text x="160" y="272" font-size="13" text-anchor="middle" fill="#64748b">t₁</text><text x="216" y="272" font-size="13" text-anchor="middle" fill="#64748b">t₂</text><text x="272" y="272" font-size="13" text-anchor="middle" fill="#64748b">t₃</text><text x="328" y="272" font-size="13" text-anchor="middle" fill="#64748b">t₄</text>
-<text x="13" y="296" font-size="13" fill="#0f172a">codebook 1</text><text x="13" y="322" font-size="13" fill="#0f172a">codebook 2</text><text x="13" y="348" font-size="13" fill="#0f172a">codebook 3</text>
-<rect x="134" y="280" width="52" height="24" rx="4" fill="#e2e8f0" stroke="#0f172a"/><text x="160" y="297" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">2</text>
-<rect x="134" y="306" width="52" height="24" rx="4" fill="#e2e8f0" stroke="#0f172a"/><text x="160" y="323" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">0</text>
-<rect x="134" y="332" width="52" height="18" rx="4" fill="#e2e8f0" stroke="#0f172a"/><text x="160" y="346" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">…</text>
-<rect x="190" y="280" width="52" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="216" y="297" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
-<rect x="190" y="306" width="52" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="216" y="323" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
-<rect x="190" y="332" width="52" height="18" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="216" y="346" font-size="13" text-anchor="middle" fill="#0f172a">…</text>
-<rect x="246" y="280" width="52" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="272" y="297" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
-<rect x="246" y="306" width="52" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="272" y="323" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
-<rect x="246" y="332" width="52" height="18" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="272" y="346" font-size="13" text-anchor="middle" fill="#0f172a">…</text>
-<rect x="302" y="280" width="52" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="328" y="297" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
-<rect x="302" y="306" width="52" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="328" y="323" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
-<rect x="302" y="332" width="52" height="18" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="328" y="346" font-size="13" text-anchor="middle" fill="#0f172a">…</text>
-<text x="372" y="298" font-size="13" fill="#0f172a">t₁ 열의 (2, 0, …)이 위의 예다.</text>
-<text x="372" y="320" font-size="13" fill="#64748b">텍스트 token은 위치마다 번호 1개,</text>
-<text x="372" y="340" font-size="13" fill="#64748b">RVQ audio token은 codebook 수만큼.</text>
+<svg viewBox="0 0 640 366" role="img" aria-label="RVQ의 1차원 가상 예. 위쪽 첫 줄에서 feature 1.7은 codebook 1의 값 0, 1, 2 가운데 가장 가까운 2(번호 2)로 근사되고 잔차는 −0.3이다. 둘째 줄에서 잔차 −0.3은 codebook 2의 값 −0.5, 0, 0.5 가운데 가장 가까운 −0.5(번호 0)로 근사되어 복원값은 1.5, 잔차는 0.2가 된다. codebook 3은 0.2를 다시 근사한다. 아래쪽 표는 시간 위치 t₁부터 t₄까지 codebook 1, 2, 3의 번호가 하나씩 나와, audio token이 시간 × codebook의 배열이 되는 모습이다. t₁ 열의 번호 2와 0이 위의 예다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<text x="16" y="22" font-size="15" font-weight="600" fill="#0f172a">① 잔차를 다음 codebook이 다시 근사한다</text>
+<text x="16" y="75" font-size="13" fill="#0f172a">codebook 1</text>
+<path d="M120 70 H360" stroke="#94a3b8"/>
+<circle cx="140" cy="70" r="6" fill="#dbeafe" stroke="#2a78d6"/>
+<text x="140" y="94" font-size="13" text-anchor="middle" fill="#64748b">0</text>
+<circle cx="240" cy="70" r="6" fill="#dbeafe" stroke="#2a78d6"/>
+<text x="240" y="94" font-size="13" text-anchor="middle" fill="#64748b">1</text>
+<circle cx="340" cy="70" r="7" fill="#2a78d6"/>
+<text x="340" y="94" font-size="13" text-anchor="middle" font-weight="600" fill="#2a78d6">2</text>
+<path d="M316 70 H332" stroke="#eb6834" stroke-width="1.5" stroke-dasharray="3 3"/>
+<circle cx="310" cy="70" r="5" fill="#ffffff" stroke="#eb6834" stroke-width="2"/><text x="310" y="57" font-size="13" text-anchor="middle" font-weight="600" fill="#eb6834">1.7</text>
+<text x="392" y="66" font-size="13.5" fill="#0f172a">1.7 → 가장 가까운 <tspan fill="#2a78d6" font-weight="600">2</tspan> (번호 2)</text>
+<text x="392" y="87" font-size="13" fill="#64748b">잔차 = 1.7 − 2 = −0.3</text>
+<text x="16" y="151" font-size="13" fill="#0f172a">codebook 2</text>
+<path d="M120 146 H360" stroke="#94a3b8"/>
+<circle cx="140" cy="146" r="7" fill="#2a78d6"/>
+<text x="140" y="170" font-size="13" text-anchor="middle" font-weight="600" fill="#2a78d6">−0.5</text>
+<circle cx="240" cy="146" r="6" fill="#dbeafe" stroke="#2a78d6"/>
+<text x="240" y="170" font-size="13" text-anchor="middle" fill="#64748b">0</text>
+<circle cx="340" cy="146" r="6" fill="#dbeafe" stroke="#2a78d6"/>
+<text x="340" y="170" font-size="13" text-anchor="middle" fill="#64748b">0.5</text>
+<path d="M174 146 H148" stroke="#eb6834" stroke-width="1.5" stroke-dasharray="3 3"/>
+<circle cx="180" cy="146" r="5" fill="#ffffff" stroke="#eb6834" stroke-width="2"/><text x="180" y="133" font-size="13" text-anchor="middle" font-weight="600" fill="#eb6834">−0.3</text>
+<text x="392" y="142" font-size="13.5" fill="#0f172a">−0.3 → 가장 가까운 <tspan fill="#2a78d6" font-weight="600">−0.5</tspan> (번호 0)</text>
+<text x="392" y="163" font-size="13" fill="#64748b">복원값 = 2 + (−0.5) = 1.5, 잔차 0.2</text>
+<text x="16" y="204" font-size="13" fill="#64748b">codebook 3은 잔차 0.2를 다시 근사한다. Codebook을 더 쓸수록 복원값이 1.7에 가까워진다.</text>
+<text x="16" y="242" font-size="15" font-weight="600" fill="#0f172a">② 시간 위치마다 번호가 codebook 수만큼 나온다</text>
+<text x="148" y="266" font-size="13" text-anchor="middle" fill="#64748b">t₁</text>
+<text x="210" y="266" font-size="13" text-anchor="middle" fill="#64748b">t₂</text>
+<text x="272" y="266" font-size="13" text-anchor="middle" fill="#64748b">t₃</text>
+<text x="334" y="266" font-size="13" text-anchor="middle" fill="#64748b">t₄</text>
+<text x="16" y="293" font-size="13" fill="#0f172a">codebook 1</text>
+<rect x="120" y="276" width="56" height="24" rx="4" fill="#dbeafe" stroke="#2a78d6"/><text x="148" y="293" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">2</text>
+<rect x="182" y="276" width="56" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="210" y="293" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="244" y="276" width="56" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="272" y="293" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="306" y="276" width="56" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="334" y="293" font-size="13" text-anchor="middle" fill="#0f172a">0</text>
+<text x="16" y="321" font-size="13" fill="#0f172a">codebook 2</text>
+<rect x="120" y="304" width="56" height="24" rx="4" fill="#dbeafe" stroke="#2a78d6"/><text x="148" y="321" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">0</text>
+<rect x="182" y="304" width="56" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="210" y="321" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<rect x="244" y="304" width="56" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="272" y="321" font-size="13" text-anchor="middle" fill="#0f172a">1</text>
+<rect x="306" y="304" width="56" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="334" y="321" font-size="13" text-anchor="middle" fill="#0f172a">2</text>
+<text x="16" y="349" font-size="13" fill="#0f172a">codebook 3</text>
+<rect x="120" y="332" width="56" height="24" rx="4" fill="#dbeafe" stroke="#2a78d6"/><text x="148" y="349" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">…</text>
+<rect x="182" y="332" width="56" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="210" y="349" font-size="13" text-anchor="middle" fill="#0f172a">…</text>
+<rect x="244" y="332" width="56" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="272" y="349" font-size="13" text-anchor="middle" fill="#0f172a">…</text>
+<rect x="306" y="332" width="56" height="24" rx="4" fill="#f8fafc" stroke="#94a3b8"/><text x="334" y="349" font-size="13" text-anchor="middle" fill="#0f172a">…</text>
+<text x="392" y="293" font-size="13.5" fill="#0f172a">t₁ 열의 (2, 0, …)이 위의 예다.</text>
+<text x="392" y="321" font-size="13" fill="#64748b">텍스트 token은 위치마다 번호 1개,</text>
+<text x="392" y="341" font-size="13" fill="#64748b">RVQ token은 codebook 수만큼이다.</text>
 </svg>
-<figcaption>RVQ의 1차원 가상 예. 위는 본문의 1.7 예를 두 단계로 근사하는 과정이고, 아래는 그 결과 시간 위치마다 codebook 수만큼 번호가 나오는 모습이다. t₂~t₄ 열의 번호는 설명을 위해 임의로 넣었다.</figcaption>
+<figcaption>RVQ의 1차원 가상 예. 위는 본문의 1.7을 codebook 두 개로 근사하는 과정이고, 아래는 시간 위치마다 codebook 수만큼 번호가 나오는 모습이다.</figcaption>
 </figure>
 
-1,024개짜리 codebook 8개를 이어 쓰면 저장하는 벡터는 $8\times1024=8{,}192$개뿐이지만, frame마다 고를 수 있는 조합은 $1024^8=2^{80}$가지다.[^encodec]
-wav2vec 2.0이 320개짜리 codebook 두 개로 102,400가지 정답을 만든 것과 같은 원리다.
+1,024개짜리 codebook 8개를 이어 쓰면 저장하는 벡터는 $8\times1024=8{,}192$개뿐이지만, 시간 위치마다 고를 수 있는 조합은 $1024^8=2^{80}$가지다.[^soundstream]
+wav2vec 2.0이 320개짜리 codebook 두 개로 102,400가지 정답을 만든 것처럼, 여러 codebook에서 하나씩 고르면 조합의 수는 곱으로 늘어난다.
 **저장할 벡터는 덧셈으로 늘고 표현할 수 있는 조합은 곱셈으로 늘어나는 것이 RVQ의 핵심이다.**
-첫 codebook이 원래 벡터를 대략 근사하고 뒤의 codebook들은 남은 작은 차이를 채우므로, 뒤쪽 codebook을 덜 쓰면 bitrate(초당 쓰는 bit 수)는 낮아지고 소리는 거칠어진다.
+첫 codebook이 원래 벡터를 대략 근사하고 뒤의 codebook들은 남은 작은 차이를 채운다.
+그래서 codebook 개수를 줄이면 bitrate(초당 쓰는 bit 수)는 낮아지지만, 잔차가 더 많이 남아 복원한 소리가 원래 소리에서 멀어진다.
 
-<Callout type="example">
-초당 12.5개 frame을 내고 frame마다 codebook 8개의 ID를 내는 codec이라면, 앞의 10초 음성은 125개 시간 위치마다 ID가 8개씩 모두 1,000개의 codec token이 된다.
-</Callout>
-
-각 시간 위치에서 여러 codebook의 ID가 나오므로, codec token은 텍스트 token처럼 한 줄이 아니라 시간 × codebook의 배열이 된다.
-그래서 이 배열을 어떤 순서로 생성할지가 audio 생성 모델의 설계 문제가 된다.
+각 시간 위치에서 여러 codebook의 번호가 나오므로, codec token은 텍스트 token처럼 한 줄이 아니라 시간 × codebook 개수의 배열이 된다.
+그래서 codebook의 번호를 어떤 순서로 생성할지가 audio 생성 모델의 설계 문제가 된다.
 
 ### 5-3. Semantic token과 acoustic token
 
@@ -778,7 +793,7 @@ Kanana-o의 음성 생성 모델도 이 방식을 쓴다.[^lmspt-kanana]
 이때 모델은 시간 1의 둘째 codebook ID를 예측하면서, 앞 단계에서 이미 생성한 시간 1의 첫 codebook ID `3`을 참고할 수 있다.
 생성이 끝나면 모델은 늦춘 만큼 위치를 되돌려 `(3, 7)`과 `(5, 2)`를 각각 같은 시간 칸으로 다시 묶는다.
 시간 칸이 $T$개이고 codebook이 $K$개이면 생성 단계는 $T + K - 1$번이다.
-앞의 10초 예($T=125$, $K=8$)라면 132번으로, 한 줄로 펼칠 때의 $T \times K = 1{,}000$번보다 훨씬 적다.
+초당 12.5개의 시간 칸을 내는 codec으로 10초 음성을 codebook 8개로 나타내면($T=125$, $K=8$) 132번으로, 한 줄로 펼칠 때의 $T \times K = 1{,}000$번보다 훨씬 적다.
 
 ### 6-3. 이해와 생성의 결합
 
@@ -955,8 +970,8 @@ Full-Duplex-Bench는 사용자의 쉼을 기다리는지, 맞장구(backchannel)
 [^lmspt-kanana]: Kakao. (2026). 잘 말하는 AI를 넘어, 원하는 대로 말하는 AI로: Kanana-o 음성 생성 고도화 과정. *kakao tech*. [글](https://tech.kakao.com/posts/827).
 [^llamaomni]: Fang, Q., Guo, S., Zhou, Y., Ma, Z., Zhang, S., & Feng, Y. (2024). LLaMA-Omni: Seamless Speech Interaction with Large Language Models. *arXiv preprint arXiv:2409.06666*. [논문](https://arxiv.org/abs/2409.06666).
 [^naver-usdm]: Kim, H., et al. (2024). Paralinguistics-Aware Speech-Empowered Large Language Models for Natural Conversation. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2402.05706), [공개 구현](https://github.com/naver-ai/usdm).
+[^oversmooth]: Ren, Y., Tan, X., Qin, T., Zhao, Z., & Liu, T.-Y. (2022). Revisiting Over-Smoothness in Text to Speech. *Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics*. [논문](https://arxiv.org/abs/2202.13066).
 [^valle]: Wang, C., Chen, S., Wu, Y., Zhang, Z., et al. (2023). Neural Codec Language Models are Zero-Shot Text to Speech Synthesizers. *arXiv preprint arXiv:2301.02111*. [논문](https://arxiv.org/abs/2301.02111).
-[^wavenet]: van den Oord, A., Dieleman, S., Zen, H., et al. (2016). WaveNet: A Generative Model for Raw Audio. *arXiv preprint arXiv:1609.03499*. [논문](https://arxiv.org/abs/1609.03499).
 [^glm4voice]: Zeng, A., Du, Z., Liu, M., et al. (2024). GLM-4-Voice: Towards Intelligent and Human-Like End-to-End Spoken Chatbot. *arXiv preprint arXiv:2412.02612*. [논문](https://arxiv.org/abs/2412.02612).
 [^librispeech]: Panayotov, V., Chen, G., Povey, D., & Khudanpur, S. (2015). Librispeech: An ASR corpus based on public domain audio books. *ICASSP*. [데이터](https://www.openslr.org/12/).
 [^audiocaps]: Kim, C. D., Kim, B., Lee, H., & Kim, G. (2019). AudioCaps: Generating Captions for Audios in The Wild. *Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics*. [논문](https://aclanthology.org/N19-1011/).
