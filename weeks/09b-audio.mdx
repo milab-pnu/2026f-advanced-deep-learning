@@ -787,95 +787,78 @@ SpeechTokenizer는 codec 하나가 두 역할을 하도록, HuBERT를 teacher로
 
 ### 6-1. Codec 언어 모델과 TTS
 
-Codec이 음성을 token으로 바꾸고 다시 파형으로 복원할 수 있다면, 생성 모델은 입력 조건에 맞는 codec token을 예측해 음성을 만들 수 있다.
-TTS에서는 텍스트와 화자 조건을 주고, 모델이 그에 맞는 codec token들을 생성한다.
-Speech-to-speech에서는 모델이 사용자의 음성을 조건으로 응답 음성의 token을 생성한다.
+Codec은 이미 있는 녹음을 token으로 압축하고 복원한다.
+TTS에서는 읽을 문장만 있고 그 문장을 읽은 녹음은 아직 없으므로, **문장에 맞는 음성 token을 새로 예측하는 모델**이 필요하다.
+언어 모델이 그 token을 만들고, 음향을 복원하는 모델이 이를 waveform으로 바꾸면 문장을 소리로 읽을 수 있다.
+VALL-E와 CosyVoice는 모두 이 구성을 쓰지만, 언어 모델이 예측하는 token과 그 뒤의 복원 경로가 다르다.
 
-VALL-E는 TTS를 연속값 회귀 대신 codec token의 언어 모델링으로 다룬다.[^valle]
-VALL-E는 텍스트와 함께 처음 듣는 화자의 3초짜리 음성을 prompt로 받아, 그 목소리로 문장을 읽는 codec token을 생성한다.
-같은 입력에서도 sampling에 따라 다른 결과를 낸다고 보고한다.
-CosyVoice는 내용과 음향을 나눈다.
-CosyVoice의 언어 모델은 텍스트와 화자 embedding을 조건으로 내용 중심의 speech token을 예측한다.[^cosyvoice]
-이 speech token은 음성 인식 모델의 encoder 중간에 양자화를 넣어 얻는다.
-전사를 맞히도록 학습된 encoder에서 나오므로 발화 내용을 주로 담는다.
-그 뒤 flow matching 모델이 speech token과 화자 정보로 Mel spectrogram을 만들고, vocoder가 이를 파형으로 바꾼다.
+**VALL-E는 미리 학습된 EnCodec과, 음성 token을 예측하도록 학습하는 언어 모델을 결합한다.**[^valle]
+EnCodec의 encoder는 녹음을 codec token으로 바꾸고, decoder는 그 token을 waveform으로 복원한다.
+VALL-E는 이 변환을 이용해 약 6만 시간의 영어 음성에서 학습용 정답 token을 만든다.
+녹음의 전사는 음성 인식 모델로 얻고, 발음을 나타내는 음소(phoneme)의 sequence로 바꾼다.
+언어 모델은 이 음소 sequence를 조건으로, 같은 녹음에서 추출한 codec token을 맞히도록 학습한다.
+이때 EnCodec의 encoder와 decoder는 고정하고, neural codec language model만 학습한다.
 
-| 모델 | 입력과 중간 표현 | 출력 경로 |
-| --- | --- | --- |
-| VALL-E | 텍스트와 3초 음성 prompt → codec token 예측 | codec decoder → 파형 |
-| CosyVoice | 텍스트와 화자 embedding → speech token 예측 | flow matching → Mel spectrogram → vocoder → 파형 |
+학습을 마친 VALL-E로 “See you tomorrow.”를 특정 사람의 목소리로 읽게 한다고 하자.
+사용자는 **새로 읽을 문장, 그 사람의 3초짜리 참조 음성, 참조 음성의 전사**를 준다.
+참조 음성의 전사는 주어진 소리가 전체 텍스트의 어느 부분에 해당하는지 알려 준다.
+예를 들어 참조 음성에서 “Hello.”라고 말했다면, 텍스트 조건은 “Hello. See you tomorrow.”를 음소로 바꾼 sequence이고, 음성 조건은 “Hello.” 녹음의 codec token이다.
+모델은 “Hello.”에 해당하는 소리를 이미 주어진 시작 부분으로 받아, 그 뒤에 “See you tomorrow.”의 codec token을 이어 생성한다.
+EnCodec decoder는 새로 생성한 token을 waveform으로 복원한다.
+이때 참조 음성으로 weight를 갱신하지 않는다.
+이미 학습된 모델이 새로운 화자의 목소리를 입력 조건으로 받아 합성하는 것이 여기서 말하는 zero-shot TTS다.
+
+<Figure src="https://arxiv.org/html/2301.02111v1/prompt.jpg" alt="VALL-E 전체 구조. 텍스트 prompt는 phoneme으로, 3초 참조 음성은 audio codec encoder를 거쳐 codec token으로 바뀐다. 두 조건을 받은 neural codec language model이 새 codec token을 생성하고, audio codec decoder가 이를 화자의 목소리를 반영한 음성으로 복원한다." caption="VALL-E는 텍스트를 음소(phoneme)로 바꾸고 참조 음성을 codec token으로 바꾸어 조건으로 쓴다. 생성한 codec token에서 waveform으로 가는 경로는 audio codec decoder가 맡는다." source="Wang et al. (2023), Figure 1" wide />
+
+VALL-E의 codec token에는 발화 내용과 함께 소리를 복원하는 데 필요한 음향 정보가 담겨 있다.
+**CosyVoice는 언어 모델이 내용 중심의 speech token을 예측하도록 하고, 세부 음향을 만드는 모델을 따로 학습한다.**[^cosyvoice]
+
+먼저 speech token을 만드는 tokenizer를 준비한다.
+그림 (a)처럼 음성 인식 모델의 encoder 중간에 양자화를 넣는다.
+앞쪽 encoder의 출력은 codebook 벡터로 바뀌고, 뒤쪽 encoder와 ASR decoder는 이 양자화된 표현을 받아 전사를 예측한다.
+여기서 전사를 맞히려면, 양자화를 거친 뒤에도 서로 다른 말을 구별할 수 있어야 한다.
+예를 들어 “불”과 “물”의 첫소리 차이가 양자화 과정에서 사라지면, 뒤쪽 모델은 두 단어를 구별할 단서를 잃어 전사를 틀릴 수 있다.
+학습에서는 정답 전사와 예측을 비교해 오류를 줄이므로, encoder와 quantizer도 이런 발음 차이를 보존하는 방향으로 조정된다.
+그렇게 학습한 codebook ID의 sequence가 speech token이므로, token sequence에 어떤 말을 했는지 구별하는 정보가 담기는 것이다.
+학습 후에는 앞쪽 encoder와 quantizer를 speech tokenizer로 사용한다.
+
+그다음 녹음과 전사의 쌍으로 두 가지 대응을 배운다.
+그림 (b)의 **text-to-token LM**은 전사와 화자 embedding을 조건으로, tokenizer가 녹음에서 추출한 정답 speech token을 하나씩 예측하도록 학습한다.
+화자 embedding은 음성에서 추출한 목소리의 특징 벡터다.
+별도의 **flow matching 모델**은 speech token, 화자 embedding, 녹음의 일부 Mel spectrogram을 조건으로 나머지 음향을 생성하도록 학습한다.
+언어 모델이 발화의 내용과 운율을 맡고, flow matching 모델이 이에 맞는 음색과 세부 음향을 만드는 역할 분담이다.
+
+학습된 CosyVoice로 새 화자의 목소리를 합성할 때도, 새 문장과 짧은 참조 음성을 입력한다.
+같은 언어의 zero-shot 합성에서는 참조 음성의 전사와 speech token도 언어 모델에 주어, 그 뒤로 새 문장의 speech token을 이어 생성한다.
+VALL-E의 예시처럼, 참조 전사는 이미 주어진 음성 token이 어떤 말을 담고 있는지 알려 주는 역할이다.
+Flow matching 모델은 참조 음성과 새 문장의 speech token, 참조 음성의 화자 embedding과 Mel spectrogram을 조건으로 새 문장의 Mel spectrogram을 만든다.
+마지막에 **vocoder**가 그 spectrogram을 waveform으로 바꾼다.
+VALL-E가 생성한 codec token을 EnCodec decoder로 복원하는 것과 달리, CosyVoice는 내용 중심 token에서 Mel spectrogram을 생성하는 단계를 거친다.
+
+<Figure src="https://arxiv.org/html/2407.05407v2/overview2.svg" alt="CosyVoice 전체 구조. 왼쪽 (a)는 음성 인식 encoder 중간에 vector quantizer를 넣어 speech token을 얻는 tokenizer다. 가운데 (b)는 텍스트와 화자 embedding을 조건으로 speech token을 예측하는 text-to-token LM과 flow matching 모델이다. 오른쪽 (c)는 flow matching 모델의 조건 입력을 확대한 그림이다." caption="CosyVoice의 (a)는 speech token을 만드는 tokenizer이고, (b)는 그 token을 예측하는 언어 모델과 Mel spectrogram을 만드는 flow matching 모델이다. (c)는 flow matching 내부를 확대한 것이다. Waveform을 만드는 vocoder는 그림에서 생략되어 있다." source="Du et al. (2024), Figure 1" wide />
 
 ### 6-2. 생성 순서
 
-앞의 시간 × codebook 배열을 어떤 순서로 예측할지 정해야 한다.
-예를 들어 시간 두 칸과 codebook 두 개가 있고 각 칸의 ID가 아래와 같다고 하자.
+EnCodec이나 Mimi처럼 여러 codebook을 쓰는 codec에서는 시간 위치마다 ID가 여러 개 나오므로, 생성 모델은 시간 방향과 codebook 방향의 순서를 정해야 한다.
+모두 한 줄로 펼쳐 예측하면 단순하지만, 큰 언어 모델을 시간 칸 수 × codebook 수만큼 실행해야 한다.
 
-| 시간 | 첫 codebook ID | 둘째 codebook ID |
-| --- | --- | --- |
-| 1 | 3 | 7 |
-| 2 | 5 | 2 |
+Moshi는 이 계산을 두 모델로 나눈다.[^moshi]
+큰 **Temporal Transformer**는 이전 시간 칸들의 정보를 모아 현재의 문맥을 만들고, 작은 **Depth Transformer**는 그 문맥을 받아 codebook ID들을 차례로 예측한다.
+큰 모델은 시간 칸마다 한 번만 실행하고, codebook 수만큼 반복되는 계산은 작은 모델이 맡는다.
+작은 모델이 내는 것은 codec token이며, 파형으로 바꾸는 일은 Mimi의 decoder가 맡는다.
 
-한 가지 방법은 모두 한 줄로 펼쳐 `(3, 7, 5, 2)` 순서로 예측하는 것이다.
-이 방법은 시간과 codebook 방향의 의존성을 모두 표현하지만, sequence 길이가 codebook 수만큼 곱해진다.
-다른 방법은 시간 순서를 맡는 큰 모델과 한 시간 칸 안의 codebook 순서를 맡는 작은 모델을 나누는 것이다.
-Moshi는 시간 방향의 문맥을 만드는 Temporal Transformer와, 그 문맥을 받아 한 시간 칸의 여러 codebook을 차례로 예측하는 작은 Depth Transformer를 쓴다.[^moshi]
-이렇게 나누면 큰 Transformer는 시간 칸마다 한 번만 계산하고, codebook 수만큼 반복되는 계산은 작은 Transformer가 맡는다.
-Voila의 Audio Transformer도 큰 언어 모델의 hidden state를 받아 codebook ID들을 차례로 예측한다.[^voila]
-작은 Transformer가 예측하는 것은 파형이 아니라 codec token이며, 파형은 codec decoder가 만든다.
+<Figure src="https://arxiv.org/html/2410.00037v2/figures/overview_moshi_v2.png" alt="Moshi 전체 구조. 왼쪽 Mimi가 사용자 음성을 token으로 바꾸고, Helium Temporal Transformer가 시간 방향의 문맥을 만든다. 위쪽 Depth Transformer가 문맥을 받아 semantic·acoustic token을 예측하고, 오른쪽 Mimi가 음성 token을 파형으로 복원한다. 아래에는 사용자 음성, Moshi 음성, Inner Monologue 텍스트의 세 스트림이 같은 시간축에 놓인다." caption="Moshi 전체 구조. 큰 Temporal Transformer가 시간 방향의 문맥을 만들고, 작은 Depth Transformer가 음성 token을 예측하며, Mimi가 token과 파형 사이의 변환을 맡는다." source="Défossez et al. (2024), Figure 1 · CC BY-NC-SA 4.0" wide />
 
-<figure class="lecture-figure wide">
-<svg viewBox="0 0 600 340" role="img" aria-label="시간 두 칸과 codebook 두 개의 생성 예. 큰 Transformer가 시간 1의 문맥 h1을 만들면 작은 Transformer가 ID 3과 7을 차례로 예측한다. 생성한 ID들의 embedding을 모아 큰 Transformer의 다음 입력으로 넣는다. 큰 Transformer가 시간 2의 문맥 h2를 만들면 작은 Transformer가 ID 5와 2를 차례로 예측한다. 생성한 두 묶음은 codec decoder를 거쳐 파형이 된다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
-<defs><marker id="audio-depth-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#64748b"/></marker></defs>
-<text x="145" y="22" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">시간 1</text>
-<text x="455" y="22" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">시간 2</text>
-<rect x="45" y="38" width="200" height="40" rx="6" fill="#e2e8f0" stroke="#94a3b8"/>
-<rect x="355" y="38" width="200" height="40" rx="6" fill="#e2e8f0" stroke="#94a3b8"/>
-<text x="145" y="64" text-anchor="middle" font-size="15" fill="#0f172a">큰 Transformer</text>
-<text x="455" y="64" text-anchor="middle" font-size="15" fill="#0f172a">큰 Transformer</text>
-<path d="M145 78 V125 M455 78 V125" stroke="#64748b" stroke-width="1.5" marker-end="url(#audio-depth-arrow)"/>
-<text x="157" y="106" font-size="14" fill="#2a78d6">문맥 h₁</text>
-<text x="467" y="106" font-size="14" fill="#2a78d6">문맥 h₂</text>
-<rect x="25" y="128" width="240" height="112" rx="8" fill="#fff7ed" stroke="#eb6834"/>
-<rect x="335" y="128" width="240" height="112" rx="8" fill="#fff7ed" stroke="#eb6834"/>
-<text x="145" y="152" text-anchor="middle" font-size="15" fill="#0f172a">작은 Transformer</text>
-<text x="455" y="152" text-anchor="middle" font-size="15" fill="#0f172a">작은 Transformer</text>
-<text x="85" y="175" text-anchor="middle" font-size="13" fill="#64748b">codebook 1</text>
-<text x="205" y="175" text-anchor="middle" font-size="13" fill="#64748b">codebook 2</text>
-<text x="395" y="175" text-anchor="middle" font-size="13" fill="#64748b">codebook 1</text>
-<text x="515" y="175" text-anchor="middle" font-size="13" fill="#64748b">codebook 2</text>
-<rect x="55" y="184" width="60" height="36" rx="5" fill="#ffffff" stroke="#eb6834"/>
-<rect x="175" y="184" width="60" height="36" rx="5" fill="#ffffff" stroke="#eb6834"/>
-<rect x="365" y="184" width="60" height="36" rx="5" fill="#ffffff" stroke="#eb6834"/>
-<rect x="485" y="184" width="60" height="36" rx="5" fill="#ffffff" stroke="#eb6834"/>
-<text x="85" y="208" text-anchor="middle" font-size="15" fill="#0f172a">3</text>
-<text x="205" y="208" text-anchor="middle" font-size="15" fill="#0f172a">7</text>
-<text x="395" y="208" text-anchor="middle" font-size="15" fill="#0f172a">5</text>
-<text x="515" y="208" text-anchor="middle" font-size="15" fill="#0f172a">2</text>
-<path d="M115 202 H172 M425 202 H482" stroke="#64748b" stroke-width="1.5" marker-end="url(#audio-depth-arrow)"/>
-<path d="M265 202 H298 V58 H352" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#audio-depth-arrow)"/>
-<text x="300" y="33" text-anchor="middle" font-size="13" fill="#64748b">생성한 ID들의</text>
-<text x="300" y="82" text-anchor="middle" font-size="13" fill="#64748b">embedding</text>
-<path d="M145 240 V272 H300 V291 M455 240 V272 H300" fill="none" stroke="#64748b" stroke-width="1.5"/>
-<rect x="213" y="292" width="174" height="36" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
-<text x="300" y="316" text-anchor="middle" font-size="14" fill="#0f172a">codec decoder</text>
-<path d="M387 310 H435" stroke="#64748b" stroke-width="1.5" marker-end="url(#audio-depth-arrow)"/>
-<text x="447" y="316" font-size="14" fill="#0f172a">파형</text>
-</svg>
-<figcaption>시간 방향과 codebook 방향을 나눈 생성. 본문의 가상 ID를 사용했으며, 텍스트 token과 모델별 delay 설정은 생략했다. 같은 큰 Transformer와 같은 작은 Transformer를 시간마다 다시 사용한다.</figcaption>
-</figure>
+그림 아래쪽 세 줄은 사용자 음성, 모델 음성, 모델이 말할 내용의 텍스트(Inner Monologue)이며, 같은 시간축에 놓인다.
 
-첫 시간 칸에서는 큰 모델이 만든 문맥을 조건으로 작은 모델이 `3`을 고르고, 그 문맥과 `3`을 함께 보고 `7`을 고른다.
-완성한 `(3, 7)`의 embedding을 모아 큰 모델의 다음 입력으로 넣으면, 큰 모델이 다음 시간 칸의 문맥을 만든다.
-작은 모델은 새 문맥을 받아 `(5, 2)`를 같은 방식으로 생성한다.
-Qwen3-Omni의 음성 생성 모듈도 같은 방식으로, 시간 칸마다 첫 codebook만 큰 모델이 예측하고 작은 MTP(multi-token prediction) 모듈이 나머지 codebook을 채운다.[^qwen3]
-이 MTP 모듈은 미래 시점의 token 여러 개를 예측하는 MTP와 달리, 같은 시간 칸의 나머지 codebook을 예측한다.
+Voila는 이 작은 모델을 Audio Transformer라 부른다.[^voila]
+Qwen3-Omni는 첫 codebook을 큰 모델이 예측하고, 작은 MTP(multi-token prediction) 모듈이 나머지를 채운다.[^qwen3]
+여기서 MTP는 미래 시점 여러 개가 아니라 같은 시간 칸의 나머지 codebook을 예측한다.
 
-작은 모델을 따로 두지 않는 방법도 있다.
-Codebook마다 출력 head를 두면 한 생성 단계에서 모든 codebook의 token을 병렬로 낼 수 있다.
-하지만 RVQ의 둘째 codebook은 첫 codebook이 남긴 오차를 보완하므로, 같은 시간 칸의 첫 codebook ID를 알면 더 잘 예측할 수 있다.
-그래서 codebook마다 출력을 한 단계씩 늦추는 delay pattern을 쓰기도 한다.[^musicgen]
+작은 모델 없이 codebook별 출력 head로 여러 ID를 병렬 예측하는 방법도 있다.
+다만 뒤 codebook이 앞 codebook의 결과를 참고할 수 있도록, codebook마다 출력을 한 단계씩 늦추는 **delay pattern**을 쓸 수 있다.[^musicgen]
 Kanana-o의 음성 생성 모델도 이 방식을 쓴다.[^lmspt-kanana]
-위의 예를 delay pattern으로 생성하면 다음과 같다.
+시간 1의 ID가 `(3, 7)`, 시간 2의 ID가 `(5, 2)`인 가상 예를 보자.
 
 | 생성 단계 | 첫 codebook | 둘째 codebook |
 | --- | --- | --- |
@@ -883,52 +866,38 @@ Kanana-o의 음성 생성 모델도 이 방식을 쓴다.[^lmspt-kanana]
 | 2 | 5 (시간 2) | 7 (시간 1) |
 | 3 | 종료 | 2 (시간 2) |
 
-두 번째 단계에서 모델은 시간 2의 첫 codebook ID와 시간 1의 둘째 codebook ID를 함께 예측한다.
-이때 모델은 시간 1의 둘째 codebook ID를 예측하면서, 앞 단계에서 이미 생성한 시간 1의 첫 codebook ID `3`을 참고할 수 있다.
-생성이 끝나면 모델은 늦춘 만큼 위치를 되돌려 `(3, 7)`과 `(5, 2)`를 각각 같은 시간 칸으로 다시 묶는다.
-시간 칸이 $T$개이고 codebook이 $K$개이면 생성 단계는 $T + K - 1$번이다.
-초당 12.5개의 시간 칸을 내는 codec으로 10초 음성을 codebook 8개로 나타내면($T=125$, $K=8$) 132번으로, 한 줄로 펼칠 때의 $T \times K = 1{,}000$번보다 훨씬 적다.
+2단계에서 `5`와 `7`을 함께 예측하지만, `7`은 앞 단계에서 생성한 같은 시간 칸의 `3`을 참고할 수 있다.
+이처럼 codebook마다 한 단계씩 늦추면, 시간 칸이 $T$개이고 codebook이 $K$개일 때 생성 단계는 $T + K - 1$번이다.
+생성 뒤에는 늦춘 위치를 되돌려 같은 시간 칸의 ID들을 묶고 codec decoder에 넣는다.
 
 ### 6-3. 이해와 생성의 결합
 
+TTS는 주어진 문장을 읽지만, 음성 대화 모델은 사용자 음성을 이해해 답변 내용도 만들어야 한다.
 듣는 모델과 말하는 모델을 따로 두는 대신, 한 언어 모델이 음성과 텍스트를 입력과 출력 양쪽에서 처리하도록 학습할 수도 있다.
 Voila는 codec token을 텍스트 어휘 뒤에 붙여 이 구성을 만든다.[^voila]
-Voila의 tokenizer는 초당 25개 frame마다 2,048개짜리 codebook 4개에서 ID를 하나씩 고른다.[^voila-code]
-텍스트 어휘는 0번부터 128,255번까지이고, codec token은 그 뒤에 codebook별 구간을 차지한다.
+입력할 때 Voila는 한 시간 위치의 codebook ID 네 개를 각각 embedding으로 바꾼 뒤 평균해, 언어 모델의 한 위치에 벡터 하나로 넣는다.[^voila-code]
+출력할 때는 언어 모델의 hidden state를 받은 Audio Transformer가 네 ID를 차례로 생성한다.
+즉 큰 언어 모델은 시간 위치마다 벡터 하나를 다루고, 여러 codebook을 펼치는 일은 작은 모델이 맡는다.
 
-| codebook | 어휘 ID 구간 |
-| --- | --- |
-| 1 | 128,256–130,303 |
-| 2 | 130,304–132,351 |
-| 3 | 132,352–134,399 |
-| 4 | 134,400–136,447 |
+<Details summary="음성 token을 언어 모델의 입력으로 묶는 다른 방법">
 
-예를 들어 한 시간 위치에서 네 codebook이 각각 134, 1195, 2000, 957번 항목을 고르면, 어휘 ID는 128,390, 131,499, 134,352, 135,357이 된다.
-입력할 때 Voila는 이 ID 4개를 각각 embedding으로 바꾼 뒤 평균해, 언어 모델의 한 위치에 벡터 하나로 넣는다.
-텍스트 token은 같은 ID를 네 번 반복해 같은 방식으로 넣는다.
-출력할 때는 언어 모델의 hidden state를 받은 작은 Audio Transformer가 첫 codebook부터 넷째 codebook까지 차례로 ID를 생성한다.
-이 Audio Transformer는 Moshi의 Depth Transformer와 같은 역할을 한다.
+긴 음성의 입력을 더 줄이려면 여러 시점을 묶을 수도 있다.
+MiMo-Audio는 연속한 네 시점의 RVQ token을 patch encoder로 묶어 언어 모델의 한 위치에 넣고, patch decoder가 다음 patch를 생성한다.[^mimo]
+GLM-4-Voice처럼 codebook 하나만 쓰면 시간 위치마다 ID가 하나여서 텍스트처럼 한 줄로 다룰 수 있다.[^glm4voice]
 
-다만 codec은 한 초에도 많은 token을 내므로, 긴 대화를 그대로 넣으면 sequence가 길어진다.
-이 부담을 다루는 선택은 크게 세 가지이며, 한 모델에서 함께 쓸 수도 있다.
+</Details>
 
-- **여러 시점을 묶기**: 여러 시점의 codec token을 patch로 묶어 언어 모델의 한 위치로 전달한다.[^mimo]
-- **codebook 하나만 쓰기**: 한 시간 위치에 ID가 하나뿐이면 텍스트처럼 token을 한 줄로 예측할 수 있고, 줄어든 정보는 뒤의 decoder가 채운다.[^glm4voice]
-- **입력과 출력의 표현을 다르게 두기**: 입력은 encoder의 연속 feature로 받고, 출력만 discrete token으로 낸다.
-
-MiMo-Audio는 연속한 4개 시점의 RVQ token을 patch encoder로 묶어 언어 모델의 한 위치로 넣고, patch decoder가 다음 patch의 token을 생성한다.[^mimo]
-
-<Figure src="https://arxiv.org/html/2512.23808v1/mimoaudio_new.svg" alt="MiMo-Audio 구조. 아래쪽에서 여러 시점의 audio codebook token을 patch encoder로 묶고, 가운데 언어 모델을 거쳐 위쪽 patch decoder가 다음 audio token을 생성한다. 오른쪽은 patch encoder와 decoder의 내부를 확대한다." caption="아래는 입력 audio patch를 하나의 표현으로 묶는 경로, 위는 언어 모델의 표현에서 다음 patch의 token을 생성하는 경로다. 그림은 설명을 위해 codebook 네 행을 그렸고, 원논문의 LLM 설정에서는 20개 RVQ 층 가운데 여덟 개를 사용한다." source="Xiaomi LLM-Core Team (2025), Figure 3 · CC BY 4.0" wide />
-
-카카오의 Kanana-a는 세 번째 구성이다.[^kanana-a]
-Kanana-a는 Kanana-o에서 음성을 맡는 모델이다.
+입력은 연속 feature로 받고 출력만 discrete token으로 내는 구성도 있다.
+Kanana-o에서 음성을 맡는 Kanana-a가 이 방식이다.[^kanana-a]
 음성 입력은 Whisper encoder와 audio projector를 거쳐 continuous representation이 되고, 음성으로 답할 때는 별도의 Voice Token LM이 discrete token을 만든 뒤 decoder와 vocoder가 파형으로 바꾼다.
-LLM이 텍스트 응답을 먼저 생성하면, Voice Token LM은 입력 문맥까지 담은 LLM의 마지막 hidden state를 받아 speech token을 만든다.
+LLM이 생성한 텍스트 응답을 음성으로 바꿀 때, Voice Token LM에는 입력 문맥과 텍스트 응답을 처리하면서 얻은 LLM의 hidden state를 전달한다.
 그래서 텍스트에 없는 감정이나 말투도 음성에 반영할 수 있다.
 카카오는 한 언어 모델이 speech token까지 직접 생성하는 방식과도 비교했다.
 Voice Token LM을 따로 둔 쪽이 계산 효율이 좋았고, 언어 모델이 원래 가진 언어 지식도 안정적으로 유지됐다고 보고한다.[^kanana-a]
 LLaMA-Omni도 LLM의 출력 hidden state를 받아 음성 단위를 예측하는 speech decoder를 따로 둔다.[^llamaomni]
-Kanana-a는 세 단계로 학습한다.
+이런 입출력 구조만으로 음성 대화 능력이 생기지는 않는다.
+Kanana-a는 ASR·TTS로 음성과 텍스트를 연결한 뒤, 음성 질문과 답변을 짝지은 데이터와 발화 지시 데이터로 응답하는 방법을 학습한다.
+아래 표에서 모델 전체는 audio encoder, projector, LLM, Voice Token LM을 뜻하며, token을 Mel spectrogram과 파형으로 바꾸는 모듈은 사전학습된 상태로 고정한다.[^kanana-a]
 
 | 단계 | 학습하는 부분 | 학습 데이터 |
 | --- | --- | --- |
@@ -955,9 +924,7 @@ GLM-4-Voice는 음성과 텍스트가 짝지어진 데이터가 텍스트만큼 
 
 Speech token에 속도나 억양 같은 음향 특성을 담을 수 있다고 해서, 모델이 “아주 빠르게 읽어 줘” 같은 발화 지시를 정확히 따르는 것은 아니다.
 카카오는 Kanana-o에 이 능력을 기르려고, 화자와 문장은 같고 발화 지시만 다르게 생성한 음성들로 선호쌍을 만들었다.[^lmspt-kanana]
-예를 들어 “아주 빠르게”, “빠르게”, 지시 없음의 세 조건으로 같은 문장을 읽은 음성 A, B, C가 있다고 하자.
-“아주 빠르게 읽어 줘”를 기준으로 하면 A가 B와 C보다 선호된다.
-“빠르게 읽어 줘”를 기준으로 하면 지나치게 빠른 A보다 B가 선호된다.
+예를 들어 같은 문장을 아주 빠르게 읽은 음성과 적당히 빠르게 읽은 음성을 비교하면, “아주 빠르게”라는 지시에서는 전자를, “빠르게”라는 지시에서는 후자를 선호한다.
 카카오는 이 선호쌍으로 reward model을 학습했다.
 같은 음성 쌍이라도 기준 지시에 따라 선호가 바뀌므로, reward model은 음성 자체의 품질보다 지시와 음성이 맞는지를 배우게 된다.
 카카오는 이 reward model의 점수로 online RL을 적용했다.
