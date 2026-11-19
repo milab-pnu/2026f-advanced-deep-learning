@@ -193,7 +193,7 @@ BERT의 정답은 token 번호지만 소리에는 정해진 어휘가 없고, MA
 
 Codebook은 벡터 여러 개를 모아 둔 표다.
 wav2vec 2.0은 codebook을 두 개 쓰고, 각 codebook에는 벡터가 320개 들어 있다.
-20ms 구간마다 선형층이 구간의 벡터를 받아 codebook 벡터마다 점수를 내고, codebook마다 점수가 가장 높은 벡터를 하나씩 고른다.
+20 ms 구간마다 선형층이 구간의 벡터를 받아 codebook 벡터마다 점수를 내고, codebook마다 점수가 가장 높은 벡터를 하나씩 고른다.
 고른 두 벡터를 이어 붙인 것이 그 구간의 정답이며, 이렇게 구간의 벡터를 codebook 벡터로 바꾸는 일을 양자화(quantization)라 한다.
 정답은 320 × 320 = 102,400가지뿐이므로 비슷한 소리의 구간들은 같은 정답을 받고, 화자나 잡음에 따른 작은 차이는 정답에서 덜어진다.
 
@@ -448,7 +448,8 @@ LLM이 나온 뒤에는 가운데의 NLU, 대화 관리, NLG를 LLM 하나가 �
 음성을 텍스트로 전사해서 LLM에 넘기고, 음성으로 답해야 하면 LLM이 쓴 텍스트 답을 다시 음성으로 읽는다.
 즉 ASR → LLM → TTS(text-to-speech)로 잇는 구성이며, 이처럼 따로 학습한 모델을 텍스트로 이어 붙인 구성을 cascade라고 한다.
 
-<Figure src="https://arxiv.org/html/2505.02707v1/voice-ai.png" alt="음성 대화 시스템의 네 구성을 위아래로 놓은 그림. (a)는 사용자 음성이 ASR, text, NLU, Management, NLG, text response, TTS를 차례로 거쳐 음성 응답이 된다. (b)는 ASR과 TTS 사이의 모듈들이 LLM 하나로 바뀌었다. (c)는 사용자 음성이 end-to-end voice-language model에 바로 들어가 음성 응답이 나온다. (d)는 autonomous voice-language model이 사용자 음성과 자기 음성 응답이 겹친 입력을 함께 받는다." caption="음성 대화 시스템의 네 구성. (a) 모듈을 따로 설계해 이은 2010년대 음성 비서, (b) 가운데 모듈을 LLM으로 바꾼 cascade, (c) 음성을 직접 받고 음성으로 답하는 end-to-end 모델, (d) 사용자 음성과 자기 음성을 함께 들으며 말하는 모델." source="Shi et al. (2025), Figure 1" />
+<Figure src="https://arxiv.org/html/2505.02707v1/voice-ai.png" alt="음성 대화 시스템의 네 구성을 위아래로 놓은 그림. (a)는 사용자 음성이 ASR, text, NLU, Management, NLG, text response, TTS를 차례로 거쳐 음성 응답이 된다. (b)는 ASR과 TTS 사이의 모듈들이 LLM 하나로 바뀌었다. (c)는 사용자 음성이 end-to-end voice-language model에 바로 들어가 음성 응답이 나온다. (d)는 autonomous voice-language model이 사용자 음성과 자기 음성 응답이 겹친 입력을 함께 받는다." caption="음성 대화 시스템의 네 구성. (a) 모듈을 따로 설계해 이은 2010년대 음성 비서, (b) 가운데 모듈을 LLM으로 바꾼 cascade, (c) 음성을 직접 받고 음성으로 답하는 end-to-end 모델, (d) 사용자 음성과 자기 음성을 함께 들으며 말하는 모델." source="Shi et al. (2025), Figure 1 · CC BY 4.0" />
+
 ASR(automatic speech recognition)은 음성을 글로 받아쓰는 일로, STT(speech-to-text)라고도 부른다.
 Whisper 같은 ASR 모델이 이 전사를 맡는다.
 
@@ -695,12 +696,11 @@ wav2vec 2.0이 320개짜리 codebook 두 개로 102,400가지 정답을 만든 �
 그래서 codebook 개수를 줄이면 bitrate(초당 쓰는 bit 수)는 낮아지지만, 잔차가 더 많이 남아 복원한 소리가 원래 소리에서 멀어진다.
 
 각 시간 위치에서 여러 codebook의 번호가 나오므로, codec token은 텍스트 token처럼 한 줄이 아니라 시간 × codebook 개수의 배열이 된다.
-그래서 codebook의 번호를 어떤 순서로 생성할지가 audio 생성 모델의 설계 문제가 된다.
+그래서 codebook을 어떤 순서로 생성할지가 audio 생성 모델의 설계 문제가 된다.
 
 ### 5-3. Semantic token과 acoustic token
 
-음성을 discrete token으로 바꾸면 텍스트 LLM과 같은 다음 token 예측을 audio에도 적용할 수 있다.
-다만 token을 어떻게 만들었는지에 따라 담는 정보가 다르다.
+Token을 어떻게 만들었는지에 따라 담는 정보가 다르다.
 Codec token은 소리를 정밀하게 복원하도록 학습되어 화자의 음색과 녹음 환경까지 담으며, acoustic token이라고도 부른다.
 발화 내용을 주로 담는 token은 semantic token이라 부른다.
 Semantic token은 HuBERT가 MFCC를 k-means로 묶어 정답 번호를 만든 것과 같은 방법으로 얻는다.
@@ -709,11 +709,58 @@ wav2vec 2.0이나 HuBERT처럼 라벨 없이 학습한 음성 encoder의 중간 
 예를 들어 AudioLM은 wav2vec 2.0 계열의 모델 w2v-BERT의 중간 feature에서 semantic token을 얻는다.[^audiolm]
 이 구분은 설계 목표에 관한 것이어서, 두 token이 담는 정보가 깨끗이 나뉘지는 않는다.
 
-모델이 acoustic token만 예측하면 음향의 세부는 복원할 수 있지만, 높은 token rate에서 긴 시간의 내용까지 함께 모델링해야 한다.
+AudioLM에서 semantic token은 초당 25개이고, acoustic token은 초당 50개의 시간 위치마다 codebook이 12개여서 초당 600개다.[^audiolm]
+모델이 acoustic token만 예측하면 음향의 세부는 복원할 수 있지만, 이렇게 긴 sequence에서 긴 시간의 내용까지 함께 모델링해야 한다.
 반대로 semantic token은 긴 범위의 내용을 다루기에 유리하지만, 그것만으로는 원래 목소리를 복원하기 어렵다.
 그래서 AudioLM은 둘을 차례로 생성한다.
 먼저 semantic token을 이어 생성하고, 이를 조건으로 acoustic token을 생성한 뒤 codec decoder로 파형을 만든다.
+조건으로 생성한다는 것은, 생성한 semantic token 전체를 sequence의 앞에 놓고 그 뒤에 acoustic token을 이어서 예측한다는 뜻이다.
+LLM이 prompt 뒤를 이어 쓰듯, acoustic token을 예측하는 모델은 앞에 놓인 semantic token을 참조해 그 내용에 맞는 소리를 만든다.
 짧은 발화를 들려주면 AudioLM은 내용이 이어지고 음색도 일관된 후속 소리를 만든다.
+
+<figure>
+<svg viewBox="0 0 720 318" role="img" aria-label="AudioLM의 두 가지 token과 생성 순서. 위쪽 ①에서는 같은 waveform에서 두 가지 token을 얻는다. 한 경로는 w2v-BERT의 중간 층 feature를 k-means로 묶어 시간 위치마다 번호 하나인 semantic token을 만들고, 초당 25개이며 발화 내용을 주로 담는다. 다른 경로는 codec encoder와 RVQ로 시간 위치마다 codebook 수만큼 번호가 있는 acoustic token을 만들고, 초당 50개 위치에 codebook 12개이며 음색과 녹음 환경까지 담는다. 아래쪽 ②는 생성 순서로, 먼저 semantic token을 생성하고, 이를 조건으로 acoustic token을 생성한 뒤, codec decoder가 waveform을 만든다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<defs><marker id="sem-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#64748b"/></marker></defs>
+<text x="16" y="22" font-size="15" text-anchor="start" font-weight="600" fill="#0f172a">① 같은 소리에서 두 가지 token을 얻는다</text>
+<rect x="16" y="88" width="84" height="44" rx="6" fill="#f8fafc" stroke="#94a3b8"/><path d="M22 110 l6 -9 l6 18 l6 -22 l6 26 l6 -17 l6 11 l6 -8 l6 6 l6 -4 l6 2 l6 -3 l6 0" fill="none" stroke="#2a78d6" stroke-width="1.6"/><text x="58" y="150" font-size="13" text-anchor="middle" fill="#0f172a">waveform</text>
+<path d="M100 110 H122 V70 H146" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#sem-arrow)"/>
+<path d="M122 110 V150 H146" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#sem-arrow)"/>
+<rect x="150" y="50" width="200" height="40" rx="8" fill="#e2e8f0" stroke="#0f172a"/><text x="250.0" y="75" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">w2v-BERT 중간 층 + k-means</text>
+<rect x="150" y="130" width="200" height="40" rx="8" fill="#e2e8f0" stroke="#0f172a"/><text x="250.0" y="155" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">codec encoder + RVQ</text>
+<path d="M350 70 H378" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#sem-arrow)"/>
+<path d="M350 150 H378" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#sem-arrow)"/>
+<rect x="382" y="57" width="30" height="26" rx="4" fill="#dbeafe" stroke="#2a78d6"/><text x="397" y="75" font-size="13" text-anchor="middle" fill="#0f172a">31</text>
+<rect x="416" y="57" width="30" height="26" rx="4" fill="#dbeafe" stroke="#2a78d6"/><text x="431" y="75" font-size="13" text-anchor="middle" fill="#0f172a">31</text>
+<rect x="450" y="57" width="30" height="26" rx="4" fill="#dbeafe" stroke="#2a78d6"/><text x="465" y="75" font-size="13" text-anchor="middle" fill="#0f172a">7</text>
+<rect x="484" y="57" width="30" height="26" rx="4" fill="#dbeafe" stroke="#2a78d6"/><text x="499" y="75" font-size="13" text-anchor="middle" fill="#0f172a">52</text>
+<rect x="382" y="123" width="30" height="16" rx="3" fill="#dcfce7" stroke="#16a34a"/><text x="397" y="135" font-size="11" text-anchor="middle" fill="#0f172a">12</text>
+<rect x="416" y="123" width="30" height="16" rx="3" fill="#dcfce7" stroke="#16a34a"/><text x="431" y="135" font-size="11" text-anchor="middle" fill="#0f172a">7</text>
+<rect x="450" y="123" width="30" height="16" rx="3" fill="#dcfce7" stroke="#16a34a"/><text x="465" y="135" font-size="11" text-anchor="middle" fill="#0f172a">301</text>
+<rect x="484" y="123" width="30" height="16" rx="3" fill="#dcfce7" stroke="#16a34a"/><text x="499" y="135" font-size="11" text-anchor="middle" fill="#0f172a">45</text>
+<rect x="382" y="141" width="30" height="16" rx="3" fill="#dcfce7" stroke="#16a34a"/><text x="397" y="153" font-size="11" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="416" y="141" width="30" height="16" rx="3" fill="#dcfce7" stroke="#16a34a"/><text x="431" y="153" font-size="11" text-anchor="middle" fill="#0f172a">88</text>
+<rect x="450" y="141" width="30" height="16" rx="3" fill="#dcfce7" stroke="#16a34a"/><text x="465" y="153" font-size="11" text-anchor="middle" fill="#0f172a">3</text>
+<rect x="484" y="141" width="30" height="16" rx="3" fill="#dcfce7" stroke="#16a34a"/><text x="499" y="153" font-size="11" text-anchor="middle" fill="#0f172a">610</text>
+<rect x="382" y="159" width="30" height="16" rx="3" fill="#dcfce7" stroke="#16a34a"/><text x="397" y="171" font-size="11" text-anchor="middle" fill="#0f172a">…</text>
+<rect x="416" y="159" width="30" height="16" rx="3" fill="#dcfce7" stroke="#16a34a"/><text x="431" y="171" font-size="11" text-anchor="middle" fill="#0f172a">…</text>
+<rect x="450" y="159" width="30" height="16" rx="3" fill="#dcfce7" stroke="#16a34a"/><text x="465" y="171" font-size="11" text-anchor="middle" fill="#0f172a">…</text>
+<rect x="484" y="159" width="30" height="16" rx="3" fill="#dcfce7" stroke="#16a34a"/><text x="499" y="171" font-size="11" text-anchor="middle" fill="#0f172a">…</text>
+<text x="536" y="58" font-size="13.5" text-anchor="start" font-weight="600" fill="#2a78d6">semantic token</text><text x="536" y="76" font-size="13" text-anchor="start" fill="#0f172a">초당 25개</text><text x="536" y="94" font-size="13" text-anchor="start" fill="#64748b">발화 내용을 주로 담는다</text>
+<text x="536" y="138" font-size="13.5" text-anchor="start" font-weight="600" fill="#15803d">acoustic token</text><text x="536" y="156" font-size="13" text-anchor="start" fill="#0f172a">초당 50개 × codebook 12개</text><text x="536" y="174" font-size="13" text-anchor="start" fill="#64748b">음색과 녹음 환경까지 담는다</text>
+<text x="16" y="218" font-size="15" text-anchor="start" font-weight="600" fill="#0f172a">② Semantic token을 먼저 생성한다</text>
+<rect x="16" y="242" width="170" height="40" rx="8" fill="#dbeafe" stroke="#2a78d6"/><text x="101.0" y="267" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">semantic token 생성</text>
+<rect x="226" y="242" width="170" height="40" rx="8" fill="#dcfce7" stroke="#16a34a"/><text x="311.0" y="267" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">acoustic token 생성</text>
+<rect x="436" y="242" width="130" height="40" rx="8" fill="#e2e8f0" stroke="#0f172a"/><text x="501.0" y="267" font-size="13" text-anchor="middle" font-weight="600" fill="#0f172a">codec decoder</text>
+<rect x="606" y="240" width="84" height="44" rx="6" fill="#f8fafc" stroke="#94a3b8"/><path d="M612 262 l6 -9 l6 18 l6 -22 l6 26 l6 -17 l6 11 l6 -8 l6 6 l6 -4 l6 2 l6 -3 l6 0" fill="none" stroke="#2a78d6" stroke-width="1.6"/>
+<path d="M186 262 H224" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#sem-arrow)"/>
+<path d="M396 262 H434" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#sem-arrow)"/>
+<path d="M566 262 H604" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#sem-arrow)"/>
+<text x="101" y="302" font-size="12.5" text-anchor="middle" fill="#64748b">앞의 소리에 이어지는 내용</text>
+<text x="311" y="302" font-size="12.5" text-anchor="middle" fill="#64748b">semantic token을 조건으로</text>
+<text x="648" y="302" font-size="12.5" text-anchor="middle" fill="#64748b">생성한 소리</text>
+</svg>
+<figcaption>AudioLM의 두 가지 token과 생성 순서. 번호는 설명을 위해 임의로 넣었다. 원논문 그림을 바탕으로 다시 그렸다.</figcaption>
+</figure>
 
 ### 5-4. Semantic distillation
 
@@ -723,14 +770,7 @@ SpeechTokenizer는 codec 하나가 두 역할을 하도록, HuBERT를 teacher로
 그 결과 하나의 RVQ 안에서 첫 codebook은 내용을, 나머지 codebook은 남은 음향 정보를 담는다.
 실시간 대화 모델 Moshi의 codec인 Mimi도 같은 방식으로 내용 표현을 증류하되, 내용용 codebook을 음향용 RVQ와 나란히 두어 둘을 분리한다.[^moshi]
 
-<Figure src="https://arxiv.org/html/2308.16692v2/model_structure.png" alt="SpeechTokenizer 구조. 음성 입력이 encoder와 여러 단계의 residual vector quantizer를 거쳐 decoder로 전달되고, 첫 quantizer에 semantic teacher의 학습 신호가 제공된다." caption="SpeechTokenizer의 학습 구조. 그림의 quantizer는 RVQ의 codebook 한 단계다. 첫 quantizer는 semantic teacher(HuBERT)의 지도를 받고, 전체 양자화 표현은 음성 복원에 쓰인다." source="Zhang et al. (2024), Figure 2 · CC BY-SA 4.0" wide />
-
-Codec이 초당 내는 frame 수도 줄어 왔다.
-EnCodec은 24 kHz 음성에서 초당 75개 frame을 내지만, Mimi는 초당 12.5개만 낸다.[^encodec][^moshi]
-10초 음성이라면 시간 위치가 750개에서 125개로 줄어든다.
-다만 teacher 증류 방식은 codebook이 낸 벡터를 teacher feature와 시점마다 맞추므로, token 수를 줄이려 frame rate를 낮추면 teacher feature도 함께 뭉개야 한다.
-카카오의 LM-SPT는 token으로 음성을 다시 합성한 뒤 원본과 재합성 음성의 표현을 비교해, 시간 해상도가 달라도 발화 내용이 보존되도록 학습한다.[^lmspt][^lmspt-code]
-카카오는 통합 멀티모달 모델 Kanana-o의 tokenizer를 LM-SPT로 바꾸어, 생성할 시간 위치를 초당 25개에서 12.5개로 줄였다.[^lmspt-kanana]
+<Figure src="https://arxiv.org/html/2308.16692v2/model_structure.png" alt="SpeechTokenizer 구조. 음성 입력이 encoder와 여러 단계의 residual vector quantizer를 거쳐 decoder로 전달되고, 첫 quantizer에 semantic teacher의 학습 신호가 제공된다." caption="SpeechTokenizer의 학습 구조. VQ1부터 VQ8이 RVQ의 codebook 한 단계씩이다. ⊖는 잔차를 구하는 빼기이고, ⊕는 각 단계가 고른 벡터를 더하는 것이다. VQ1이 고른 벡터는 HuBERT의 feature를 따라가도록 학습하고, 모두 더한 벡터는 decoder가 음성을 복원하는 데 쓴다." source="Zhang et al. (2024), Figure 2 · CC BY-SA 4.0" wide />
 
 <Callout type="note">
 [음성 언어모델은 어디서부터 시작될까? LM-SPT 개발 및 모델 적용기](https://if.kakao.com/2026/session/time-table?sessionId=77)는 LM-SPT의 개발과 모델 적용을 다루는 카카오 기술 세션이다.
@@ -878,18 +918,35 @@ Streaming은 입력이나 출력을 전체가 끝날 때까지 기다리지 않�
 Streaming 시스템은 사용자 발화가 길어도 이미 들어온 구간부터 처리하고, 응답 전체가 완성되기 전에 첫 소리를 낼 수 있다.
 이때 현재 출력이 미래 입력에 의존하지 않는 causal 구조가 유용하다.
 녹음된 구간 전체를 보는 encoder는 그 구간이 끝나야 feature를 낼 수 있지만, causal encoder는 소리가 들어오는 대로 feature를 낸다.
-Chunk가 작으면 빨리 전달할 수 있지만, 경계에서 문맥이 부족해지고 처리 횟수가 늘어 비용이 커질 수 있다.
-지연은 모델의 계산 시간만으로 정해지지 않고, 입력 chunk를 모으는 시간, 모델 계산, 출력 codec과 재생 버퍼의 시간이 모두 더해진다.
-예를 들어 Moshi는 frame 하나(80 ms)와 acoustic token의 지연(80 ms)을 합쳐 이론상 160 ms, 실제로는 약 200 ms의 지연을 보고한다.[^moshi]
+
+Chunk의 길이는 기다리는 시간을 정한다.
+모델은 chunk 하나가 다 들어와야 처리를 시작하므로, chunk가 80 ms이면 적어도 80 ms를 기다린다.
+Chunk를 줄이면 기다리는 시간은 짧아지지만, 같은 길이의 소리에 모델을 더 여러 번 돌려야 해서 계산이 늘어난다.
+
+사용자가 느끼는 지연은 다음 시간을 모두 더한 것이다.
+
+- 입력 chunk가 다 들어오기를 기다리는 시간
+- 모델이 계산하는 시간
+- 출력 token을 소리로 바꾸고 재생을 준비하는 시간
+
+예를 들어 Moshi는 80 ms 길이의 frame 단위로 듣고 말한다.[^moshi]
+Moshi는 한 frame의 acoustic token을 semantic token보다 한 frame 늦게 생성하므로, frame 하나의 80 ms에 이 80 ms가 더해져 이론상 지연이 160 ms다.
+실제 지연은 약 200 ms라고 보고한다.
 
 ### 7-2. Full duplex
 
-Half duplex 대화에서는 한쪽 발화가 끝난 뒤 다른 쪽이 말하는 식으로 차례를 구분한다.
-Full duplex는 양쪽의 듣기와 말하기가 겹칠 수 있는 상호작용이다.
-사람은 상대의 설명 중 “네”라고 짧게 반응하거나, 잘못 알아들었을 때 끼어들 수 있다.
-Streaming TTS를 붙인 cascade 음성 비서는 첫 소리를 빨리 내지만, 말하는 동안 사용자 음성을 처리하지 않는다면 half duplex다.
+Half duplex 대화에서는 한쪽 발화가 끝난 뒤에 다른 쪽이 말한다.
+Full duplex는 양쪽의 듣기와 말하기가 겹칠 수 있는 대화다.
+아래 그림은 두 사람의 대화를 화자별로 나눠 그린 것이다.[^dgslm]
 
-Moshi는 사용자 음성과 모델의 음성을 별도의 병렬 스트림으로 표현해, 80 ms마다 사용자 스트림의 새 frame을 받고 자기 스트림의 다음 frame을 낸다.[^moshi]
+<Figure src="https://arxiv.org/html/2203.16502v2/turntaking.png" alt="두 화자 A와 B의 음성을 위아래 두 줄의 waveform으로 그린 그림. 아래 줄의 B가 먼저 길게 말하고(Turn B), 그 안에 IPU, P., IPU 구간이 있다. B의 말이 끝나기 전에 위 줄의 A가 말을 시작해 두 waveform이 겹치는 구간에 Overlap이라고 적혀 있다. A가 말하는 동안(Turn A) B가 짧게 소리를 내는 구간에 Backchannel이라고 적혀 있다. A의 말이 끝난 뒤 아무도 말하지 않는 구간이 Gap이고, 그 뒤에 B가 다시 말한다(Turn B)." caption="두 화자 A와 B의 대화를 화자별로 그린 것. IPU는 한 화자가 끊김 없이 말한 구간이고, P.(pause)는 같은 화자의 말 사이에 있는 침묵, Gap은 화자가 바뀔 때의 침묵이다. Overlap은 두 사람이 동시에 말한 구간이고, Backchannel은 상대가 말하는 동안 끼워 넣은 짧은 반응이다." source="Nguyen et al. (2022), Figure 3 · CC BY 4.0" wide />
+
+그림의 Overlap과 Backchannel처럼, 사람은 상대가 말하는 동안 끼어들거나 “네”라고 짧게 반응한다.
+Half duplex 시스템은 말하는 동안 듣지 않으므로, 이런 겹침을 만들지도 알아듣지도 못한다.
+Streaming TTS를 붙인 cascade 음성 비서도 말하는 동안 사용자 음성을 처리하지 않는다면 half duplex다.
+
+Moshi는 사용자 음성과 모델의 음성을 별도의 병렬 스트림으로 둔다.[^moshi]
+80 ms마다 사용자 스트림의 새 frame을 받고 자기 스트림의 다음 frame을 내므로, 말하면서 들을 수 있다.
 또 각 시간 칸에서 자기가 할 말의 텍스트 token을 speech token보다 먼저 예측한다.
 가상의 예로 보자.
 
@@ -899,8 +956,9 @@ Moshi는 사용자 음성과 모델의 음성을 별도의 병렬 스트림으�
 | 1–2초 | “오늘로 바꿔”라고 끼어듦 | 발화가 아직 진행 중 |
 | 2초 이후 | 조용함 | 새 지시를 반영해 응답 전환 |
 
-두 번째 구간의 두 음성은 같은 시간에 존재하므로, 한쪽이 끝날 때까지 다른 쪽을 무시하는 처리로는 끼어든 시점과 내용을 제때 반영하기 어렵다.
-병렬 스트림은 겹침을 표현할 수 있게 할 뿐이고, 끼어들기에 알맞게 반응하는지는 그런 대화를 담은 학습 데이터에 달려 있다.
+두 번째 구간에서는 두 음성이 같은 시간에 있다.
+모델은 말하는 중에도 사용자 스트림을 받고 있으므로, 끼어든 시점과 내용을 바로 반영할 수 있다.
+다만 병렬 스트림은 겹침을 표현할 수 있게 할 뿐이고, 끼어들기에 알맞게 반응하는지는 그런 대화를 담은 학습 데이터에 달려 있다.
 실제 제품에서는 마이크가 스피커에서 재생된 모델 음성까지 다시 받는 echo, 주변 잡음, 네트워크 지연도 처리해야 한다.
 
 ## 8. 평가
@@ -958,6 +1016,7 @@ Full-Duplex-Bench는 사용자의 쉼을 기다리는지, 맞장구(backchannel)
 [^soundstream]: Zeghidour, N., Luebs, A., Omran, A., et al. (2022). SoundStream: An End-to-End Neural Audio Codec. *IEEE/ACM Transactions on Audio, Speech, and Language Processing*. [논문](https://arxiv.org/abs/2107.03312).
 [^encodec]: Défossez, A., Copet, J., Synnaeve, G., & Adi, Y. (2023). High Fidelity Neural Audio Compression. *Transactions on Machine Learning Research*. [논문](https://openreview.net/forum?id=ivCd8z8zR2), [공개본](https://arxiv.org/abs/2210.13438).
 [^speechtokenizer]: Zhang, X., Zhang, D., Li, S., Zhou, Y., & Qiu, X. (2024). SpeechTokenizer: Unified Speech Tokenizer for Speech Language Models. *International Conference on Learning Representations*. [논문](https://proceedings.iclr.cc/paper_files/paper/2024/hash/86d1ab582afb247ccaa84bec4a7e24f7-Abstract-Conference.html).
+[^dgslm]: Nguyen, T. A., Kharitonov, E., Copet, J., Adi, Y., Hsu, W.-N., Elkahky, A., Tomasello, P., Algayres, R., Sagot, B., Mohamed, A., & Dupoux, E. (2022). Generative Spoken Dialogue Language Modeling. *arXiv preprint arXiv:2203.16502*. [논문](https://arxiv.org/abs/2203.16502).
 [^moshi]: Défossez, A., Mazaré, L., Orsini, M., Royer, A., Pérez, P., Jégou, H., Grave, E., & Zeghidour, N. (2024). Moshi: a speech-text foundation model for real-time dialogue. *arXiv preprint arXiv:2410.00037*. [논문](https://arxiv.org/abs/2410.00037).
 [^audiolm]: Borsos, Z., et al. (2023). AudioLM: a Language Modeling Approach to Audio Generation. *IEEE/ACM Transactions on Audio, Speech, and Language Processing*. [논문](https://arxiv.org/abs/2209.03143).
 [^cosyvoice]: Du, Z., et al. (2024). CosyVoice: A Scalable Multilingual Zero-shot Text-to-speech Synthesizer based on Supervised Semantic Tokens. *arXiv preprint arXiv:2407.05407*. [논문](https://arxiv.org/abs/2407.05407).
