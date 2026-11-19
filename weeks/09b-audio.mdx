@@ -112,16 +112,17 @@ Transformer에 넣을 **sequence의 길이도 sample 수가 아니라 frame 수*
 ### 1-3. Mel spectrogram과 MFCC
 
 사람의 귀는 낮은 주파수의 차이에는 민감하고 높은 주파수의 차이에는 둔하다.
-Mel 척도는 이 지각에 맞춰 주파수 축을 다시 나눈 것으로, 낮은 주파수를 촘촘하게, 높은 주파수를 성기게 나눈다.
+Mel 척도는 이 사실에 맞춰 주파수 축을 다시 나눈 것으로, 낮은 주파수를 촘촘하게, 높은 주파수를 성기게 나눈다.<Sidenote>mel은 melody에서 따온 단위로, 1,000 Hz를 1,000 mel로 두고 사람이 두 배 높게 느끼는 음이 두 배의 mel 값이 되도록 정했다.[^melscale] 2,000 mel은 2,000 Hz가 아니라 약 3,400 Hz다.</Sidenote>
 Mel spectrogram은 spectrogram의 주파수 구간들을 Mel 척도에 맞춰 묶어 만들고, 여기에 로그를 취한 것이 log-Mel spectrogram이다.
-지금의 신경망 audio encoder는 대개 log-Mel spectrogram을 입력으로 받는다.[^whisper]
+Whisper처럼 audio를 이해하는 encoder는 흔히 log-Mel spectrogram을 입력으로 받는다.[^whisper]
+사용자는 녹음 파일을 그대로 넣지만, 모델 앞의 전처리 단계가 waveform에서 log-Mel spectrogram을 계산해 encoder에 넘긴다.
 MFCC(mel-frequency cepstral coefficient)는 log-Mel spectrogram을 frame마다 13개 정도의 계수로 한 번 더 압축한 것으로, 고전적인 음성 인식의 입력으로 오래 쓰였다.[^mfcc]<Sidenote>Python의 audio 분석 라이브러리 librosa는 녹음 불러오기와 resampling, STFT, Mel spectrogram, MFCC를 각각 함수 하나로 계산해 준다.[^librosa]</Sidenote>
 
-<Figure src={audioRepresentations.src} alt="같은 발화 this is a test sentence의 네 가지 표현을 시간축을 맞춰 위아래로 놓은 그림. 맨 위는 16 kHz waveform으로 sample이 37,333개다. 둘째는 234 frame, 201개 주파수 구간의 spectrogram으로 모음 구간에서 낮은 주파수에 촘촘한 가로 줄무늬가 보인다. 셋째는 80개 Mel 구간의 log-Mel spectrogram으로 낮은 주파수 대역이 넓게 펼쳐지고 높은 주파수 대역이 눌려 있다. 맨 아래는 frame마다 계수 13개인 MFCC다." caption="같은 2.3초 발화의 네 표현. Waveform은 sample 37,333개이고, 25 ms 창과 10 ms 이동으로 만든 spectrogram은 234 frame × 201 구간, log-Mel spectrogram은 234 × 80, MFCC는 234 × 13이다. Spectrogram부터는 아래로 갈수록 frame당 차원이 줄어든다. 앞의 그림과 달리 spectrogram과 log-Mel spectrogram은 검은 바탕에서 밝을수록 세다. Spectrogram의 모음 구간에 보이는 촘촘한 가로 줄무늬는 목소리 높이에서 생기는 배음(harmonics)이고, MFCC에서는 사라진다." source="자작 · 음성은 Foobarista2, Wikimedia Commons, CC0" wide />
+<Figure src={audioRepresentations.src} alt="같은 발화 this is a test sentence의 네 가지 표현을 시간축을 맞춰 위아래로 놓은 그림. 맨 위는 16 kHz waveform으로 sample이 37,333개다. 둘째는 234 frame, 201개 주파수 구간의 spectrogram으로 모음 구간에서 낮은 주파수에 촘촘한 가로 줄무늬가 보인다. 셋째는 80개 Mel 구간의 log-Mel spectrogram으로 낮은 주파수 대역이 넓게 펼쳐지고 높은 주파수 대역이 눌려 있다. 맨 아래는 frame마다 계수 13개인 MFCC다." caption="같은 2.3초 발화의 네 표현. Waveform은 sample 37,333개이고, 25 ms 창과 10 ms 이동으로 만든 spectrogram은 234 frame × 201 구간, log-Mel spectrogram은 234 × 80, MFCC는 234 × 13이다. Spectrogram의 모음 구간에 보이는 촘촘한 가로 줄무늬는 목소리 높이에서 생기는 배음(harmonics)이고, MFCC에서는 사라진다." source="음성 Foobarista2, Wikimedia Commons, CC0" wide />
 
 <figure class="lecture-figure">
 <audio controls preload="none" src="https://upload.wikimedia.org/wikipedia/commons/9/95/LL-Q1860_%28eng%29-Foobarista2-this_is_a_test_sentence.wav" aria-label="영어 문장 this is a test sentence를 읽은 2.3초 녹음"></audio>
-<figcaption>위 그림의 원본 녹음. “this is a test sentence”를 읽은 2.3초 음성이다. 음성 Foobarista2 · <a href="https://commons.wikimedia.org/wiki/File:LL-Q1860_(eng)-Foobarista2-this_is_a_test_sentence.wav">Wikimedia Commons</a> · CC0</figcaption>
+<figcaption>위 그림의 원본 녹음. 음성 Foobarista2 · <a href="https://commons.wikimedia.org/wiki/File:LL-Q1860_(eng)-Foobarista2-this_is_a_test_sentence.wav">Wikimedia Commons</a> · CC0</figcaption>
 </figure>
 
 | 표현 | 2.3초 발화의 크기 | 버리는 정보 | 주로 쓰이는 곳 |
@@ -559,6 +560,7 @@ Full-Duplex-Bench는 사용자의 쉼을 기다리는지, 맞장구(backchannel)
 [^survey]: Yang, Z., Shimizu, S., Yu, Y., & Chu, C. (2025). When Large Language Models Meet Speech: A Survey on Integration Approaches. *Findings of the Association for Computational Linguistics: ACL 2025*, 20298–20315. [논문](https://aclanthology.org/2025.findings-acl.1041/).
 [^slp3]: Jurafsky, D., & Martin, J. H. (2026). Speech and Language Processing (3rd ed. draft), Chapter 15: Phonetics and Speech Feature Extraction. [교재](https://web.stanford.edu/~jurafsky/slp3/15.pdf).
 [^mfcc]: Davis, S., & Mermelstein, P. (1980). Comparison of parametric representations for monosyllabic word recognition in continuously spoken sentences. *IEEE Transactions on Acoustics, Speech, and Signal Processing*. 28(4), 357–366. [논문](https://doi.org/10.1109/TASSP.1980.1163420).
+[^melscale]: Stevens, S. S., Volkmann, J., & Newman, E. B. (1937). A Scale for the Measurement of the Psychological Magnitude Pitch. *The Journal of the Acoustical Society of America*, 8(3), 185–190. [논문](https://doi.org/10.1121/1.1915893).
 [^librosa]: McFee, B., Raffel, C., Liang, D., Ellis, D. P. W., McVicar, M., Battenberg, E., & Nieto, O. (2015). librosa: Audio and Music Signal Analysis in Python. *Proceedings of the 14th Python in Science Conference*, 18–24. [논문](https://doi.org/10.25080/Majora-7b98e3ed-003), [문서](https://librosa.org/doc/latest/).
 [^wav2vec2]: Baevski, A., Zhou, H., Mohamed, A., & Auli, M. (2020). wav2vec 2.0: A Framework for Self-Supervised Learning of Speech Representations. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2006.11477).
 [^laionclap]: Wu, Y., Chen, K., Zhang, T., et al. (2023). Large-scale Contrastive Language-Audio Pretraining with Feature Fusion and Keyword-to-Caption Augmentation. *ICASSP*. [논문](https://arxiv.org/abs/2211.06687).
