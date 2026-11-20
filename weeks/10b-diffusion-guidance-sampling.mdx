@@ -5,7 +5,7 @@ order: 1
 ---
 
 같은 diffusion model이라도 어떤 조건을 주고 어떤 단계로 샘플링하느냐에 따라 생성 결과와 비용이 달라진다.[^survey]
-모델이 예측을 만드는 방법, 예측을 강화하는 방법, 다음 상태로 이동하는 방법은 서로 연결되지만 같은 선택은 아니다.
+조건을 모델에 넣는 방법, 그 조건의 영향을 강화하는 방법, 예측을 이용해 다음 상태로 이동하는 방법은 서로 연결되지만 같은 선택은 아니다.
 이 노트는 text conditioning과 classifier-free guidance(CFG), noise schedule과 sampler를 구분해 살펴본다.
 
 ## 1. 조건을 반영하는 생성
@@ -18,16 +18,14 @@ order: 1
 현재 noise가 섞인 상태를 $x_t$, noise 수준을 나타내는 단계를 $t$라 하자.
 조건을 받은 모델의 noise 예측은 $\epsilon_\theta(x_t,t,c)$로 쓴다.
 $c$는 모델의 예측을 바꾸는 입력이다.
-하지만 $c$만으로 각 단계의 갱신 방법이 정해지지는 않는다.
 
-Text encoder는 먼저 text 조건을 token별 벡터로 바꾼다.
-Cross-attention을 쓰는 모델은 이미지 표현에서 query를 만들고, text 표현에서 key와 value를 만든다.
-그러면 이미지의 각 위치가 문장 정보를 참조할 수 있다.
-조건을 넣는 구체적인 위치와 방식은 backbone에 따라 다르다.
+Text 조건은 text encoder가 token별 벡터로 바꾼다.
+Noise를 예측하는 신경망(denoiser)은 cross-attention 등으로 그 벡터를 읽는다.
+조건을 넣는 위치와 방식은 denoiser의 구조에 따라 다르다.
 
 ### 1-2. Classifier-free guidance
 
-Classifier guidance는 별도 classifier의 gradient를 이용해 생성 방향을 조절한다.
+Classifier guidance는 별도 classifier의 gradient를 이용해 생성 방향을 조절한다.[^classifier-guidance]
 예를 들어 classifier는 현재 noisy 이미지가 개일 확률을 높이는 방향을 gradient로 알려 준다.
 Classifier guidance는 이 방향을 각 단계의 denoising에 더한다.
 그러려면 noise 수준이 서로 다른 이미지를 모두 판단할 수 있는 classifier를 따로 학습해야 한다.
@@ -54,14 +52,24 @@ $s$가 1보다 크면 CFG는 조건부 예측이 조건 없는 예측에서 벗�
 `개` 조건을 준 예측은 여기에 개 이미지 쪽으로 이끄는 정보를 더 반영한다.
 두 예측의 차이는 같은 현재 상태에서 조건을 추가했을 때 모델의 예측이 바뀐 방향이다.
 CFG는 이 차이에 가중치를 곱한다.
-다만 모델의 예측은 완벽한 정답이 아니다.
-그래서 가중치를 키운다고 항상 더 좋은 이미지가 나오지는 않는다.
 
 <Callout type="example">
 어느 한 좌표에서 $\epsilon_u=0.2$, $\epsilon_c=0.3$, $s=3$이라면 결합 결과는 $0.2+3(0.3-0.2)=0.5$다.
 실제 CFG는 이미지 전체에 해당하는 벡터의 모든 좌표에 같은 연산을 적용한다.
-이 값은 이해를 위한 가상 예이며, 숫자가 클수록 픽셀이 밝아진다는 뜻은 아니다.
+이 값은 이해를 위한 가상 예다.
 </Callout>
+
+두 예측의 차이는 score로 보면 classifier guidance와 이어진다.
+Noise 예측은 score와 $\nabla_{x_t}\log p(x_t)\approx-\epsilon_\theta(x_t,t)/\sqrt{1-\bar\alpha_t}$로 연결된다.
+Bayes 규칙에 따르면 $\nabla_{x_t}\log p(x_t\mid c)=\nabla_{x_t}\log p(x_t)+\nabla_{x_t}\log p(c\mid x_t)$이므로, 조건부 score와 무조건부 score의 차가 곧 classifier의 gradient다.
+
+$$
+\nabla_{x_t}\log p(c\mid x_t)\approx-\frac{\epsilon_c-\epsilon_u}{\sqrt{1-\bar\alpha_t}}.
+$$
+
+따라서 CFG는 따로 학습한 classifier 대신, 두 예측의 차로 만든 암묵적 classifier의 gradient를 $s$배로 키워 더하는 guidance로 볼 수 있다.[^cfg]
+$s>1$이면 결합된 예측은 조건을 더 확실히 만족하는 쪽으로 기운 분포 $p(x_t)\,p(c\mid x_t)^s$의 score에 해당한다.
+다만 두 예측은 학습된 신경망의 출력이어서, 원논문도 그 차가 일반적으로 어떤 classifier의 gradient와 정확히 같지는 않다고 밝힌다.
 
 Scale을 높이면 조건이 더 강하게 반영된다.
 하지만 scale을 계속 높이면 결과의 다양성이나 품질이 나빠질 수 있다.
@@ -70,22 +78,16 @@ CFG는 단계마다 예측을 두 번 구하므로 계산 비용이 늘어난다
 어떤 구현은 조건 없는 예측 자리에 negative prompt를 넣은 예측을 쓴다.
 이 예측은 진짜 무조건부 예측과 다르다.
 
-### 1-3. 공간 조건
-
-Text prompt는 내용과 분위기를 지정하지만, 생성 결과가 특정 선이나 자세를 정확히 따르게 하기는 어렵다.
-ControlNet은 기존에 학습된 text-to-image 모델에 edge map이나 사람의 자세 같은 공간 조건을 전달하는 별도 경로를 학습한다.[^controlnet]
-ControlNet이 푸는 문제는 prompt를 더 강하게 반영하는 CFG와 다르다.
-ControlNet은 생성할 위치별 구조를 추가로 제공한다.
-CFG는 기존 조건의 예측과 무조건부 예측의 차이를 조절한다.
-
 ## 2. Noise schedule과 sampler
 
 ### 2-1. 학습에서의 noise 수준
 
 DDPM의 forward 과정에서 $\beta_t$는 각 단계에 더하는 noise의 분산이다.
-$\bar\alpha_t=\prod_{s=1}^{t}(1-\beta_s)$는 원본 신호가 얼마나 남는지를 정한다.
+$\bar\alpha_t=\prod_{k=1}^{t}(1-\beta_k)$는 원본 신호가 얼마나 남는지를 정한다.
 Noise schedule은 각 단계에 어떤 noise 수준을 배정할지 정한다.
-예를 들어 선형 schedule과 cosine schedule은 시간에 따라 신호와 noise의 비율을 서로 다르게 바꾼다.[^improved]
+DDPM은 $\beta_t$를 선형으로 늘리는 schedule을 썼다.
+Improved DDPM은 32×32, 64×64 같은 낮은 해상도에서 이 선형 schedule의 마지막 구간이 거의 순수한 noise여서, 그 단계들이 표본 품질에 별로 기여하지 않는다고 보았다.[^improved]
+그래서 $\bar\alpha_t$가 중간에서는 직선에 가깝게 줄고 처음과 끝 근처에서는 천천히 변하는 cosine schedule을 제안했다.
 학습할 때 $t$를 뽑는 분포는 모델이 각 noise 수준을 얼마나 자주 학습할지를 정한다.
 
 ### 2-2. 생성에서의 단계와 갱신식
@@ -93,7 +95,7 @@ Noise schedule은 각 단계에 어떤 noise 수준을 배정할지 정한다.
 Sampler는 현재 상태와 모델 예측을 이용해 다음 상태를 계산한다.
 Sampler를 쓰려면 생성할 때 방문할 시간 단계도 정해야 한다.
 일부 도구는 이 시간표와 갱신 알고리즘을 묶어 scheduler라고 부른다.
-이름이 비슷하다고 scheduler를 학습에 쓴 noise schedule과 같은 것으로 보면 안 된다.
+Scheduler는 학습에 쓴 noise schedule을 그대로 받아, 그중 어느 시간을 방문하고 어떤 식으로 갱신할지를 정한다.
 
 다음 표는 `개` 조건으로 생성할 때 **생성의 한 단계**에서 각 부분이 맡는 역할을 보여 준다.
 학습된 denoiser의 parameter는 이 과정에서 바뀌지 않는다.
@@ -109,27 +111,22 @@ Sampler를 쓰려면 생성할 때 방문할 시간 단계도 정해야 한다.
 모델은 현재 상태에 어떤 noise가 섞였는지 추정한다.
 Guidance는 그 추정을 조건에 맞춰 조절한다.
 Sampler는 조절된 추정으로 상태를 다음 단계로 옮긴다.
-세 부분은 서로 다른 단계이므로, scheduler만 바꾸면 text encoder와 모델 weight는 그대로다.
+세 부분이 나뉘어 있으므로 scheduler만 바꿔도 text encoder와 모델 weight는 다시 학습하지 않는다.
+
+### 2-3. DDIM의 단계 건너뛰기
 
 DDPM의 기본 역방향 갱신은 먼저 다음 상태의 평균을 예측한다.
 그리고 정해진 분산의 noise를 더해 다음 상태를 뽑는다.
-DDIM은 DDPM과 같은 방식으로 학습한 noise 예측 모델을 그대로 쓴다.[^ddim]
-대신 생성 경로를 다르게 구성해 더 적은 단계로 샘플링한다.
-DDIM은 설정에 따라 결정론적으로 동작하게 할 수도 있다.
-결정론적 DDIM에서는 초기 noise가 같으면 단계 수가 달라도 전체 구도 같은 고수준 특징이 대체로 비슷하게 나온다.
-다만 세부는 달라지므로, sampler나 단계 수를 바꾸면 완전히 같은 이미지가 나오지는 않는다.
-단계 수를 줄이면 모델 호출 횟수와 지연이 준다.
-하지만 품질은 모델과 sampler에 따라 달라지므로, 어떤 단계 수가 항상 최적인 것은 아니다.
-DPM-Solver는 또 다른 접근이다.[^solver]
-DPM-Solver는 생성 과정을 미분방정식으로 보고, 적은 모델 호출로 그 해를 근사하는 수치해법을 설계한다.
-Scheduler 설정은 이름이 같더라도 모델이 학습한 noise 수준과 예측 대상에 맞아야 한다.
-호출 횟수가 같아도 solver마다 필요한 계산과 생성 결과는 다를 수 있다.
+이 갱신은 학습 때의 단계를 하나씩 모두 밟는다.
+DDIM(denoising diffusion implicit model)은 DDPM과 같은 방식으로 학습한 noise 예측 모델을 그대로 쓰면서 단계를 건너뛴다.[^ddim]
+DDPM의 학습 손실은 각 시점의 분포 $q(x_t\mid x_0)$에만 의존하고, 단계와 단계가 어떻게 이어지는지는 쓰지 않기 때문이다.
+DDIM은 이 시점별 분포를 그대로 두고 단계 사이의 연결만 바꾼 forward 과정을 새로 정의한다.
+그 역방향 과정은 중간 시간을 건너뛴 일부 단계만으로도 정의되므로, DDIM은 다시 학습하지 않고 더 적은 단계로 샘플링한다.
+단계 수를 줄이면 모델 호출 횟수와 지연이 주는 대신, 단계가 너무 적으면 품질이 떨어진다.
 
-### 2-3. DDIM의 한 단계 계산
-
-Sampler가 실제로 하는 일을 결정론적 DDIM으로 살펴보자.
-Sampler가 현재 시간 $t$에서 더 이른 시간 $r$로 이동한다고 하자.
-여기서 $r<t$이고, sampler는 중간 시간을 건너뛸 수도 있다.
+DDIM에는 매 단계 새 noise를 더하는 설정과 더하지 않는 결정론적 설정이 있다.
+결정론적 설정으로 sampler가 실제로 하는 일을 살펴보자.
+Sampler가 현재 시간 $t$에서 중간 시간을 건너뛰어 더 이른 시간 $r<t$로 이동한다고 하자.
 $\bar\alpha$는 forward 과정에서 noise를 더할수록 작아지므로, $r$에서는 $\bar\alpha_r>\bar\alpha_t$다.
 DDIM은 먼저 현재 상태 $x_t$와 모델 예측 $\hat\epsilon=\epsilon_\theta(x_t,t)$로 원본을 추정한다.
 
@@ -144,67 +141,17 @@ x_r=\sqrt{\bar\alpha_r}\hat x_0+\sqrt{1-\bar\alpha_r}\hat\epsilon.
 $$
 
 두 번째 식은 원본 추정과 예측 noise를 $r$의 noise 수준에 맞는 비율로 다시 섞는다.
-이 계산은 새 무작위 noise를 더하지 않는 결정론적 설정이다.
-DDIM에는 무작위 noise를 더하는 설정도 있다.
+이 계산에는 새 무작위 noise가 들어가지 않으므로, 생성 결과는 초기 noise로 정해진다.
+그래서 초기 noise를 고정하고 단계 수만 바꾸면 전체 구도 같은 고수준 특징은 대체로 비슷하게 나오고, 세부만 달라진다.
 
 <Callout type="example">
 현재 $x_t=1.9$, $\bar\alpha_t=0.64$, $\hat\epsilon=0.5$라면 원본 추정은 $\hat x_0=2$다.
 다음에 방문할 단계의 $\bar\alpha_r=0.81$이라면 $x_r=0.9\times2+\sqrt{0.19}\times0.5\approx2.018$이다.
 이 값은 다음 모델 호출의 입력이 된다.
-Sampler는 모델의 parameter를 갱신하지 않는다.
-Sampler는 주어진 noise 수준과 방문 순서에 따라, 현재 예측으로 다음 상태를 계산한다.
 </Callout>
-
-## 3. 예측 대상과 생성 경로
-
-### 3-1. Noise, 원본, velocity
-
-같은 noisy 상태에서도 모델이 예측할 대상은 여러 가지로 정할 수 있다.
-모델은 noise $\epsilon$, 원본 $x_0$, 또는 둘을 조합한 velocity를 예측할 수 있다.
-예를 들어 $x_t=a_t x_0+b_t\epsilon$에서 $a_t=\sqrt{\bar\alpha_t}$, $b_t=\sqrt{1-\bar\alpha_t}$라 하자.
-한 가지 velocity 정의는 $v_t=a_t\epsilon-b_t x_0$이다.[^v]
-$a_t^2+b_t^2=1$이므로 세 대상은 $x_0=a_t x_t-b_t v_t$, $\epsilon=b_t x_t+a_t v_t$로 서로 바꿀 수 있다.
-
-세 대상은 같은 정보를 다르게 표현한 것이다.
-하지만 어느 대상을 예측하느냐에 따라 학습 손실의 가중치와 수치적 성질은 달라질 수 있다.
-Velocity라는 이름은 문헌마다 다른 정의로도 쓰이므로, 모델마다 정의를 확인해야 한다.
-예를 들어 Stable Diffusion 3 논문은 $\epsilon-x_0$를 velocity 목표로 쓴다.[^sd3]
-
-### 3-2. Flow matching과의 관계
-
-생성 과정의 다른 선택으로 flow matching이 있다.
-Flow matching은 데이터와 noise를 잇는 시간별 경로를 정하고, 모델이 그 경로 위의 이동 방향, 즉 vector field를 예측하도록 학습한다.[^flow]
-생성 과정은 모델이 예측한 방향을 따라 미분방정식을 풀어 noise를 데이터로 옮긴다.
-한 가지 직선 경로를 예로 들자.
-학습 과정은 noise 표본 $z$와 데이터 표본 $y$를 하나씩 뽑고, $0$부터 $1$ 사이의 시간 $t$를 고른다.
-중간 상태 $x_t=(1-t)z+ty$는 $t=0$에서 noise이고 $t=1$에서 데이터다.
-이 경로의 시간에 따른 변화율은 $y-z$다.
-시간의 방향은 문헌마다 달라서, $t=0$을 데이터로 두고 $t=1$을 noise로 두는 논문도 있다.
-모델 $v_\theta(x_t,t)$는 이 값을 예측하도록 제곱 오차 $\lVert v_\theta(x_t,t)-(y-z)\rVert^2$를 줄이며 학습한다.
-모델은 여러 noise와 데이터 쌍에서 이 과정을 반복해 시간과 위치에 따른 방향을 배운다.
-
-<Callout type="example">
-가상의 1차원 학습 예시에서 $z=-1$, $y=3$, $t=0.25$라면 입력은 $x_t=0$, 목표 변화율은 $y-z=4$다.
-모델이 $v_\theta(0,0.25)=2$를 예측했다면 이 예의 제곱 오차는 $(2-4)^2=4$다.
-생성할 때는 모델에 데이터 표본 $y$를 정답으로 주지 않는다.
-예를 들어 현재 $x_{0.25}=0$이고 모델이 변화율 2를 예측하면, Euler 방법으로 시간 간격 $0.25$만큼 이동한 다음 상태는 $x_{0.5}\approx0+0.25\times2=0.5$다.
-이 값을 다음 모델 호출에 넣고, 같은 계산을 $t=1$까지 반복한다.
-</Callout>
-
-학습의 직선은 각 noise와 데이터 쌍에 대해 만든 목표 경로다.
-같은 위치와 시간에 여러 쌍의 경로가 지날 수 있으므로, 모델이 배운 방향과 생성 궤적이 특정 학습 쌍의 직선을 그대로 따르는 것은 아니다.
-Flow matching은 diffusion과 연결해 이해할 수 있다.
-Gaussian 경로에서는 flow matching의 목표를 noise 예측 손실로 바꿔 쓸 수 있다.
-하지만 그때 시간별 손실 가중치가 DDPM의 단순 손실과 달라지므로, 두 학습 목표가 같지는 않다.
-예를 들어 Stable Diffusion 3 연구는 rectified flow와 Transformer backbone을 함께 사용한다.[^sd3]
-경로, 학습 목표, backbone은 서로 독립된 선택이므로 모델마다 각각 확인해야 한다.
 
 [^survey]: Yang, L., Zhang, Z., Song, Y., et al. (2024). Diffusion Models: A Comprehensive Survey of Methods and Applications. *ACM Computing Surveys*, 56(4), 105:1–105:39. [논문](https://arxiv.org/abs/2209.00796).
-[^controlnet]: Zhang, L., Rao, A., & Agrawala, M. (2023). Adding Conditional Control to Text-to-Image Diffusion Models. *ICCV*. [논문](https://arxiv.org/abs/2302.05543).
-[^solver]: Lu, C., Zhou, Y., Bao, F., et al. (2022). DPM-Solver: A Fast ODE Solver for Diffusion Probabilistic Model Sampling in Around 10 Steps. *NeurIPS*. [논문](https://arxiv.org/abs/2206.00927).
+[^classifier-guidance]: Dhariwal, P., & Nichol, A. (2021). Diffusion Models Beat GANs on Image Synthesis. *NeurIPS*. [논문](https://arxiv.org/abs/2105.05233).
 [^cfg]: Ho, J., & Salimans, T. (2022). Classifier-Free Diffusion Guidance. *arXiv*. [논문](https://arxiv.org/abs/2207.12598).
 [^improved]: Nichol, A. Q., & Dhariwal, P. (2021). Improved Denoising Diffusion Probabilistic Models. *ICML*. [논문](https://proceedings.mlr.press/v139/nichol21a.html).
 [^ddim]: Song, J., Meng, C., & Ermon, S. (2021). Denoising Diffusion Implicit Models. *ICLR*. [논문](https://arxiv.org/abs/2010.02502).
-[^v]: Salimans, T., & Ho, J. (2022). Progressive Distillation for Fast Sampling of Diffusion Models. *ICLR*. [논문](https://arxiv.org/abs/2202.00512).
-[^flow]: Lipman, Y., Chen, R. T. Q., Ben-Hamu, H., Nickel, M., & Le, M. (2023). Flow Matching for Generative Modeling. *ICLR*. [논문](https://arxiv.org/abs/2210.02747).
-[^sd3]: Esser, P., Kulal, S., Blattmann, A., et al. (2024). Scaling Rectified Flow Transformers for High-Resolution Image Synthesis. *ICML*. [논문](https://arxiv.org/abs/2403.03206).

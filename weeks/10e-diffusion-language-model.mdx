@@ -13,10 +13,11 @@ Diffusion language model은 다른 방식으로 텍스트를 생성한다.[^surv
 
 ### 1-1. Autoregressive 생성
 
-Token sequence $x_1,\ldots,x_L$에 대한 AR 모델의 결합확률은 다음과 같이 분해된다.
+길이 $L$인 token sequence의 $i$번째 token을 $x^i$라 하자.
+AR 모델의 결합확률은 다음과 같이 분해된다.
 
 $$
-p(x_1,\ldots,x_L)=\prod_{i=1}^{L}p(x_i\mid x_1,\ldots,x_{i-1}).
+p(x^1,\ldots,x^L)=\prod_{i=1}^{L}p(x^i\mid x^1,\ldots,x^{i-1}).
 $$
 
 생성할 때 AR 모델은 첫 token을 뽑고, 그 결과를 조건으로 두 번째 token을 뽑는다.
@@ -31,7 +32,6 @@ Diffusion에서 continuous와 discrete는 우선 모델이 손상시키는 **상
 이미지 DDPM은 실수 벡터에 Gaussian noise를 더하므로 continuous-state diffusion이다.
 시간을 여러 개의 정수 단계로 나눴더라도 상태의 값은 연속이다.
 반면 discrete-state diffusion은 가능한 상태와 그 상태 사이의 전이 확률을 정의한다.[^d3pm]
-시간을 연속으로 나타내느냐와 상태가 연속이냐도 서로 별개의 선택이다.
 
 텍스트에서도 두 접근이 모두 가능하다.[^diffusion-lm][^d3pm]
 
@@ -43,31 +43,23 @@ Diffusion에서 continuous와 discrete는 우선 모델이 손상시키는 **상
 | 예 | Diffusion-LM | D3PM, LLaDA |
 
 Continuous 접근에서 `고양이` token을 embedding 벡터로 바꾼 뒤 벡터에 noise를 더하면, 중간 상태는 어느 단어 하나의 ID가 아니라 실수 벡터다.
-그래서 생성의 마지막에 모델은 각 위치의 벡터를 어휘의 token으로 읽어 내야 한다.
-이 변환을 어떻게 학습하고 처리할지가 별도의 설계 문제다.
-Discrete 접근은 token ID 숫자에 noise를 더하지 않는다.
-대신 한 기호가 다른 상태로 바뀔 확률을 정한다.
-
-Continuous 언어 diffusion의 한 경로를 따라가 보자.
-모델 학습에는 token sequence를 embedding sequence $e(x)$로 바꾸고 각 위치의 벡터에 Gaussian noise를 섞은 입력을 쓴다.
+학습에는 token sequence를 embedding sequence $e(x)$로 바꾸고 각 위치의 벡터에 Gaussian noise를 섞은 입력을 쓴다.
 모델은 noisy vector에서 깨끗한 embedding에 관한 정보를 예측하도록 학습한다.
 생성할 때 모델은 연속 noise 벡터에서 출발해 벡터를 반복해서 갱신한다.
 마지막에는 그 벡터들을 어휘의 기호로 바꾸는 decoding 단계가 필요하다.
 예를 들어 Diffusion-LM은 각 위치의 최종 벡터에서 token 확률을 계산하고 가장 확률이 높은 token을 선택하는 rounding을 사용한다.[^diffusion-lm]
 확률이 비슷한 두 후보의 경계에서는 벡터의 작은 변화가 다른 token 선택으로 이어질 수도 있다.
-이 과정은 token ID에 noise를 더하는 것과 다르다.
+이 변환을 어떻게 학습하고 처리할지가 continuous 접근의 별도 설계 문제다.
 
-<Figure src="https://tuananhbui89.github.io/assets/img/diffusion-foundation/diffusion-lm-overview.png" alt="연속 Gaussian noise 벡터가 여러 denoising 단계를 거쳐 단어 벡터가 되고 텍스트로 바뀐다. 아래에는 문장 구조 조건을 제공하는 classifier가 연결되어 있다." caption="연속 벡터에서 텍스트를 생성하는 Diffusion-LM. 위쪽은 noise에서 단어 벡터로 이동하는 경로이고, 아래 classifier는 원하는 문장 구조를 추가로 반영하는 선택적 제어다." source="Li et al. (2022), Figure 1 · CC BY 4.0" wide />
+<Figure src="https://arxiv.org/html/2205.14217v1/fig1_v2.png" alt="연속 Gaussian noise 벡터가 여러 denoising 단계를 거쳐 단어 벡터가 되고 텍스트로 바뀐다. 아래에는 문장 구조 조건을 제공하는 classifier가 연결되어 있다." caption="연속 벡터에서 텍스트를 생성하는 Diffusion-LM. 위쪽은 noise에서 단어 벡터로 이동하는 경로이고, 아래 classifier는 원하는 문장 구조를 추가로 반영하는 선택적 제어다." source="Li et al. (2022), Figure 1 · CC BY 4.0" wide />
 
 그림에서 $x_T,\ldots,x_0$는 연속 벡터이고 $w$는 최종 텍스트다.
-아래의 classifier는 원하는 문장 구조를 반영하려고 추가한 예시다.
-모든 연속 diffusion 언어 모델에 필요한 구성은 아니다.
-그림은 [원논문](https://arxiv.org/abs/2205.14217)의 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 조건으로 제공된다.
+[원논문](https://arxiv.org/abs/2205.14217)은 이 그림을 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)으로 공개했다.
 
-### 1-3. Discrete diffusion
+### 1-3. Mask를 이용한 이산 손상
 
-이산 diffusion에서 mask는 여러 가능한 손상 방식 중 하나다.
-전이 확률을 그렇게 정하면, 한 번 가린 위치가 이후 forward 단계에서도 계속 mask로 남게 할 수 있다.
+Discrete 접근은 token ID 숫자에 noise를 더하지 않는다.
+대신 한 기호가 다른 상태로 바뀔 확률을 정하고, mask는 그렇게 정할 수 있는 손상 방식 중 하나다.
 
 예를 들어 원래 문장이 `나는 오늘 학교에 간다`라고 하자.
 Forward 과정이 선택한 token을 `[MASK]`로 바꾸면, 문장은 다음처럼 정보를 점차 잃는다.
@@ -78,8 +70,7 @@ Forward 과정이 선택한 token을 `[MASK]`로 바꾸면, 문장은 다음처�
 | 일부 손상 | 나는 [MASK] 학교에 [MASK] |
 | 완전 손상 | [MASK] [MASK] [MASK] [MASK] |
 
-실제 token은 단어나 띄어쓰기 단위와 일치하지 않을 수 있다.
-이 표는 이해를 위한 단순화된 예다.
+실제 token은 단어나 띄어쓰기 단위와 일치하지 않을 수 있지만, 여기서는 어절 하나를 token 하나처럼 다룬다.
 한 번 mask가 된 위치가 계속 mask로 남는 과정을 absorbing-mask 과정이라 한다.
 손상 확률은 시간에 따라 정해진다.
 생성 과정은 충분히 손상된 상태에서 출발해 역방향으로 token을 복원하도록 설계한다.
@@ -88,7 +79,6 @@ Forward 과정이 선택한 token을 `[MASK]`로 바꾸면, 문장은 다음처�
 어떤 위치가 아직 `학교에`이고 다음 단계에서 mask될 확률이 0.2라면, 그 위치는 확률 0.8로 `학교에`를 유지하고 확률 0.2로 `[MASK]`가 된다.
 이미 `[MASK]`인 위치는 확률 1로 `[MASK]`에 머문다.
 이처럼 연속 noise 대신 기호 사이의 전이 확률을 정한 것이 discrete forward 과정이다.
-수치는 개념을 위한 예이며 LLaDA의 특정 단계 설정을 뜻하지 않는다.
 </Callout>
 
 전이 확률을 행렬로 쓰면 mask 외의 손상 방식도 같은 틀에서 나타낼 수 있다.
@@ -106,20 +96,23 @@ $$
 마지막 행에서는 mask가 mask로 남을 확률이 1이다.
 같은 $Q$를 두 단계 연속 쓰면 처음 `A`였던 위치가 여전히 `A`일 확률은 $0.8^2=0.64$다.
 서로 다른 단계의 전이 행렬을 곱하면 그 단계들을 거친 누적 전이를 얻는다.
-D3PM은 이처럼 전이 행렬을 설계해 mask뿐 아니라 다른 이산 손상도 표현한다.[^d3pm]
+D3PM은 이처럼 전이 행렬을 설계해 mask뿐 아니라 균등한 무작위 치환 같은 다른 이산 손상도 표현한다.[^d3pm]
+그리고 텍스트 실험에서는 여러 전이 가운데 absorbing mask가 가장 좋은 결과를 냈다.
 
 ## 2. Masked diffusion의 학습과 생성
 
 ### 2-1. 학습 목표
 
-LLaDA는 시간에 따른 masking으로 학습 데이터를 손상시킨다.[^llada]
-그리고 Transformer가 가려진 token을 예측하도록 학습한다.
-학습 중에는 원본 sequence와 mask 위치를 알고 있으므로, 모델은 가려진 위치마다 정답 token의 확률을 높이도록 학습할 수 있다.
-모델은 각기 다른 비율로 가려진 입력을 경험하고, 남아 있는 양쪽 문맥을 활용해 빠진 token의 분포를 예측한다.
-LLaDA의 목적함수에는 시간에 따른 가중치가 있고, 이 목적함수는 likelihood의 bound와 연결된다.
-그래서 고정된 mask 비율 하나를 쓰는 분류 문제와는 다르다.
+D3PM은 전이 행렬을 자유롭게 고를 수 있는 대신 학습 목적함수가 복잡했다.
+시간을 1000개의 이산 단계로 나눈 variational bound를 학습했고, 학습을 안정시키려고 보조 cross-entropy 손실을 더했다.[^d3pm]
+2024년 비슷한 시기에 나온 MDLM, MD4, RADD는 손상을 absorbing mask로 한정하고 시간을 연속으로 두면 이 bound가 단순한 꼴로 정리된다는 것을 각각 보였다.[^mdlm][^md4][^radd]
+정리된 bound는 mask된 위치의 cross-entropy를 시간에 따른 가중치로 적분한 값이다.
+MDLM은 이것을 mask 비율을 바꿔 가며 계산한 masked language modeling 손실의 가중 평균으로 해석한다.[^mdlm]
+세 연구 모두 언어 모델링 perplexity에서 이전 diffusion 언어 모델을 앞섰지만, 실험한 모델은 GPT-2 정도의 규모였다.
 
-LLaDA는 pre-training에서 $t$를 0과 1 사이에서 균일하게 뽑고, 각 token을 독립적으로 확률 $t$로 mask한다.
+LLaDA는 이 목적함수를 그대로 쓰면서 규모를 LLM 수준으로 키웠다.[^llada]
+8B Transformer를 2.3조 token으로 처음부터 학습한 것이다.
+Pre-training에서 LLaDA는 $t$를 0과 1 사이에서 균일하게 뽑고, 각 token을 독립적으로 확률 $t$로 mask한다.
 원래 sequence를 $x_0$, 손상된 sequence를 $x_t$, mask token을 $\mathrm{M}$이라 하면 손실은 다음과 같다.
 
 $$
@@ -133,36 +126,30 @@ $$
 
 지시 함수 $\mathbf{1}[\cdot]$는 해당 위치가 mask이면 1, 아니면 0이다.
 그래서 손실은 가려진 위치에서만 계산된다.
+모델은 남아 있는 양쪽 문맥을 보고, 가려진 위치마다 정답 token의 확률을 높이도록 학습한다.
 예를 들어 네 token 중 둘만 가려졌다면 두 정답의 log probability가 합에 들어간다.
+
 $1/t$는 noise 수준에 따라 손실에 주는 가중치다.
 $t$는 각 token이 mask될 확률이자 mask 비율의 기댓값이다.
 가령 길이가 100인 sequence에서 $t=0.1$이면 평균 10개, $t=0.5$이면 평균 50개 위치가 가려진다.
 각 위치의 손실이 1이라고 가정하면 가려진 위치의 손실 합의 기댓값은 각각 10과 50이고, $1/t$를 곱한 기댓값은 둘 다 100이다.
 즉 $t$가 작으면 손실에 참여하는 위치가 적어지는 만큼 가중치가 커진다.
-실제로는 문맥과 위치마다 예측 손실이 달라지므로 이 예가 모든 noise 수준의 손실이 같다는 뜻은 아니다.
 가령 $t=0.5$이고 가려진 두 위치의 정답 token 확률이 각각 0.8과 0.25라면, 자연로그를 쓰는 이 한 표본의 손실은 $-2(\log 0.8+\log 0.25)\approx3.22$다.
 이 값은 두 위치의 log probability를 합한 다음 $1/t=2$를 곱한 것이다.
-Batch 평균이나 실제 모델의 측정값은 아니다.
-연속 균일분포에서 정확히 $t=0$이 선택될 확률은 0이므로 이 식은 $t>0$에서 해석한다.
-유한 정밀도로 구현할 때는 $t=0$이 나오지 않도록 처리해야 한다.
-작은 양의 하한을 두면, 그 구현은 원래 시간 분포를 근사한다는 점도 감안해야 한다.
-LLaDA의 parameterization에서는 모델에 $t$를 따로 입력하지 않아도 된다.
 
-이 가중치의 근거는 단순히 mask 개수를 보정하는 직관보다 깊다.
-원논문의 forward 과정과 그에 대응하는 역방향 생성 분포 $p_\theta$에서는 위 목적함수 $L(\theta)$가 데이터의 평균 negative log-likelihood(NLL), 즉 $-\mathbb{E}_{x_0\sim p_{\mathrm{data}}}[\log p_\theta(x_0)]$의 상한이다.[^llada]
-NLL이 작다는 것은 모델이 실제 데이터에 높은 확률을 준다는 뜻이다.
-상한이라는 말은 평균 NLL이 이 값보다 크지 않다는 뜻이다.
-따라서 상한을 낮추면 생성 분포를 학습하는 데 도움이 된다.
-하지만 상한을 낮춘 모든 변화가 실제 NLL을 같은 비율로 낮춘다거나, 상한과 NLL이 같아진다는 보장은 없다.
-또 이 상한은 유도에서 정의한 역과정의 분포에 관한 것이다.
-신뢰도 기준처럼 생성 정책을 바꾼 sampler의 분포에도 같은 상한이 성립한다고 가정할 수는 없다.
-앞의 mask 개수 계산은 가중치의 크기를 이해하기 위한 예시일 뿐, 상한의 증명은 아니다.
+이 가중치의 근거는 mask 개수를 보정하는 직관보다 깊다.
+MDLM, MD4, RADD는 이 꼴의 목적함수가 데이터의 평균 negative log-likelihood(NLL), 즉 $-\mathbb{E}_{x_0\sim p_{\mathrm{data}}}[\log p_\theta(x_0)]$의 상한임을 보였다.[^md4][^mdlm][^radd]
+여기서 $p_\theta$는 학습한 모델로 역과정을 끝까지 진행했을 때 얻는 분포다.
+NLL이 작을수록 모델이 실제 데이터에 높은 확률을 주므로, 이 상한을 낮추는 학습은 근사적인 maximum likelihood 학습이 된다.
+일반식에서 가중치는 masking schedule에 따라 정해지고, mask 확률이 $t$와 같은 LLaDA의 선형 schedule에서 $1/t$가 된다.[^md4]
+RADD는 또 mask된 위치에서 맞혀야 할 분포가 시간과 무관한, 깨끗한 데이터의 조건부 분포임을 보였다.[^radd]
+그래서 LLaDA는 모델에 $t$를 따로 입력하지 않는다.
 
-BERT도 mask된 token을 예측한다.
-하지만 그런 학습 목표를 가진 모델이 모두 곧바로 생성 모델이 되지는 않는다.
-Diffusion 언어 모델에는 손상 확률, 각 noise 수준의 학습, 초기 상태에서 시작해 여러 단계에 걸쳐 token을 복원하는 sampling 절차가 함께 필요하다.
+BERT도 mask된 token을 예측하지만 고정된 mask 비율 하나로 학습한다.
+그런 학습 목표를 가진 모델이 곧바로 생성 모델이 되지는 않는다.
+Diffusion 언어 모델에는 모든 noise 수준에서의 학습과 likelihood에 연결된 가중치, 완전히 가려진 상태에서 시작해 여러 단계에 걸쳐 token을 복원하는 sampling 절차가 함께 필요하다.
 
-### 2-2. 역방향 생성 예시
+### 2-2. 신뢰도 기반 생성
 
 Prompt는 조건으로 그대로 두고, 생성할 영역은 모두 mask로 채워 시작한다고 하자.
 모델은 한 번 호출될 때 mask된 여러 위치의 후보 token 분포를 한꺼번에 낸다.
@@ -175,63 +162,55 @@ Sampler는 그 예측과 정해진 정책에 따라 일부 위치를 채우고, 
 | 종료 | `나는 오늘 학교에 간다` |
 
 예를 들어 첫 호출에서 네 위치의 최고 확률 후보가 차례로 `나는` 0.90, `오늘` 0.55, `학교에` 0.80, `간다` 0.45라고 하자.
-가상의 sampler가 최고 후보의 확률을 신뢰도로 삼아 한 번에 두 위치를 채운다고 하자.
+Sampler가 최고 후보의 확률을 신뢰도로 삼아 한 번에 두 위치를 채운다고 하자.
 그러면 sampler는 신뢰도가 0.90과 0.80인 첫째와 셋째 위치를 채워 표의 중간 상태를 만든다.
 다음 호출에서 모델은 `나는 [MASK] 학교에 [MASK]`라는 바뀐 문맥을 보고 남은 위치의 후보를 다시 계산한다.
 그 결과가 `오늘` 0.85, `간다` 0.75라면 sampler는 두 위치를 채워 문장을 완성한다.
-이 숫자는 작동을 설명하기 위한 가상 값이며 모델이 출력한 실험 결과가 아니다.
+이 숫자는 작동을 설명하기 위한 가상 값이다.
 이 예의 sampler는 먼저 채운 token을 그대로 유지한다.
-채울 개수와 후보 선택은 sampler의 설정에 따라 달라진다.
+채우는 순서도 왼쪽부터가 아니라 신뢰도 순서다.
 
-Sampler가 왼쪽부터 채울 필요는 없다.
-LLaDA 원논문은 신뢰도가 낮은 후보를 다시 mask로 되돌리는 방식 등을 분석한다.
-구체적으로 이미 확정한 token을 수정할 수 있는지, 위치를 어떻게 선택하는지는 sampler에 따라 달라진다.
-위 예의 문장은 가능한 한 경로를 설명할 뿐, 모델이 항상 같은 순서로 복원한다는 뜻은 아니다.
+이론상 역과정은 각 단계에서 어느 위치를 mask로 남길지 무작위로 정해야 한다.
+LLaDA는 LLM sampling의 annealing 기법에서 착안해, 예측 가운데 신뢰도가 가장 낮은 것들을 다시 mask로 되돌리는 low-confidence remasking을 기본으로 쓴다.[^llada]
+앞의 예가 바로 이 방식이다.
+이렇게 정책을 바꾼 sampler의 분포는 앞의 NLL 상한이 다루는 분포와 다르다.
 
-### 2-3. Prompt와 출력 길이
+### 2-3. Instruction 학습과 응답 길이
 
-Instruction을 따르는 모델은 prompt를 조건으로 그대로 두고, 응답 부분만 손상시키고 복원하도록 학습과 생성을 구성할 수 있다.
-생성할 영역의 길이를 미리 정해 두는 방식에서는 그 길이 선택도 결과에 영향을 준다.
-길이 처리, 종료 token, 여러 block에 걸친 생성 방식은 구현마다 다르다.
-그래서 모든 diffusion 언어 모델이 같은 방식으로 응답 길이를 정한다고 보면 안 된다.
+Instruction을 따르는 모델은 prompt를 조건으로 두고 응답만 생성해야 한다.
+LLaDA의 supervised fine-tuning(SFT)은 prompt를 그대로 보존하고 응답 부분의 token만 pre-training과 같은 방식으로 mask한다.[^llada]
+Mini-batch 안에서 짧은 응답 뒤에는 종료 token(EOS)을 덧붙여 길이를 맞추고, 모델은 EOS도 일반 token처럼 예측하도록 학습한다.
 
-LLaDA의 supervised fine-tuning(SFT)은 prompt를 보존한 채 응답 부분만 무작위로 mask한다.
-이와 달리 improved LLaDA(iLLaDA)는 prompt와 응답, 종료 token을 이어 붙인 학습 sequence 전체에 masking을 적용한다.[^illada]
-두 모델 모두 masked diffusion 손실을 쓰지만, 어떤 token을 학습에서 가릴 수 있는지는 다르다.
+생성할 때 LLaDA는 응답 길이를 hyperparameter로 미리 정하고 그 길이만큼의 mask로 시작한다.
+생성이 끝나면 EOS 뒤의 token은 버린다.
+원논문은 이 길이를 바꿔도 결과가 크게 달라지지 않았다고 보고한다.
+하지만 응답이 짧아도 모델은 정해 둔 길이 전체를 매 단계 다시 처리해야 한다.
 
-### 2-4. iLLaDA의 학습과 가변 길이 생성
+### 2-4. 가변 길이 생성
 
-iLLaDA는 LLaDA와 같은 masked diffusion 목표를 유지하면서 8B 양방향 Transformer를 처음부터 학습한 모델이다.[^illada]
+Improved LLaDA(iLLaDA)는 응답 길이를 생성하면서 정하는 가변 길이 생성으로 이 낭비를 줄인다.[^illada]
+iLLaDA는 같은 masked diffusion 목적함수로 8B 양방향 Transformer를 처음부터 다시 학습한 모델이다.
 원논문은 pre-training에 12조 token을 사용했고, 약 250억 token의 instruction corpus로 12 epoch SFT했다고 보고한다.
-iLLaDA는 LLaDA의 multi-head attention 대신 grouped-query attention(GQA)을 쓰고, 입력 embedding과 출력 head의 weight를 공유한다.
-GQA는 cache에 저장하는 key와 value의 메모리를 줄여 주지만, 이 절감은 attention 상태를 재사용하는 cache 방식에서만 생긴다.
-Diffusion에서는 단계마다 상태가 바뀌므로 cache를 어떻게 재사용할지 따로 정해야 한다.
+가변 길이 생성을 위해 iLLaDA는 SFT 데이터의 형식을 바꿨다.
+각 instruction 예제를 prompt, 응답, EOS 하나의 순서로 잇고, 이렇게 이은 corpus에서 잘라 낸 학습 sequence 전체에 pre-training과 같은 masking을 적용한다.
+그래서 prompt와 응답, EOS가 모두 학습 중에 가려질 수 있다.
 
-생성할 때 iLLaDA는 prompt 뒤에 일정 크기의 mask block을 붙인다.
-그리고 여러 denoising 단계에 걸쳐 신뢰도가 높은 예측을 채운다.
-Block의 복원이 끝났을 때 종료 token이나 다른 stop token이 있으면 iLLaDA는 생성을 멈춘다.
-없으면 새 mask block을 붙이고, 정해 둔 최대 생성 길이에 도달해도 생성을 멈춘다.
-예를 들어 block 길이가 4라면, 모델은 첫 네 위치를 복원한 뒤 필요할 때 다음 네 위치를 생성한다.
-이 예의 길이는 설명용이다.
-원논문은 task마다 서로 다른 block 길이와 최대 길이를 쓴다.
+생성할 때 iLLaDA는 prompt 뒤에 일정 크기의 mask block을 붙이고, 여러 denoising 단계에 걸쳐 신뢰도가 높은 예측을 채운다.
+Block의 복원이 끝났을 때 EOS나 다른 stop token이 있으면 iLLaDA는 생성을 멈춘다.
+없으면 새 mask block을 붙이고, 정해 둔 최대 생성 길이에 도달하면 멈춘다.
 Block 안의 token은 병렬로 예측할 수 있지만 block 사이와 denoising 단계는 순차적으로 진행된다.
+원논문은 task마다 block 길이와 최대 길이를 다르게 정한다.
+예를 들어 instruction 모델의 GSM8K 평가에서는 block 길이 32, 최대 길이 2048을 쓴다.
 
-가상 예시로 prompt가 `오늘 날씨는`이고 block 길이가 4라고 하자.
+<Callout type="example">
+Prompt가 `오늘 날씨는`이고 block 길이가 4라고 하자.
 첫 입력은 prompt 뒤에 `[MASK] [MASK] [MASK] [MASK]`를 붙인 것이다.
 모델이 네 위치의 후보를 한 번에 예측한 뒤, sampler가 자신 있는 위치부터 채우고 나머지를 다시 예측한다.
-첫 block이 `맑고 바람이 약합니다 .`처럼 채워졌는데 종료 token이 없다고 하자.
-그러면 모델은 이 block을 문맥으로 남기고 뒤에 새 mask block을 붙인다.
-다음 block의 복원이 끝났을 때 종료 token이 있으면, 모델은 생성을 멈춘다.
-이것은 작동 순서를 보여 주는 가상 예시다.
-문장 조각이 실제 tokenizer에서 네 token이라는 뜻은 아니다.
-
-후보 답안마다 점수를 매겨 고르는 객관식 평가에서, iLLaDA는 각 후보 답안을 전부 mask한 상태에서 시작한다.
-매 단계에서 남은 위치 가운데, 모델이 후보 답안의 token에 가장 높은 확률을 준 위치를 하나 드러낸다.
-이 과정을 반복하며 드러낸 위치의 확률에 log를 취해 더한다.
-후보마다 이렇게 계산한 점수를 비교한다.
-이 confidence score는 후보를 비교하기 위한 점수이지 정확한 sequence likelihood는 아니다.
-원논문의 성능 향상은 데이터 규모, 학습 방식, 평가 방법이 함께 달라진 결과다.
-그러므로 어느 한 가지 변경의 효과로 단정할 수 없다.
+첫 block이 `맑고 바람이 약합니다 .`처럼 채워졌는데 EOS가 없다고 하자.
+그러면 sampler는 이 block을 문맥으로 남기고 뒤에 새 mask block을 붙인다.
+다음 block의 복원이 끝났을 때 EOS가 있으면, sampler는 생성을 멈춘다.
+응답이 짧으면 block 몇 개로 끝나므로, 긴 고정 길이를 매 단계 처리할 필요가 없다.
+</Callout>
 
 ## 3. AR 모델과의 비교
 
@@ -244,27 +223,24 @@ Block 안의 token은 병렬로 예측할 수 있지만 block 사이와 denoisin
 | 활용 | 자연스러운 왼쪽에서 오른쪽 이어 쓰기 | infilling과 유연한 위치 선택 가능 |
 
 병렬로 여러 위치를 예측할 수 있다는 점은 잠재적 이점이다.
-하지만 모델은 전체 sequence를 여러 차례 다시 처리해야 할 수 있다.
-실제 비용은 단계 수, batch, cache 활용, hardware 구현에 따라 달라진다.
-따라서 diffusion이라는 이유만으로 같은 조건의 AR 시스템보다 항상 빠르다고 말할 수 없다.
-양방향 문맥을 본다는 것도 미래 token의 정답을 미리 안다는 뜻은 아니다.
-생성 초기에는 뒤쪽 위치도 대부분 mask이기 때문이다.
+하지만 모델은 denoising 단계마다 전체 sequence를 다시 처리한다.
+AR 모델은 앞 token의 key와 value를 KV cache에 저장해 두고 다음 token을 만들 때 재사용한다.
+LLaDA 원논문은 LLaDA가 KV cache와 호환되지 않는다고 밝힌다.[^llada]
+양방향 attention에서는 새 token이 채워질 때마다 이미 계산한 다른 위치의 key와 value도 바뀔 수 있기 때문이다.
+이후 KV cache와 비슷한 재사용 방식을 diffusion 언어 모델에 맞게 고친 방법들이 제안되었다.[^dkv]
+그래서 실제 속도는 denoising 단계 수, batch 크기, cache 활용, hardware 구현에 따라 AR 모델보다 빠를 수도 느릴 수도 있다.
 
-## 4. 확장과 남은 문제
-
-Discrete diffusion은 mask 외에도 여러 token 사이의 전이 확률을 정할 수 있다.
-연속 embedding에 noise를 더하는 접근은 상태를 token으로 읽어 내는 방법까지 함께 설계해야 한다.
-
-전체 sequence를 한 번에 처리하는 접근 외에 block을 순차적으로 진행하면서 각 block 내부에서 diffusion을 사용하는 방식도 있다.
-또한 처음부터 diffusion 모델을 학습하는 LLaDA와 달리 AR 모델의 weight에서 출발하는 Dream 같은 접근도 제안되었다.[^dream]
-어떤 모델이 좋은지는 품질뿐 아니라 학습 비용, 생성 길이, 지연 시간, 처리량, infilling 등 task를 함께 고려해 비교해야 한다.
-
-이미지와 언어의 공통점은 데이터를 점차 손상시키고 그 역방향 생성 과정을 학습한다는 발상이다.
-공간이 연속인지 이산인지에 따라 noise, 모델 출력과 sampler의 구체적인 정의는 달라진다.
+두 방식을 잇는 길도 있다.
+처음부터 diffusion 모델을 학습하는 LLaDA와 달리, Dream은 AR 모델의 weight에서 출발해 diffusion 언어 모델로 바꾼다.[^dream]
+어떤 방식이 나은지는 품질뿐 아니라 학습 비용, 생성 길이, 지연 시간, 처리량, infilling 같은 task를 함께 놓고 비교해야 한다.
 
 [^survey]: Yu, R., Li, Q., & Wang, X. (2026). Discrete Diffusion in Large Language and Multimodal Models: A Survey. *Transactions on Machine Learning Research*. [논문](https://arxiv.org/abs/2506.13759).
 [^diffusion-lm]: Li, X. L., Thickstun, J., Gulrajani, I., Liang, P., & Hashimoto, T. B. (2022). Diffusion-LM Improves Controllable Text Generation. *NeurIPS*. [논문](https://arxiv.org/abs/2205.14217).
-[^illada]: Nie, S., Min, Q., Xu, S., et al. (2026). Improved Large Language Diffusion Models. *arXiv*. [논문](https://arxiv.org/abs/2606.25331).
 [^d3pm]: Austin, J., Johnson, D. D., Ho, J., Tarlow, D., & van den Berg, R. (2021). Structured Denoising Diffusion Models in Discrete State-Spaces. *NeurIPS*. [논문](https://arxiv.org/abs/2107.03006).
+[^mdlm]: Sahoo, S. S., Arriola, M., Schiff, Y., et al. (2024). Simple and Effective Masked Diffusion Language Models. *NeurIPS*. [논문](https://arxiv.org/abs/2406.07524).
+[^md4]: Shi, J., Han, K., Wang, Z., Doucet, A., & Titsias, M. K. (2024). Simplified and Generalized Masked Diffusion for Discrete Data. *NeurIPS*. [논문](https://arxiv.org/abs/2406.04329).
+[^radd]: Ou, J., Nie, S., Xue, K., et al. (2025). Your Absorbing Discrete Diffusion Secretly Models the Conditional Distributions of Clean Data. *ICLR*. [논문](https://arxiv.org/abs/2406.03736).
 [^llada]: Nie, S., Zhu, F., You, Z., et al. (2025). Large Language Diffusion Models. *NeurIPS*. [논문](https://arxiv.org/abs/2502.09992).
+[^illada]: Nie, S., Min, Q., Xu, S., et al. (2026). Improved Large Language Diffusion Models. *arXiv*. [논문](https://arxiv.org/abs/2606.25331).
+[^dkv]: Ma, X., Yu, R., Fang, G., & Wang, X. (2025). dKV-Cache: The Cache for Diffusion Language Models. *arXiv*. [논문](https://arxiv.org/abs/2505.15781).
 [^dream]: Ye, J., Xie, Z., Zheng, L., et al. (2025). Dream 7B: Diffusion Large Language Models. *arXiv*. [논문](https://arxiv.org/abs/2508.15487).

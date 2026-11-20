@@ -4,15 +4,17 @@ week: 10
 order: 2
 ---
 
+import instructPix2Pix from "./assets/week10-instructpix2pix.jpg";
+
 고해상도 이미지에 diffusion을 적용하면 매 단계에서 큰 이미지 배열을 신경망으로 처리해야 한다.
 Latent diffusion은 이미지를 먼저 작은 표현으로 압축한다.[^survey]
 그리고 반복 denoising을 그 압축된 표현에서 수행해 이 비용을 줄인다.
 이 노트는 Stable Diffusion의 초기 text-to-image 모델을 기준으로, autoencoder, text encoder, U-Net이 학습과 생성에서 어떻게 연결되는지 살펴본다.[^ldm]
-이어서 이 구조를 바탕으로 기존 이미지에 noise를 더해 편집하는 방법과, 원본 이미지와 편집 지시를 조건으로 학습하는 InstructPix2Pix를 다룬다.
+이어서 같은 구조로 기존 이미지를 편집하거나 주어진 공간 구조를 따르는 이미지를 만드는 방법을 다룬다.
 
-생성 task는 **조건으로 주는 정보와 새로 만들 출력**을 나누어 보면 연결된다.
-Omni 모델의 출력 쪽 생성기를 이해할 때도 이 구분이 필요하다.
-다음은 task를 구분하기 위한 가상 요청이며, 한 모델이 이 조합을 모두 지원한다는 뜻은 아니다.
+생성 task는 **조건으로 주는 정보와 새로 만들 출력**으로 나누어 보면 서로 연결된다.
+Omni 모델의 출력 쪽 생성기도 이 구분으로 읽을 수 있다.
+다음 표의 요청은 이 구분을 보이기 위한 가상 예다.
 
 | 입력 조건 → 출력 | 가상 요청 | 생성할 대상 |
 |---|---|---|
@@ -24,7 +26,9 @@ Omni 모델의 출력 쪽 생성기를 이해할 때도 이 구분이 필요하�
 | text → audio | “숲에서 바람이 불고 새가 우는 소리” | 소리의 waveform |
 
 같은 text 조건이라도 출력이 바뀌면 생성할 데이터의 표현과 decoder가 달라진다.
-이미지가 입력에 포함되어도, 원본의 내용을 편집할지, 그 구조만 따를지, 움직이는 영상으로 확장할지에 따라 조건의 역할이 달라진다.
+입력에 이미지가 있을 때도 조건의 역할은 하나가 아니다.
+원본의 내용을 편집할 수도 있고, 구조만 따를 수도 있고, 움직이는 영상으로 늘릴 수도 있다.
+이 노트가 다루는 것은 image를 출력하는 앞의 세 행이다.
 
 ## 1. Pixel에서 latent로
 
@@ -34,31 +38,24 @@ $512\times512$ RGB 이미지는 색 채널을 포함해 786,432개의 값을 가
 이 공간에서 수십 번 denoising하면, 신경망은 매번 이 큰 배열을 처리해야 한다.
 Latent diffusion은 encoder $E$로 이미지를 더 작은 latent $z_0=E(x)$로 바꾼다.
 Decoder $D$는 latent에서 이미지를 복원하도록 학습된다.
-이 autoencoder는 이미지의 중요한 구조를 남기면서 공간 해상도를 줄인다.
-여기서 $E(x)$와 $D$는 간략한 표기다.
-$E(x)$는 필요한 표본 추출과 크기 조정까지 포함하고, $D$는 decoding 전의 역변환까지 포함한다.
-예를 들어 Stable Diffusion v1-4는 encoder에서 얻은 latent에 설정값인 scaling factor 0.18215를 곱해 diffusion에 쓴다.[^sd]
-그리고 latent를 decoder에 넣기 전에는 같은 계수로 나눈다.[^sd-decoding]
-이 계수는 모델 설정에 따라 다르므로, 모든 latent diffusion이 같은 값을 쓰지는 않는다.
+이 autoencoder는 이미지의 중요한 구조를 남기면서 공간 해상도를 줄인다.<Sidenote>실제 구현은 latent의 크기를 상수로 맞춘다. 예를 들어 Stable Diffusion v1-4의 VAE 설정값은 0.18215이고,[^sd] 구현은 encoder 출력에 이 값을 곱해 diffusion에 쓰고 decoder에 넣기 전에 같은 값으로 나눈다.[^sd-vae] 이 노트의 $E$와 $D$는 이 조정까지 포함한 표기다.</Sidenote>
 
 <Callout type="example">
 초기 Stable Diffusion 계열은 흔히 $512\times512\times3$ 이미지를 $64\times64\times4$ latent로 바꾼다.
 그러면 배열 원소 수가 786,432개에서 16,384개로 줄어든다.
-원소 수가 48분의 1이라고 해서 전체 실행 시간이 정확히 48분의 1이 되는 것은 아니다.
-실행 시간에는 신경망의 채널 수, attention, 구현 방식, decoder 비용이 함께 영향을 준다.
+원소 수는 48분의 1이지만, 실행 시간은 신경망의 채널 수, attention, decoder 비용에도 좌우되므로 정확히 그만큼 줄지는 않는다.
 </Callout>
 
 압축에는 대가가 있다.
 Decoder가 압축 과정에서 잃은 세부 정보를 완벽하게 복원하지 못하면, diffusion 모델이 latent를 아무리 잘 만들어도 최종 이미지의 세부에는 한계가 생긴다.
-$D(E(x))$는 일반적으로 원본 $x$와 정확히 같지 않다.
-Latent는 사람이 해석하기 쉬운 개별 개념의 목록이 아니라 이미지 정보를 담도록 학습한 연속 배열이다.
 
 ### 1-2. 두 단계 학습
 
 Latent diffusion은 두 단계로 학습한다.[^ldm]
 먼저 이미지 autoencoder를 학습하고, 그다음 그 encoder가 만든 latent로 diffusion model을 학습한다.
 Autoencoder의 손실에는 복원 품질을 높이는 항과 latent 공간의 성질을 조절하는 항이 들어간다.
-구체적인 정규화 방식은 모델마다 다르고, 모든 autoencoder가 같은 VAE(variational autoencoder) 구조인 것도 아니다.
+LDM 원논문은 latent에 약한 KL penalty를 거는 정규화와 decoder 안에 vector quantization 층을 두는 정규화를 모두 실험했다.[^ldm]
+Stable Diffusion v1-4의 autoencoder는 KL 정규화를 쓰는 VAE(variational autoencoder)다.[^sd]
 Diffusion을 학습할 때는 학습된 encoder가 이미지 $x$를 $z_0$로 바꾼다.
 그리고 학습 과정은 임의의 시간 $t$와 noise $\epsilon$을 뽑아 $z_t$를 만든다.
 Text 조건 $c$가 있을 때 noise 예측 손실은 다음과 같다.
@@ -77,10 +74,7 @@ $$
 $\bar\alpha_t$는 단계 $t$에서 원본 신호가 얼마나 남는지를 정하는 계수다.
 이 식은 pixel 공간의 denoising diffusion probabilistic model(DDPM)과 형태가 같다.
 다른 점은 데이터가 $x_0$가 아니라 $z_0$라는 것뿐이다.
-Encoder와 decoder가 반복 denoising을 대신하지는 않는다.
-Encoder는 학습 이미지를 latent로 바꾼다.
-Denoiser는 latent의 분포를 배운다.
-Decoder는 생성된 latent를 이미지로 바꾼다.
+정리하면 encoder는 학습 이미지를 latent로 바꾸고, denoiser는 latent의 분포를 배우며, decoder는 생성된 latent를 이미지로 되돌린다.
 
 ## 2. U-Net과 텍스트 조건
 
@@ -92,8 +86,7 @@ U-Net은 공간 해상도를 단계적으로 낮추면서 특징을 추출한다
 낮은 해상도의 특징은 넓은 영역의 정보를 결합하기 쉽고, 높은 해상도의 특징은 공간적 세부를 유지하기 쉽다.
 Skip connection은 downsampling 경로에서 얻은 특징을 같은 해상도의 upsampling 경로로 넘겨, 복원 단계에 세부 정보를 전달한다.[^unet]
 
-다음은 구조를 이해하기 위한 **가상의 간소화된 예**다.
-이 예는 실제 Stable Diffusion의 block 수와 channel 수를 그대로 나타내지 않는다.
+다음은 구조를 이해하기 위해 block 수와 channel 수를 줄인 가상의 예다.
 Down 경로는 높이와 너비를 줄이며 공간 정보를 압축한다.
 Up 경로는 같은 크기의 skip 특징과 합쳐 위치별 정보를 다시 활용한다.
 
@@ -111,38 +104,26 @@ Up 경로는 같은 크기의 skip 특징과 합쳐 위치별 정보를 다시 �
 두 특징은 공간 크기가 같아야 대응 위치끼리 결합할 수 있다.
 Skip이 전달하는 것은 깨끗한 정답 이미지가 아니라 **현재 noisy 입력에서 계산한 중간 특징**이다.
 
-이 U-Net은 segmentation용으로 처음 제안된 U-Net과 같지 않다.
-Diffusion용 U-Net은 noisy latent와 timestep을 입력으로 받는다.
-그리고 residual block, attention, conditioning을 결합해 noise를 예측한다.
+Diffusion용 U-Net은 segmentation용으로 처음 제안된 U-Net에 residual block, attention, 시간 입력과 조건 경로를 더한 구조다.
+이 U-Net은 noisy latent와 timestep을 입력으로 받아 noise를 예측한다.
 시간 embedding은 현재 noise 수준을 각 처리 단계에 알려 준다.
 모양이 같은 $z_t$라도 $t$가 다르면 섞인 noise의 양이 다르므로, 모델은 이를 구별해야 한다.
 
 ### 2-2. Text encoder와 cross-attention
 
 Text encoder는 “빨간 우산을 든 사람”이라는 prompt를 token별 문맥 벡터로 바꾼다.
-Cross-attention은 U-Net의 이미지 특징에서 query $Q$를 만들고, 텍스트 표현에서 key $K$와 value $V$를 만든다.
-그리고 다음과 같이 계산한다.
+U-Net은 이 벡터들을 cross-attention으로 읽는다.
+Cross-attention의 query는 U-Net의 이미지 특징에서 나오고, key와 value는 text token에서 나온다.
+그래서 이미지의 각 위치가 prompt의 서로 다른 token을 골라 참고할 수 있다.
+예를 들어 우산이 그려질 위치는 “빨간”과 “우산” token을, 사람의 얼굴이 그려질 위치는 “사람” token을 더 많이 참고할 수 있다.
 
-$$
-\operatorname{Attention}(Q,K,V)=\operatorname{softmax}\left(\frac{QK^\top}{\sqrt{d_k}}\right)V.
-$$
-
-$d_k$는 query와 key 벡터의 차원이다.
-$\sqrt{d_k}$로 나누는 것은 내적의 크기를 조절하기 위해서다.
-이미지의 각 위치는 자기 query로 텍스트 token들과의 관련성을 계산하고, 그 비중대로 텍스트 정보를 받아온다.
-이로써 서로 다른 이미지 위치가 prompt의 서로 다른 부분을 참고할 수 있다.
-예를 들어 한 이미지 위치의 query가 두 텍스트 token에 각각 0.75와 0.25의 attention 가중치를 주고, 두 value의 한 좌표가 각각 2와 6이라면 출력의 해당 좌표는 $0.75\times2+0.25\times6=3$이다.
-가중치는 query와 key의 점수에 softmax를 적용한 결과다.
-숫자는 계산 과정을 보여 주는 가상 예시다.
 초기 Stable Diffusion은 CLIP 계열 text encoder를 쓴다.
 CLIP은 이미지와 그에 맞는 텍스트 표현을 가깝게 만드는 contrastive 학습으로 이미지와 언어의 관계를 익힌다.[^clip]
-Stable Diffusion은 그중 text encoder의 출력만 이미지 생성의 조건으로 쓴다.[^sd]
-CLIP의 정렬 학습과 diffusion 모델의 noise 예측 학습은 서로 다른 학습이다.
-어떤 text encoder를 쓰고 그것을 함께 학습하는지는 버전마다 다르므로 따로 확인해야 한다.
+Stable Diffusion v1-4는 이미 학습된 CLIP ViT-L/14의 text encoder를 고정한 채, 그 출력만 이미지 생성의 조건으로 쓴다.[^sd]
 
 <Figure src="https://upload.wikimedia.org/wikipedia/commons/f/f6/Stable_Diffusion_architecture.png" alt="입력 이미지가 encoder를 통해 latent로 압축되고 latent U-Net에서 반복 처리된 뒤 decoder를 통해 이미지로 복원된다. 텍스트 등 조건은 cross-attention을 거쳐 U-Net에 전달된다." caption="Latent diffusion의 전체 구조. Encoder와 decoder 사이에서 diffusion을 수행하고 조건 표현을 cross-attention으로 전달한다." source="Copyright (c) 2022 Machine Vision and Learning Group, LMU Munich · MIT License" wide />
 
-그림의 원본과 이용 조건은 [Wikimedia Commons 파일 페이지](https://commons.wikimedia.org/wiki/File:Stable_Diffusion_architecture.png)에 있다.
+이 그림은 [Wikimedia Commons 파일 페이지](https://commons.wikimedia.org/wiki/File:Stable_Diffusion_architecture.png)에서 MIT License로 공개되어 있다.
 
 <Details summary="그림의 MIT License 전문">
 
@@ -170,11 +151,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 생성하는 동안 U-Net은 매 단계 현재 latent, 시간, 텍스트 조건을 입력받아 noise를 예측한다.
 Sampler는 이 예측으로 다음 latent를 만든다.
 마지막 단계가 끝나면 decoder가 latent를 pixel 공간의 이미지로 바꾼다.<Sidenote>비슷한 구성은 audio 생성에도 쓰인다. AudioLDM은 Mel spectrogram을 VAE로 압축한 latent에서 diffusion을 수행한다. 조건으로는 CLAP(contrastive language-audio pretraining) 표현을 주는데, 학습에서는 audio embedding을 쓰고 생성에서는 text embedding을 쓴다. 생성한 Mel spectrogram은 vocoder가 waveform으로 바꾼다.[^audioldm] AudioLDM의 공저자 [Xubo Liu](https://liuxubo717.github.io/)의 강연 슬라이드 [Diffusion Models in Audio Processing](https://liuxubo717.github.io/homepage_files/diffusions_for_audio.pdf)은 audio 표현에서 시작해 text-to-audio 생성, 음원 분리, audio tokenizer에 diffusion을 쓰는 방법을 정리한다.</Sidenote>
-Classifier-free guidance(CFG)를 쓰면 U-Net은 조건부 예측과 조건을 지운 예측을 모두 낸다.
-CFG는 두 예측의 차이에 guidance scale을 곱해 조건의 영향을 조절하고, 그 결과를 sampler에 넘긴다.
+Classifier-free guidance(CFG)를 쓰면 U-Net은 매 단계 조건부 예측과 조건을 지운 예측을 모두 계산하므로, 단계당 호출이 두 번으로 늘어난다.
 결과 이미지는 prompt, 초기 noise, 학습된 모델, guidance scale과 sampler의 영향을 함께 받는다.
 
-## 4. 기존 이미지의 편집
+## 4. 이미지 조건을 쓰는 생성
 
 ### 4-1. Image-to-image와 noise 수준
 
@@ -190,50 +170,42 @@ $$
 그다음 sampler는 text 조건을 받은 모델의 예측으로 $z_{t_0}$에서 noise가 낮은 단계로 이동한다.
 마지막 latent는 decoder가 이미지로 바꾼다.
 이 방법은 원본 정보가 남은 상태에서 시작하므로, 완전히 새로운 noise에서 생성할 때보다 결과가 원본을 더 닮을 수 있다.
-SDEdit은 입력에 noise를 넣은 뒤 학습된 diffusion prior로 denoising하는 접근을 제안했다.[^sdedit]
-위 식은 같은 직관을 **latent DDPM의 표기**로 나타낸 것이다.
-SDEdit 원논문의 연속시간 SDE(stochastic differential equation) 식과 같은 구현이라는 뜻은 아니다.
+SDEdit은 입력에 noise를 넣은 뒤 학습된 diffusion prior로 denoising하는 이 접근을 연속시간 SDE(stochastic differential equation)의 틀에서 제안했다.[^sdedit]
+앞의 식은 같은 생각을 latent DDPM의 표기로 쓴 것이다.
 
 예를 들어 원본이 낮에 찍은 거리 사진이고 텍스트 조건이 “밤의 거리”라 하자.
 Noise를 적게 넣으면 결과에 거리의 구도가 많이 남지만, 밤으로 바뀌는 정도는 약할 수 있다.
 Noise를 많이 넣으면 크게 바뀔 수 있는 대신, 건물의 위치나 모양까지 달라질 수 있다.
-변화량은 noise 수준 말고도 prompt, 모델, sampler, random seed의 영향을 받는다.
-그리고 이 방법은 특정 영역을 그대로 보존한다고 보장하지 않는다.
+즉 이 방법은 원본을 얼마나 남길지와 얼마나 바꿀지를 noise 수준 하나로 함께 정한다.
+SDEdit 원논문은 바꾸지 않을 영역을 mask로 지정하는 변형도 제시했지만,[^sdedit] 바꿀 영역 안에서는 여전히 이 값 하나가 둘을 함께 정한다.
+그래서 구도는 지키면서 원하는 변화만 강하게 주기 어렵다.
 
 ### 4-2. 편집 지시와 학습 데이터
 
+InstructPix2Pix는 원본 이미지를 출발점에 섞지 않고 따로 조건으로 받으며, 텍스트도 결과 설명 대신 편집 지시로 받는다.
 “밤의 거리”는 결과 이미지의 설명이다.
 “낮 사진을 밤으로 바꿔 줘”는 입력 이미지에 대해 수행할 **편집 지시**다.
-InstructPix2Pix는 원본 이미지와 편집 지시를 함께 받아 편집 결과를 생성하도록 Stable Diffusion을 추가 학습한다.[^instructpix]
+InstructPix2Pix는 원본 이미지와 편집 지시를 함께 받아 편집 결과를 생성하도록 Stable Diffusion을 미세조정한다.[^instructpix]
 이렇게 학습하려면 `(원본 이미지, 지시, 편집된 이미지)` 세 가지를 짝지은 데이터가 필요하다.
 아무 이미지 두 장을 모아서는 지시에 맞는 한 장면의 전후 관계를 얻기 어렵다.
 
-<Figure src="https://arxiv.org/html/2211.09800v2/method.png" alt="왼쪽은 GPT-3가 원본 설명으로 편집 지시와 변경된 설명을 만들고 Stable Diffusion과 Prompt-to-Prompt가 전후 이미지 쌍을 만드는 과정이다. 오른쪽은 입력 이미지와 지시를 InstructPix2Pix에 넣어 편집된 이미지를 얻는 예다." caption="왼쪽은 합성 학습 데이터 생성, 오른쪽은 학습된 모델의 편집 예시다. 데이터 생성에 쓴 GPT-3와 Prompt-to-Prompt를 사용자의 이미지마다 다시 실행하는 구조는 아니다." source="Brooks et al. (2023), Figure 2 · CC BY 4.0" wide />
+<Figure src={instructPix2Pix.src} alt="왼쪽은 GPT-3가 원본 설명으로 편집 지시와 변경된 설명을 만들고 Stable Diffusion과 Prompt-to-Prompt가 전후 이미지 쌍을 만드는 과정이다. 오른쪽은 입력 이미지와 지시를 InstructPix2Pix에 넣어 편집된 이미지를 얻는 예다." caption="왼쪽은 합성 학습 데이터 생성, 오른쪽은 학습된 모델의 편집 예시다. 데이터 생성에 쓴 GPT-3와 Prompt-to-Prompt를 사용자의 이미지마다 다시 실행하는 구조는 아니다." source="Brooks et al. (2023), Figure 2 · CC BY 4.0" wide />
 
 [원논문](https://arxiv.org/abs/2211.09800)은 이 그림을 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)으로 공개했다.
-연구진은 사람이 작성한 예시로 GPT-3를 fine-tuning했다.
+연구진은 사람이 작성한 예시로 GPT-3를 미세조정했다.
 그리고 이 GPT-3로 이미지 설명에서 편집 지시와 편집 후 설명을 생성했다.
-예를 들어 GPT-3는 “말을 타는 소녀의 사진”이라는 설명에서 “소녀가 용을 타게 해 줘”라는 지시와 “용을 타는 소녀의 사진”이라는 결과 설명을 만든다.
-이 텍스트는 위 그림에 실린 원논문 예시를 번역한 것이다.
+원논문의 예에서 GPT-3는 “말을 타는 소녀의 사진”이라는 설명에서 “소녀가 용을 타게 해 줘”라는 지시와 “용을 타는 소녀의 사진”이라는 결과 설명을 만든다.
 
 이어서 연구진은 두 설명을 Stable Diffusion과 Prompt-to-Prompt에 넣어 편집 전후의 합성 이미지 쌍을 만든다.
-Prompt-to-Prompt는 원래 cross-attention을 조절해, 두 이미지가 공유해야 할 내용을 유지하는 방법이다.[^prompt2prompt]
-InstructPix2Pix 원논문의 본문도 이 과정을 cross-attention 가중치를 빌려 쓰는 것으로 요약한다.[^instructpix]
-다만 논문 부록과 공개된 데이터 생성 코드를 보면, 실제 구현은 이 아이디어를 변형했다.
-이 구현은 두 이미지에 같은 noise를 쓰고, 처음 일부 denoising 단계에서 둘째 이미지의 self-attention 가중치를 첫째 이미지의 것으로 바꾼다.[^instructpix-code]
-연구진은 설명 쌍마다 후보 이미지 쌍 100개를 만들고, CLIP 기반 점수로 걸러 학습에 쓸 쌍을 고른다.
+Prompt-to-Prompt는 두 생성 과정이 같은 cross-attention map을 쓰게 해, 설명이 바뀐 부분 외의 내용을 유지하는 방법이다.[^prompt2prompt]
+연구진은 이렇게 만든 후보 쌍을 CLIP 기반 점수로 거른다.
 이 점수는 두 이미지 사이의 변화가 두 설명 사이의 변화와 얼마나 맞는지를 잰다.
-걸러 낸 쌍에도 원치 않는 변화나 지시와 어긋난 부분이 남을 수 있다.
-그래서 이렇게 만든 데이터가 완벽한 정답은 아니다.
+걸러 낸 쌍에도 원치 않는 변화나 지시와 어긋난 부분이 일부 남는다.
 
 ### 4-3. 원본 이미지와 지시를 조건으로 학습
 
 원본 이미지를 $I$, 편집된 정답 이미지를 $Y$, 지시 텍스트를 $c$라 하자.
-두 이미지는 같은 autoencoder를 거치지만, 여기서는 변환을 구분해 쓴다.
-원본 조건에 쓰는 변환을 $C$라 하면 $z_I=C(I)$이고, diffusion 대상에 쓰는 변환을 $E$라 하면 $z_Y=E(Y)$다.
-예를 들어 Diffusers의 InstructPix2Pix 학습 구현은 편집된 이미지에 대해 posterior에서 표본을 뽑고 scaling factor를 곱한다.
-반면 원본 조건에는 posterior의 mode를 scaling 없이 쓴다.[^instructpix-implementation]
-같은 encoder를 쓴다는 사실만으로 두 경로의 표본 추출과 크기 조정이 같다고 가정하면 안 된다.
+같은 encoder가 두 이미지를 latent $z_I=E(I)$와 $z_Y=E(Y)$로 바꾼다.
 학습 시 noise를 더하는 대상은 **편집된 정답** $z_Y$다.
 학습 과정은 임의의 시간 $t$와 표준 Gaussian noise $\epsilon$을 뽑아 $z_t=\sqrt{\bar\alpha_t}z_Y+\sqrt{1-\bar\alpha_t}\epsilon$을 만든다.
 모델은 $z_t$, 시간, 원본 latent $z_I$, 지시 $c$를 보고 추가한 noise를 예측한다.
@@ -242,14 +214,12 @@ $$
 L=\mathbb{E}\left[\left\|\epsilon-\epsilon_\theta(z_t,t,z_I,c)\right\|^2\right].
 $$
 
-여기서 기대값은 학습 예제, 시간, noise를 뽑는 모든 경우에 대한 평균이다.
+여기서 기댓값은 학습 예제, 시간, noise를 뽑는 모든 경우에 대한 평균이다.
 원본 latent는 모델에 원래 장면을 알려 주는 조건이다.
 Noisy latent는 모델이 생성해야 할 편집 결과의 현재 상태다.
 원논문은 두 latent를 channel 방향으로 이어 U-Net의 첫 convolution에 넣는다.
 지시는 text encoder와 cross-attention을 거쳐 전달된다.
-예를 들어 두 latent가 각각 $64\times64\times4$이면 연결된 U-Net 입력은 $64\times64\times8$이다.
-이 숫자는 입력 channel을 설명하기 위한 예시다.
-원논문의 학습 이미지 해상도를 뜻하지 않는다.
+예를 들어 $512\times512$ 이미지라면 두 latent가 각각 $64\times64\times4$이고, 연결된 U-Net 입력은 $64\times64\times8$이다.
 모델은 기존 Stable Diffusion weight로 초기화한다.
 새로 붙은 이미지 조건 channel에 대응하는 weight만 0에서 시작한다.
 
@@ -260,12 +230,8 @@ Noisy latent는 모델이 생성해야 할 편집 결과의 현재 상태다.
 편집 결과의 latent는 Gaussian noise에서 시작한다.
 Sampler가 U-Net의 예측으로 latent를 여러 번 갱신한다.
 마지막 latent는 decoder가 이미지로 바꾼다.
-Image-to-image는 원본 latent에 noise를 더해 생성의 출발점으로 삼았다.
-InstructPix2Pix는 원본 latent를 출발점이 아니라 매 단계의 조건으로 준다.
-두 방법 모두 원본을 활용하지만, noise에서 복원할 대상과 원본을 전달하는 경로가 다르다.
-InstructPix2Pix는 사용자 이미지마다 모델을 다시 학습하지 않는다.
-입력 이미지를 noise로 되돌리는 inversion도 하지 않는다.
-다만 diffusion의 denoising 단계는 여전히 여러 번 반복한다.
+원본 latent는 출발점이 아니라 매 단계의 조건으로만 들어간다.
+InstructPix2Pix는 사용자 이미지마다 모델을 다시 학습하지 않고, 입력 이미지를 noise로 되돌리는 계산(inversion)도 하지 않는다.
 
 InstructPix2Pix는 원본 이미지와 텍스트 지시의 영향을 따로 조절하기 위해 두 조건을 각각 또는 함께 제거한 예제도 학습한다.
 생성할 때 InstructPix2Pix는 조건이 모두 없는 예측, 이미지만 있는 예측, 이미지와 지시가 모두 있는 예측을 결합한다.
@@ -279,19 +245,22 @@ $s_I$와 $s_T$가 모두 1이면 두 차이 항이 이어져 결합 결과는 $\
 세 예측은 같은 현재 latent와 시간에서 조건만 바꿔 얻는다.
 이미지 guidance scale $s_I$는 결과가 원본을 얼마나 닮을지 조절한다.
 텍스트 guidance scale $s_T$는 지시를 얼마나 강하게 반영할지 조절한다.
-두 값의 영향은 서로 얽혀 있다.
-그래서 어느 한 값을 키워도 원하는 속성만 보존하거나 바꾼다는 보장은 없다.
+두 값은 서로의 효과에 영향을 주므로 함께 조절한다.
 
 ### 4-5. ControlNet의 공간 조건
 
 편집 지시만으로는 인물의 팔과 다리가 놓일 위치를 정확하게 지정하기 어렵다.
 ControlNet은 edge map, depth map, pose 같은 공간 조건을 pretrained text-to-image diffusion 모델에 전달한다.[^controlnet]
-예를 들어 사람 사진에서 pose를 추출하고 “무대 위의 발레 무용수”라는 prompt를 함께 주면, 그 자세를 따르는 새 이미지를 생성하도록 조건을 줄 수 있다.
-Pose에는 원본 인물의 얼굴이나 옷 정보가 없으므로, 그 사람의 정체성까지 보존하는 조건은 아니다.
+예를 들어 사람 사진에서 pose를 추출하고 “무대 위의 발레 무용수”라는 prompt를 함께 주면, 그 자세를 따르는 새 이미지를 생성하게 할 수 있다.
+Pose에는 원본 인물의 얼굴이나 옷 정보가 없으므로, 이 조건은 그 사람의 정체성까지 보존하지 않는다.
 
-ControlNet은 기존 모델을 고정하고, 복사한 encoder block을 포함하는 별도 학습 경로에서 공간 조건을 처리한다.
-이 경로를 0으로 초기화한 convolution으로 연결해 학습 초기에는 추가 경로의 영향이 0에서 출발하게 한다.
-학습하면서 공간 조건이 denoising에 영향을 주도록 연결 가중치와 조건 처리 경로를 갱신한다.[^controlnet]
+ControlNet은 기존 모델의 weight를 고정한다.
+그리고 U-Net encoder block을 복사한 학습 가능한 사본에 공간 조건을 넣는다.
+사본의 출력은 weight를 0으로 초기화한 convolution을 거쳐 고정된 모델에 더해진다.
+그래서 학습 초기에는 추가 경로의 영향이 0이고, 기존 모델의 출력이 그대로 유지된다.
+학습이 진행되면 0에서 출발한 연결 가중치와 사본이 함께 갱신되어, 공간 조건이 denoising에 영향을 주기 시작한다.
+원논문은 모델이 조건을 따르는 능력을 서서히가 아니라 대개 1만 step 안에 갑자기 얻는다고 보고했다.[^controlnet]
+새 조건 경로를 0에서 시작해 기존 모델을 망가뜨리지 않는다는 점은 InstructPix2Pix가 새 channel의 weight를 0으로 두는 것과 같은 생각이다.
 
 세 방법에서 입력 이미지가 맡는 역할을 구분하면 다음과 같다.
 
@@ -302,19 +271,16 @@ ControlNet은 기존 모델을 고정하고, 복사한 encoder block을 포함�
 | ControlNet | edge·depth·pose 등 위치별 구조를 추가 조건으로 사용 | “이 자세로 무용수를 그려 줘” |
 
 ControlNet은 CFG와 함께 쓸 수 있다.
-공간 조건을 추가하는 선택과 조건부·무조건부 예측을 결합하는 선택은 서로 다른 역할을 한다.
+ControlNet은 위치별 구조라는 조건을 더하고, CFG는 주어진 조건을 얼마나 강하게 반영할지 조절하므로 두 장치의 역할은 겹치지 않는다.
 
 [^survey]: Yang, L., Zhang, Z., Song, Y., et al. (2024). Diffusion Models: A Comprehensive Survey of Methods and Applications. *ACM Computing Surveys*, 56(4), 105:1–105:39. [논문](https://arxiv.org/abs/2209.00796).
 [^ldm]: Rombach, R., Blattmann, A., Lorenz, D., Esser, P., & Ommer, B. (2022). High-Resolution Image Synthesis with Latent Diffusion Models. *CVPR*. [논문](https://arxiv.org/abs/2112.10752).
 [^unet]: Ronneberger, O., Fischer, P., & Brox, T. (2015). U-Net: Convolutional Networks for Biomedical Image Segmentation. *MICCAI*. [논문](https://arxiv.org/abs/1505.04597).
 [^clip]: Radford, A., Kim, J. W., Hallacy, C., et al. (2021). Learning Transferable Visual Models From Natural Language Supervision. *ICML*. [논문](https://arxiv.org/abs/2103.00020).
 [^sd]: Rombach, R., & Esser, P. (2022). Stable Diffusion v1-4 Model Card. *Hugging Face*. [모델 카드](https://huggingface.co/CompVis/stable-diffusion-v1-4), [VAE 설정](https://huggingface.co/CompVis/stable-diffusion-v1-4/blob/main/vae/config.json).
-[^sd-decoding]: Hugging Face. (v0.35.1). Stable Diffusion pipeline. *Diffusers*. [구현](https://github.com/huggingface/diffusers/blob/v0.35.1/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py).
+[^sd-vae]: Hugging Face. (v0.35.1). AutoencoderKL. *Diffusers*. [구현](https://github.com/huggingface/diffusers/blob/v0.35.1/src/diffusers/models/autoencoders/autoencoder_kl.py).
 [^audioldm]: Liu, H., Chen, Z., Yuan, Y., et al. (2023). AudioLDM: Text-to-Audio Generation with Latent Diffusion Models. *ICML*. [논문](https://arxiv.org/abs/2301.12503).
 [^sdedit]: Meng, C., He, Y., Song, Y., et al. (2022). SDEdit: Guided Image Synthesis and Editing with Stochastic Differential Equations. *ICLR*. [논문](https://arxiv.org/abs/2108.01073).
 [^instructpix]: Brooks, T., Holynski, A., & Efros, A. A. (2023). InstructPix2Pix: Learning to Follow Image Editing Instructions. *CVPR*. [논문](https://arxiv.org/abs/2211.09800).
-[^instructpix-code]: Brooks, T. (2023). instruct-pix2pix. *GitHub*. [데이터 생성 코드](https://github.com/timothybrooks/instruct-pix2pix/blob/0dffd1eeb02611c35088462d1df88714ce2b52f4/dataset_creation/generate_img_dataset.py), [attention 구현](https://github.com/timothybrooks/instruct-pix2pix/blob/0dffd1eeb02611c35088462d1df88714ce2b52f4/stable_diffusion/ldm/modules/attention.py).
-[^instructpix-implementation]: Hugging Face. (v0.35.1). InstructPix2Pix. *Diffusers documentation*. [문서](https://huggingface.co/docs/diffusers/v0.35.1/training/instructpix2pix).
 [^prompt2prompt]: Hertz, A., Mokady, R., Tenenbaum, J., et al. (2023). Prompt-to-Prompt Image Editing with Cross Attention Control. *ICLR*. [논문](https://arxiv.org/abs/2208.01626).
-
 [^controlnet]: Zhang, L., Rao, A., & Agrawala, M. (2023). Adding Conditional Control to Text-to-Image Diffusion Models. *ICCV*. [논문](https://arxiv.org/abs/2302.05543).
