@@ -4,48 +4,464 @@ week: 11
 order: 0
 ---
 
-<Callout type="note">
-작성 예정 노트다. 아래는 담을 내용의 계획이며, 모델·논문 이름은 노트를 쓸 때 원논문으로 확인한다.
-</Callout>
-
-{/* 작성 메모 (사이트에 보이지 않음)
-- 참고문헌 1 후보: Lipman et al. (2024) Flow Matching Guide and Code. 보조: Albergo et al. (2023) Stochastic Interpolants.
-- 앞 주차에서 이미 다룬 것
-  - 10a 4절: forward·reverse SDE, score, denoising score matching(조건부 score의 평균이 주변 score).
-  - 10b 2절: DDIM의 결정론적 샘플링, DPM-Solver(생성을 미분방정식의 수치해로 봄).
-  - 10b 3절: noise·원본·velocity 예측 대상, flow matching의 직선 경로와 1차원 예시, Euler 한 step, SD3 언급.
-- 앞 주차에 없는 것: probability flow ODE, 조건부 velocity로 학습해도 되는 이유, 일반 경로, 궤적이 휘는 이유.
-- 10b 3절은 고치지 않는다. 이 노트는 같은 표기로 한 단락만 다시 정의하고 1차원 예시는 반복하지 않는다.
-- 표기: 10b와 맞춘다. noise z, 데이터 y, x_t=(1-t)z+ty, t=0이 noise, t=1이 데이터. 논문마다 방향이 반대임을 본문에서 한 번 밝힌다.
-- 본문에서는 주차·노트 번호 대신 개념 이름으로 받는다.
-*/}
-
-이번 주는 diffusion의 생성 궤적을 ODE로 보고, 그 궤적을 배우고(flow matching), 곧게 펴고(rectified flow), 한 번에 건너뛰는(consistency model) 계보를 다룬다.
-계보의 출발 문제는 diffusion 생성이 수십~수백 번의 모델 호출을 필요로 해 느리다는 것이다.
+Diffusion model로 이미지를 만들려면 noise에서 출발해 denoiser를 여러 번 차례로 호출해야 한다.[^survey]
+DDPM은 $T=1000$개의 단계를 쓰고, 단계마다 모델을 한 번씩 순서대로 불러야 표본 하나가 나온다.
+DDIM 원논문에 따르면 Nvidia 2080 Ti GPU 한 장에서 $32\times32$ 이미지 5만 장을 DDPM으로 뽑는 데 약 20시간이 걸리고, GAN으로는 1분이 채 걸리지 않는다.[^ddim]
+이번 주는 이 호출 횟수를 줄여 온 계보를 따라간다.
+생성 과정을 ODE로 보고, 그 ODE의 궤적을 직접 학습하고(flow matching), 궤적을 곧게 펴고(rectified flow), 궤적을 건너뛰는(consistency model과 분포를 맞추는 distillation) 순서다.
+이 노트는 앞의 두 단계를 다룬다.
+먼저 reverse SDE와 같은 분포를 만드는 결정적 ODE를 세우고, 결정론적 DDIM과 DPM-Solver를 그 ODE의 수치해법으로 묶는다.
+그다음 그 ODE의 velocity를 처음부터 회귀로 배우는 flow matching을 세우고, diffusion과 무엇이 같고 무엇이 다른지 정리한다.
 
 ## 1. SDE에서 ODE로
 
-- Reverse SDE와 같은 주변 분포를 내는 결정적 과정인 probability flow ODE
-- 결정론적 DDIM은 이 ODE를 이산화한 것이고, DPM-Solver는 이 ODE의 수치해법이다. 따로 보였던 sampler들이 한 관점으로 묶인다
-- 결정적 궤적의 이점: 적은 step, noise와 데이터의 1:1 대응(같은 noise는 같은 이미지)
-- 남는 문제: 이 ODE는 정해진 forward 과정의 score에서 유도되므로, 궤적의 모양을 고를 수 없다
+### 1-1. Probability flow ODE
+
+이 절은 diffusion의 표기를 그대로 쓴다.
+데이터는 $x_0$, noise는 $\epsilon$이고, 시간 $t$는 0(데이터)에서 $T$(noise)로 흐르며, 생성은 $T$에서 0으로 거슬러 간다.
+Forward SDE는 $dx=f(x,t)\,dt+g(t)\,dw$이고, 시점 $t$의 주변 분포를 $p_t$라 하자.
+
+Reverse SDE로 생성하면 단계마다 새 noise를 뽑아 상태에 더한다.
+그래서 같은 초기 noise에서 출발해도 실행할 때마다 다른 이미지가 나오고, 무작위 항 때문에 한 step을 크게 잡기도 어렵다.
+그런데 생성에 필요한 것은 표본 하나하나가 걸어가는 경로가 아니라, 시점마다 표본 전체가 이루는 분포 $p_t$다.
+분포만 같다면 무작위로 흔들리는 경로를 결정적인 경로로 바꿔도 된다.
+
+Score SDE 논문은 모든 시점에서 SDE와 같은 주변 분포 $p_t$를 지나는 결정적 과정이 있음을 보였다.[^score-sde]
+
+$$
+\frac{dx}{dt}=f(x,t)-\frac12 g(t)^2\nabla_x\log p_t(x).
+$$
+
+이 ODE를 probability flow ODE(PF-ODE)라 한다.
+Reverse SDE와 비교하면 score 항의 계수가 $g^2$에서 $\frac12g^2$로 줄고, 무작위 항 $g\,d\bar w$가 사라졌다.
+필요한 것은 같은 score뿐이므로, 이미 학습한 diffusion model을 다시 학습하지 않고 그대로 쓴다.
+
+무작위 항을 지웠는데 분포가 왜 같을까?
+물에 떨어뜨린 잉크를 떠올려 보자.
+잉크 분자 하나하나는 무작위로 움직이지만, 전체로 보면 잉크는 진한 곳에서 옅은 곳으로 퍼진다.
+이 퍼짐을 "밀도가 낮아지는 쪽으로 미는 흐름"으로 바꾸어 모든 분자를 결정적으로 움직여도, 시점마다 잉크의 농도 분포는 같다.
+밀도가 낮아지는 방향이 $-\nabla_x\log p_t$이고, PF-ODE의 $-\frac12g^2\nabla_x\log p_t$ 항이 이 흐름이다.
+비유에서 같은 것은 농도 분포뿐이며, 바꾼 흐름 속 분자 하나의 경로는 실제 분자의 경로와 다르다.
+
+<Callout type="example">
+1차원에서 drift가 없고($f=0$), $g(t)^2=3$이며, 데이터 분포가 $\mathcal N(0,1)$이라 하자.
+Forward 과정은 $x_t=x_0+\sqrt{3t}\,\epsilon$이므로 $p_t=\mathcal N(0,1+3t)$이고, score는 $-x/(1+3t)$다.
+PF-ODE는 $dx/dt=3x/[2(1+3t)]$이고, 그 해는 $x_t=x_0\sqrt{1+3t}$다.
+즉 $t=1$까지 모든 점이 원점에서 정확히 두 배 멀어진다.
+
+데이터 점 $x_0=0.5$를 따라가 보자.
+SDE에서는 $x_1=0.5+\sqrt3\,\epsilon$이어서 표준편차 1.73으로 흩어진 어딘가에 도착한다.
+PF-ODE에서는 항상 $x_1=1.0$에 도착한다.
+그래도 전체 분포는 같다.
+SDE는 $\mathcal N(0,1)$에 독립인 $\mathcal N(0,3)$을 더해 $\mathcal N(0,4)$를 만들고, PF-ODE는 $\mathcal N(0,1)$을 두 배로 늘려 같은 $\mathcal N(0,4)$를 만든다.
+생성할 때는 PF-ODE를 거꾸로 풀어, $t=1$에서 뽑은 noise $1.0$을 데이터 $0.5$로 되돌린다.
+</Callout>
+
+<Details summary="PF-ODE가 같은 주변 분포를 내는 이유">
+
+$g$가 상태에 의존하지 않을 때, SDE의 주변 밀도는 Fokker–Planck 방정식을 따른다.
+
+$$
+\frac{\partial p_t}{\partial t}=-\nabla\cdot(f\,p_t)+\frac12g^2\Delta p_t.
+$$
+
+Laplacian 항은 $\Delta p_t=\nabla\cdot(\nabla p_t)=\nabla\cdot(p_t\nabla\log p_t)$로 쓸 수 있다.
+이를 대입해 두 항을 하나의 divergence로 묶는다.
+
+$$
+\frac{\partial p_t}{\partial t}=-\nabla\cdot\Bigl[\bigl(f-\tfrac12g^2\nabla\log p_t\bigr)p_t\Bigr].
+$$
+
+오른쪽은 확률 질량이 velocity $f-\frac12g^2\nabla\log p_t$로 움직일 때의 연속 방정식(continuity equation)이고, 이 velocity가 PF-ODE의 우변이다.
+SDE와 PF-ODE는 같은 초기 분포에서 같은 방정식을 따르므로 모든 시점에서 같은 $p_t$를 갖는다.
+</Details>
+
+DDPM에 대응하는 VP SDE에서는 $f=-\frac12\beta(t)x$, $g^2=\beta(t)$다.
+Score에 noise 예측 모델을 넣으면 $\nabla_x\log p_t(x)\approx-\epsilon_\theta(x,t)/\sqrt{1-\bar\alpha(t)}$이므로, 생성에 쓰는 ODE는 다음과 같다.
+
+$$
+\frac{dx}{dt}=-\frac12\beta(t)\left[x-\frac{\epsilon_\theta(x,t)}{\sqrt{1-\bar\alpha(t)}}\right].
+$$
+
+생성은 $x_T\sim\mathcal N(0,I)$를 뽑아 이 ODE를 $t=T$에서 0까지 수치적으로 푸는 일이 된다.
+
+궤적이 결정적이라는 데서 두 가지 이점이 생긴다.
+첫째, 초기 noise에서 이미지로 가는 대응이 하나의 함수가 된다.
+같은 noise는 언제나 같은 이미지를 만들고, ODE를 반대로 풀면 이미지를 그 이미지를 만드는 noise로 되돌릴 수 있다.
+둘째, 무작위 항이 없으므로 범용 ODE solver를 쓸 수 있고 step도 크게 잡을 수 있다.
+생성 비용은 신경망을 호출한 횟수로 센다.
+이를 NFE(number of function evaluations)라 한다.
+CIFAR-10에서 step 크기를 스스로 정하는 RK45 solver는 허용 오차를 느슨하게 잡으면 PF-ODE를 약 60 NFE로 풀어, 1000 step으로 reverse SDE를 푼 결과와 비슷한 품질을 냈다.[^score-sde][^solver]
+
+### 1-2. 결정론적 DDIM과 Euler 방법
+
+결정론적 DDIM은 따로 제안된 sampler지만 PF-ODE의 수치해법으로 다시 읽을 수 있다.
+DDIM은 현재 시점 $t$에서 원본 추정 $\hat x_0$를 만들고, 원본 추정과 예측 noise $\hat\epsilon=\epsilon_\theta(x_t,t)$를 더 이른 시점 $r$의 비율로 다시 섞는다.
+
+$$
+\hat x_0=\frac{x_t-\sqrt{1-\bar\alpha_t}\,\hat\epsilon}{\sqrt{\bar\alpha_t}},
+\qquad
+x_r=\sqrt{\bar\alpha_r}\,\hat x_0+\sqrt{1-\bar\alpha_r}\,\hat\epsilon.
+$$
+
+이 식은 ODE와 상관없어 보이지만 변수를 바꾸면 달라진다.
+상태를 신호 계수로 나눈 $\bar x=x/\sqrt{\bar\alpha}$와, noise 대 신호의 비율 $\sigma=\sqrt{(1-\bar\alpha)/\bar\alpha}$를 쓰자.
+두 번째 식의 양변을 $\sqrt{\bar\alpha_r}$로 나누고 첫 번째 식을 대입하면 다음을 얻는다.
+
+$$
+\bar x_r=\bar x_t+(\sigma_r-\sigma_t)\,\hat\epsilon.
+$$
+
+이것은 ODE $d\bar x/d\sigma=\epsilon_\theta(x,t)$를 $\sigma$에 대한 step $\sigma_r-\sigma_t$로 한 번 푼 Euler 방법이다.
+그리고 이 ODE는 VP SDE의 PF-ODE를 변수 $(\bar x,\sigma)$로 다시 쓴 것과 같다.
+즉 결정론적 DDIM은 변수를 바꾼 PF-ODE에 Euler 방법을 적용한 것이다.[^ddim]
+같은 ODE라도 $\sigma$ 대신 원래 시간 $t$를 기준으로 Euler step을 밟으면 다른 갱신식이 나온다.
+DDIM 원논문은 두 갱신이 step이 작을 때는 거의 같지만, step 수가 적으면 차이가 난다고 밝힌다.
+
+<Details summary="DDIM의 ODE가 PF-ODE와 같다는 계산">
+
+VP SDE에서는 $\bar\alpha(t)=\exp(-\int_0^t\beta(s)ds)$이므로 $d\bar\alpha/dt=-\beta\bar\alpha$다.
+위의 PF-ODE를 $\bar x=x/\sqrt{\bar\alpha}$에 대해 다시 쓰면 $x$에 비례하는 항이 상쇄된다.
+
+$$
+\frac{d\bar x}{dt}=\frac{1}{\sqrt{\bar\alpha}}\frac{dx}{dt}+\frac{\beta}{2}\frac{x}{\sqrt{\bar\alpha}}
+=\frac{\beta}{2\sqrt{\bar\alpha}\sqrt{1-\bar\alpha}}\,\epsilon_\theta.
+$$
+
+한편 $\sigma^2=1/\bar\alpha-1$을 시간으로 미분하면 $2\sigma\,d\sigma/dt=\beta/\bar\alpha$이므로 다음이 성립한다.
+
+$$
+\frac{d\sigma}{dt}=\frac{\beta}{2\bar\alpha\sigma}=\frac{\beta}{2\sqrt{\bar\alpha}\sqrt{1-\bar\alpha}}.
+$$
+
+두 식을 나누면 $d\bar x/d\sigma=\epsilon_\theta$다.
+</Details>
+
+<Callout type="example">
+현재 $x_t=1.9$, $\bar\alpha_t=0.64$, $\hat\epsilon=0.5$이고 다음 시점이 $\bar\alpha_r=0.81$이라 하자.
+위의 DDIM 식은 $\hat x_0=2$를 거쳐 $x_r\approx2.018$을 낸다.
+같은 값을 Euler 방법으로 계산해 보자.
+$\bar x_t=1.9/0.8=2.375$, $\sigma_t=0.6/0.8=0.75$, $\sigma_r=\sqrt{0.19}/0.9\approx0.484$다.
+Euler 한 step은 $\bar x_r\approx2.375+(0.484-0.75)\times0.5\approx2.242$이고, 신호 계수를 다시 곱하면 $x_r\approx0.9\times2.242\approx2.018$로 같다.
+</Callout>
+
+왜 하필 $(\bar x,\sigma)$일까?
+데이터가 한 점 $x_0$뿐이라면 forward 과정에서 $\bar x=x_0+\sigma\epsilon$이다.
+이 궤적은 $\sigma$에 대해 기울기가 $\epsilon$으로 일정한 직선이므로, Euler 방법은 step 크기와 상관없이 정확하다.
+실제 데이터에서는 예측 noise가 궤적을 따라 바뀌지만, 이 좌표에서는 천천히 바뀌어 Euler 방법의 오차가 작다.
+궤적이 곧을수록 큰 step으로도 정확하게 따라갈 수 있다는 점이 DDIM이 적은 step에서 잘 동작하는 이유다.
+
+### 1-3. 고차 solver
+
+$(\bar x,\sigma)$ 좌표에서 시점 $t$에서 $r$까지의 정확한 해는 예측 noise의 적분이다.
+
+$$
+\bar x_r=\bar x_t+\int_{\sigma_t}^{\sigma_r}\epsilon_\theta\,d\sigma.
+$$
+
+DDIM은 구간 안에서 $\epsilon_\theta$가 처음 값 그대로라고 보고 이 적분을 근사한 셈이다.
+Euler 방법이 step 시작점의 기울기를 구간 전체에 쓰는 것과 같다.
+2차 solver는 구간 중간의 기울기를 한 번 더 구해 구간 안에서 기울기가 바뀌는 정도를 반영한다.
+Step당 호출은 늘지만 오차가 step 크기에 따라 더 빨리 줄어들므로, 같은 NFE에서도 대개 더 정확하다.
+
+DPM-Solver는 이 생각으로 같은 적분을 더 정확히 근사한다.[^solver]
+DPM-Solver는 diffusion의 ODE가 상태에 대한 선형 항과 신경망 항으로 나뉜다는 점에 주목해, 선형 항은 정확히 풀고 신경망 항만 근사한다.
+신호 계수로 나눈 $\bar x$를 쓰는 것이 바로 선형 항을 정확히 푸는 일이다.
+그리고 $\lambda=-\log\sigma$(신호 대 noise 비의 log의 절반)를 적분 변수로 삼고, $\epsilon_\theta$를 $\lambda$에 대해 Taylor 전개해 몇 개 항까지 남긴다.
+0차 항만 남기면 DDIM과 정확히 같은 갱신이 되며, 원논문은 이를 DPM-Solver-1이라 부른다.
+$k$차 solver는 구간 안의 중간 시점에서 모델을 더 불러 전개의 고차 항을 추정하므로, step마다 모델을 $k$번 호출한다.
+그래서 step 수와 NFE는 다를 수 있다.
+CFG를 쓰면 한 번의 갱신에서 조건부와 무조건부 예측을 모두 구하므로 호출이 다시 두 배가 된다.
+CIFAR-10에서 DPM-Solver는 10 NFE에서 FID 4.70, 20 NFE에서 FID 2.87을 냈다.[^solver]
+
+여기까지의 방법은 모두 이미 학습된 모델의 궤적을 더 잘 따라가는 쪽으로 발전했다.
+궤적 자체는 학습 전에 정해진다.
+Forward 과정이 데이터에 Gaussian noise를 섞는 방식으로 주변 분포 $p_t$를 정하고, PF-ODE의 velocity는 그 분포의 score에서 따라 나온다.
+Noise schedule은 고를 수 있지만, 출발점은 Gaussian noise여야 하고 경로는 데이터에 noise를 섞는 꼴에 묶여 있다.
+경로와 출발 분포를 forward 과정에 맡기지 않고 직접 정할 수 있다면, 어떤 경로가 학습과 생성에 유리한지도 따져 볼 수 있다.
+Flow matching은 경로를 먼저 정하고, 그 경로를 만드는 velocity를 회귀로 배운다.
 
 ## 2. Flow matching
 
-- 경로를 먼저 정하고, 그 위의 velocity를 신경망이 회귀로 배운다
-- 전체 분포의 velocity(주변 velocity)는 계산할 수 없지만, noise와 데이터 한 쌍의 velocity(조건부 velocity)는 계산할 수 있다
-- 조건부 velocity로 회귀해도 주변 velocity를 배우는 이유. Denoising score matching에서 조건부 score의 평균이 주변 score가 되는 것과 같은 논리다
-- 직선 경로 $x_t=(1-t)z+ty$와 목표 $y-z$. 학습 중에 ODE를 풀지 않는다(simulation-free)
+### 2-1. 확률 경로와 velocity
+
+이 절부터는 flow matching 문헌의 표기를 쓴다.
+Noise는 $z\sim\mathcal N(0,I)$, 데이터는 $y$이고, 시간 $t\in[0,1]$은 $t=0$이 noise, $t=1$이 데이터다.
+앞 절의 diffusion 시간과는 방향이 반대다.
+문헌마다 방향이 다르다는 점도 주의한다.
+Stable Diffusion 3처럼 $t=0$을 데이터로 두는 모델은 velocity 목표가 $\epsilon-x_0$, 즉 이 노트 표기로 $z-y$가 되어 부호가 반대다.[^sd3]
+
+생성은 ODE $dx_t/dt=v(x_t,t)$를 $x_0=z$에서 출발해 $t=1$까지 푸는 일이다.
+목표는 이렇게 풀었을 때 $x_1$이 데이터 분포를 따르게 하는 velocity field $v$를 찾는 것이다.
+신경망 $v_\theta$로 정의한 이런 ODE 생성 모델을 continuous normalizing flow라 부른다.
+예전에는 이 모델을 likelihood로 학습했는데, 학습 step마다 ODE를 수치적으로 풀어야 해서 비쌌다.[^flow]
+
+Flow matching은 velocity보다 경로를 먼저 정한다.[^flow]
+Noise $z$ 하나와 데이터 $y$ 하나를 독립으로 뽑아 직선으로 잇자.
+
+$$
+x_t=(1-t)z+ty.
+$$
+
+이 점은 $t=0$에서 $z$, $t=1$에서 $y$에 있고, 시간에 따라 일정한 속도 $dx_t/dt=y-z$로 움직인다.
+쌍 하나에 대해 정한 이 속도를 조건부 velocity(conditional velocity)라 한다.
+수많은 쌍을 뽑아 시점 $t$의 $x_t$를 모으면 분포 $p_t$가 생긴다.
+$p_0$는 $\mathcal N(0,I)$이고 $p_1$은 데이터 분포이며, 그 사이의 $p_t$를 확률 경로(probability path)라 한다.
+
+생성 모델에 필요한 것은 개별 쌍이 아니라 이 확률 경로를 따라 분포를 옮기는 하나의 velocity field다.
+어떤 위치 $x$를 시점 $t$에 지나는 직선은 여럿이고, 직선마다 방향이 다르다.
+그 방향들을 지나갈 확률로 평균한 것이 주변 velocity(marginal velocity)다.
+
+$$
+u_t(x)=\mathbb E\bigl[\,y-z\mid x_t=x\,\bigr].
+$$
+
+Lipman 등은 이렇게 조건부 velocity를 평균한 주변 velocity가 확률 경로 $p_t$를 정확히 만든다는 것을 보였다.[^flow]
+즉 $z\sim\mathcal N(0,I)$에서 출발해 $dx/dt=u_t(x)$를 따라가면 시점마다 $x_t$의 분포가 $p_t$가 되고, $t=1$에서는 데이터 분포가 된다.
+교차로를 지나는 사람들이 저마다 다른 목적지로 가더라도, 그 자리의 평균 흐름을 따라 모두를 움직이면 군중의 밀도는 똑같이 변한다.
+PF-ODE가 개별 경로를 바꾸고 분포만 지켰던 것과 같은 원리다.
+
+문제는 $u_t(x)$를 계산할 수 없다는 점이다.
+한 점 $x$를 지날 수 있는 모든 쌍과 그 확률을 알아야 하는데, 이는 데이터 분포 전체에 대한 적분이다.
+그래서 주변 velocity를 직접 회귀하는 손실 $\mathbb E_{t,\,x\sim p_t}\lVert v_\theta(x,t)-u_t(x)\rVert^2$은 그대로는 쓸 수 없다.
+
+### 2-2. 조건부 velocity의 회귀
+
+해법은 계산할 수 없는 주변 velocity 대신, 쌍마다 바로 계산되는 조건부 velocity를 목표로 회귀하는 것이다.
+$t$를 $[0,1]$에서 균일하게 뽑고 손실을 다음과 같이 둔다.
+
+$$
+\mathcal L_{\mathrm{CFM}}(\theta)=\mathbb E_{t,\,z,\,y}\Bigl[\bigl\lVert v_\theta(x_t,t)-(y-z)\bigr\rVert^2\Bigr].
+$$
+
+이를 conditional flow matching(CFM) 손실이라 한다.
+Lipman 등은 이 손실과 주변 velocity를 회귀하는 손실이 $\theta$와 무관한 상수만큼만 다르다는 것을 보였다.[^flow]
+두 손실은 gradient가 같으므로 최솟값을 주는 모델도 같고, 그 모델은 주변 velocity $u_t$다.
+
+직관은 제곱 오차 회귀의 성질에 있다.
+같은 $(x_t,t)$에 대해 모델은 값 하나만 낼 수 있는데, 학습 중에는 그 점을 지나는 여러 쌍의 서로 다른 목표를 본다.
+여러 목표에 대한 제곱 오차의 합은 목표들의 평균을 낼 때 가장 작다.
+그 평균이 곧 주변 velocity다.
+Denoising score matching에서 조건부 score로 학습해도 신경망이 그 평균인 주변 score를 배웠던 것과 같은 논리다.[^dsm]
+
+<Details summary="두 손실이 상수만큼 다르다는 계산">
+
+$Y=y-z$로 두고 $(x_t,t)$를 고정하자.
+조건부 기댓값 $u_t(x_t)=\mathbb E[Y\mid x_t]$를 더하고 빼서 전개하면 교차항의 기댓값이 0이 된다.
+
+$$
+\mathbb E\bigl[\lVert v_\theta-Y\rVert^2\mid x_t\bigr]
+=\lVert v_\theta-u_t(x_t)\rVert^2+\mathbb E\bigl[\lVert Y-u_t(x_t)\rVert^2\mid x_t\bigr].
+$$
+
+첫 항을 $t$와 $x_t$에 대해 평균하면 주변 velocity를 회귀하는 손실이 된다.
+둘째 항은 그 점을 지나는 목표들의 분산이며 $\theta$가 들어 있지 않다.
+따라서 CFM 손실은 주변 손실에 상수를 더한 것이고, 두 손실의 gradient는 같다.
+</Details>
+
+<Callout type="example">
+데이터가 두 점 $y=-2$와 $y=2$뿐이고 각각 절반의 확률로 나온다고 하자.
+쌍 $z=-1$, $y=2$를 뽑고 $t=0.5$를 고르면 $x_t=0.5\times(-1)+0.5\times2=0.5$이고, 학습 목표는 $y-z=3$이다.
+모델이 이 점에서 2를 예측했다면 이 표본의 손실은 $(2-3)^2=1$이다.
+이 계산에는 ODE를 푸는 과정이 없다.
+
+그런데 같은 점 $(x,t)=(0.5,0.5)$를 지나는 쌍이 하나 더 있다.
+$z=3$, $y=-2$이면 $x_t=1.5-1=0.5$이고, 목표는 $y-z=-5$다.
+두 쌍의 $y$는 같은 확률로 나오므로, 두 쌍이 이 점을 지날 상대 확률은 필요한 noise의 밀도 비 $e^{-1^2/2}:e^{-3^2/2}$로 정해진다.
+정규화하면 약 $0.982:0.018$이다.
+따라서 이 점의 주변 velocity는 $0.982\times3+0.018\times(-5)\approx2.86$이다.
+
+학습이 잘 끝나 모델이 2.86을 내도 손실은 0이 아니다.
+이 점에서 기대 손실은 $0.982\times(3-2.86)^2+0.018\times(-5-2.86)^2\approx1.13$이다.
+이 값은 이 점을 지나는 목표들의 분산이며, 모델이 무엇을 내든 줄일 수 없는 $\theta$와 무관한 상수다.
+</Callout>
+
+<figure class="lecture-figure">
+<svg viewBox="0 0 480 330" role="img" aria-label="가로축은 시간 t(0은 noise, 1은 데이터), 세로축은 1차원 위치 x다. 회색 직선들은 noise 표본과 데이터 점 2 또는 −2를 잇는 조건부 경로다. 파란 직선은 noise −1에서 데이터 2로 가는 쌍이고 기울기는 3이다. 주황 직선은 noise 3에서 데이터 −2로 가는 쌍이고 기울기는 −5다. 두 직선은 t=0.5, x=0.5에서 만난다. 검은 곡선은 주변 velocity를 따르는 생성 궤적으로, noise 0.2 근처에서 출발해 t=0.5 무렵까지 거의 수평으로 가다가 휘어 올라 데이터 2에 도착하며, 만나는 점에서의 기울기는 약 2.86이다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<path d="M60 64 V280 H440" stroke="#94a3b8" fill="none"/>
+<path d="M56 260.0 H60" stroke="#94a3b8"/><text x="52" y="264.0" font-size="13" text-anchor="end" fill="#64748b">−3</text>
+<path d="M56 230.0 H60" stroke="#94a3b8"/><text x="52" y="234.0" font-size="13" text-anchor="end" fill="#64748b">−2</text>
+<path d="M56 170.0 H60" stroke="#94a3b8"/><text x="52" y="174.0" font-size="13" text-anchor="end" fill="#64748b">0</text>
+<path d="M56 110.0 H60" stroke="#94a3b8"/><text x="52" y="114.0" font-size="13" text-anchor="end" fill="#64748b">2</text>
+<path d="M56 80.0 H60" stroke="#94a3b8"/><text x="52" y="84.0" font-size="13" text-anchor="end" fill="#64748b">3</text>
+<path d="M60.0 280 V284" stroke="#94a3b8"/><text x="60.0" y="298" font-size="13" text-anchor="middle" fill="#64748b">0</text>
+<path d="M250.0 280 V284" stroke="#94a3b8"/><text x="250.0" y="298" font-size="13" text-anchor="middle" fill="#64748b">0.5</text>
+<path d="M440.0 280 V284" stroke="#94a3b8"/><text x="440.0" y="298" font-size="13" text-anchor="middle" fill="#64748b">1</text>
+<text x="250" y="320" font-size="14" text-anchor="middle" fill="#0f172a">시간 t (0: noise, 1: 데이터)</text>
+<text x="20" y="172" font-size="14" text-anchor="middle" fill="#0f172a" transform="rotate(-90 20 172)">위치 x</text>
+<path d="M60.0 239.0 L440.0 110.0" stroke="#94a3b8" stroke-width="1"/>
+<path d="M60.0 158.0 L440.0 110.0" stroke="#94a3b8" stroke-width="1"/>
+<path d="M60.0 125.0 L440.0 110.0" stroke="#94a3b8" stroke-width="1"/>
+<path d="M60.0 194.0 L440.0 230.0" stroke="#94a3b8" stroke-width="1"/>
+<path d="M60.0 134.0 L440.0 230.0" stroke="#94a3b8" stroke-width="1"/>
+<path d="M60.0 248.0 L440.0 230.0" stroke="#94a3b8" stroke-width="1"/>
+<path d="M60.0 200.0 L440.0 110.0" stroke="#2a78d6" stroke-width="2"/>
+<path d="M60.0 80.0 L440.0 230.0" stroke="#eb6834" stroke-width="2"/>
+<polyline points="60.0,164.0 67.6,164.2 75.2,164.3 82.8,164.4 90.4,164.4 98.0,164.5 105.6,164.6 113.2,164.6 120.8,164.6 128.4,164.6 136.0,164.6 143.6,164.6 151.2,164.5 158.8,164.4 166.4,164.2 174.0,164.0 181.6,163.7 189.2,163.4 196.8,162.9 204.4,162.3 212.0,161.6 219.6,160.7 227.2,159.5 234.8,158.2 242.4,156.7 250.0,155.0 257.6,153.3 265.2,151.5 272.8,149.7 280.4,147.9 288.0,146.1 295.6,144.3 303.2,142.5 310.8,140.7 318.4,138.9 326.0,137.1 333.6,135.2 341.2,133.4 348.8,131.6 356.4,129.8 364.0,128.0 371.6,126.2 379.2,124.4 386.8,122.6 394.4,120.8 402.0,119.0 409.6,117.2 417.2,115.4 424.8,113.6 432.4,111.8 438.2,110.4" fill="none" stroke="#0f172a" stroke-width="2.5"/>
+<circle cx="440.0" cy="110.0" r="4.5" fill="#0f172a"/>
+<circle cx="440.0" cy="230.0" r="4.5" fill="#0f172a"/>
+<circle cx="250.0" cy="155.0" r="4" fill="#ffffff" stroke="#0f172a" stroke-width="1.5"/>
+<path d="M268 98 L253 150" stroke="#0f172a" stroke-width="1"/>
+<text x="262" y="92" font-size="13" fill="#0f172a">이 점의 주변 velocity 2.86</text>
+<path d="M60 18 H84" stroke="#2a78d6" stroke-width="2"/><text x="90" y="22" font-size="13" fill="#0f172a">z=−1 → y=2 (목표 3)</text>
+<path d="M270 18 H294" stroke="#eb6834" stroke-width="2"/><text x="300" y="22" font-size="13" fill="#0f172a">z=3 → y=−2 (목표 −5)</text>
+<path d="M60 40 H84" stroke="#0f172a" stroke-width="2.5"/><text x="90" y="44" font-size="13" fill="#0f172a">생성 궤적</text>
+<path d="M270 40 H294" stroke="#94a3b8" stroke-width="1"/><text x="300" y="44" font-size="13" fill="#0f172a">다른 쌍의 조건부 경로</text>
+</svg>
+<figcaption>데이터가 두 점 ±2뿐인 1차원 예. 회색과 색 직선은 noise와 데이터 한 쌍을 잇는 조건부 경로이고, 검은 곡선은 주변 velocity를 따라 푼 생성 궤적이다. 흰 점(t=0.5, x=0.5)에서 기울기 3인 파란 쌍과 −5인 주황 쌍이 만나며, 이 점의 주변 velocity는 두 기울기를 0.982 대 0.018로 평균한 2.86이다. 생성 궤적은 어느 직선과도 겹치지 않는다. 예제의 식으로 직접 계산해 그렸다.</figcaption>
+</figure>
+
+이 학습은 simulation-free다.
+학습 step 하나는 데이터와 noise와 시간을 뽑아 $x_t$를 만들고, 모델을 한 번 호출해 목표와 비교하는 것으로 끝난다.
+ODE를 푸는 일은 생성할 때만 한다.
+Diffusion의 noise 예측 학습과 비용 구조가 같다.
+
+```python
+def flow_matching_loss(model, y):            # y: 데이터 batch
+    z = torch.randn_like(y)                  # noise
+    t = torch.rand(y.shape[0], 1, 1, 1)      # 표본마다 시간 하나
+    x_t = (1 - t) * z + t * y                # 직선 경로 위의 점
+    target = y - z                           # 조건부 velocity
+    return ((model(x_t, t) - target) ** 2).mean()
+```
+
+### 2-3. 생성 궤적
+
+생성은 noise $z$에서 출발해 학습된 velocity를 따라 ODE를 푸는 일이다.
+가장 단순한 Euler 방법은 시간 간격 $h$마다 상태를 velocity 방향으로 옮긴다.
+
+$$
+x_{t+h}=x_t+h\,v_\theta(x_t,t).
+$$
+
+$N$ step의 Euler 방법은 모델을 $N$번 부르므로 NFE가 $N$이다.
+Midpoint나 Heun 같은 고차 solver도 그대로 쓸 수 있다.
+
+```python
+x = torch.randn(shape)                       # t = 0의 noise
+for i in range(N):
+    t = i / N
+    x = x + (1 / N) * model(x, t)            # Euler 한 step
+```
+
+<Callout type="example">
+앞의 두 점 예에서 $(x,t)=(0.5,0.5)$에 있고 모델이 주변 velocity 2.86을 정확히 낸다고 하자.
+$h=0.5$로 Euler 한 step을 가면 $x_1=0.5+0.5\times2.86\approx1.93$이다.
+정확한 생성 궤적은 데이터 점 2에 도착하므로 0.07만큼 모자란다.
+이 1.93은 이 점을 지나는 쌍들의 데이터 $y$를 앞의 가중치로 평균한 값 $0.982\times2+0.018\times(-2)$와 같다.
+남은 시간을 한 step에 건너뛰면 그 점을 지날 수 있는 데이터들의 평균에 도착하는 셈이다.
+$t=0$에서 출발하면 noise는 모든 데이터와 같은 비율로 짝지어지므로, Euler 한 step은 어느 noise든 데이터 전체의 평균 0으로 보낸다.
+</Callout>
+
+이 오차는 궤적이 휘어 있어서 생긴다.
+조건부 경로는 모두 직선이지만, 주변 velocity는 위치와 시간마다 다른 쌍들을 평균하므로 생성 궤적은 위 그림의 검은 곡선처럼 휜다.
+조건부 경로를 곧게 골라도 생성 궤적까지 곧아지지는 않는다.
+
+<Video src="https://www.youtube.com/watch?v=PNkMKWW8Khw" caption="Peter Holderrieth, MIT 6.S184 (2026) Lecture 2: Flow Matching. 조건부·주변 확률 경로와 velocity field, flow matching 손실을 다룬다. 강의 표기에서 z는 noise가 아니라 데이터 점이다." />
 
 ## 3. Diffusion과의 관계
 
-- 경로를 $x_t=a_t y+b_t z$로 쓰면, diffusion과 직선 경로는 $a_t$, $b_t$를 고르는 차이다
-- Noise 예측, 원본 예측, velocity 예측 사이의 변환. Diffusion의 v-prediction과 flow matching의 velocity는 정의가 다르다
-- 같은 Gaussian 경로에서 남는 차이: 시간별 손실 가중치와 학습할 때 시간을 뽑는 분포
-- Diffusion으로 설명되지 않는 부분: Gaussian이 아닌 임의의 두 분포 사이의 경로(이미지에서 이미지로)
+### 3-1. Gaussian 경로와 PF-ODE
 
-## 4. 직선 경로와 휘어진 궤적
+직선 경로는 한 가지 선택일 뿐이다.
+더 일반적으로 경로를 $x_t=a_ty+b_tz$로 두고, $a_0=0$, $b_0=1$, $a_1=1$, $b_1=0$이 되게 계수를 고를 수 있다.[^survey]
+조건부 velocity는 $\dot a_ty+\dot b_tz$가 되고, 주변 velocity는 그 조건부 기댓값이다.
+앞 절의 논리는 계수가 바뀌어도 그대로 성립하므로 같은 CFM 손실로 학습한다.
+직선 경로는 $a_t=t$, $b_t=1-t$인 경우다.
 
-- 쌍마다의 조건부 경로는 직선이지만, 여러 쌍의 경로가 같은 점을 지나면 모델은 그 평균 방향을 배운다
-- 그래서 생성 궤적은 휘고, step을 줄이면 오차가 커진다
-- 이 문제가 rectified flow의 출발점이다
+Diffusion의 forward 과정도 같은 꼴이다.
+DDPM의 $q(x_t\mid x_0)$는 데이터와 Gaussian noise를 $\sqrt{\bar\alpha}$와 $\sqrt{1-\bar\alpha}$로 섞으므로, 시간 방향만 뒤집으면 $a_t^2+b_t^2=1$을 만족하는 Gaussian 경로(VP 경로)다.
+차이는 VP 경로가 마지막에도 신호가 아주 조금 남아 끝점이 정확한 Gaussian noise가 아니라는 점 정도다.
+Lipman 등은 데이터 한 점에 대한 diffusion 경로에서 flow matching의 조건부 velocity가 그 경로의 probability flow ODE velocity와 같음을 보였다.[^flow]
+두 velocity를 데이터에 대해 평균해도 이 관계는 유지된다.
+즉 PF-ODE로 생성하는 diffusion model은 VP 경로를 고른 flow matching으로 볼 수 있다.
+Flow matching은 그 경로를 schedule 몇 가지에서 고르는 대신, $a_t$와 $b_t$를 직접 설계하게 해 준다.
+
+출발 분포도 고를 수 있다.
+앞 절의 유도는 $z$가 Gaussian이라는 사실을 한 번도 쓰지 않았다.
+$z$를 다른 이미지 분포에서 뽑으면 같은 손실로 한 이미지 분포를 다른 이미지 분포로 옮기는 ODE를 배운다.
+Rectified flow 원논문은 이렇게 사람 얼굴 사진을 고양이 얼굴 사진으로 옮기는 예를 보였다.[^rf]
+Diffusion의 PF-ODE는 데이터에 Gaussian noise를 더하는 forward 과정에서 유도되므로 이런 경로를 바로 만들지 않는다.
+
+### 3-2. 예측 대상의 변환
+
+같은 $x_t$와 $t$에서 신경망이 무엇을 출력할지는 고를 수 있다.
+Velocity $\hat v$, 데이터 예측 $\hat y$, noise 예측 $\hat z$ 가운데 하나만 알면 나머지 둘이 정해진다.
+$x_t=a_t\hat y+b_t\hat z$와 $\hat v=\dot a_t\hat y+\dot b_t\hat z$라는 두 선형 관계가 있기 때문이다.
+직선 경로에서는 다음과 같다.
+
+$$
+\hat y=x_t+(1-t)\,\hat v,\qquad \hat z=x_t-t\,\hat v.
+$$
+
+최적 모델끼리도 같은 관계가 성립한다.
+주변 velocity는 데이터의 조건부 기댓값으로 쓸 수 있다.
+
+$$
+u_t(x)=\frac{\mathbb E[\,y\mid x_t=x\,]-x}{1-t}.
+$$
+
+앞의 두 점 예에서 $(x,t)=(0.5,0.5)$, $\hat v=2.86$이면 $\hat y\approx1.93$, $\hat z\approx-0.93$이다.
+$\hat y$는 앞의 Euler 한 step이 도착한 1.93 그대로이고, $\hat z$는 noise $-1$과 $3$을 같은 비율로 평균한 값이다.
+그래서 noise 예측으로 학습한 diffusion model의 출력도 velocity로 바꿔 flow matching의 sampler에 넣을 수 있다.
+무엇을 출력하느냐는 표현할 수 있는 대상을 바꾸지 않고, 학습 손실의 시간별 가중치와 수치적 성질을 바꾼다.
+
+Velocity라는 이름은 문헌마다 다른 양을 가리킨다.
+Diffusion의 v-prediction은 VP 경로를 각도 $\phi$로 매개화해 $x=\cos\phi\,x_0+\sin\phi\,\epsilon$로 쓰고, $\phi$에 대한 변화율 $v=\cos\phi\,\epsilon-\sin\phi\,x_0$를 예측한다.[^v]
+같은 VP 경로에서도 v-prediction은 noise 쪽을, flow matching의 velocity $dx_t/dt$는 데이터 쪽을 향하고 배율도 다르다.
+직선 경로는 $a_t+b_t=1$이고 $a_t^2+b_t^2=1$이 아니어서 VP 경로가 아니므로, 목표 $y-z$는 v-prediction과 다른 양이다.
+
+### 3-3. 같은 경로에서 남는 차이
+
+경로 계수를 바꾸면 생성 결과도 달라질까?
+Noise와 데이터를 독립으로 짝짓고 출발 분포가 Gaussian인 경우, 서로 다른 Gaussian 경로는 시간을 다시 매개화하고 상태의 배율을 바꾼 관계에 있다.
+그래서 velocity를 정확히 배운다면 어느 경로로 학습하든 ODE는 같은 noise를 $t=1$에서 같은 데이터로 보낸다.[^survey]
+실제 차이는 경로 자체보다 학습과 이산화에서 생긴다.
+
+첫째는 시간별 손실 가중치다.
+직선 경로의 CFM 손실을 noise 예측 오차로 바꿔 보자.
+$\hat z_\theta=x_t-t\,v_\theta$이고 $y-z=(x_t-z)/t$이므로 $v_\theta-(y-z)=(z-\hat z_\theta)/t$다.
+
+$$
+\bigl\lVert v_\theta-(y-z)\bigr\rVert^2=\frac{1}{t^2}\bigl\lVert \hat z_\theta-z\bigr\rVert^2.
+$$
+
+DDPM의 단순 손실은 noise 오차에 모든 시간에서 가중치 1을 준다.
+직선 경로의 flow matching은 같은 noise 오차에 $1/t^2$을 곱하므로, noise에 가까운 $t=0.1$에서는 가중치가 100이고 $t=0.5$에서는 4, $t=0.9$에서는 약 1.23이다.
+같은 경로에서도 어느 시간대의 오차를 얼마나 중시하는지가 다르다.
+
+둘째는 학습할 때 시간을 뽑는 분포다.
+$t$를 밀도 $\pi(t)$로 뽑는 것은, 균일하게 뽑고 각 시간의 손실에 $\pi(t)$를 곱하는 것과 같다.
+그래서 시간 분포와 손실 가중치는 함께 학습이 어느 시간대를 중시할지를 정한다.
+
+셋째는 이산화 오차다.
+끝점이 같아도 궤적이 시간에 따라 휘는 모양은 경로마다 달라서, 같은 step 수의 Euler 방법이 내는 오차가 다르다.
+직선 경로에서 flow matching의 Euler 한 step을 계산해 보면, 결정론적 DDIM 한 step과 같은 식이 된다.[^dfm]
+
+<Details summary="직선 경로의 Euler 갱신이 DDIM 갱신과 같다는 계산">
+
+직선 경로에서 신호 계수는 $t$, noise 계수는 $1-t$이므로 $\bar x=x/t$, $\sigma=(1-t)/t$다.
+시점 $t$에서 $s=t+h$로 가는 DDIM 갱신은 $\bar x_s=\bar x_t+(\sigma_s-\sigma_t)\hat z$이고, $\sigma_s-\sigma_t=1/s-1/t$다.
+양변에 $s$를 곱하면 다음과 같다.
+
+$$
+x_s=\frac{s}{t}x_t+\Bigl(1-\frac{s}{t}\Bigr)\hat z
+=x_t+\frac{h}{t}\,(x_t-\hat z).
+$$
+
+$\hat z=x_t-t\,\hat v$를 넣으면 $x_s=x_t+h\,\hat v$로, Euler 갱신과 같다.
+</Details>
+
+DDIM은 앞에서 본 $(\bar x,\sigma)$ 좌표에서 움직이므로 경로의 배율을 바꿔도 갱신이 같고, 어느 시점들에 step을 두느냐가 오차를 정한다.
+결국 Gaussian 경로에서 diffusion과 flow matching은 같은 생성 과정을 가리키고, 둘의 차이는 신경망의 출력, 손실 가중치, 시간 분포, step 배치의 선택에 있다.[^dfm]
+
+[^survey]: Lipman, Y., Havasi, M., Holderrieth, P., et al. (2024). Flow Matching Guide and Code. *arXiv*. [논문](https://arxiv.org/abs/2412.06264).
+[^ddim]: Song, J., Meng, C., & Ermon, S. (2021). Denoising Diffusion Implicit Models. *ICLR*. [논문](https://arxiv.org/abs/2010.02502).
+[^score-sde]: Song, Y., Sohl-Dickstein, J., Kingma, D. P., et al. (2021). Score-Based Generative Modeling through Stochastic Differential Equations. *ICLR*. [논문](https://arxiv.org/abs/2011.13456).
+[^solver]: Lu, C., Zhou, Y., Bao, F., et al. (2022). DPM-Solver: A Fast ODE Solver for Diffusion Probabilistic Model Sampling in Around 10 Steps. *NeurIPS*. [논문](https://arxiv.org/abs/2206.00927).
+[^sd3]: Esser, P., Kulal, S., Blattmann, A., et al. (2024). Scaling Rectified Flow Transformers for High-Resolution Image Synthesis. *ICML*. [논문](https://arxiv.org/abs/2403.03206).
+[^flow]: Lipman, Y., Chen, R. T. Q., Ben-Hamu, H., Nickel, M., & Le, M. (2023). Flow Matching for Generative Modeling. *ICLR*. [논문](https://arxiv.org/abs/2210.02747).
+[^dsm]: Vincent, P. (2011). A Connection Between Score Matching and Denoising Autoencoders. *Neural Computation*, 23(7), 1661–1674. [논문](https://doi.org/10.1162/neco_a_00142).
+[^rf]: Liu, X., Gong, C., & Liu, Q. (2023). Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow. *ICLR*. [논문](https://arxiv.org/abs/2209.03003).
+[^v]: Salimans, T., & Ho, J. (2022). Progressive Distillation for Fast Sampling of Diffusion Models. *ICLR*. [논문](https://arxiv.org/abs/2202.00512).
+[^dfm]: Gao, R., Hoogeboom, E., Heek, J., De Bortoli, V., Murphy, K. P., & Salimans, T. (2024). Diffusion Meets Flow Matching: Two Sides of the Same Coin. *Blog post*. [글](https://diffusionflow.github.io/).

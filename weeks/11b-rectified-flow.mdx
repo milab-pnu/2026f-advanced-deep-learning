@@ -4,39 +4,323 @@ week: 11
 order: 1
 ---
 
-<Callout type="note">
-작성 예정 노트다. 아래는 담을 내용의 계획이며, 모델·논문 이름은 노트를 쓸 때 원논문으로 확인한다.
+import meanflowFlows from "./assets/week11-meanflow-flows.png";
+
+Flow matching은 noise $z$와 데이터 $y$를 직선 $x_t=(1-t)z+ty$로 잇고, 모델 $v_\theta(x_t,t)$가 그 방향 $y-z$를 회귀하도록 학습한다.[^survey]
+생성할 때는 noise에서 출발해 $v_\theta$가 정하는 ODE를 $t=0$부터 $t=1$까지 푼다.
+학습에 쓴 경로가 직선이니 생성 궤적도 직선이라면, Euler 방법 한 step, 즉 모델 호출 한 번으로 데이터에 닿을 것이다.
+실제로는 그렇지 않다.
+이 노트는 생성 궤적이 왜 휘는지 보고, 궤적을 곧게 펴는 rectified flow의 reflow 절차와 그 효과·대가를 살펴본다.
+마지막으로 대형 이미지·비디오 모델이 rectified flow라는 이름으로 실제로 쓰는 학습법을 reflow와 구분한다.
+
+## 1. 휘어진 생성 궤적
+
+### 1-1. 교차하는 직선 경로
+
+학습에 쓰는 noise와 데이터의 짝을 coupling이라 한다.
+Flow matching은 보통 $z$와 $y$를 서로 독립으로 뽑는다(independent coupling).
+어떤 noise가 어떤 이미지로 가야 한다는 정답이 없으므로, 아무 noise나 아무 이미지와 짝지어진다.
+그러면 쌍마다 그은 직선은 서로 교차한다.
+위쪽 noise가 아래쪽 이미지와, 아래쪽 noise가 위쪽 이미지와 짝지어지면 두 직선은 중간에서 만난다.
+
+모델의 입력은 위치 $x_t$와 시간 $t$뿐이라, 교차점에서는 그 점이 어느 쌍에서 왔는지 알 수 없다.
+그래서 제곱 오차 회귀의 최소해는 그 점을 그 시간에 지나는 모든 직선 방향의 평균, 즉 주변 velocity가 된다.[^rf]
+
+$$
+v(x,t)=\mathbb{E}\left[\,y-z \mid x_t=x\,\right]
+$$
+
+생성은 이 velocity field를 따라 ODE $dx_t/dt=v(x_t,t)$를 푸는 일이다.
+해가 유일한 ODE에서는 서로 다른 두 궤적이 같은 시간에 같은 점을 지날 수 없다.
+같은 점을 지나면 그 뒤로는 같은 길을 가야 하기 때문이다.
+학습 직선은 교차하는데 생성 궤적은 교차하지 못한다.
+그래서 생성 궤적은 교차점 근처에서 다른 직선으로 갈아타고, 그 결과 휜다.
+MeanFlow 논문의 그림이 이 차이를 많은 점으로 보여 준다.[^meanflow]
+
+<Figure
+  src={meanflowFlows.src}
+  alt="두 패널. 왼쪽은 왼편의 회색 noise 점들과 오른편의 빨간 데이터 점들을 무작위로 짝지은 직선 경로로, 직선들이 가운데에서 촘촘히 교차하고 한 점 z_t에서 서로 다른 방향의 화살표 v_t 세 개가 나간다. 오른쪽은 주변 velocity v(z_t, t)를 따라간 궤적으로, 서로 교차하지 않고 완만하게 휜 곡선들이 noise에서 데이터로 이어진다."
+  caption="왼쪽: noise(회색)와 데이터(빨강)를 독립으로 짝지은 직선 경로. 한 점을 여러 직선이 지나므로 그 점의 방향이 여럿이다. 오른쪽: 그 방향들을 평균한 주변 velocity를 따라간 생성 궤적. 서로 교차하지 않는 대신 휜다. 그림의 z_t는 이 노트의 x_t다."
+  source="Geng et al. (2025), Figure 2 · CC BY 4.0"
+/>
+
+### 1-2. 교차점의 평균 velocity
+
+평균이 실제로 어떤 방향이 되는지 점 네 개로 계산해 보자.
+
+<Callout type="example">
+2차원에 noise 점 $z_1=(0,1)$, $z_2=(0,-1)$과 데이터 점 $y_1=(2,-1)$, $y_2=(2,1)$이 있다고 하자(교육용 가상 예시).
+Independent coupling이면 네 조합이 1/4씩 뽑힌다.
+그 가운데 $z_1\to y_1$의 방향은 $(2,-2)$, $z_2\to y_2$의 방향은 $(2,2)$다.
+두 직선은 $t=0.5$에 같은 점 $(1,0)$을 지난다.
+이 입력에서 두 목표는 반반으로 나오므로, 모델이 배우는 velocity는 평균인 $(2,0)$이다.
+어느 쌍의 방향도 아닌 수평 방향이다.
 </Callout>
 
-{/* 작성 메모 (사이트에 보이지 않음)
-- 참고문헌 1 후보: Lipman et al. (2024) Flow Matching Guide and Code. 원논문: Liu et al. (2022) Flow Straight and Fast.
-- 앞 주차에서 이미 다룬 것
-  - 10b 3절·10d 5절: SD3가 rectified flow와 MMDiT를 쓴다는 언급. MMDiT 구조와 spacetime patch는 10d에 있으므로 다시 설명하지 않는다.
-  - 10c: latent diffusion의 두 단계 학습.
-- 확인할 것: SD3·FLUX가 쓰는 것은 직선 경로 정식화이고 reflow 절차는 아닌 것으로 알고 있다. 원논문에서 확인한 뒤 3절의 용어 구분을 쓴다.
-- 그림 후보: 교차하는 경로가 reflow 뒤에 펴지는 그림. Rectified flow 원논문 그림은 라이선스를 확인하고, 안 되면 2차원 점 쌍으로 자작한다.
-- 표기는 flow matching 노트와 같게 쓴다.
-- 모델 사례는 따로 절을 두지 않고 3절의 예로만 쓴다(과목 규칙: 모델별 사례 모음 절 금지).
-*/}
+그렇다면 ODE를 끝까지 풀면 $z_1$은 어디에 도착할까?
+점에서는 velocity가 직선 위에서만 정의되므로, 각 점을 폭이 좁은 Gaussian 덩어리(표준편차 0.15)로 바꾸고 ODE를 수치로 풀어 보자.
+$z_1$ 덩어리의 위쪽 절반은 수평선을 따라 거의 곧게 $y_2$로 간다.
+아래쪽 절반은 $y_1$ 쪽 직선을 따라 내려가다가, 교차점 근처의 가로축에서 방향을 바꿔 $y_2$로 올라간다.
+가로축 위에서는 대칭 때문에 velocity의 수직 성분이 0이고, 위에서 출발한 궤적은 그 축을 넘지 못한다.
+결국 $z_1$ 덩어리 전체가 $y_2$에, $z_2$ 덩어리 전체가 $y_1$에 도착한다.
+학습 쌍 $z_1\to y_1$은 생성 궤적에 남지 않고, 그 자리를 교차점에서 꺾여 갈아탄 길이 대신한다.
 
-## 1. 휘어진 궤적의 문제
+### 1-3. 휜 궤적의 이산화 오차
 
-- Noise와 데이터를 독립으로 짝지으면 직선 경로들이 서로 교차한다
-- ODE의 궤적은 교차할 수 없으므로, 학습된 velocity는 교차점에서 평균 방향이 되고 궤적이 휜다
-- 휜 궤적은 큰 step으로 따라가면 이산화 오차가 크다
+Euler 방법은 한 step 동안 velocity가 변하지 않는다고 보고 $x_{t+h}=x_t+h\,v_\theta(x_t,t)$로 이동한다.
+궤적이 등속 직선이면 velocity가 처음부터 끝까지 같으므로 한 step으로도 끝점에 정확히 닿는다.
+궤적이 휘면 step 안에서 velocity가 바뀌고, step이 클수록 그 차이가 오차로 쌓인다.
+가장 극단적인 경우가 한 step이다.
+Independent coupling에서는 출발점이 noise 자체라 어느 데이터로 갈지 알 수 없으므로, Euler 한 step은 모든 noise를 데이터의 평균으로 보낸다.
+앞의 예시에서는 $z_1$과 $z_2$가 모두 두 데이터 점의 평균 $(2,0)$에 떨어지지만, $z_1$의 실제 궤적은 $(2,1)$에 도착한다.
+
+실제 이미지에서도 같은 일이 일어난다.
+Rectified flow 원논문은 이렇게 independent coupling으로 처음 학습한 flow를 1-rectified flow라 부른다.
+CIFAR-10에서 이 모델을 작은 허용 오차의 적응형 solver(RK45)로 끝까지 풀면 FID가 2.58이지만, Euler 한 step으로 풀면 378이다.[^rf]
+원논문에 실린 1~3 step 표본도 흐릿하다.
+같은 신경망 구조로 학습한 diffusion의 probability flow ODE(PF-ODE)도 한 step에서는 무너진다.
+궤적이 휜다는 점은 diffusion이든 flow matching이든 같다.
 
 ## 2. Reflow
 
-- 학습한 모델로 noise에서 이미지를 생성해 (noise, 생성 이미지) 쌍을 만들고, 그 쌍의 직선 경로로 다시 학습한다
-- 새 쌍은 같은 ODE 궤적의 양 끝이라 교차가 줄고, 반복할수록 궤적이 직선에 가까워진다
-- 궤적이 직선이면 Euler 한 step으로 끝점에 도달한다
-- 비용: 쌍을 만들려면 전체 샘플링을 많이 돌려야 하고, 반복할수록 오차가 쌓인다
-- Reflow와 distillation을 결합해 text-to-image 모델을 한 step으로 줄인 사례(InstaFlow)
+### 2-1. 생성한 쌍으로 다시 학습
+
+생성 궤적은 교차하지 않는다.
+그렇다면 학습 쌍을 독립으로 뽑는 대신, 이미 학습한 flow가 이어 준 (noise, 생성 결과) 쌍을 쓰면 직선끼리의 교차가 줄어든다.
+이것이 reflow다.[^rf]
+
+1. 평소처럼 independent coupling으로 flow matching을 학습한다. 이 모델이 1-rectified flow다.
+2. Noise $z$를 많이 뽑고, 학습한 모델의 ODE를 끝까지 풀어 생성 결과 $\hat y$를 얻는다.
+   이 궤적을 $Z_t$라 하면 $Z_0=z$, $Z_1=\hat y$다.
+3. 새 쌍 $(z,\hat y)$로 같은 손실을 다시 학습한다. 보통 앞 모델에서 이어서 미세조정한다.
+
+$$
+\min_\theta\ \mathbb{E}_{z,t}\left[\big\lVert v_\theta(x_t,t)-(\hat y-z)\big\rVert^2\right],
+\qquad x_t=(1-t)z+t\hat y
+$$
+
+이렇게 얻은 모델이 2-rectified flow이고, 같은 절차를 반복하면 $k$-rectified flow가 된다.
+
+앞의 예시에 reflow를 적용하면 새 쌍은 $(z_1,y_2)$와 $(z_2,y_1)$이다.
+두 직선은 높이 1과 $-1$의 수평선이라 교차하지 않는다.
+각 직선 위의 velocity는 처음부터 끝까지 $(2,0)$이고, Euler 한 step이 $z_1+(2,0)=(2,1)=y_2$로 정확히 끝점에 닿는다.
+
+<figure>
+<svg viewBox="0 0 600 270" role="img" aria-label="본문 예시의 reflow 전후. 왼쪽 패널(reflow 전, 1-rectified flow)에는 왼편 noise 점 z1(위)과 z2(아래), 오른편 데이터 점 y2(위)와 y1(아래)이 있고, 독립으로 짝지은 네 직선이 회색 점선으로 그려져 있다. 그 가운데 z1에서 y1, z2에서 y2로 가는 두 직선은 가운데에서 교차한다. 색 선은 생성 궤적이다. z1에서 출발한 파란 궤적은 위쪽 절반이 수평으로 y2에 가고, 아래쪽 절반은 가운데 가로축까지 내려왔다가 꺾여 y2로 올라간다. z2에서 출발한 주황 궤적은 위아래가 대칭으로 y1에 도착한다. z1과 z2에서 각각 나간 검은 점선 화살표는 Euler 한 step의 이동으로, 둘 다 두 데이터 점의 가운데인 (2, 0)의 × 표시에 떨어진다. 오른쪽 패널(reflow 후, 2-rectified flow)에는 z1에서 y2로 가는 파란 수평선과 z2에서 y1로 가는 주황 수평선만 있고, Euler 한 step이 끝점과 일치한다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<defs>
+<marker id="rf-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/></marker>
+</defs>
+<text x="155" y="24" font-size="15" font-weight="600" text-anchor="middle" fill="#0f172a">Reflow 전 · 1-rectified flow</text>
+<text x="450" y="24" font-size="15" font-weight="600" text-anchor="middle" fill="#0f172a">Reflow 후 · 2-rectified flow</text>
+<line x1="50" y1="145" x2="260" y2="145" stroke="#e2e8f0" stroke-width="1"/>
+<line x1="50" y1="65" x2="260" y2="225" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4 4"/>
+<line x1="50" y1="65" x2="260" y2="65" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4 4"/>
+<line x1="50" y1="225" x2="260" y2="65" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4 4"/>
+<line x1="50" y1="225" x2="260" y2="225" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4 4"/>
+<g fill="none" stroke="#2a78d6" stroke-width="1.6">
+<path d="M50.0,77.0 L58.4,80.2 L66.8,84.4 L75.2,89.6 L83.6,95.5 L92.0,101.7 L100.4,107.9 L108.8,114.2 L117.2,120.5 L125.6,126.8 L134.0,133.1 L142.4,138.7 L150.8,141.3 L159.2,141.3 L167.6,138.7 L176.0,133.1 L184.4,126.8 L192.8,120.5 L201.2,114.2 L209.6,107.9 L218.0,101.7 L226.4,95.5 L234.8,89.6 L243.2,84.4 L251.6,80.2 L260.0,77.0"/>
+<path d="M50.0,69.0 L58.4,72.2 L66.8,75.8 L75.2,79.9 L83.6,84.9 L92.0,90.8 L100.4,97.3 L108.8,103.9 L117.2,110.4 L125.6,117.0 L134.0,123.5 L142.4,129.9 L150.8,134.8 L159.2,134.8 L167.6,129.9 L176.0,123.5 L184.4,117.0 L192.8,110.4 L201.2,103.9 L209.6,97.3 L218.0,90.8 L226.4,84.9 L234.8,79.9 L243.2,75.8 L251.6,72.2 L260.0,69.0"/>
+<path d="M50.0,61.0 L58.4,64.2 L66.8,67.0 L75.2,69.3 L83.6,70.7 L92.0,71.2 L100.4,71.1 L108.8,70.9 L117.2,70.8 L125.6,70.6 L134.0,70.5 L142.4,70.5 L150.8,70.4 L159.2,70.4 L167.6,70.5 L176.0,70.5 L184.4,70.6 L192.8,70.8 L201.2,70.9 L209.6,71.1 L218.0,71.2 L226.4,70.7 L234.8,69.3 L243.2,67.0 L251.6,64.2 L260.0,61.0"/>
+<path d="M50.0,53.0 L58.4,56.2 L66.8,58.4 L75.2,59.6 L83.6,60.1 L92.0,60.3 L100.4,60.5 L108.8,60.6 L117.2,60.7 L125.6,60.8 L134.0,60.9 L142.4,60.9 L150.8,61.0 L159.2,61.0 L167.6,60.9 L176.0,60.9 L184.4,60.8 L192.8,60.7 L201.2,60.6 L209.6,60.5 L218.0,60.3 L226.4,60.1 L234.8,59.6 L243.2,58.4 L251.6,56.2 L260.0,53.0"/>
+</g>
+<g fill="none" stroke="#eb6834" stroke-width="1.6">
+<path d="M50.0,237.0 L58.4,233.8 L66.8,231.6 L75.2,230.4 L83.6,229.9 L92.0,229.7 L100.4,229.5 L108.8,229.4 L117.2,229.3 L125.6,229.2 L134.0,229.1 L142.4,229.1 L150.8,229.0 L159.2,229.0 L167.6,229.1 L176.0,229.1 L184.4,229.2 L192.8,229.3 L201.2,229.4 L209.6,229.5 L218.0,229.7 L226.4,229.9 L234.8,230.4 L243.2,231.6 L251.6,233.8 L260.0,237.0"/>
+<path d="M50.0,229.0 L58.4,225.8 L66.8,223.0 L75.2,220.7 L83.6,219.3 L92.0,218.8 L100.4,218.9 L108.8,219.1 L117.2,219.2 L125.6,219.4 L134.0,219.5 L142.4,219.5 L150.8,219.6 L159.2,219.6 L167.6,219.5 L176.0,219.5 L184.4,219.4 L192.8,219.2 L201.2,219.1 L209.6,218.9 L218.0,218.8 L226.4,219.3 L234.8,220.7 L243.2,223.0 L251.6,225.8 L260.0,229.0"/>
+<path d="M50.0,221.0 L58.4,217.8 L66.8,214.2 L75.2,210.1 L83.6,205.1 L92.0,199.2 L100.4,192.7 L108.8,186.1 L117.2,179.6 L125.6,173.0 L134.0,166.5 L142.4,160.1 L150.8,155.2 L159.2,155.2 L167.6,160.1 L176.0,166.5 L184.4,173.0 L192.8,179.6 L201.2,186.1 L209.6,192.7 L218.0,199.2 L226.4,205.1 L234.8,210.1 L243.2,214.2 L251.6,217.8 L260.0,221.0"/>
+<path d="M50.0,213.0 L58.4,209.8 L66.8,205.6 L75.2,200.4 L83.6,194.5 L92.0,188.3 L100.4,182.1 L108.8,175.8 L117.2,169.5 L125.6,163.2 L134.0,156.9 L142.4,151.3 L150.8,148.7 L159.2,148.7 L167.6,151.3 L176.0,156.9 L184.4,163.2 L192.8,169.5 L201.2,175.8 L209.6,182.1 L218.0,188.3 L226.4,194.5 L234.8,200.4 L243.2,205.6 L251.6,209.8 L260.0,213.0"/>
+</g>
+<line x1="55" y1="67" x2="251" y2="142" stroke="#0f172a" stroke-width="1.2" stroke-dasharray="2 3" marker-end="url(#rf-arrow)"/>
+<line x1="55" y1="223" x2="251" y2="148" stroke="#0f172a" stroke-width="1.2" stroke-dasharray="2 3" marker-end="url(#rf-arrow)"/>
+<path d="M254,139 L266,151 M266,139 L254,151" stroke="#0f172a" stroke-width="2.2"/>
+<text x="260" y="171" font-size="13" text-anchor="middle" fill="#0f172a">Euler 한 step</text>
+<line x1="345" y1="65" x2="555" y2="65" stroke="#2a78d6" stroke-width="2.4"/>
+<line x1="345" y1="225" x2="555" y2="225" stroke="#eb6834" stroke-width="2.4"/>
+<text x="450" y="140" font-size="13" text-anchor="middle" fill="#64748b">velocity가 (2, 0)으로 일정해</text>
+<text x="450" y="158" font-size="13" text-anchor="middle" fill="#64748b">Euler 한 step이 끝점과 일치</text>
+<g fill="#64748b">
+<circle cx="50" cy="65" r="5"/><circle cx="50" cy="225" r="5"/>
+<circle cx="345" cy="65" r="5"/><circle cx="345" cy="225" r="5"/>
+</g>
+<g fill="#0f172a">
+<circle cx="260" cy="65" r="5"/><circle cx="260" cy="225" r="5"/>
+<circle cx="555" cy="65" r="5"/><circle cx="555" cy="225" r="5"/>
+</g>
+<g font-size="14" fill="#0f172a">
+<text x="38" y="70" text-anchor="end">z₁</text><text x="38" y="230" text-anchor="end">z₂</text>
+<text x="272" y="70">y₂</text><text x="272" y="230">y₁</text>
+<text x="333" y="70" text-anchor="end">z₁</text><text x="333" y="230" text-anchor="end">z₂</text>
+<text x="567" y="70">y₂</text><text x="567" y="230">y₁</text>
+</g>
+<text x="155" y="262" font-size="13" text-anchor="middle" fill="#64748b">점선: 독립으로 짝지은 학습 직선 · 색 선: 생성 궤적</text>
+<text x="450" y="262" font-size="13" text-anchor="middle" fill="#64748b">새 쌍 (z₁, y₂), (z₂, y₁)의 직선</text>
+</svg>
+<figcaption>앞의 예시에서 각 점을 표준편차 0.15의 Gaussian으로 두고 ODE를 수치로 풀어 그렸다. 색 선은 각 noise 덩어리에서 출발한 입자 네 개의 궤적이다. 왼쪽에서는 아래쪽 절반의 입자가 교차점에서 꺾이고, Euler 한 step은 두 데이터 점의 평균 (2, 0)에 떨어진다. 오른쪽은 그 끝점끼리 다시 짝지은 쌍으로 학습한 결과다.</figcaption>
+</figure>
+
+### 2-2. 주변 분포 보존과 비용 감소
+
+Reflow가 생성 분포는 그대로 두고 궤적만 펴는지는 이론으로 확인할 수 있다.
+원논문은 velocity가 정확히 조건부 평균이고 ODE의 해가 유일하다는 가정 아래 세 성질을 보였다.[^rf]
+아래에서 $(z,y)$는 flow를 학습할 때 쓴 쌍, $(z,\hat y)$는 그 flow가 만든 새 쌍이다.
+
+첫째, 주변 분포가 보존된다.
+모든 시간 $t$에서 생성 궤적 위의 점 $Z_t$의 분포는 학습 직선 위의 점 $x_t$의 분포와 같다.
+$v$는 각 위치를 지나는 직선 방향의 평균이므로, 어느 위치와 시간에서든 생성 궤적이 실어 나르는 확률 질량이 직선 경로들이 실어 나르는 양과 같다.
+출발 분포가 같고 매 순간 질량의 흐름이 같으니, 두 과정의 분포는 시간마다 같다.
+특히 $\hat y$는 데이터 분포를 따른다.
+Reflow는 분포를 바꾸지 않고 누가 누구와 짝지어지는지만 바꾼다.
+앞의 예시에서도 생성 결과는 여전히 $y_1$과 $y_2$가 반반이다.
+
+둘째, 이동 비용이 늘지 않는다.
+거리나 거리의 제곱처럼 볼록한(convex) 비용 함수 $c$라면 어느 것이든 다음이 성립한다.
+
+$$
+\mathbb{E}\big[c(\hat y-z)\big]\le\mathbb{E}\big[c(y-z)\big]
+$$
+
+직관은 평균 두 번이다.
+새 쌍의 변위 $\hat y-z$는 궤적 위 velocity를 시간에 대해 평균한 것이고, 휜 길의 양 끝을 잇는 직선은 그 길보다 짧다.
+그리고 궤적 위 velocity 자체가 그 점을 지나는 직선 방향들의 평균이며, 평균한 방향의 크기는 크기들의 평균보다 크지 않다.
+앞의 예시의 교차점에서 두 방향 $(2,-2)$와 $(2,2)$의 크기는 각각 약 2.83이지만 평균 $(2,0)$의 크기는 2다.
+제곱 비용 $\lVert\hat y-z\rVert^2$로 보면 독립 쌍 네 개의 평균은 $(8+4+4+8)/4=6$이고, reflow 후의 쌍은 둘 다 4다.
+
+셋째, 반복하면 궤적이 곧아진다.
+직선 경로가 서로 교차하지 않는 coupling은 reflow를 해도 바뀌지 않고, 그 flow는 직선이다.
+반대로 reflow로 바뀌지 않는 coupling은 직선 경로가 교차하지 않는다.
+이론이 보장하는 직선화 속도는 느리지만, 원논문의 실험에서는 한 번의 reflow만으로도 궤적이 거의 직선이 되었다.
+
+<Details summary="직선성의 정의와 수렴 속도">
+
+얼마나 곧은지는 궤적 위 순간 velocity가 출발점에서 끝점으로 가는 변위와 얼마나 다른지로 잰다.
+
+$$
+S=\int_0^1\mathbb{E}\Big[\big\lVert(\hat y-z)-\tfrac{d}{dt}Z_t\big\rVert^2\Big]\,dt
+$$
+
+$S$는 궤적이 등속 직선일 때만 0이다.
+$k$번째 rectified flow의 $S$를 $S_k$라 하면, 처음 coupling의 제곱 비용이 그 합의 상한이 된다.
+
+$$
+\sum_{k=1}^{K}S_k\le\mathbb{E}\big[\lVert y-z\rVert^2\big]
+$$
+
+Reflow를 한 번 할 때마다 제곱 비용은 적어도 새 flow의 $S$만큼 줄어든다.
+비용은 0 아래로 내려갈 수 없으므로 $S$가 큰 채로 계속 남을 수 없고, 처음 $K$개 가운데 가장 곧은 flow의 $S$는 $\mathbb{E}\lVert y-z\rVert^2/K$ 이하다.
+</Details>
+
+Reflow가 겨냥하는 것은 특정 비용의 최솟값이 아니라 교차가 없는 coupling이다.
+그래서 반복해도 최적 수송(optimal transport) coupling에 닿는다는 보장은 1차원을 빼면 없다.
+
+### 2-3. 직선화의 효과와 대가
+
+원논문은 CIFAR-10에서 같은 U-Net 구조로 reflow를 반복해 비교했다.[^rf]
+아래 표는 그 결과(FID, 낮을수록 좋음)를 옮긴 것이다.
+Distillation 열은 각 모델이 만든 쌍 $(z,\hat y)$를 놓고, 한 번의 호출 $z+v_\theta(z,0)$이 $\hat y$에 가까워지도록 미세조정한 결과다.
+
+| 모델 | Euler 한 step | 한 step + distillation | RK45 전체 풀이 (NFE) |
+|---|---|---|---|
+| 1-rectified flow | 378 | 6.18 | 2.58 (127) |
+| 2-rectified flow | 12.21 | 4.85 | 3.36 (110) |
+| 3-rectified flow | 8.15 | 5.21 | 3.96 (104) |
+| Diffusion PF-ODE (VP 경로) | 451 | 16.23 | 3.93 (140) |
+
+효과는 한 step 생성에서 크다.
+Reflow 한 번으로 Euler 한 step의 FID가 378에서 12.21로 내려가고, 두 번째 reflow의 개선 폭은 그보다 작다.
+Distillation과 결합하면 2-rectified flow에서 4.85이고, reflow 없이 1-rectified flow를 바로 distillation하면 6.18이다.
+같은 distillation이라도 휜 궤적을 가진 diffusion PF-ODE에서는 16.23에 그쳤다.
+곧은 궤적이 이어 준 쌍일수록 한 step으로 흉내 내기 쉽다.
+Distillation은 주어진 쌍을 그대로 따라 하고, reflow는 비용이 더 낮은 새 쌍을 만든다는 점이 다르다.
+그래서 원논문은 distillation을 마지막 단계에만 쓰라고 권한다.
+
+대가는 두 가지다.
+첫째, 많은 step으로 끝까지 풀 때의 품질이 조금씩 나빠진다.
+전체 풀이 FID가 2.58, 3.36, 3.96으로 올라갔다.
+실제 모델은 velocity를 정확히 알지 못한다.
+Reflow는 앞 모델이 만든 이미지로 학습하므로 앞 모델의 오차를 물려받고, 새 모델의 학습 오차가 그 위에 더해진다.
+원논문도 reflow가 약 80 step 아래에서는 FID를 개선하지만 그보다 많은 step에서는 오히려 나쁘게 만든다고 보고하고, reflow를 너무 여러 번 반복하지 말라고 권한다.
+
+둘째, 쌍을 만드는 비용이 든다.
+CIFAR-10 실험에서는 reflow 한 번마다 ODE를 끝까지 풀어 400만 쌍을 만들고, 그 쌍으로 300,000 step을 미세조정했다.
+
+### 2-4. Diffusion model에서 출발한 reflow
+
+Reflow의 첫 flow가 꼭 rectified flow일 필요는 없다.
+Noise를 데이터로 보내는 ODE라면 무엇이든 끝점 쌍을 만들 수 있다.
+InstaFlow는 Stable Diffusion의 PF-ODE를 첫 flow로 삼았다.[^instaflow]
+Stable Diffusion에 text prompt를 주고 25-step DPM-Solver로 ODE를 풀어 (noise, 이미지) 쌍을 만들었다.
+그 쌍으로 text 조건 reflow를 해 2-rectified flow를 얻고, 다시 한 step으로 distillation했다.
+
+출발점은 Stable Diffusion을 바로 한 step으로 distillation하면 실패한다는 관찰이었다.
+Stable Diffusion의 ODE 궤적은 휘어 있어서, 그 ODE가 이어 준 noise와 이미지의 짝을 한 step 모델이 흉내 내기 어렵다.
+예비 실험(Stable Diffusion 1.4, MS COCO 2017의 5,000장)에서 Stable Diffusion을 바로 distillation한 한 step 모델의 FID는 40.9였다.
+같은 조건에서 reflow를 먼저 한 뒤 distillation하면 31.0이었다.
+
+규모를 키운 InstaFlow-0.9B(Stable Diffusion 1.5에서 출발)는 MS COCO 2014의 30,000장에서 FID 13.1을 냈다.
+A100 GPU 한 장에서 이미지 한 장에 0.09초가 걸린다.
+쌍 생성과 reflow, distillation을 합친 학습 전체에 A100 199 GPU-일이 들었고, 그 가운데 절반 남짓인 108 GPU-일이 distillation 몫이다.
+합계는 InstaFlow 논문이 비교로 든 Stable Diffusion 1.4의 처음부터 학습 비용(A100 6,250 GPU-일)의 3% 정도다.
 
 ## 3. 대형 모델에서의 학습
 
-- Rectified flow라는 이름의 두 뜻: 직선 경로로 학습하는 정식화와, 궤적을 펴는 reflow 절차
-- 학습할 때 시간을 뽑는 분포: 중간 시간을 더 자주 뽑는 logit-normal
-- 예: Stable Diffusion 3는 직선 경로와 Transformer backbone으로 text-to-image 모델을 학습했다
-- 같은 학습 목표가 이미지 편집(FLUX.1 Kontext)과 비디오 생성(Movie Gen, Wan)에도 쓰인다
-- Transformer backbone과 flow matching 목표의 조합이 이미지·비디오 생성의 표준이 된 흐름으로 마무리한다
+### 3-1. Rectified flow라는 이름의 두 뜻
+
+지금까지 rectified flow는 reflow로 궤적을 펴는 절차를 포함한 방법이었다.
+하지만 대형 text-to-image 모델이 rectified flow라고 할 때는 대개 직선 경로 $x_t=(1-t)z+ty$와 목표 $y-z$로 학습하는 정식화만을 가리킨다.
+이것은 이 노트의 용어로 1-rectified flow이고, 직선 경로를 쓰는 flow matching과 같은 것이다.
+
+Stable Diffusion 3(SD3) 논문은 rectified flow를 noise와 데이터를 잇는 직선 경로로 정의하고, 조건부 flow matching 손실로 학습한다.[^sd3]
+SD3는 reflow를 하지 않는다.
+FLUX.1 Kontext 논문도 FLUX.1을 rectified flow transformer라 부르고 같은 꼴의 velocity 손실로 학습한다고 적지만, reflow 단계는 적지 않는다.[^kontext]
+두 논문은 시간 방향을 이 노트와 반대로 두어 목표의 부호가 반대일 뿐, 같은 목표를 쓴다.
+
+Reflow를 하지 않았으니 이 모델들의 생성 궤적은 앞에서 본 대로 휜다.
+적은 step 생성은 별도의 방법으로 얻는다.
+Kontext 논문은 flow matching 모델의 생성에 보통 guidance를 포함해 50~250번의 network 호출이 든다고 적는다.
+그리고 FLUX.1 Kontext [pro]는 이를 줄이는 데 reflow가 아니라, GAN처럼 판별 신경망을 함께 학습하는 distillation의 한 종류인 latent adversarial diffusion distillation(LADD)을 쓴다.
+
+### 3-2. 시간 샘플링 분포
+
+직선 경로는 그것만으로 diffusion의 학습 정식화보다 나은가?
+SD3는 이 질문을 61가지 정식화의 비교로 확인했다.[^sd3]
+Noise 예측과 v-prediction에 여러 noise schedule을 조합한 것, 직선 경로에 여러 시간 샘플링 분포를 조합한 것 등을 같은 신경망 구조와 데이터(ImageNet, CC12M)로 학습했다.
+그리고 여러 sampler 설정에서 FID와 CLIP score로 순위를 매겨 평균했다.
+CLIP score는 생성 이미지와 prompt를 CLIP으로 임베딩해 cosine 유사도로 비교한 값으로, 높을수록 prompt를 잘 따른다.
+원래 제안된 CLIPScore는 이 유사도의 음수를 0으로 자르고 2.5배 하지만, 논문에 따라 cosine 값을 그대로 보고하기도 한다.[^clipscore]
+
+결과는 직선 경로만으로는 부족하다는 것이었다.
+학습 시간 $t$를 균일하게 뽑은 직선 경로의 평균 순위는 5.67로, 기존 latent diffusion의 noise 예측 정식화(2.88)보다 낮았다.
+기존 정식화를 앞선 것은 시간 분포를 바꾼 직선 경로 정식화뿐이었고, 중간 시간을 더 자주 뽑는 logit-normal 분포($m=0$, $s=1$)가 1.54로 가장 좋았다.
+Step 수에 따라서도 차이가 있었다.
+직선 경로 정식화들은 sampling step을 줄일 때 다른 정식화보다 품질이 덜 떨어졌지만, 25 step 이상에서는 그 logit-normal 정식화만 기존 정식화와 견줄 만했다.
+
+SD3 논문은 중간 시간이 중요한 이유를 목표의 난이도로 설명한다.
+양 끝에서는 최적 velocity가 단순하다.
+$t=0$에서는 출발점이 noise 자체라 데이터의 평균 쪽으로 가면 된다.
+$t=1$에서는 $x_1$이 곧 데이터이고 noise의 평균이 0이므로 $v(x,1)=x$다.
+어려운 것은 noise와 데이터가 섞인 중간이므로, 그 시간을 더 자주 학습한다.
+
+Logit-normal 분포는 정규분포에서 $u\sim\mathcal{N}(m,s^2)$를 뽑아 sigmoid에 넣은 값을 $t$로 쓴다.
+
+$$
+t=\frac{1}{1+e^{-u}}
+$$
+
+SD3가 고른 $m=0$, $s=1$에서는 분포가 $t=0.5$를 중심으로 대칭이라 시간 방향의 관례와 상관없이 같은 분포다.
+
+<Callout type="example">
+$u\sim\mathcal{N}(0,1)$이면 $u$의 약 68%가 $-1$과 $1$ 사이에 들어간다.
+$\mathrm{sigmoid}(1)\approx0.73$, $\mathrm{sigmoid}(-1)\approx0.27$이므로, 학습 시간 $t$의 약 68%가 0.27과 0.73 사이에서 뽑힌다.
+$t$를 균일하게 뽑으면 같은 구간에 들어갈 확률은 46%다.
+</Callout>
+
+Movie Gen과 Wan 같은 이후 비디오 모델도 reflow 없이 직선 경로와 logit-normal 시간 분포로 학습한다.[^moviegen][^wan]
+
+[^survey]: Lipman, Y., Havasi, M., Holderrieth, P., et al. (2024). Flow Matching Guide and Code. *arXiv*. [논문](https://arxiv.org/abs/2412.06264).
+[^rf]: Liu, X., Gong, C., & Liu, Q. (2023). Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow. *ICLR*. [논문](https://arxiv.org/abs/2209.03003).
+[^meanflow]: Geng, Z., Deng, M., Bai, X., Kolter, J. Z., & He, K. (2025). Mean Flows for One-step Generative Modeling. *NeurIPS*. [논문](https://arxiv.org/abs/2505.13447).
+[^instaflow]: Liu, X., Zhang, X., Ma, J., Peng, J., & Liu, Q. (2024). InstaFlow: One Step is Enough for High-Quality Diffusion-Based Text-to-Image Generation. *ICLR*. [논문](https://arxiv.org/abs/2309.06380).
+[^sd3]: Esser, P., Kulal, S., Blattmann, A., et al. (2024). Scaling Rectified Flow Transformers for High-Resolution Image Synthesis. *ICML*. [논문](https://arxiv.org/abs/2403.03206).
+[^kontext]: Black Forest Labs, Batifol, S., Blattmann, A., et al. (2025). FLUX.1 Kontext: Flow Matching for In-Context Image Generation and Editing in Latent Space. *arXiv*. [논문](https://arxiv.org/abs/2506.15742).
+[^clipscore]: Hessel, J., Holtzman, A., Forbes, M., Le Bras, R., & Choi, Y. (2021). CLIPScore: A Reference-free Evaluation Metric for Image Captioning. *EMNLP*. [논문](https://arxiv.org/abs/2104.08718).
+[^moviegen]: Polyak, A., Zohar, A., Brown, A., et al. (2024). Movie Gen: A Cast of Media Foundation Models. *arXiv*. [논문](https://arxiv.org/abs/2410.13720).
+[^wan]: Wan Team, Wang, A., Ai, B., et al. (2025). Wan: Open and Advanced Large-Scale Video Generative Models. *arXiv*. [논문](https://arxiv.org/abs/2503.20314).

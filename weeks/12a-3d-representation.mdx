@@ -4,44 +4,477 @@ week: 12
 order: 0
 ---
 
-<Callout type="note">
-작성 예정 노트다. 아래는 담을 내용의 계획이며, 모델·논문 이름은 노트를 쓸 때 원논문으로 확인한다.
-</Callout>
+import taxonomy from "./assets/week12-3d-taxonomy.png";
 
-{/* 작성 메모 (사이트에 보이지 않음)
-- 참고문헌 1 후보: 표현 전체를 다루는 서베이를 먼저 찾는다. 부분별 후보는 Xie et al. (2022) Neural Fields in Visual Computing and Beyond.
-- 앞 주차에서 이미 다룬 것
-  - 10c: 압축한 latent에서 생성하는 두 단계 학습. 3D latent는 3D 생성 노트에서 다룬다.
-- 그림 후보: 같은 물체를 mesh, point cloud, voxel, SDF로 나타낸 비교 그림. CC 라이선스 자료를 찾고, 없으면 자작한다.
-*/}
-
-이번 주는 3D를 어떤 표현으로 나타낼지 고르고(3D 표현), 사진으로 장면을 복원하며(NeRF → Gaussian Splatting), 생성 모델로 만들어 내는(3D generation) 계보를 다룬다.
-계보의 출발 문제는 3D에는 이미지의 픽셀 격자처럼 하나로 정해진 표현이 없고, 3D 데이터가 2D보다 훨씬 적다는 것이다.
+이번 주는 3D를 어떤 표현으로 나타낼지 고르고, 사진에서 장면을 복원하며(NeRF, Gaussian Splatting), 생성 모델로 3D를 만들어 내는(3D generation) 흐름을 다룬다.
+출발점에는 두 문제가 있다.
+3D에는 이미지의 픽셀 격자처럼 하나로 정해진 표현이 없고, 학습에 쓸 3D 데이터가 2D보다 훨씬 적다.
+이 노트는 첫 번째 문제에서 출발해, 자주 쓰는 3D 표현이 각각 무엇을 저장하고 어디에 강한지 살펴본다.[^survey]
+이어서 3D 표현과 사진을 잇는 카메라와 렌더링을 정리한다.
+사진으로 3D를 학습하는 방법은 이 연결 위에서 동작한다.
 
 ## 1. 3D 표현의 선택
 
-- 이미지는 픽셀 격자 하나로 정해지지만, 3D는 무엇을 저장하느냐에 따라 표현이 갈린다
-- 표현 비교 표: mesh, point cloud, voxel, neural implicit(SDF, occupancy), radiance field(NeRF), 3D Gaussian
-  - 열: 저장하는 것, 메모리, 표면·topology, 렌더링, 편집, 주로 쓰이는 곳
+이미지는 어떤 모델에서든 같은 모양의 배열이다.
+$512\times512$ RGB 이미지는 $512\times512\times3$ 배열이고, CNN도 ViT도 이 배열에서 출발한다.
+3D에는 이런 기본 형식이 없다.
+Occupancy Networks 논문의 표현을 빌리면, 3D에는 계산과 메모리가 효율적이면서 임의의 topology를 가진 고해상도 형상까지 담는 정해진 표현이 없다.[^occnet]
+여기서 topology는 구멍의 수처럼 형상을 늘이거나 구부려도 바뀌지 않는 성질이다.
+공과 도넛은 topology가 다르다.
+
+그래서 3D 표현은 무엇을 저장하느냐에 따라 갈린다.
+표면 위의 점과 면을 저장할 수도 있고, 공간을 나눈 격자 칸마다 값을 저장할 수도 있으며, 좌표를 넣으면 값을 내는 함수를 저장할 수도 있다.
+표현을 고르면 신경망으로 학습하는 방법, 메모리, 렌더링 속도, 결과를 다른 도구로 옮기는 일이 함께 정해진다.[^survey]
+
+<Figure src={taxonomy.src} alt="3D 표현 여섯 가지를 나란히 놓은 그림. 점선 왼쪽의 Surface-based Representations에는 삼각형 면으로 덮인 낙타 mesh와 확대한 면, 점으로 이루어진 고양이와 말 point cloud, 동물 표면 사이의 대응을 화살표로 잇는 Neural Surfaces가 있다. 점선 오른쪽의 Volumetric Representations에는 작은 정육면체를 쌓은 의자 voxel, 여러 카메라 사진에 둘러싸인 레고 중장비 장면의 radiance field, 색이 다른 타원체들을 격자 화면에 겹쳐 그리는 primitive splatting이 있다." caption="3D 표현의 종류. 왼쪽은 표면을 나타내는 표현, 오른쪽은 공간 전체에 값을 두는 표현이다. Neural Surfaces는 2D 평면을 3D 곡면으로 보내는 신경망으로 표면을 나타내는 방식으로, 이 노트에서는 다루지 않는다. Primitive splatting은 3D Gaussian 같은 기본 도형을 화면에 투영해 그리는 표현이다." source="Schockaert et al. (2026), Figure 3 · CC BY-SA 4.0" wide />
+
+그림은 표현을 무엇을 나타내느냐(표면, 공간 전체)로 나눈다.
+이 노트의 절은 표현을 어떻게 저장하느냐로 나눈다.
+Explicit 표현은 형상을 이루는 값(꼭짓점 좌표, 격자 칸의 값)을 그대로 저장하고 읽어서 쓴다.
+Neural implicit 표현은 신경망 가중치를 저장하고, 필요한 좌표마다 값을 계산한다.[^survey]
+두 축은 서로 다르다.
+예를 들어 voxel은 공간 전체에 값을 두지만 그 값을 직접 저장하므로, 저장 방식으로 보면 explicit 표현이다.
+다만 occupancy나 SDF 값을 담은 격자를 implicit 표현으로 분류하는 문헌도 있다.[^survey]
+
+각 표현을 볼 때는 네 가지를 묻는다.
+
+1. 무엇을 저장하는가.
+2. 해상도를 높이면 메모리가 얼마나 느는가.
+3. 표면과 topology를 어떻게 다루는가.
+4. 이미지로 어떻게 그리는가(렌더링).
 
 ## 2. Explicit 표현
 
-- Mesh: 꼭짓점과 면. 그래픽스와 물리 시뮬레이션의 표준이고 생성 결과의 최종 형식이지만, 신경망으로 topology를 바꾸기 어렵다
-- Voxel: 3D 격자. Convolution을 그대로 쓸 수 있지만, 해상도를 높이면 메모리가 세제곱으로 는다. 빈 공간을 저장하지 않는 sparse voxel로 줄인다
-- Point cloud: 3D 점의 집합. LiDAR와 depth 카메라가 직접 내놓는 형식이다. 점 사이에 순서와 연결이 없어 표면이 없고, 신경망은 순서에 영향을 받지 않는 구조(PointNet, Point Transformer)를 쓴다
+Explicit 표현에서는 저장한 값이 곧 형상이다.
+값을 읽기만 하면 형상이 나오는 대신, 저장할 값의 수가 해상도를 정한다.
 
-## 3. Neural implicit representation
+### 2-1. Mesh
 
-- 좌표를 넣으면 값을 내는 신경망으로 형상을 표현한다
-- SDF(표면까지의 부호 있는 거리)와 occupancy(안팎 확률)를 MLP로 표현하는 방식(DeepSDF, Occupancy Networks 계열)
-- 장점: 해상도에 묶이지 않는 연속 표현, 매끄러운 표면, topology가 자유롭다
-- 한계: 값을 얻으려면 매번 신경망을 계산해야 해 느리다
-- Hybrid 표현: 격자나 평면(triplane, hash grid)에 feature를 저장하고 작은 MLP로 읽어 속도를 높인다
-- 형상 대신 밀도와 색을 내게 하면 NeRF(radiance field)가 된다
+Mesh는 꼭짓점(vertex)과 면(face)으로 표면을 나타낸다.
+꼭짓점 $N$개의 좌표를 $V\in\mathbb R^{N\times3}$에 두고, 삼각형 면마다 그 면을 이루는 꼭짓점 번호 세 개를 저장한다.
+면 위의 점은 세 꼭짓점 좌표의 가중 평균으로 정해진다.
+평평한 곳은 큰 면 몇 개로, 굴곡이 많은 곳은 작은 면 여러 개로 나타낼 수 있다.[^survey]
 
-## 4. 표현 사이의 변환
+<Callout type="example">
+단위 구를 가장 거칠게 근사한 mesh는 팔면체다.
+꼭짓점은 $(\pm1,0,0)$, $(0,\pm1,0)$, $(0,0,\pm1)$의 6개이고, 면은 8개다.
+꼭짓점에 0부터 5까지 번호를 붙이면 면 하나는 $(0,2,4)$처럼 번호 셋으로 저장된다.
+</Callout>
 
-- 게임과 시뮬레이션은 mesh를 쓰므로, 다른 표현으로 만든 결과도 결국 mesh로 바꿔야 한다
-- Implicit에서 mesh로: marching cubes
-- Point cloud에서 mesh로: 표면 복원(surface reconstruction)
-- 변환에서 잃는 것: 세부, topology 오류, texture
+색은 꼭짓점마다 두거나, 2D 이미지(texture map)를 면 위에 붙여 표현한다.
+꼭짓점마다 texture map 안의 2D 위치(UV 좌표)를 정해 두면, 각 면은 이미지에서 해당하는 삼각형 부분을 가져와 칠한다.
+
+Mesh는 게임 엔진, 애니메이션, 시각 효과, 물리 시뮬레이션의 표준 형식이고, GPU로 빠르게 그릴 수 있다.[^survey]
+그래서 3D 결과물을 실제로 쓰려면 대개 마지막에 mesh로 바꾼다.
+반면 신경망이 mesh를 직접 다루기는 어렵다.
+꼭짓점 수가 형상마다 다르고 연결 구조가 불규칙해서, 이미지처럼 격자 위에서 convolution을 적용할 수 없다.
+Topology를 바꾸는 일도 어렵다.
+구에 구멍을 뚫으려면 면의 연결을 끊고 다시 이어야 하는데, 이는 꼭짓점 좌표를 조금씩 움직이는 연속적인 변화가 아니다.
+그래서 gradient로 꼭짓점을 조정하는 학습으로는 topology를 바꿀 수 없다.[^survey]
+
+### 2-2. Voxel과 sparse voxel
+
+Voxel은 3D 픽셀이다.
+공간을 $N\times N\times N$ 격자로 나누고, 칸마다 값을 저장한다.
+값은 칸이 물체로 차 있는지(occupancy), 색, 또는 학습한 feature일 수 있다.
+격자가 규칙적이므로 이미지의 2D convolution을 3D convolution으로 바꿔 그대로 쓸 수 있다.
+
+문제는 메모리다.
+해상도 $N$을 두 배로 올리면 칸 수는 $2^3=8$배가 된다.[^occnet]
+그래서 voxel을 단순하게 구현한 신경망은 $32^3$이나 $64^3$ 격자에 묶였다.[^occnet]
+
+<Callout type="example">
+$512^3$ 격자의 칸마다 1 bit만 저장해도 $512^3=134{,}217{,}728$ bit, 즉 약 16.8 MB다.[^deepsdf]
+칸마다 32-bit 실수 하나를 저장하면 4 byte를 곱해 약 537 MB가 된다(계산값).
+같은 해상도에서 칸마다 feature 벡터를 저장하면 메모리는 채널 수만큼 다시 커진다.
+</Callout>
+
+게다가 칸 대부분은 비어 있거나 물체 안쪽이다.
+형상을 결정하는 것은 표면이고, 표면은 2차원이라 표면에 걸친 칸 수는 대략 $N^2$에 비례해 는다.
+전체 칸 수는 $N^3$에 비례하므로, 해상도를 올릴수록 쓸모없는 칸의 비율이 커진다.
+Instant-NGP 논문의 한 예에서는 $128^3$ 격자의 칸 가운데 보이는 표면에 닿는 칸이 53,807개, 전체의 2.57%뿐이었다.[^instant-ngp]
+
+Sparse voxel은 표면 근처의 칸만 저장한다.
+차 있는 칸의 정수 좌표와 그 칸의 값을 목록으로 두거나, 공간을 재귀적으로 8등분하는 octree로 빈 영역을 크게 묶는다.[^survey]
+저장량은 표면 크기에 비례하게 줄지만, 대가가 있다.
+이웃 칸을 찾으려면 좌표를 검색해야 한다.
+또 어느 칸이 표면 근처인지 미리 알아야 하는데, 형상을 처음부터 학습할 때는 표면이 학습 중에 생겨난다.
+그래서 구조를 미리 만들 수 없고, 학습하면서 빈 칸을 점차 지워 나간다.[^survey]
+
+어떤 voxel이든 표면은 칸 크기에 묶인다.
+그림의 의자처럼 해상도가 낮으면 매끄러운 면이 계단 모양으로 나온다.
+
+### 2-3. Point cloud
+
+Point cloud는 3D 점의 집합 $\{\mathbf p_1,\dots,\mathbf p_N\}$, $\mathbf p_i\in\mathbb R^3$이다.
+점마다 색이나 법선(표면에 수직인 방향)을 함께 둘 수 있다.
+LiDAR, depth 카메라, 3D 스캐너가 직접 내놓는 형식이라 가장 쉽게 얻는 3D 데이터다.[^survey]
+
+점 사이에는 연결이 없다.
+그래서 point cloud에는 표면이 없고, 점을 그대로 화면에 찍으면 점 사이가 비어 구멍이 보인다.[^survey]
+또 같은 형상이라도 점을 나열하는 순서가 $N!$가지다.
+배열로 저장하면 순서가 생기지만 그 순서에는 의미가 없으므로, point cloud를 받는 신경망은 순서를 바꿔도 같은 출력을 내야 한다.
+PointNet은 모든 점에 같은 MLP를 따로 적용해 점마다 feature를 만들고, 채널마다 모든 점의 최댓값을 취하는 max pooling으로 점들을 하나로 모은다.[^pointnet]
+최댓값은 입력 순서와 무관한 대칭 함수이므로 출력이 순서에 영향을 받지 않는다.
+
+<Callout type="example">
+점 세 개의 feature가 $\mathbf h_1=(1,4)$, $\mathbf h_2=(3,2)$, $\mathbf h_3=(0,5)$라 하자.
+채널별 최댓값은 $(3,5)$다.
+점의 순서를 $\mathbf h_3,\mathbf h_1,\mathbf h_2$로 바꿔도 결과는 $(3,5)$ 그대로다.
+반면 세 feature를 순서대로 이어 붙여 MLP에 넣으면 순서가 바뀔 때 입력 벡터가 달라진다.
+</Callout>
+
+세 explicit 표현에는 공통 한계가 있다.
+꼭짓점, 칸, 점의 수가 곧 해상도이고, 그 해상도보다 작은 세부는 저장되지 않는다.
+해상도를 올리면 저장량이 함께 커지며, voxel에서는 그 증가가 세제곱이다.
+
+## 3. Neural implicit 표현
+
+Neural implicit 표현은 형상을 값의 목록 대신 함수로 나타낸다.
+좌표 $\mathbf x\in\mathbb R^3$를 넣으면 그 점의 값을 내는 신경망 $f_\theta(\mathbf x)$를 학습하고, 가중치 $\theta$만 저장한다.
+어떤 좌표든 물어볼 수 있으므로 표현이 해상도에 묶이지 않는다.[^survey]
+이런 표현을 neural field라고도 부른다.
+
+### 3-1. SDF와 occupancy
+
+SDF(signed distance function)는 점에서 가장 가까운 표면까지의 거리에 부호를 붙인 함수다.
+DeepSDF의 규약에서는 물체 안쪽이 음수, 바깥이 양수이고, 표면은 값이 0인 점들의 집합 $\{\mathbf x: f(\mathbf x)=0\}$이다.[^deepsdf]
+이 집합을 0 등위면(zero level set)이라 한다.
+
+<Callout type="example">
+원점에 놓인 반지름 1인 구의 SDF는 $f(\mathbf x)=\lVert\mathbf x\rVert-1$이다.
+점 $(0,0,0.5)$에서는 $-0.5$이므로 안쪽으로 표면에서 0.5 떨어져 있다.
+점 $(0,0,2)$에서는 $1$이므로 바깥으로 1 떨어져 있다.
+점 $(0.6,0,0.8)$에서는 $0$이므로 표면 위에 있다.
+식 하나가 구를 정확하게 나타내므로, 꼭짓점이나 칸 수 같은 해상도가 없다.
+</Callout>
+
+SDF는 topology를 자유롭게 바꾼다.
+예를 들어 구 두 개를 합친 형상의 SDF는 두 SDF의 최솟값이다.
+두 구의 중심을 서로 가까이 옮기면 함수 값은 연속적으로 바뀌는데, 0 등위면은 떨어진 두 덩어리에서 붙은 한 덩어리로 바뀐다.
+Mesh라면 면을 끊고 잇는 이산적인 수술이 필요한 변화다.
+
+Occupancy는 점이 물체 안에 있을 확률 $o(\mathbf x)\in[0,1]$이다.
+Occupancy Networks는 이 확률을 신경망으로 나타내고, 점마다 안팎을 맞히는 이진 분류로 학습한다.[^occnet]
+표면은 확률이 정해 둔 문턱값 $\tau$와 같아지는 등위면이다.
+
+두 표현 모두 3D 데이터에서 뽑은 점과 그 점의 정답 값(SDF 값이나 안팎)의 쌍으로 학습한다.[^deepsdf][^occnet]
+형상 하나마다 신경망 하나를 학습할 수도 있지만, DeepSDF는 형상마다 latent code $\mathbf z$를 하나씩 두고 $f_\theta(\mathbf z,\mathbf x)$로 여러 형상을 한 신경망에 담는다.
+Latent code는 신경망 가중치와 함께 학습한다.
+이렇게 하면 의자 수천 개를 담은 모델의 크기가 7.4 MB다.
+압축하지 않은 $512^3$ voxel 격자 하나(16.8 MB)의 절반도 안 된다.[^deepsdf]
+
+대가는 계산이다.
+값 하나를 얻을 때마다 신경망 전체를 계산해야 한다.
+이 함수로 $256^3$ 격자의 값을 모두 얻으려면 깊은 MLP를 16,777,216번 계산해야 한다(계산값).
+렌더링처럼 픽셀마다 여러 점을 물어야 하는 작업에서는 이 비용이 그대로 속도 문제가 된다.
+
+### 3-2. Hybrid 표현
+
+Hybrid 표현은 explicit 격자와 작은 신경망을 함께 쓴다.
+학습 가능한 feature 벡터를 격자에 저장하고, 질의한 좌표 주변의 feature를 보간한 뒤, 얕은 MLP가 그 feature를 값으로 바꾼다.
+깊은 MLP를 계산하는 대신 메모리 조회와 작은 MLP 하나로 값을 얻으므로 빠르다.
+하지만 feature를 3D 격자에 빽빽하게 두면 voxel의 메모리 문제가 돌아온다.
+Instant-NGP 논문의 예에서는 $128^3$ 격자에 16차원 feature를 둔 것만으로 학습할 parameter가 3,360만 개였다.[^instant-ngp]
+이 문제를 줄이는 두 방법이 triplane과 hash grid다.
+
+**Triplane**은 3D 격자 대신 서로 수직인 2D feature 평면 세 장(xy, xz, yz 평면)을 쓴다.[^eg3d]
+각 평면은 $N\times N\times C$ 크기다.
+3D 점의 feature를 얻을 때는 점을 세 평면에 각각 수직으로 투영하고, 평면마다 주변 칸의 feature를 bilinear 보간한 뒤, 세 feature를 더해 작은 MLP에 넣는다.
+해상도 $N$을 올릴 때 저장량은 dense 격자처럼 $O(N^3)$가 아니라 $O(N^2)$로 는다.[^eg3d]
+같은 메모리로 더 높은 해상도의 feature를 쓸 수 있다는 뜻이다.
+또 평면이 2D 이미지와 같은 모양이므로, 이미지용 2D CNN 생성기로 triplane을 만들 수 있다.[^eg3d]
+
+<Callout type="example">
+점 $(0.2,0.5,-0.3)$의 feature는 xy 평면의 $(0.2,0.5)$, xz 평면의 $(0.2,-0.3)$, yz 평면의 $(0.5,-0.3)$에서 읽은 세 벡터의 합이다.
+EG3D가 표현력 실험에 쓴 크기 $N=512$, $C=48$이면 triplane의 값은 $3\times512^2\times48=37{,}748{,}736$개다.[^eg3d]
+같은 해상도와 채널의 dense 격자는 $512^3\times48=6{,}442{,}450{,}944$개로, 약 171배($N/3$배)다(계산값).
+</Callout>
+
+**Hash grid**는 Instant-NGP가 쓴 multiresolution hash encoding이다.[^instant-ngp]
+해상도가 거친 것부터 고운 것까지 등비로 커지는 격자 $L$개를 둔다.
+각 해상도에서 질의한 점을 둘러싼 칸의 꼭짓점 8개를 찾고, 꼭짓점의 정수 좌표를 hash 함수에 넣어 크기 $T$인 table의 칸 번호로 바꾼다.
+그 칸에 저장된 $F$차원 feature 8개를 trilinear 보간하고, 모든 해상도의 결과를 이어 붙여 작은 MLP에 넣는다.
+Table 크기 $T$는 고정이므로, 해상도를 아무리 올려도 parameter 수는 $T\times L\times F$를 넘지 않는다.
+
+해상도가 높은 격자에서는 서로 다른 꼭짓점이 같은 table 칸에 배정되는 충돌(collision)이 생긴다.
+Instant-NGP는 충돌을 따로 처리하지 않는다.
+충돌한 점들의 gradient는 그 칸에서 평균된다.
+보이는 표면 위의 점은 큰 gradient를 내고 빈 공간의 점은 작은 gradient를 내므로, table 칸은 중요한 점에 맞춰 학습된다.[^instant-ngp]
+거친 해상도는 칸이 table보다 적어 충돌이 없으므로 전체 구조를 맡고, 고운 해상도가 세부를 보탠다.
+
+정리하면 흐름은 이렇다.
+Explicit 격자는 메모리가 $N^3$으로 늘었다.
+신경망 함수는 작지만 질의마다 깊은 MLP를 계산해 느렸다.
+Feature 격자와 작은 MLP는 빠르지만 다시 $N^3$ 메모리가 들었다.
+Triplane은 3D를 2D 평면 셋으로 줄여, hash grid는 table 크기를 고정해 그 메모리를 다시 줄였다.
+
+### 3-3. Radiance field
+
+지금까지의 함수는 형상만 나타낸다.
+사진으로 3D를 학습하려면 형상과 함께 색도 나타내야 하고, 색은 보는 방향에 따라 달라질 수 있다.
+반짝이는 표면은 보는 각도마다 하이라이트가 다른 자리에 생긴다.
+
+Radiance field는 공간의 점 $\mathbf x$와 보는 방향 $\mathbf d$를 받아 밀도(density) $\sigma$와 색 $\mathbf c$를 내는 함수다.[^nerf]
+NeRF는 밀도를 위치만의 함수 $\sigma(\mathbf x)$로, 색을 위치와 방향의 함수 $\mathbf c(\mathbf x,\mathbf d)$로 제한한다.[^nerf]
+그래서 형상(밀도)은 어느 방향에서 보든 같고, 겉모습(색)만 방향에 따라 바뀐다.
+밀도는 그 점에서 빛이 단위 길이당 얼마나 막히는지를 나타낸다.
+SDF처럼 뚜렷한 0 등위면이 있는 것이 아니라, 형상이 밀도의 분포로 퍼져 있다.
+
+Radiance field도 여러 방식으로 저장한다.
+NeRF는 MLP 하나로,[^nerf] Instant-NGP는 hash grid와 작은 MLP로 나타낸다.[^instant-ngp]
+3D Gaussian Splatting은 신경망 없이, 위치·모양(공분산)·불투명도·방향에 따른 색을 가진 3D Gaussian 수백만 개의 집합으로 장면을 나타낸다.[^3dgs]
+Gaussian의 parameter를 그대로 저장하므로 저장 방식으로는 explicit 표현이지만, 공간의 점과 방향에 불투명도와 색을 준다는 점에서 같은 radiance field를 나타낸다.
+그림 오른쪽의 radiance field와 primitive splatting이 이 두 갈래다.
+
+### 3-4. Mesh 추출
+
+Implicit 표현으로 만든 형상도 실제 도구에서 쓰려면 mesh로 바꿔야 한다.[^survey]
+표준 방법은 marching cubes다.[^marching-cubes]
+
+1. 공간을 격자로 나누고, 격자의 모든 꼭짓점에서 함수 값(SDF, occupancy, 밀도)을 계산한다.
+2. 작은 정육면체(cube) 하나를 본다.
+   꼭짓점 8개가 각각 안쪽인지 바깥쪽인지에 따라 $2^8=256$가지 경우가 생긴다.
+   미리 만든 표가 경우마다 어느 변을 표면이 지나는지와 그 변들을 잇는 삼각형을 알려 준다.
+3. 표면이 지나는 변 위에서, 양 끝 값을 선형 보간해 값이 0(또는 문턱값)이 되는 위치에 꼭짓점을 둔다.
+4. 모든 cube를 차례로 처리해 삼각형을 모으면 mesh가 된다.
+
+<Callout type="example">
+한 변의 양 끝에서 SDF가 $-0.2$와 $0.6$이라면, 부호가 바뀌므로 표면이 이 변을 지난다.
+선형 보간한 0의 위치는 첫 끝점에서 변 길이의 $0.2/(0.2+0.6)=0.25$만큼 간 곳이다.
+SDF로 쓴 구라면 이렇게 구한 꼭짓점들이 구면 근처에 놓이고, 격자가 고울수록 구에 가까워진다.
+</Callout>
+
+Marching cubes는 값이 공간의 점마다 정해진 표현이면 어디에나 쓸 수 있다.
+대신 결과가 격자 간격에 묶인다.
+격자보다 가는 구조는 사라지고, 해상도가 아주 높지 않으면 날카로운 모서리가 뭉개진다.
+또 학습이 끝난 뒤의 후처리라 mesh 품질을 학습 목표에 넣지 못한다.
+그래서 mesh 추출 과정을 미분 가능한 층으로 바꿔 학습 안에 넣는 방법들도 나왔다.[^survey]
+
+## 4. 카메라와 렌더링
+
+사진 한 장은 3D 장면을 한 카메라에서 본 2D 투영이다.
+3D 표현을 사진처럼 그리거나 사진으로 3D 표현을 학습하려면 두 계산이 필요하다.
+장면의 점이 어느 픽셀에 찍히는지(투영)와, 픽셀이 장면의 어느 방향을 보는지(광선)다.
+두 계산을 정하는 값이 카메라 parameter다.
+이 노트는 렌즈 왜곡을 무시한 표준 pinhole 카메라 모델을 쓴다.[^hz][^opencv]
+
+좌표계는 둘이다.
+World 좌표계는 장면 전체가 공유하는 좌표계다.
+카메라 좌표계는 카메라 중심을 원점으로 하고, 카메라가 보는 방향(광축)을 $z$축, 화면의 오른쪽을 $x$축, 아래쪽을 $y$축으로 둔다.
+픽셀 좌표 $(u,v)$는 이미지 왼쪽 위에서 시작해 $u$는 오른쪽으로, $v$는 아래로 커진다.[^opencv]
+
+### 4-1. 내부 parameter
+
+카메라 좌표계의 점 $\mathbf X_c=(X_c,Y_c,Z_c)$를 생각하자.
+카메라 앞에 있는 점은 $Z_c>0$이다.
+
+<figure>
+<svg viewBox="0 0 480 244" role="img" aria-label="Pinhole 카메라를 옆에서 본 그림. 왼쪽 끝의 카메라 중심 o에서 오른쪽으로 광축 z가 수평으로 뻗는다. 카메라 중심에서 거리 f만큼 떨어진 곳에 세로로 image plane이 있고, 광축과 만나는 점이 주점이다. 파란 광선이 카메라 중심에서 출발해 image plane의 한 픽셀 (u, v)를 지나 오른쪽 아래로 뻗는다. 광선 위에 주황색 점 X가 있고, 더 먼 곳에 속이 빈 주황색 점이 하나 더 있어 두 점이 같은 픽셀에 찍힌다. 점 X에서 광축까지 내린 점선의 길이가 Y_c, 카메라 중심에서 그 발까지의 거리가 Z_c이고, image plane 위에서 주점과 픽셀 사이 길이가 v − c_y다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<line x1="40" y1="70" x2="465" y2="70" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="465" y="60" font-size="13" text-anchor="end" fill="#64748b">광축 z</text>
+<line x1="40" y1="30" x2="330" y2="30" stroke="#64748b" stroke-width="1"/>
+<line x1="40" y1="25" x2="40" y2="35" stroke="#64748b" stroke-width="1"/>
+<line x1="330" y1="25" x2="330" y2="35" stroke="#64748b" stroke-width="1"/>
+<text x="235" y="24" font-size="13" text-anchor="middle" fill="#0f172a">Z<tspan font-size="10" dy="3">c</tspan></text>
+<line x1="140" y1="40" x2="140" y2="190" stroke="#0f172a" stroke-width="2"/>
+<text x="140" y="208" font-size="13" text-anchor="middle" fill="#0f172a">image plane</text>
+<line x1="40" y1="224" x2="140" y2="224" stroke="#64748b" stroke-width="1"/>
+<line x1="40" y1="219" x2="40" y2="229" stroke="#64748b" stroke-width="1"/>
+<line x1="140" y1="219" x2="140" y2="229" stroke="#64748b" stroke-width="1"/>
+<text x="90" y="240" font-size="13" text-anchor="middle" font-style="italic" fill="#0f172a">f</text>
+<line x1="330" y1="70" x2="330" y2="160" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4 3"/>
+<text x="337" y="120" font-size="13" fill="#0f172a">Y<tspan font-size="10" dy="3">c</tspan></text>
+<line x1="40" y1="70" x2="460" y2="200.3" stroke="#2a78d6" stroke-width="2"/>
+<circle cx="40" cy="70" r="4" fill="#0f172a"/>
+<text x="8" y="56" font-size="13" fill="#0f172a">카메라 중심 o</text>
+<circle cx="140" cy="70" r="3" fill="#0f172a"/>
+<text x="148" y="62" font-size="13" fill="#0f172a">주점</text>
+<text x="147" y="92" font-size="13" fill="#0f172a">v − c<tspan font-size="10" dy="3">y</tspan></text>
+<rect x="136" y="97" width="8" height="8" fill="#2a78d6"/>
+<text x="130" y="122" font-size="13" text-anchor="end" fill="#0f172a">픽셀 (u, v)</text>
+<circle cx="330" cy="160" r="5" fill="#eb6834"/>
+<text x="322" y="182" font-size="14" text-anchor="end" font-weight="600" fill="#0f172a">X</text>
+<circle cx="430" cy="191" r="5" fill="#ffffff" stroke="#eb6834" stroke-width="2"/>
+<text x="452" y="222" font-size="13" text-anchor="end" fill="#64748b">더 먼 점도 같은 픽셀</text>
+</svg>
+<figcaption>Pinhole 카메라를 옆에서 본 모습. 카메라 중심에서 픽셀을 지나 장면으로 뻗는 직선이 그 픽셀의 광선이고, 광선 위의 점은 깊이와 상관없이 모두 같은 픽셀에 찍힌다. 실제 센서에는 상이 중심 뒤에 거꾸로 맺히지만, 계산이 같으므로 중심 앞쪽 거리 f에 image plane을 그렸다.</figcaption>
+</figure>
+
+그림의 닮은 삼각형에서, 점이 찍히는 픽셀은 다음과 같다.
+
+$$
+u=f_x\frac{X_c}{Z_c}+c_x,\qquad v=f_y\frac{Y_c}{Z_c}+c_y.
+$$
+
+$f_x,f_y$는 픽셀 단위로 잰 초점거리(focal length)이고, $(c_x,c_y)$는 광축이 이미지와 만나는 주점(principal point)으로 보통 이미지 중앙 근처에 있다.[^opencv]
+이 네 값이 내부 parameter(intrinsic parameter)이고, 행렬 하나로 묶어 쓴다.
+
+$$
+K=\begin{pmatrix} f_x & 0 & c_x\\ 0 & f_y & c_y\\ 0 & 0 & 1\end{pmatrix},\qquad
+Z_c\begin{pmatrix}u\\ v\\ 1\end{pmatrix}=K\begin{pmatrix}X_c\\ Y_c\\ Z_c\end{pmatrix}.
+$$
+
+오른쪽 식의 셋째 행은 양변이 모두 $Z_c$이고, 첫째와 둘째 행을 $Z_c$로 나누면 위의 $u,v$ 식이 된다.
+$Z_c$로 나누는 이 연산 때문에 먼 물체가 작게 찍힌다.
+내부 parameter는 장면과 무관하고 카메라와 렌즈 설정에만 달려 있다.
+다만 이미지 크기를 바꾸면 네 값도 같은 비율로 바꿔야 한다.[^opencv]
+
+<Callout type="example">
+$640\times480$ 이미지에 $f_x=f_y=500$, $(c_x,c_y)=(320,240)$인 카메라를 쓰자.
+카메라 좌표 $(0.48,0.36,4.0)$의 점은 $u=500\times0.48/4.0+320=380$, $v=500\times0.36/4.0+240=285$에 찍힌다.
+같은 $X_c,Y_c$로 거리만 두 배인 $(0.48,0.36,8.0)$은 $u=350$, $v=262.5$에 찍혀 이미지 중앙 쪽으로 다가간다.
+이 값들은 이해를 위한 가상 예다.
+</Callout>
+
+### 4-2. 외부 parameter
+
+여러 장의 사진은 같은 장면을 서로 다른 위치와 방향에서 찍는다.
+외부 parameter(extrinsic parameter)는 world 좌표를 그 카메라의 좌표로 바꾸는 회전 $R$(3×3 회전 행렬)과 이동 $\mathbf t$(3차원 벡터)다.[^opencv]
+
+$$
+\mathbf X_c=R\mathbf X_w+\mathbf t.
+$$
+
+내부 parameter와 합치면 world 좌표의 점에서 픽셀까지의 투영 전체가 된다.
+
+$$
+Z_c\begin{pmatrix}u\\ v\\ 1\end{pmatrix}=K\,[R\mid\mathbf t]\begin{pmatrix}\mathbf X_w\\ 1\end{pmatrix}.
+$$
+
+$3\times4$ 행렬 $P=K[R\mid\mathbf t]$를 카메라 행렬이라 한다.[^hz]
+회전과 이동은 각각 자유도가 3이므로 외부 parameter의 자유도는 6이다.
+카메라 중심은 카메라 좌표의 원점 $\mathbf X_c=\mathbf 0$이므로, world 좌표로는 $\mathbf o=-R^\top\mathbf t$다.
+카메라가 world에서 어디에 있고 어느 쪽을 보는지를 카메라 pose라고 하며, $R$과 $\mathbf t$가 이를 정한다.
+
+<Callout type="example">
+$R=I$, $\mathbf t=(0,0,4.8)$이면 카메라 중심은 $\mathbf o=(0,0,-4.8)$이다.
+카메라는 원점에서 $z$축 음의 방향으로 4.8만큼 물러나 원점을 바라본다.
+원점에 놓인 단위 구의 표면 점 $\mathbf X_w=(0.48,0.36,-0.8)$을 보자($0.48^2+0.36^2+0.8^2=1$).
+카메라 좌표는 $\mathbf X_c=(0.48,0.36,4.0)$이므로, 앞의 예처럼 픽셀 $(380,285)$에 찍힌다.
+</Callout>
+
+물체 하나를 여러 방향에서 찍는 데이터에서는 흔히 카메라를 물체 중심을 바라보는 구면 위에 둔다.
+이때 pose는 고도(elevation), 방위각(azimuth), 구의 반지름 세 값으로 정해지고, 이 값에서 $R$과 $\mathbf t$를 계산한다.
+
+### 4-3. 픽셀과 광선
+
+투영은 3D 점에서 픽셀로 가는 계산이다.
+반대로 픽셀에서 출발하면 점 하나가 정해지지 않는다.
+투영에서 $Z_c$로 나누면서 깊이 정보가 사라지기 때문이다.
+그림처럼 카메라 중심에서 픽셀을 지나는 직선 위의 점은 모두 같은 픽셀에 찍힌다.
+이 직선이 픽셀의 광선(ray)이다.
+
+광선의 방향은 투영 식을 거꾸로 풀어 얻는다.
+카메라 좌표에서 픽셀 $(u,v)$의 방향은 다음과 같다.[^hz]
+
+$$
+\mathbf d_c=K^{-1}\begin{pmatrix}u\\ v\\ 1\end{pmatrix}=\begin{pmatrix}(u-c_x)/f_x\\ (v-c_y)/f_y\\ 1\end{pmatrix}.
+$$
+
+이 방향을 world 좌표로 돌리면 $\mathbf d=R^\top\mathbf d_c$이고, 광선은 카메라 중심 $\mathbf o$에서 출발한다.
+
+$$
+\mathbf r(t)=\mathbf o+t\,\mathbf d,\qquad t>0.
+$$
+
+$\mathbf d_c$의 셋째 성분을 1로 두었으므로 $t$는 그 점의 깊이 $Z_c$와 같다.
+신경망에 방향을 입력할 때는 보통 $\mathbf d$를 길이 1로 정규화한다.
+광선 위의 위치를 나타내는 $t$는 이동 벡터 $\mathbf t$와 다른 기호다.
+
+<Callout type="example">
+앞의 카메라에서 픽셀 $(380,285)$의 방향은 $\mathbf d_c=((380-320)/500,(285-240)/500,1)=(0.12,0.09,1)$이다.
+$R=I$이므로 $\mathbf d$도 같고, 광선은 $\mathbf r(t)=(0,0,-4.8)+t(0.12,0.09,1)$이다.
+$t=4.0$이면 $\mathbf r(4.0)=(0.48,0.36,-0.8)$로 앞에서 투영한 구의 표면 점이 나온다.
+$t=8.0$인 점 $(0.96,0.72,3.2)$도 카메라 좌표가 $(0.96,0.72,8.0)$이라 같은 픽셀 $(380,285)$에 찍힌다.
+
+이 광선을 따라 구의 SDF $\lVert\mathbf r(t)\rVert-1$을 계산하면, 값은 $t=4.0$에서 처음 0이 된다(계산값).
+이 픽셀에 보이는 것은 광선이 처음 만나는 표면, 즉 $t=4.0$의 점이다.
+
+카메라를 하나 더 두어 $R=I$, $\mathbf t=(-1,0,4.8)$이라 하자.
+이 카메라에서는 $t=4.0$의 점이 $(255,285)$에, $t=8.0$의 점이 $(317.5,285)$에 찍힌다.
+첫 카메라에서 겹쳤던 두 점이 둘째 카메라에서는 다른 픽셀로 갈라진다.
+</Callout>
+
+사진 한 장으로는 픽셀의 깊이를 정할 수 없지만, 여러 시점의 사진이 있으면 광선들이 만나는 곳에서 깊이가 정해진다.
+여러 사진으로 3D를 복원할 수 있는 이유가 이것이다.
+
+### 4-4. 미분 가능한 렌더링
+
+렌더링은 3D 표현과 카메라 parameter를 받아 이미지를 만드는 함수다.
+3D 표현의 parameter를 $\theta$라 하면 카메라 $k$에서 본 이미지는 $\hat I_k=\mathcal R(\theta;K_k,R_k,\mathbf t_k)$로 쓸 수 있다.
+렌더링 방식은 크게 둘이다.
+
+- **Rasterization**은 장면에서 화면으로 간다.
+  삼각형이나 Gaussian 같은 기본 도형을 투영 식으로 화면에 옮기고, 도형이 덮는 픽셀을 깊이 순서에 맞춰 칠한다.
+  Mesh와 3D Gaussian을 이렇게 그린다.
+- **Ray casting**은 화면에서 장면으로 간다.
+  픽셀마다 광선을 만들고 그 위의 점들에서 표현을 질의한다.
+  SDF라면 값이 처음 0이 되는 점을 찾고, radiance field라면 광선 위의 밀도와 색을 합성한다.
+
+사진 $I_1,\dots,I_M$과 각 사진의 카메라 parameter가 있다고 하자.
+렌더링 결과가 사진과 같아지도록 다음 손실을 gradient descent로 줄이면 3D 표현을 학습할 수 있다.
+
+$$
+\min_\theta\ \sum_{k=1}^{M}\big\lVert\mathcal R(\theta;K_k,R_k,\mathbf t_k)-I_k\big\rVert^2.
+$$
+
+그러려면 $\mathcal R$을 $\theta$로 미분할 수 있어야 한다.
+NeRF는 radiance field의 렌더링이 자연스럽게 미분 가능하므로, 카메라를 아는 사진 묶음만으로 표현을 최적화할 수 있다고 밝혔다.[^nerf]
+한 표현이 모든 시점의 사진을 동시에 설명해야 하므로, 앞 절의 예처럼 여러 광선이 일관되게 만나는 곳에 밀도가 모이게 된다.[^nerf]
+3D 정답 없이 사진으로만 3D를 학습할 수 있다는 점이 핵심이다.
+
+모든 표현이 이렇게 학습하기 쉽지는 않다.
+Mesh의 일반적인 rasterization에는 픽셀이 삼각형에 덮이는지를 정하는 이산 연산이 있어 역전파가 막힌다.[^kato]
+꼭짓점을 조금 움직여도 삼각형 경계가 픽셀 중심을 넘기 전까지 픽셀 색이 그대로이고, 넘는 순간 갑자기 바뀌기 때문이다.
+이 문제를 완화한 미분 가능한 rasterizer도 있다.
+하지만 사진과의 차이로 mesh를 최적화하면 지역 최솟값에 빠지기 쉽고, topology가 정해진 초기 mesh가 있어야 한다.[^nerf]
+그래서 사진에서 3D를 복원할 때는 각 점이 픽셀 색에 연속적으로 기여하는 표현, 즉 밀도를 가진 radiance field나 반투명한 Gaussian을 주로 쓴다.
+
+<Callout type="example">
+픽셀 하나를 보자.
+물체의 색은 1.0, 배경은 0.0, 사진에서 이 픽셀의 값은 0.8이다.
+불투명한 삼각형이라면 픽셀 값은 덮이면 1.0, 아니면 0.0이다.
+꼭짓점을 조금 움직여도 덮임 여부가 바뀌지 않는 한 값이 같으므로, 꼭짓점에 대한 gradient는 0이다.
+반투명한 표현이라면 픽셀 값은 불투명도 $\alpha$로 섞인 $\alpha\times1.0+(1-\alpha)\times0.0=\alpha$다.
+$\alpha=0.5$일 때 손실은 $(0.5-0.8)^2=0.09$이고, $\alpha$에 대한 gradient는 $2(0.5-0.8)=-0.6$이다.
+Gradient descent는 $\alpha$를 키우는 방향으로 움직여 픽셀을 사진에 맞춘다.
+이 값들은 이해를 위한 가상 예다.
+</Callout>
+
+이 학습에는 사진마다 카메라 parameter가 필요하다.
+합성 데이터처럼 카메라를 미리 아는 경우가 아니면, 카메라 parameter도 사진들에서 추정해야 한다.
+
+## 5. 표현의 비교
+
+처음의 네 질문에 대한 답을 표로 모으면 다음과 같다.
+
+| 표현 | 저장하는 것 | 해상도와 메모리 | 표면과 topology | 렌더링 | 주로 쓰이는 곳 |
+|---|---|---|---|---|---|
+| Mesh | 꼭짓점 좌표, 면의 꼭짓점 번호, texture | 꼭짓점 수에 비례, 곳마다 다르게 조절 | 표면이 명시적, topology를 바꾸기 어렵다 | Rasterization | 게임·시뮬레이션 등 실제 도구, 결과물의 최종 형식 |
+| Point cloud | 점 좌표(색, 법선) | 점 수에 비례 | 연결이 없어 표면이 없다 | 점을 찍음(구멍이 생김) | LiDAR·depth 카메라·3D 스캐너의 출력 |
+| Voxel | 격자 칸의 값(occupancy, 색, feature) | Dense는 $N^3$, sparse는 표면 근처 칸 수 | 칸 크기에 묶인 계단 모양 표면 | Ray casting 또는 mesh로 변환 | 3D convolution으로 다루는 격자 입출력(sparse voxel 포함) |
+| SDF·occupancy | MLP 가중치, 또는 feature 격자와 작은 MLP | 해상도와 무관, 질의마다 신경망 계산 | 등위면, topology가 자유롭다 | Ray casting 또는 marching cubes 후 rasterization | 형상 복원, mesh를 만드는 중간 표현 |
+| Radiance field | 점마다 밀도와 방향별 색을 내는 MLP, feature 격자(triplane, hash grid) | MLP는 작고 느림, feature 격자는 크고 빠름 | 뚜렷한 표면 없이 밀도로 퍼짐 | 광선 위의 밀도와 색 합성 | 사진에서 장면 복원과 새 시점 렌더링 |
+| 3D Gaussian | Gaussian마다 위치, 공분산, 불투명도, 방향별 색 | Gaussian 수에 비례(장면당 수백만 개) | 뚜렷한 표면 없이 반투명 도형이 겹침 | Rasterization(투영과 깊이 정렬) | 사진에서 장면 복원과 실시간 렌더링 |
+
+한 표현이 모든 칸에서 앞서지는 않는다.
+사진에서 배우려면 픽셀 색이 parameter에 연속적으로 반응하는 표현이 유리하다.
+결과를 실제 도구로 넘기려면 mesh가 필요하다.
+신경망의 입력과 출력으로는 voxel이나 triplane처럼 격자 모양인 표현이 다루기 쉽다.
+그래서 실제 시스템은 한 표현으로 학습하고 marching cubes 같은 변환으로 다른 표현을 내놓는 식으로 여러 표현을 이어 쓴다.
+표현을 고른 뒤에도 3D 데이터가 적다는 문제는 남는다.
+미분 가능한 렌더링은 3D 정답 없이 사진만으로 표현을 학습하게 해서 이 문제를 비켜 갈 첫 수단이 된다.
+
+[^survey]: Schockaert, A., Laga, H., Wannous, H., et al. (2026). Recent Advances and Trends in Learning-Based 3D Representations. *Computer Graphics Forum*, e70530. [논문](https://arxiv.org/abs/2606.04871).
+[^occnet]: Mescheder, L., Oechsle, M., Niemeyer, M., Nowozin, S., & Geiger, A. (2019). Occupancy Networks: Learning 3D Reconstruction in Function Space. *CVPR*. [논문](https://arxiv.org/abs/1812.03828).
+[^deepsdf]: Park, J. J., Florence, P., Straub, J., Newcombe, R., & Lovegrove, S. (2019). DeepSDF: Learning Continuous Signed Distance Functions for Shape Representation. *CVPR*. [논문](https://arxiv.org/abs/1901.05103).
+[^instant-ngp]: Müller, T., Evans, A., Schied, C., & Keller, A. (2022). Instant Neural Graphics Primitives with a Multiresolution Hash Encoding. *ACM Transactions on Graphics*, 41(4), 102:1–102:15. [논문](https://arxiv.org/abs/2201.05989).
+[^pointnet]: Qi, C. R., Su, H., Mo, K., & Guibas, L. J. (2017). PointNet: Deep Learning on Point Sets for 3D Classification and Segmentation. *CVPR*. [논문](https://arxiv.org/abs/1612.00593).
+[^eg3d]: Chan, E. R., Lin, C. Z., Chan, M. A., et al. (2022). Efficient Geometry-aware 3D Generative Adversarial Networks. *CVPR*. [논문](https://arxiv.org/abs/2112.07945).
+[^nerf]: Mildenhall, B., Srinivasan, P. P., Tancik, M., et al. (2020). NeRF: Representing Scenes as Neural Radiance Fields for View Synthesis. *ECCV*. [논문](https://arxiv.org/abs/2003.08934).
+[^3dgs]: Kerbl, B., Kopanas, G., Leimkühler, T., & Drettakis, G. (2023). 3D Gaussian Splatting for Real-Time Radiance Field Rendering. *ACM Transactions on Graphics*, 42(4). [논문](https://arxiv.org/abs/2308.04079).
+[^marching-cubes]: Lorensen, W. E., & Cline, H. E. (1987). Marching Cubes: A High Resolution 3D Surface Construction Algorithm. *ACM SIGGRAPH Computer Graphics*, 21(4), 163–169. [논문](https://doi.org/10.1145/37402.37422).
+[^hz]: Hartley, R., & Zisserman, A. (2004). Multiple View Geometry in Computer Vision (2nd ed.). *Cambridge University Press*. [책 페이지](https://www.robots.ox.ac.uk/~vgg/hzbook/).
+[^opencv]: OpenCV. (4.13.0). Camera Calibration and 3D Reconstruction. *OpenCV documentation*. [문서](https://docs.opencv.org/4.13.0/d9/d0c/group__calib3d.html).
+[^kato]: Kato, H., Ushiku, Y., & Harada, T. (2018). Neural 3D Mesh Renderer. *CVPR*. [논문](https://arxiv.org/abs/1711.07566).
