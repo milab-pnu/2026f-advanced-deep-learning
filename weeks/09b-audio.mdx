@@ -785,79 +785,85 @@ SpeechTokenizer는 codec 하나가 두 역할을 하도록, HuBERT를 teacher로
 
 ## 6. 음성 생성
 
-### 6-1. Codec 언어 모델과 TTS
+### 6-1. Zero-shot TTS
 
-Codec은 이미 있는 녹음을 token으로 압축하고 복원한다.
-TTS에서는 읽을 문장만 있고 그 문장을 읽은 녹음은 아직 없으므로, **문장에 맞는 음성 token을 새로 예측하는 모델**이 필요하다.
-언어 모델이 그 token을 만들고, 음향을 복원하는 모델이 이를 waveform으로 바꾸면 문장을 소리로 읽을 수 있다.
-VALL-E와 CosyVoice는 모두 이 구성을 쓰지만, 언어 모델이 예측하는 token과 그 뒤의 복원 경로가 다르다.
+Codec은 이미 있는 녹음을 token으로 바꿀 뿐이므로, 문장을 읽는 TTS에는 **텍스트에서 speech token을 예측하는 언어 모델**이 필요하다.
 
-**VALL-E는 미리 학습된 EnCodec과, 음성 token을 예측하도록 학습하는 언어 모델을 결합한다.**[^valle]
-EnCodec의 encoder는 녹음을 codec token으로 바꾸고, decoder는 그 token을 waveform으로 복원한다.
-VALL-E는 이 변환을 이용해 약 6만 시간의 영어 음성에서 학습용 정답 token을 만든다.
-녹음의 전사는 음성 인식 모델로 얻고, 발음을 나타내는 음소(phoneme)의 sequence로 바꾼다.
-언어 모델은 이 음소 sequence를 조건으로, 같은 녹음에서 추출한 codec token을 맞히도록 학습한다.
-이때 EnCodec의 encoder와 decoder는 고정하고, neural codec language model만 학습한다.
+**VALL-E는 EnCodec을 고정해 두고, 발음 단위인 음소(phoneme)의 sequence에서 codec token을 예측하는 언어 모델을 학습한다.**[^valle]
+합성할 때는 새로 읽을 문장과 함께, 목소리를 따라 할 사람의 3초짜리 참조 음성과 그 전사를 준다.
+참조 음성의 codec token을 이미 생성한 앞부분으로 두면, 모델은 그 뒤에 새 문장의 codec token을 같은 목소리로 이어 생성한다.
+참조 음성으로 weight를 갱신하지 않고 입력 조건으로만 쓰므로 zero-shot TTS라 한다.
 
-학습을 마친 VALL-E로 “See you tomorrow.”를 특정 사람의 목소리로 읽게 한다고 하자.
-사용자는 **새로 읽을 문장, 그 사람의 3초짜리 참조 음성, 참조 음성의 전사**를 준다.
-참조 음성의 전사는 주어진 소리가 전체 텍스트의 어느 부분에 해당하는지 알려 준다.
-예를 들어 참조 음성에서 “Hello.”라고 말했다면, 텍스트 조건은 “Hello. See you tomorrow.”를 음소로 바꾼 sequence이고, 음성 조건은 “Hello.” 녹음의 codec token이다.
-모델은 “Hello.”에 해당하는 소리를 이미 주어진 시작 부분으로 받아, 그 뒤에 “See you tomorrow.”의 codec token을 이어 생성한다.
-EnCodec decoder는 새로 생성한 token을 waveform으로 복원한다.
-이때 참조 음성으로 weight를 갱신하지 않는다.
-이미 학습된 모델이 새로운 화자의 목소리를 입력 조건으로 받아 합성하는 것이 여기서 말하는 zero-shot TTS다.
+Codec token은 라벨 없이 학습해서 발화 내용과 음색, 녹음 환경이 섞여 있고, 텍스트와의 대응도 명시되지 않는다.[^cosyvoice]
+그래서 **CosyVoice는 언어 모델이 내용 중심의 speech token만 예측하게 하고, 음색과 세부 음향은 다른 모델에 맡긴다.**
+이 speech token은 음성 인식 모델에서 얻는다.
+Encoder 중간에 codebook 하나짜리 양자화를 넣고 전사를 맞히도록 학습하면, codebook에는 전사에 필요한 내용 정보가 남는다.
+k-means로 얻는 semantic token과 달리 전사로 학습하므로 supervised semantic token이라 부른다.
+CosyVoice는 이 token을 쓰면 라벨 없이 얻은 token을 쓸 때보다 합성한 음성의 내용이 텍스트와 더 잘 맞는다고 보고한다.
 
-<Figure src="https://arxiv.org/html/2301.02111v1/prompt.jpg" alt="VALL-E 전체 구조. 텍스트 prompt는 phoneme으로, 3초 참조 음성은 audio codec encoder를 거쳐 codec token으로 바뀐다. 두 조건을 받은 neural codec language model이 새 codec token을 생성하고, audio codec decoder가 이를 화자의 목소리를 반영한 음성으로 복원한다." caption="VALL-E는 텍스트를 음소(phoneme)로 바꾸고 참조 음성을 codec token으로 바꾸어 조건으로 쓴다. 생성한 codec token에서 waveform으로 가는 경로는 audio codec decoder가 맡는다." source="Wang et al. (2023), Figure 1" wide />
+합성할 때는 text-to-token LM이 VALL-E처럼 참조 음성의 speech token을 앞부분에 두고, 텍스트에서 새 문장의 speech token을 예측한다.
+연속값을 생성하는 flow matching 모델이 이 speech token에서 새 문장의 Mel spectrogram을 만들고, vocoder가 이를 waveform으로 바꾼다.
+이때 화자 embedding(목소리의 특징을 담은 벡터)과 참조 음성의 Mel spectrogram을 조건으로 주어 음색을 맞춘다.
 
-VALL-E의 codec token에는 발화 내용과 함께 소리를 복원하는 데 필요한 음향 정보가 담겨 있다.
-**CosyVoice는 언어 모델이 내용 중심의 speech token을 예측하도록 하고, 세부 음향을 만드는 모델을 따로 학습한다.**[^cosyvoice]
+<figure>
+<svg viewBox="0 0 720 228" role="img" aria-label="VALL-E와 CosyVoice의 합성 경로를 위아래 두 줄로 비교한 그림. 위 줄 VALL-E에서는 음소 sequence와 참조 codec token이 codec 언어 모델에 들어가 초록색 codec token이 나오고, EnCodec decoder가 이를 바로 waveform으로 복원한다. codec token 아래에는 내용과 음향이 함께 담긴다고 적혀 있다. 아래 줄 CosyVoice에서는 텍스트와 참조 speech token이 text-to-token LM에 들어가 파란색 speech token이 나오고, 화자 embedding과 참조 Mel을 함께 받은 flow matching 모델이 Mel spectrogram을 만든 뒤, vocoder가 waveform으로 바꾼다. speech token 아래에는 내용 중심, flow matching 아래에는 음색과 세부 음향이라고 적혀 있다." xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+<defs><marker id="tts-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#64748b"/></marker></defs>
+<text x="8" y="26" font-size="14" font-weight="600" fill="#0f172a">VALL-E</text>
+<rect x="8" y="38" width="120" height="48" rx="6" fill="#ffffff" stroke="#94a3b8"/><text x="68" y="58" font-size="12" text-anchor="middle" fill="#0f172a">음소 sequence</text><text x="68" y="76" font-size="11.5" text-anchor="middle" fill="#0f172a">+ 참조 codec token</text>
+<rect x="144" y="38" width="92" height="48" rx="8" fill="#e2e8f0" stroke="#0f172a"/><text x="190" y="58" font-size="12.5" text-anchor="middle" font-weight="600" fill="#0f172a">codec</text><text x="190" y="76" font-size="12.5" text-anchor="middle" font-weight="600" fill="#0f172a">언어 모델</text>
+<rect x="252" y="38" width="64" height="48" rx="6" fill="#dcfce7" stroke="#16a34a"/><text x="284" y="58" font-size="12.5" text-anchor="middle" fill="#0f172a">codec</text><text x="284" y="76" font-size="12.5" text-anchor="middle" fill="#0f172a">token</text>
+<rect x="332" y="38" width="88" height="48" rx="8" fill="#e2e8f0" stroke="#0f172a"/><text x="376" y="58" font-size="12.5" text-anchor="middle" font-weight="600" fill="#0f172a">EnCodec</text><text x="376" y="76" font-size="12.5" text-anchor="middle" font-weight="600" fill="#0f172a">decoder</text>
+<rect x="620" y="38" width="92" height="48" rx="6" fill="#f8fafc" stroke="#94a3b8"/><path d="M628 62 l6 -9 l6 18 l6 -22 l6 26 l6 -17 l6 11 l6 -8 l6 6 l6 -4 l6 2 l6 -3 l6 0" fill="none" stroke="#2a78d6" stroke-width="1.6"/>
+<path d="M128 62 H142" stroke="#64748b" stroke-width="1.5" marker-end="url(#tts-arrow)"/>
+<path d="M236 62 H250" stroke="#64748b" stroke-width="1.5" marker-end="url(#tts-arrow)"/>
+<path d="M316 62 H330" stroke="#64748b" stroke-width="1.5" marker-end="url(#tts-arrow)"/>
+<path d="M420 62 H618" stroke="#64748b" stroke-width="1.5" marker-end="url(#tts-arrow)"/>
+<text x="284" y="104" font-size="12" text-anchor="middle" fill="#64748b">내용 + 음향</text>
+<text x="666" y="104" font-size="12.5" text-anchor="middle" fill="#0f172a">waveform</text>
+<text x="8" y="140" font-size="14" font-weight="600" fill="#0f172a">CosyVoice</text>
+<text x="376" y="130" font-size="11.5" text-anchor="middle" fill="#64748b">화자 embedding · 참조 Mel</text>
+<path d="M376 136 V150" stroke="#64748b" stroke-width="1.2" marker-end="url(#tts-arrow)"/>
+<rect x="8" y="152" width="120" height="48" rx="6" fill="#ffffff" stroke="#94a3b8"/><text x="68" y="172" font-size="12" text-anchor="middle" fill="#0f172a">텍스트</text><text x="68" y="190" font-size="11.5" text-anchor="middle" fill="#0f172a">+ 참조 speech token</text>
+<rect x="144" y="152" width="92" height="48" rx="8" fill="#e2e8f0" stroke="#0f172a"/><text x="190" y="172" font-size="12" text-anchor="middle" font-weight="600" fill="#0f172a">text-to-token</text><text x="190" y="190" font-size="12.5" text-anchor="middle" font-weight="600" fill="#0f172a">LM</text>
+<rect x="252" y="152" width="64" height="48" rx="6" fill="#dbeafe" stroke="#2a78d6"/><text x="284" y="172" font-size="12.5" text-anchor="middle" fill="#0f172a">speech</text><text x="284" y="190" font-size="12.5" text-anchor="middle" fill="#0f172a">token</text>
+<rect x="332" y="152" width="88" height="48" rx="8" fill="#e2e8f0" stroke="#0f172a"/><text x="376" y="172" font-size="12.5" text-anchor="middle" font-weight="600" fill="#0f172a">flow</text><text x="376" y="190" font-size="12.5" text-anchor="middle" font-weight="600" fill="#0f172a">matching</text>
+<rect x="436" y="152" width="80" height="48" rx="6" fill="#fff7ed" stroke="#eb6834"/><text x="476" y="172" font-size="12.5" text-anchor="middle" fill="#0f172a">Mel</text><text x="476" y="190" font-size="12" text-anchor="middle" fill="#0f172a">spectrogram</text>
+<rect x="532" y="152" width="72" height="48" rx="8" fill="#e2e8f0" stroke="#0f172a"/><text x="568" y="181" font-size="12.5" text-anchor="middle" font-weight="600" fill="#0f172a">vocoder</text>
+<rect x="620" y="152" width="92" height="48" rx="6" fill="#f8fafc" stroke="#94a3b8"/><path d="M628 176 l6 -9 l6 18 l6 -22 l6 26 l6 -17 l6 11 l6 -8 l6 6 l6 -4 l6 2 l6 -3 l6 0" fill="none" stroke="#2a78d6" stroke-width="1.6"/>
+<path d="M128 176 H142" stroke="#64748b" stroke-width="1.5" marker-end="url(#tts-arrow)"/>
+<path d="M236 176 H250" stroke="#64748b" stroke-width="1.5" marker-end="url(#tts-arrow)"/>
+<path d="M316 176 H330" stroke="#64748b" stroke-width="1.5" marker-end="url(#tts-arrow)"/>
+<path d="M420 176 H434" stroke="#64748b" stroke-width="1.5" marker-end="url(#tts-arrow)"/>
+<path d="M516 176 H530" stroke="#64748b" stroke-width="1.5" marker-end="url(#tts-arrow)"/>
+<path d="M604 176 H618" stroke="#64748b" stroke-width="1.5" marker-end="url(#tts-arrow)"/>
+<text x="284" y="218" font-size="12" text-anchor="middle" fill="#64748b">내용 중심</text>
+<text x="376" y="218" font-size="12" text-anchor="middle" fill="#64748b">음색 · 세부 음향</text>
+<text x="666" y="218" font-size="12.5" text-anchor="middle" fill="#0f172a">waveform</text>
+</svg>
+<figcaption>VALL-E와 CosyVoice의 합성 경로. VALL-E는 언어 모델이 예측한 codec token을 바로 waveform으로 복원하고, CosyVoice는 내용 중심의 speech token에서 Mel spectrogram을 만드는 단계를 더 거친다. 두 원논문의 설명을 바탕으로 그렸다.</figcaption>
+</figure>
 
-먼저 speech token을 만드는 tokenizer를 준비한다.
-그림 (a)처럼 음성 인식 모델의 encoder 중간에 양자화를 넣는다.
-앞쪽 encoder의 출력은 codebook 벡터로 바뀌고, 뒤쪽 encoder와 ASR decoder는 이 양자화된 표현을 받아 전사를 예측한다.
-여기서 전사를 맞히려면, 양자화를 거친 뒤에도 서로 다른 말을 구별할 수 있어야 한다.
-예를 들어 “불”과 “물”의 첫소리 차이가 양자화 과정에서 사라지면, 뒤쪽 모델은 두 단어를 구별할 단서를 잃어 전사를 틀릴 수 있다.
-학습에서는 정답 전사와 예측을 비교해 오류를 줄이므로, encoder와 quantizer도 이런 발음 차이를 보존하는 방향으로 조정된다.
-그렇게 학습한 codebook ID의 sequence가 speech token이므로, token sequence에 어떤 말을 했는지 구별하는 정보가 담기는 것이다.
-학습 후에는 앞쪽 encoder와 quantizer를 speech tokenizer로 사용한다.
+### 6-2. Codebook 생성 순서
 
-그다음 녹음과 전사의 쌍으로 두 가지 대응을 배운다.
-그림 (b)의 **text-to-token LM**은 전사와 화자 embedding을 조건으로, tokenizer가 녹음에서 추출한 정답 speech token을 하나씩 예측하도록 학습한다.
-화자 embedding은 음성에서 추출한 목소리의 특징 벡터다.
-별도의 **flow matching 모델**은 speech token, 화자 embedding, 녹음의 일부 Mel spectrogram을 조건으로 나머지 음향을 생성하도록 학습한다.
-언어 모델이 발화의 내용과 운율을 맡고, flow matching 모델이 이에 맞는 음색과 세부 음향을 만드는 역할 분담이다.
+시간 칸이 $T$개, codebook이 $K$개이면 생성할 ID는 $T \times K$개다.
+이를 한 줄로 펼쳐 예측하면 큰 언어 모델을 $T \times K$번 실행해야 한다.
+이 횟수를 줄이는 방법은 세 갈래다.
 
-학습된 CosyVoice로 새 화자의 목소리를 합성할 때도, 새 문장과 짧은 참조 음성을 입력한다.
-같은 언어의 zero-shot 합성에서는 참조 음성의 전사와 speech token도 언어 모델에 주어, 그 뒤로 새 문장의 speech token을 이어 생성한다.
-VALL-E의 예시처럼, 참조 전사는 이미 주어진 음성 token이 어떤 말을 담고 있는지 알려 주는 역할이다.
-Flow matching 모델은 참조 음성과 새 문장의 speech token, 참조 음성의 화자 embedding과 Mel spectrogram을 조건으로 새 문장의 Mel spectrogram을 만든다.
-마지막에 **vocoder**가 그 spectrogram을 waveform으로 바꾼다.
-VALL-E가 생성한 codec token을 EnCodec decoder로 복원하는 것과 달리, CosyVoice는 내용 중심 token에서 Mel spectrogram을 생성하는 단계를 거친다.
+**첫 codebook만 자기회귀로 생성한다.**
+VALL-E는 첫 codebook을 AR(autoregressive) 모델로 한 시간 칸씩 생성하고, 나머지 일곱 codebook은 NAR(non-autoregressive) 모델이 codebook 하나씩 모든 시간 칸을 한 번에 예측한다.[^valle]
+실행 횟수는 $T + K - 1$번으로 줄지만, 첫 codebook을 끝까지 생성해야 NAR 모델이 시작하므로 생성하면서 소리를 내보낼 수 없다.
 
-<Figure src="https://arxiv.org/html/2407.05407v2/overview2.svg" alt="CosyVoice 전체 구조. 왼쪽 (a)는 음성 인식 encoder 중간에 vector quantizer를 넣어 speech token을 얻는 tokenizer다. 가운데 (b)는 텍스트와 화자 embedding을 조건으로 speech token을 예측하는 text-to-token LM과 flow matching 모델이다. 오른쪽 (c)는 flow matching 모델의 조건 입력을 확대한 그림이다." caption="CosyVoice의 (a)는 speech token을 만드는 tokenizer이고, (b)는 그 token을 예측하는 언어 모델과 Mel spectrogram을 만드는 flow matching 모델이다. (c)는 flow matching 내부를 확대한 것이다. Waveform을 만드는 vocoder는 그림에서 생략되어 있다." source="Du et al. (2024), Figure 1" wide />
-
-### 6-2. 생성 순서
-
-EnCodec이나 Mimi처럼 여러 codebook을 쓰는 codec에서는 시간 위치마다 ID가 여러 개 나오므로, 생성 모델은 시간 방향과 codebook 방향의 순서를 정해야 한다.
-모두 한 줄로 펼쳐 예측하면 단순하지만, 큰 언어 모델을 시간 칸 수 × codebook 수만큼 실행해야 한다.
-
-Moshi는 이 계산을 두 모델로 나눈다.[^moshi]
-큰 **Temporal Transformer**는 이전 시간 칸들의 정보를 모아 현재의 문맥을 만들고, 작은 **Depth Transformer**는 그 문맥을 받아 codebook ID들을 차례로 예측한다.
-큰 모델은 시간 칸마다 한 번만 실행하고, codebook 수만큼 반복되는 계산은 작은 모델이 맡는다.
-작은 모델이 내는 것은 codec token이며, 파형으로 바꾸는 일은 Mimi의 decoder가 맡는다.
+**시간 방향과 codebook 방향을 다른 모델에 맡긴다.**
+Moshi에서는 큰 Temporal Transformer가 시간 칸마다 한 번 실행되어 문맥을 만들고, 작은 Depth Transformer가 그 문맥에서 같은 시간 칸의 codebook ID들을 차례로 예측한다.[^moshi]
+큰 모델의 실행은 $T$번이고, 한 시간 칸의 ID가 정해지면 바로 소리로 바꿀 수 있어 생성하면서 소리를 내보낼 수 있다.
+Qwen3-Omni도 큰 모델이 첫 codebook을, 작은 MTP(multi-token prediction) 모듈이 나머지 codebook을 예측한다.[^qwen3]
 
 <Figure src="https://arxiv.org/html/2410.00037v2/figures/overview_moshi_v2.png" alt="Moshi 전체 구조. 왼쪽 Mimi가 사용자 음성을 token으로 바꾸고, Helium Temporal Transformer가 시간 방향의 문맥을 만든다. 위쪽 Depth Transformer가 문맥을 받아 semantic·acoustic token을 예측하고, 오른쪽 Mimi가 음성 token을 파형으로 복원한다. 아래에는 사용자 음성, Moshi 음성, Inner Monologue 텍스트의 세 스트림이 같은 시간축에 놓인다." caption="Moshi 전체 구조. 큰 Temporal Transformer가 시간 방향의 문맥을 만들고, 작은 Depth Transformer가 음성 token을 예측하며, Mimi가 token과 파형 사이의 변환을 맡는다." source="Défossez et al. (2024), Figure 1 · CC BY-NC-SA 4.0" wide />
 
-그림 아래쪽 세 줄은 사용자 음성, 모델 음성, 모델이 말할 내용의 텍스트(Inner Monologue)이며, 같은 시간축에 놓인다.
-
-Voila는 이 작은 모델을 Audio Transformer라 부른다.[^voila]
-Qwen3-Omni는 첫 codebook을 큰 모델이 예측하고, 작은 MTP(multi-token prediction) 모듈이 나머지를 채운다.[^qwen3]
-여기서 MTP는 미래 시점 여러 개가 아니라 같은 시간 칸의 나머지 codebook을 예측한다.
-
-작은 모델 없이 codebook별 출력 head로 여러 ID를 병렬 예측하는 방법도 있다.
-다만 뒤 codebook이 앞 codebook의 결과를 참고할 수 있도록, codebook마다 출력을 한 단계씩 늦추는 **delay pattern**을 쓸 수 있다.[^musicgen]
-Kanana-o의 음성 생성 모델도 이 방식을 쓴다.[^lmspt-kanana]
+**한 단계에서 모든 codebook을 함께 예측한다.**
+작은 모델 없이 codebook마다 출력 head를 두는 방식이다.
+다만 같은 시간 칸의 ID를 동시에 내면, 잔차를 채우는 뒤 codebook이 앞 codebook의 결과를 보지 못한다.
+Delay pattern은 codebook마다 출력을 한 단계씩 늦춰 이를 피한다.[^musicgen]
 시간 1의 ID가 `(3, 7)`, 시간 2의 ID가 `(5, 2)`인 가상 예를 보자.
 
 | 생성 단계 | 첫 codebook | 둘째 codebook |
@@ -866,95 +872,47 @@ Kanana-o의 음성 생성 모델도 이 방식을 쓴다.[^lmspt-kanana]
 | 2 | 5 (시간 2) | 7 (시간 1) |
 | 3 | 종료 | 2 (시간 2) |
 
-2단계에서 `5`와 `7`을 함께 예측하지만, `7`은 앞 단계에서 생성한 같은 시간 칸의 `3`을 참고할 수 있다.
-이처럼 codebook마다 한 단계씩 늦추면, 시간 칸이 $T$개이고 codebook이 $K$개일 때 생성 단계는 $T + K - 1$번이다.
-생성 뒤에는 늦춘 위치를 되돌려 같은 시간 칸의 ID들을 묶고 codec decoder에 넣는다.
+2단계에서 `5`와 `7`을 함께 예측하지만, `7`은 앞 단계에서 생성한 같은 시간 칸의 `3`을 볼 수 있다.
+생성 단계는 $T + K - 1$번이다.
+Kanana-o의 음성 생성 모델이 이 방식을 쓴다.[^lmspt-kanana]
 
-### 6-3. 이해와 생성의 결합
+### 6-3. 음성 대화 모델
 
-TTS는 주어진 문장을 읽지만, 음성 대화 모델은 사용자 음성을 이해해 답변 내용도 만들어야 한다.
-듣는 모델과 말하는 모델을 따로 두는 대신, 한 언어 모델이 음성과 텍스트를 입력과 출력 양쪽에서 처리하도록 학습할 수도 있다.
-Voila는 codec token을 텍스트 어휘 뒤에 붙여 이 구성을 만든다.[^voila]
-입력할 때 Voila는 한 시간 위치의 codebook ID 네 개를 각각 embedding으로 바꾼 뒤 평균해, 언어 모델의 한 위치에 벡터 하나로 넣는다.[^voila-code]
-출력할 때는 언어 모델의 hidden state를 받은 Audio Transformer가 네 ID를 차례로 생성한다.
-즉 큰 언어 모델은 시간 위치마다 벡터 하나를 다루고, 여러 codebook을 펼치는 일은 작은 모델이 맡는다.
+TTS는 주어진 문장을 읽지만, 음성 대화 모델은 답의 내용도 만들어야 한다.
+가장 직접적인 구성은 Voila처럼 codec token을 텍스트 어휘에 추가해, 한 언어 모델이 음성과 텍스트를 모두 입력받고 출력하는 것이다.[^voila]
+Voila는 한 시간 칸의 codebook ID 네 개를 embedding의 평균 벡터 하나로 입력하고, 출력은 Moshi의 Depth Transformer처럼 작은 모델이 차례로 생성한다.[^voila-code]
+이 구성에는 두 가지 문제가 있다.
 
-<Details summary="음성 token을 언어 모델의 입력으로 묶는 다른 방법">
+- **음성 데이터가 적다**: 음성 데이터는 텍스트 corpus보다 훨씬 적어서, 텍스트로 배운 지식을 음성으로 옮길 방법이 필요하다.[^glm4voice]
+- **Sequence가 길고 언어 지식을 잃는다**: Speech token sequence는 같은 내용의 텍스트보다 훨씬 길고, 어휘를 늘린 LLM을 다시 학습하면 원래의 언어 지식을 잃을 수 있다.[^kanana-a]
 
-긴 음성의 입력을 더 줄이려면 여러 시점을 묶을 수도 있다.
-MiMo-Audio는 연속한 네 시점의 RVQ token을 patch encoder로 묶어 언어 모델의 한 위치에 넣고, patch decoder가 다음 patch를 생성한다.[^mimo]
-GLM-4-Voice처럼 codebook 하나만 쓰면 시간 위치마다 ID가 하나여서 텍스트처럼 한 줄로 다룰 수 있다.[^glm4voice]
-
-</Details>
-
-입력은 연속 feature로 받고 출력만 discrete token으로 내는 구성도 있다.
-Kanana-o에서 음성을 맡는 Kanana-a가 이 방식이다.[^kanana-a]
-음성 입력은 Whisper encoder와 audio projector를 거쳐 continuous representation이 되고, 음성으로 답할 때는 별도의 Voice Token LM이 discrete token을 만든 뒤 decoder와 vocoder가 파형으로 바꾼다.
-LLM이 생성한 텍스트 응답을 음성으로 바꿀 때, Voice Token LM에는 입력 문맥과 텍스트 응답을 처리하면서 얻은 LLM의 hidden state를 전달한다.
-그래서 텍스트에 없는 감정이나 말투도 음성에 반영할 수 있다.
-카카오는 한 언어 모델이 speech token까지 직접 생성하는 방식과도 비교했다.
-Voice Token LM을 따로 둔 쪽이 계산 효율이 좋았고, 언어 모델이 원래 가진 언어 지식도 안정적으로 유지됐다고 보고한다.[^kanana-a]
-LLaMA-Omni도 LLM의 출력 hidden state를 받아 음성 단위를 예측하는 speech decoder를 따로 둔다.[^llamaomni]
-이런 입출력 구조만으로 음성 대화 능력이 생기지는 않는다.
-Kanana-a는 ASR·TTS로 음성과 텍스트를 연결한 뒤, 음성 질문과 답변을 짝지은 데이터와 발화 지시 데이터로 응답하는 방법을 학습한다.
-아래 표에서 모델 전체는 audio encoder, projector, LLM, Voice Token LM을 뜻하며, token을 Mel spectrogram과 파형으로 바꾸는 모듈은 사전학습된 상태로 고정한다.[^kanana-a]
-
-| 단계 | 학습하는 부분 | 학습 데이터 |
-| --- | --- | --- |
-| 정렬 | projector, Voice Token LM | ASR, TTS |
-| 추가 학습 | 모델 전체 | 음성 이해 데이터를 포함한 자료 |
-| SFT | 모델 전체 | 음성 질의응답, 감정, 지시 이행 |
-
-### 6-4. Interleaving
-
-텍스트와 음성을 한 모델에서 다룰 때는 두 표현의 길이와 속도가 다르다.
-글자 몇 개가 음성에서 수백 밀리초를 차지하고, 음성의 여러 frame이 단어 하나에 대응한다.
-텍스트 전체를 먼저 완성한 뒤 음성 전체를 생성하면 구조는 단순하지만 첫 소리를 내기까지 기다려야 한다.
-Interleaving은 텍스트와 음성을 작은 단위로 번갈아 배치한다.
-이렇게 하면 일부를 먼저 생성할 수 있고, 사전학습된 텍스트 LLM의 지식을 speech token으로 이을 수도 있다.
-사전학습된 텍스트 LLM에서 출발해, 음성과 텍스트를 번갈아 배치한 데이터로 사전학습을 이어 가는 모델들이 이 방식을 쓴다.[^naver-usdm][^glm4voice]
-
-GLM-4-Voice는 음성과 텍스트가 짝지어진 데이터가 텍스트만큼 많지 않다는 문제를 합성으로 푼다.
-텍스트 corpus의 일부 구간을 text-to-token 모델로 speech token으로 바꿔, 텍스트와 speech token이 번갈아 나오는 사전학습 데이터를 만든다.[^glm4voice]
-응답할 때도 텍스트 token 몇 개를 먼저 내고 그에 맞는 speech token을 이어 내므로, 답이 다 완성되기 전에 첫 소리가 나간다.
+**Interleaving**은 첫째 문제의 해법으로, 구성은 그대로 두고 한 sequence 안에 텍스트와 speech token을 번갈아 배치한다.
+GLM-4-Voice는 텍스트 corpus의 일부 구간을 text-to-token 모델로 speech token으로 바꿔 이런 사전학습 데이터를 합성하고, 텍스트로 배운 지식을 음성에서도 쓰게 한다.[^glm4voice]
+응답할 때도 텍스트 token 13개와 speech token 26개를 번갈아 낸다.
+이 비율은 텍스트가 늘 음성보다 앞서도록 정한 것이어서, speech token은 이미 생성한 텍스트를 따라 만들어진다.
+답 전체를 기다리지 않고 앞부분부터 소리로 바꿀 수도 있다.
 
 <Figure src="https://arxiv.org/html/2412.02612v1/overall-arch.png" alt="GLM-4-Voice의 학습 단계와 구조. 왼쪽 위는 텍스트 corpus에서 text-to-token 모델로 텍스트 token과 speech token이 번갈아 나오는 데이터를 합성해 사전학습하는 1단계, 왼쪽 아래는 음성 질문에 텍스트 답과 음성 답을 잇는 형식으로 fine-tuning하는 2단계다. 오른쪽은 speech tokenizer를 거친 사용자 음성을 받은 모델이 text와 speech 조각을 번갈아 출력하고 speech decoder가 음성을 만드는 구조다." caption="GLM-4-Voice의 학습과 추론. 왼쪽 위는 합성한 interleaved 데이터로 하는 사전학습이고, 오른쪽은 텍스트와 speech token을 번갈아 내는 응답 과정이다." source="Zeng et al. (2024), Figure 2 · CC BY 4.0" wide />
 
-### 6-5. 발화 지시를 따르는 학습
+**음성 생성 모듈의 분리**는 둘째 문제의 해법이다.
+Kanana-o에서 음성을 맡는 Kanana-a는 음성 입력을 Whisper encoder와 projector를 거친 continuous representation으로 받고, LLM은 텍스트 답만 생성한다.[^kanana-a]
+Speech token은 별도의 작은 Voice Token LM이 LLM의 마지막 hidden state를 받아 생성하므로, 텍스트에 없는 감정이나 말투도 음성에 반영할 수 있다.
+카카오는 한 모델이 speech token까지 생성하는 방식보다 이 구성이 계산 효율이 좋고 LLM의 언어 지식도 유지된다고 보고한다.
 
-Speech token에 속도나 억양 같은 음향 특성을 담을 수 있다고 해서, 모델이 “아주 빠르게 읽어 줘” 같은 발화 지시를 정확히 따르는 것은 아니다.
-카카오는 Kanana-o에 이 능력을 기르려고, 화자와 문장은 같고 발화 지시만 다르게 생성한 음성들로 선호쌍을 만들었다.[^lmspt-kanana]
-예를 들어 같은 문장을 아주 빠르게 읽은 음성과 적당히 빠르게 읽은 음성을 비교하면, “아주 빠르게”라는 지시에서는 전자를, “빠르게”라는 지시에서는 후자를 선호한다.
-카카오는 이 선호쌍으로 reward model을 학습했다.
-같은 음성 쌍이라도 기준 지시에 따라 선호가 바뀌므로, reward model은 음성 자체의 품질보다 지시와 음성이 맞는지를 배우게 된다.
-카카오는 이 reward model의 점수로 online RL을 적용했다.
-다만 정책이 지시 점수만 높이도록 학습되면, 빠르게 말하는 대신 음절을 빠뜨리는 reward hacking이 생길 수 있다.
-그래서 카카오는 발화 오류율, 화자 유사도, 음질도 함께 보상에 반영했다.
+두 방식은 출발한 문제가 다르지만, 모두 답의 텍스트를 음성보다 먼저 정한다.
+내용은 텍스트로 사전학습한 LLM이 정하고, speech token은 그 내용을 소리로 옮긴다.
+텍스트를 거친다는 점은 cascade와 같지만, 사용자 음성을 전사 없이 받고 음성을 생성할 때도 텍스트뿐 아니라 모델의 문맥을 함께 본다는 점이 다르다.
+
+### 6-4. 발화 지시를 따르는 학습
+
+Speech token이 속도나 억양을 담을 수 있어도, 모델이 “아주 빠르게 읽어 줘” 같은 발화 지시를 정확히 따르는 것은 아니다.
+Kanana-o는 이 능력을 RLHF와 같은 방식으로 기른다.[^lmspt-kanana]
+화자와 문장은 같고 발화 지시만 다르게 생성한 음성으로 선호쌍을 만든다.
+같은 문장을 아주 빠르게 읽은 음성과 적당히 빠르게 읽은 음성이 있으면, “아주 빠르게”라는 지시에서는 전자를, “빠르게”라는 지시에서는 후자를 선호한다.
+같은 쌍이라도 지시에 따라 선호가 바뀌므로, 이 선호쌍으로 학습한 reward model은 음질보다 지시와 음성이 맞는지를 배운다.
+Reward model의 점수만으로 online RL을 하면 음절을 빠뜨려 속도를 올리는 식의 reward hacking이 생기므로, 보상에 발화 오류율, 화자 유사도, 음질 점수를 함께 넣는다.
 
 ## 7. 실시간 대화
-
-### 7-1. Streaming과 지연
-
-Streaming은 입력이나 출력을 전체가 끝날 때까지 기다리지 않고 작은 구간(chunk) 단위로 처리하는 방식이다.
-Streaming 시스템은 사용자 발화가 길어도 이미 들어온 구간부터 처리하고, 응답 전체가 완성되기 전에 첫 소리를 낼 수 있다.
-이때 현재 출력이 미래 입력에 의존하지 않는 causal 구조가 유용하다.
-녹음된 구간 전체를 보는 encoder는 그 구간이 끝나야 feature를 낼 수 있지만, causal encoder는 소리가 들어오는 대로 feature를 낸다.
-
-Chunk의 길이는 기다리는 시간을 정한다.
-모델은 chunk 하나가 다 들어와야 처리를 시작하므로, chunk가 80 ms이면 적어도 80 ms를 기다린다.
-Chunk를 줄이면 기다리는 시간은 짧아지지만, 같은 길이의 소리에 모델을 더 여러 번 돌려야 해서 계산이 늘어난다.
-
-사용자가 느끼는 지연은 다음 시간을 모두 더한 것이다.
-
-- 입력 chunk가 다 들어오기를 기다리는 시간
-- 모델이 계산하는 시간
-- 출력 token을 소리로 바꾸고 재생을 준비하는 시간
-
-예를 들어 Moshi는 80 ms 길이의 frame 단위로 듣고 말한다.[^moshi]
-Moshi는 한 frame의 acoustic token을 semantic token보다 한 frame 늦게 생성하므로, frame 하나의 80 ms에 이 80 ms가 더해져 이론상 지연이 160 ms다.
-실제 지연은 약 200 ms라고 보고한다.
-
-### 7-2. Full duplex
 
 Half duplex 대화에서는 한쪽 발화가 끝난 뒤에 다른 쪽이 말한다.
 Full duplex는 양쪽의 듣기와 말하기가 겹칠 수 있는 대화다.
@@ -964,10 +922,11 @@ Full duplex는 양쪽의 듣기와 말하기가 겹칠 수 있는 대화다.
 
 그림의 Overlap과 Backchannel처럼, 사람은 상대가 말하는 동안 끼어들거나 “네”라고 짧게 반응한다.
 Half duplex 시스템은 말하는 동안 듣지 않으므로, 이런 겹침을 만들지도 알아듣지도 못한다.
-Streaming TTS를 붙인 cascade 음성 비서도 말하는 동안 사용자 음성을 처리하지 않는다면 half duplex다.
+응답이 빨라도, 말하는 동안 사용자 음성을 처리하지 않는 cascade 음성 비서는 half duplex다.
 
 Moshi는 사용자 음성과 모델의 음성을 별도의 병렬 스트림으로 둔다.[^moshi]
 80 ms마다 사용자 스트림의 새 frame을 받고 자기 스트림의 다음 frame을 내므로, 말하면서 들을 수 있다.
+실제 지연은 약 200 ms라고 보고한다.
 또 각 시간 칸에서 자기가 할 말의 텍스트 token을 speech token보다 먼저 예측한다.
 가상의 예로 보자.
 
@@ -1043,13 +1002,10 @@ Full-Duplex-Bench는 사용자의 쉼을 기다리는지, 맞장구(backchannel)
 [^cosyvoice]: Du, Z., et al. (2024). CosyVoice: A Scalable Multilingual Zero-shot Text-to-speech Synthesizer based on Supervised Semantic Tokens. *arXiv preprint arXiv:2407.05407*. [논문](https://arxiv.org/abs/2407.05407).
 [^voila]: Shi, Y., Shu, Y., Dong, S., Liu, G., Sesay, J., Li, J., & Hu, Z. (2025). Voila: Voice-Language Foundation Models for Real-Time Autonomous Interaction and Voice Role-Play. *arXiv preprint arXiv:2505.02707*. [논문](https://arxiv.org/abs/2505.02707).
 [^voila-code]: Maitrix.org. (2025). Voila. *GitHub repository*. [코드](https://github.com/maitrix-org/Voila).
-[^mimo]: Xiaomi LLM-Core Team. (2025). MiMo-Audio: Audio Language Models are Few-Shot Learners. *arXiv preprint arXiv:2512.23808*. [논문](https://arxiv.org/abs/2512.23808).
 [^kanana-a]: Kakao. (2025). 이미지와 음성을 아우르는 카카오의 멀티모달 언어모델 Kanana-o 알아보기. *kakao tech*. [글](https://tech.kakao.com/posts/702).
 [^lmspt]: Jo, D., Yun, J., Roh, B., & Kim, S. (2026). LM-SPT: LM-Aligned Semantic Distillation for Speech Tokenization. *IEEE Transactions on Audio, Speech and Language Processing*, 34, 3714–3727. [논문](https://arxiv.org/abs/2506.16738).
 [^lmspt-code]: Kakao Corp. (2026). LM-SPT: LM-Aligned Semantic Distillation for Speech Tokenization. *GitHub repository*. [코드](https://github.com/kakao/lmspt).
 [^lmspt-kanana]: Kakao. (2026). 잘 말하는 AI를 넘어, 원하는 대로 말하는 AI로: Kanana-o 음성 생성 고도화 과정. *kakao tech*. [글](https://tech.kakao.com/posts/827).
-[^llamaomni]: Fang, Q., Guo, S., Zhou, Y., Ma, Z., Zhang, S., & Feng, Y. (2024). LLaMA-Omni: Seamless Speech Interaction with Large Language Models. *arXiv preprint arXiv:2409.06666*. [논문](https://arxiv.org/abs/2409.06666).
-[^naver-usdm]: Kim, H., et al. (2024). Paralinguistics-Aware Speech-Empowered Large Language Models for Natural Conversation. *Advances in Neural Information Processing Systems*. [논문](https://arxiv.org/abs/2402.05706), [공개 구현](https://github.com/naver-ai/usdm).
 [^oversmooth]: Ren, Y., Tan, X., Qin, T., Zhao, Z., & Liu, T.-Y. (2022). Revisiting Over-Smoothness in Text to Speech. *Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics*. [논문](https://arxiv.org/abs/2202.13066).
 [^valle]: Wang, C., Chen, S., Wu, Y., Zhang, Z., et al. (2023). Neural Codec Language Models are Zero-Shot Text to Speech Synthesizers. *arXiv preprint arXiv:2301.02111*. [논문](https://arxiv.org/abs/2301.02111).
 [^glm4voice]: Zeng, A., Du, Z., Liu, M., et al. (2024). GLM-4-Voice: Towards Intelligent and Human-Like End-to-End Spoken Chatbot. *arXiv preprint arXiv:2412.02612*. [논문](https://arxiv.org/abs/2412.02612).
