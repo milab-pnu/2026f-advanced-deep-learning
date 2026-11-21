@@ -1,31 +1,32 @@
 ---
-title: "NeRF and Gaussian Splatting"
+title: "사진 기반 3D 장면 복원과 새 시점 합성"
 week: 12
 order: 1
 ---
 
-여러 시점에서 찍은 사진으로 장면을 복원하면, 찍지 않은 시점의 이미지도 렌더링할 수 있다.[^survey]
-NeRF는 장면을 밀도와 색을 내는 신경망으로 두고 volume rendering으로 이미지를 만들어 새 시점 이미지의 품질을 크게 끌어올렸지만, 학습과 렌더링이 느렸다.
-3D Gaussian Splatting(3DGS)은 NeRF와 같은 픽셀 합성 식을 유지한 채 장면을 명시적인 Gaussian 집합으로 바꿔 실시간 렌더링에 이르렀다.
-그래도 두 방법 모두 사진의 카메라 parameter를 미리 추정하고, 장면마다 표현을 처음부터 최적화해야 한다.
-이 노트는 NeRF에서 3DGS로 가는 계보를 따라간 뒤, 이 두 단계를 학습된 모델의 한 번 예측으로 바꾸는 두 갈래를 살펴본다.
+import cloneSplit from "./assets/week12-gaussian-clone-split.png";
+import trainComparison from "./assets/week12-train-novel-view.webp";
 
-## 1. Novel view synthesis
+여러 방향에서 찍은 기관차 사진이 있다. 사진 사이로 카메라를 옮겼을 때 차체 뒤로 가려지는 선로와 반대쪽 배경이 어떻게 보일까?
+NeRF는 광선 위의 밀도와 색을 합쳐 이 픽셀들을 계산한다. 3D Gaussian Splatting(3DGS)은 반투명한 타원체를 화면에 투영해 앞뒤 순서에 따라 색을 합성하면서 렌더링을 빠르게 했다.[^survey]
 
-### 1-1. 문제 설정
+## 1. 관측한 장면의 새 시점
 
-Novel view synthesis는 한 장면을 여러 시점에서 찍은 사진과 각 사진의 카메라 parameter를 받아, 사진에 없는 시점의 이미지를 만드는 task다.
-카메라 parameter는 내부 parameter와 외부 parameter(pose)를 함께 가리키고, 이를 알면 픽셀마다 카메라 중심 $\mathbf o$에서 그 픽셀을 지나는 광선 $\mathbf r(t)=\mathbf o+t\,\mathbf d$를 정할 수 있다.
+### 1-1. 학습 사진과 새 카메라
+
+Novel view synthesis의 목표는 관측한 장면을 새로운 시점에서 본 이미지를 만드는 것이다.
+원래의 NeRF와 3DGS에서는 학습 사진 여러 장과 각 사진의 카메라 파라미터를 입력으로 쓴다.
+카메라 파라미터는 내부 파라미터와 외부 파라미터(pose)를 함께 가리키고, 이를 알면 픽셀마다 카메라 중심 $\mathbf o$에서 그 픽셀을 지나는 광선 $\mathbf r(t)=\mathbf o+t\,\mathbf d$를 정할 수 있다.
 
 NeRF와 3DGS는 모두 학습용 사진의 카메라에서 렌더링한 이미지와 사진의 차이를 미분 가능한 렌더링으로 줄여 3D 표현을 학습한다.
 학습이 끝나면 새 카메라에서 렌더링해 새 시점의 이미지를 얻는다.
-이 최적화는 장면 하나마다 처음부터 하고, 학습한 parameter는 그 장면만 표현한다.
+이 최적화는 장면 하나마다 처음부터 하고, 학습한 파라미터는 그 장면만 표현한다.
 
 ### 1-2. Structure from motion
 
-실제로 찍은 사진에는 카메라 parameter가 붙어 있지 않다.
+일반 사진 묶음에서는 각 사진을 찍은 카메라의 위치와 방향을 모르는 경우가 많다.
 그래서 복원 전에 사진만으로 카메라를 추정하는 단계가 필요하고, 표준 도구는 structure from motion(SfM)이다.
-SfM은 여러 시점의 사진에서 카메라 parameter와 장면의 3D 점을 함께 복원한다.
+SfM은 여러 시점의 사진에서 카메라 파라미터와 장면의 3D 점을 함께 복원한다.
 널리 쓰이는 구현인 COLMAP의 incremental SfM은 다음 순서로 진행한다.[^colmap]
 
 1. 각 사진에서 특징점(feature)을 찾고, 사진 사이에서 같은 점으로 보이는 특징점을 짝짓는다.
@@ -33,7 +34,7 @@ SfM은 여러 시점의 사진에서 카메라 parameter와 장면의 3D 점을 
 3. 사진을 하나씩 추가하며 카메라 pose를 정하고, 여러 사진에서 보인 특징점을 삼각측량(triangulation)해 3D 점을 만든다.
 4. 3D 점을 각 사진에 투영한 위치와 실제 특징점 위치의 차이가 줄도록 모든 카메라와 3D 점을 함께 조정한다(bundle adjustment).
 
-결과물은 사진마다의 카메라 parameter와, 짝지은 특징점에서 얻은 성긴(sparse) point cloud다.
+결과물은 사진마다의 카메라 파라미터와, 짝지은 특징점에서 얻은 성긴(sparse) point cloud다.
 NeRF는 실제 사진의 카메라를 COLMAP으로 추정했다.[^nerf]
 3DGS는 카메라에 더해 이 point cloud를 Gaussian의 초기 위치로도 쓴다.[^3dgs]
 
@@ -41,20 +42,23 @@ NeRF는 실제 사진의 카메라를 COLMAP으로 추정했다.[^nerf]
 
 ### 2-1. 장면 함수
 
-NeRF는 장면을 radiance field로 표현하고, 이 함수를 MLP(multi-layer perceptron) $F_\Theta$ 하나로 근사한다.[^nerf]
+NeRF는 장면을 radiance field로 표현하고, 다음 대응을 MLP(multi-layer perceptron) $F_\Theta$로 근사한다.[^nerf]
 
 $$
 F_\Theta:(\mathbf x,\mathbf d)\mapsto(\mathbf c,\sigma)
 $$
 
 입력은 3차원 위치 $\mathbf x$와 2차원 시선 방향을 합친 5D 좌표이고, 구현에서는 방향을 3차원 단위벡터 $\mathbf d$로 넣는다.
-출력은 그 위치의 밀도 $\sigma\ge0$과, 그 위치에서 방향 $\mathbf d$로 내보내는 색 $\mathbf c=(r,g,b)$다.
+출력은 그 위치의 밀도 $\sigma\ge0$과, 그 점을 광선 방향 $\mathbf d$로 바라볼 때 카메라에 보이는 색 $\mathbf c=(r,g,b)$다.
 밀도는 위치만으로, 색은 위치와 방향으로 정한다는 radiance field의 제한을 MLP 구조가 그대로 따른다.
 위치만 받는 MLP가 $\sigma$와 feature를 내고, 이 feature에 방향을 붙여 얕은 층 하나를 더 거쳐 색을 낸다.
 
 ### 2-2. Volume rendering
 
 픽셀 하나의 색은 그 픽셀의 광선을 따라 밀도와 색을 쌓아서 정한다.
+광선 방향을 단위벡터로 정규화해 $t$를 광선을 따라 이동한 거리로 재자.
+방향의 카메라 좌표 $z$ 성분을 1로 두는 표기에서는 $t$가 광축을 따른 깊이다.
+이때는 $t$의 간격에 방향 벡터의 길이를 곱해야 실제 이동 거리가 된다.
 광선이 장면을 지나는 구간을 $[t_n,t_f]$라 하면, NeRF가 쓰는 픽셀 색은 다음 적분이다.
 
 $$
@@ -64,8 +68,9 @@ T(t)=\exp\Big(-\int_{t_n}^{t}\sigma(\mathbf r(s))\,ds\Big)
 $$
 
 $T(t)$는 투과율(transmittance)로, 광선이 $t_n$에서 $t$까지 아무것에도 막히지 않고 도달할 확률이다.
-$\sigma(\mathbf r(t))\,dt$는 광선이 $t$ 근처의 짧은 구간에서 막힐 확률이다.
-따라서 $T(t)\,\sigma\,dt$는 광선이 $t$ 근처에서 처음 막힐 확률이고, 픽셀 색은 이 확률로 가중한 색의 평균이다.
+$\sigma(\mathbf r(t))\,dt$는 $t$까지 도달한 광선이 바로 다음 짧은 구간에서 막힐 조건부 확률의 1차 근사다.
+따라서 $T(t)\,\sigma\,dt$는 광선이 $t$ 근처에서 처음 막힐 확률이고, 픽셀 색은 각 위치의 색을 이 확률로 가중한 합이다.
+끝까지 광선이 막히지 않을 수 있으므로 배경색이 있다면 $T(t_f)$에 그 색을 곱해 더한다.
 앞에 밀도가 큰 물체가 있으면 $T$가 빠르게 0으로 떨어져 뒤쪽 점은 거의 기여하지 못한다.
 
 적분은 광선 위의 표본점으로 근사한다.
@@ -81,10 +86,10 @@ $$
 T_i=\exp\Big(-\sum_{j=1}^{i-1}\sigma_j\delta_j\Big)=\prod_{j=1}^{i-1}(1-\alpha_j)
 $$
 
-$\alpha_i$는 광선이 $i$번째 칸 안에서 막힐 확률, 즉 그 칸의 불투명도다.
+$\alpha_i$는 광선이 $i$번째 구간까지 도달했다는 조건에서 그 안에서 막힐 확률이다.
 $T_i$의 두 표현이 같은 이유는 $\exp(-\sum_j\sigma_j\delta_j)=\prod_j\exp(-\sigma_j\delta_j)$이고 $\exp(-\sigma_j\delta_j)=1-\alpha_j$이기 때문이다.
 곱의 꼴로 쓰면 이 식은 반투명한 층을 앞에서부터 겹쳐 칠하는 알파 합성(alpha compositing)과 같고, NeRF 원논문도 이 점을 밝힌다.
-가중치 $w_i=T_i\alpha_i$는 광선이 $i$번째 칸에서 처음 막힐 확률이다.
+앞 구간을 모두 통과할 확률 $T_i$까지 곱한 $w_i=T_i\alpha_i$가 그 구간에서 **처음** 막힐 확률이다.
 
 <Callout type="example">
 광선 위에 점 세 개를 뽑았고 간격은 모두 $\delta=0.5$라 하자.
@@ -96,18 +101,22 @@ MLP가 낸 밀도는 $\sigma=(0,\,1.4,\,4.6)$이고, 둘째 점의 색은 빨강
 - 가중치: $w=(0,\ 0.50,\ 0.50\times0.90=0.45)$.
 - 픽셀 색: $\hat C=0.50\times(1,0,0)+0.45\times(0,0,1)=(0.50,\,0,\,0.45)$.
 
-가중치의 합은 0.95이므로 광선의 5%는 세 점을 모두 통과한다.
+가중치의 합은 약 0.95다.
+남은 약 5%에는 배경색이 들어가며 위 계산은 검은 배경을 가정했다.
 둘째 점이 반투명해서 뒤의 파란 점도 색에 거의 같은 몫으로 섞였다.
 둘째 점의 밀도가 커져 $\alpha_2$가 1에 가까워지면 $T_3$이 0에 가까워지고, 파란 점은 가려진다.
 이 값들은 이해를 위한 가상 예다.
 </Callout>
 
-학습은 사진의 픽셀에서 광선 batch를 뽑아 이 식으로 색을 렌더링하고, 실제 픽셀 색과의 제곱 오차를 줄인다.
-식의 모든 연산이 미분 가능하므로, 오차의 gradient는 각 점의 $\sigma_i$와 $\mathbf c_i$를 거쳐 MLP의 weight까지 전달된다.
+학습할 때는 사진에서 픽셀 여러 개를 뽑는다.
+각 픽셀의 광선을 따라 색을 렌더링하고 실제 픽셀 색과의 제곱 오차를 줄인다.
+식의 모든 연산이 미분 가능하므로, 오차의 gradient는 각 점의 $\sigma_i$와 $\mathbf c_i$를 거쳐 MLP의 가중치까지 전달된다.
+
+스탠퍼드 CS248A 강의 그림의 아래쪽에는 같은 굴착기 장면을 지나는 광선 두 개가 있다. 두 번째 광선의 밀도 곡선에는 봉우리가 둘이다. 각각의 위치에서 얻은 색은 앞쪽을 통과한 빛의 비율에 따라 한 픽셀에 섞이고, 오른쪽 끝에서 그 픽셀과 사진 속 같은 픽셀의 색을 비교한다. [NeRF 학습과 렌더링 그림](https://gfxcourses.stanford.edu/cs248a/winter25content/media/scenerecovery/16_scenerecovery.pdf#page=22)
 
 ### 2-3. Positional encoding
 
-좌표를 MLP에 그대로 넣었을 때 NeRF는 색과 형상의 세밀한 변화를 잘 표현하지 못했다.
+위치와 방향의 좌표만 MLP에 넣었을 때 NeRF는 색과 형상의 세밀한 변화를 잘 표현하지 못했다.
 NeRF 원논문은 이 현상을 신경망이 낮은 주파수의 함수를 더 쉽게 배우는 경향으로 설명한다.
 가까운 두 위치는 입력값도 거의 같아서, 신경망 출력도 거의 같아지기 쉽다.
 그래서 NeRF는 좌표 하나 $p$를 여러 주파수의 사인과 코사인으로 펼친 뒤 MLP에 넣는다.
@@ -140,13 +149,13 @@ NeRF는 hierarchical sampling으로 색에 기여하는 곳에 점을 몰아준�
 먼저 광선마다 64개 점을 stratified sampling으로 뽑아 coarse 네트워크로 계산한다.
 그 결과의 가중치 $w_i$를 합이 1이 되게 정규화하면 광선 위의 구간별 확률분포가 된다.
 이 분포에서 128개 점을 더 뽑고, 두 집합을 합친 192개 점을 별도의 fine 네트워크로 계산해 최종 색을 낸다.
-앞의 예시라면 가중치가 $(0,\,0.50,\,0.45)$이므로, 추가 점은 둘째와 셋째 점 근처에 몰리고 빈 공간인 첫째 점 근처에는 뽑히지 않는다.
+예를 들어 두 구간의 가중치가 0.50과 0.45라면, 두 구간 사이에서 추가 표본을 나눌 비율은 약 53 대 47이다.
 학습 손실에는 coarse와 fine 두 렌더링의 오차를 모두 더한다.
 
 그래도 계산량은 크다.
 NeRF는 렌더링할 때 광선 하나에 coarse 64번, fine 192번, 모두 256번 MLP를 계산한다.
 이미지 한 장은 광선 64만~76만 개라서 MLP 계산이 1.5억~2억 번 필요하고, V100 GPU(graphics processing unit) 한 대로 장당 약 30초가 걸린다.
-학습도 장면 하나에 V100 한 대로 10만~30만 iteration, 약 1~2일이 걸린다.
+학습도 장면 하나에 V100 한 대로 약 1~2일 동안 10만~30만 회 갱신한다.
 
 Hybrid 표현은 이 비용 가운데 MLP의 크기를 줄인다.
 Instant-NGP는 여러 해상도의 격자에 학습 가능한 feature를 저장하는 hash grid를 두고, 표본점마다 주변 feature를 보간해 작은 MLP에 넣는다.[^instant-ngp]
@@ -160,8 +169,8 @@ Instant-NGP는 여러 해상도의 격자에 학습 가능한 feature를 저장�
 
 NeRF가 느린 이유는 장면이 연속 함수라서, 어디에 무엇이 있는지 알려면 공간의 점을 뽑아 일일이 물어봐야 한다는 데 있다.
 3DGS는 장면을 처음부터 명시적인 3D Gaussian의 집합으로 둔다.[^3dgs]
-Gaussian은 내용이 있는 곳에만 놓이므로 빈 공간을 계산하는 비용이 사라진다.
-Gaussian 하나는 다음 parameter를 가진다.
+화면에 투영된 Gaussian이 덮는 픽셀을 처리하므로, 각 광선의 빈 구간에서 밀도를 반복해서 질의하는 비용을 피한다.
+Gaussian 하나는 다음 파라미터를 가진다.
 
 - 중심 $\boldsymbol\mu\in\mathbb R^3$: Gaussian의 위치다.
 - 공분산 $\Sigma\in\mathbb R^{3\times3}$: 타원체의 크기와 방향이다. 축마다 크기가 다른 비등방(anisotropic) 모양을 허용한다.
@@ -180,8 +189,8 @@ $$
 $$
 
 $S$는 3차원 scale 벡터 $\mathbf s$를 대각에 놓은 행렬이고, $R$은 단위 quaternion $\mathbf q$에서 만든 회전 행렬이다.
-$\mathbf s$와 $\mathbf q$를 어떻게 갱신해도 $\Sigma$는 항상 유효한 공분산이 된다.
-Scale에는 exponential을 씌워 양수로 유지한다.
+학습한 축별 크기 변수에는 지수 함수를 적용해 양수로 만들고, 회전 변수는 길이 1로 정규화한 뒤 사용한다.
+이렇게 구성한 $\Sigma$는 양의 정부호여서 Gaussian 식의 역행렬도 정의된다.
 
 SH는 구면 위의 함수를 기저 함수의 합으로 나타내는 방법이다.
 0차 계수는 방향과 무관한 색이고, 차수를 올릴수록 방향에 따른 변화를 더 세밀하게 나타낸다.
@@ -193,33 +202,37 @@ SH는 구면 위의 함수를 기저 함수의 합으로 나타내는 방법이�
 ### 3-2. Tile 기반 rasterization
 
 3DGS는 광선마다 점을 뽑는 대신 Gaussian을 화면에 투영(splatting)해 렌더링한다.
-3D Gaussian을 카메라 좌표로 옮기고 원근 투영을 국소적으로 선형 근사하면, 화면 위의 2D Gaussian을 얻는다.
+Gaussian 중심을 카메라 좌표로 옮긴 뒤 원근 투영하면 화면 타원의 중심 $(u,v)$가 나온다.
+타원의 크기와 기울기는 중심 주변의 작은 3D 변위가 화면에서 어떻게 늘어나거나 줄어드는지로 정한다.
 
 $$
 \Sigma'=JW\Sigma W^\top J^\top
 $$
 
-$W$는 world 좌표에서 카메라 좌표로의 변환이고, $J$는 투영을 affine으로 근사한 Jacobian이다.
-$\Sigma'$에서 2×2 부분을 취하면 화면 위 타원의 모양이 된다.
+$W$는 세계 좌표에서 카메라 좌표로 옮기는 변환의 선형 부분(회전)이다.
+평행이동을 해도 카메라 좌표계에서의 3D 공분산은 그대로다.
+$J$는 그 중심에서 화면 좌표 $(u,v)$를 카메라 좌표 $(X_c,Y_c,Z_c)$로 미분한 $2\times3$ Jacobian이다. 중심의 깊이가 달라지면 $J$도 변하므로 같은 Gaussian이라도 화면에 맺히는 타원의 크기는 달라진다.
+이 표기에서 $W$와 $\Sigma$는 각각 $3\times3$이고, $\Sigma'$는 곧바로 화면 타원의 모양을 정하는 $2\times2$ 공분산이다.
 픽셀 $\mathbf p$에서 $i$번째 Gaussian의 불투명도는, 학습한 불투명도에 그 픽셀에서의 2D Gaussian 값을 곱한 $\alpha_i=o_i\,G_i^{2D}(\mathbf p)$다.
 색 $\mathbf c_i$는 보는 방향을 넣어 SH를 계산해 얻는다.
 
 알파 합성을 하려면 Gaussian을 앞에서 뒤로 정렬해야 한다.
 픽셀마다 따로 정렬하면 비싸므로, 3DGS는 이미지 전체의 Gaussian을 한 번에 정렬한다.
-화면을 16×16 픽셀 tile로 나누고, 각 Gaussian을 겹치는 tile마다 복제해 (tile ID, 깊이) key를 붙인 뒤 GPU에서 한 번에 정렬한다.
+화면을 16×16 픽셀 tile로 나누고, 각 Gaussian이 걸치는 모든 tile의 목록에 그 Gaussian의 번호를 기록한다. GPU는 이 항목들을 (tile ID, 깊이) 순으로 한 번에 정렬한다.
 그러면 tile마다 깊이 순서의 목록이 생긴다.
 각 픽셀은 자기 tile의 목록을 앞에서부터 읽으며 알파 합성하다가, 누적 불투명도가 1에 가까워지면 멈춘다.
 
-<Figure src="https://arxiv.org/html/2401.03890v9/fig_3dgs.png" alt="(a) 빨강, 초록, 파랑 3D Gaussian이 화면에 타원으로 투영된다. (b) 화면이 네 tile로 나뉘고 각 타원이 하나 이상의 tile에 걸친다. (c) 여러 tile에 걸친 Gaussian이 tile마다 복제되어 tile 번호와 깊이 key를 받고, key 순서로 정렬된다. (d) Tile 하나의 픽셀들이 정렬된 Gaussian을 읽어 병렬로 계산된다." caption="3DGS의 렌더링 순서. (a) Gaussian을 화면에 투영하고 (b) 화면을 tile로 나눈 뒤 (c) 여러 tile에 걸친 Gaussian을 tile마다 복제해 (tile ID, 깊이) key로 한 번에 정렬하고 (d) tile마다 독립적으로 픽셀 색을 계산한다." source="Chen & Wang (2026), Figure 2 · CC BY 4.0" wide />
+<Figure src="https://arxiv.org/html/2401.03890v9/fig_3dgs.png" alt="(a) 빨강, 초록, 파랑 3D Gaussian이 화면에 타원으로 투영된다. (b) 화면이 네 tile로 나뉘고 각 타원이 하나 이상의 tile에 걸친다. (c) 여러 tile에 걸친 Gaussian의 번호가 각 tile의 목록에 기록되고, 목록 항목들이 tile 번호와 깊이 순으로 정렬된다. (d) Tile 하나의 픽셀들이 정렬된 Gaussian을 읽어 병렬로 계산된다." caption="3DGS의 렌더링 순서. (a) Gaussian을 화면에 투영하고 (b) 화면을 tile로 나눈 뒤 (c) Gaussian 번호를 (tile ID, 깊이) 순으로 정렬하고 (d) tile마다 독립적으로 픽셀 색을 계산한다." source="Chen & Wang (2026), Figure 2 · CC BY 4.0" wide />
 
 정렬은 Gaussian마다 하나의 깊이로 한 번만 하고, 픽셀별로 다시 정렬하지 않는다.
 그래서 겹친 Gaussian의 실제 앞뒤가 픽셀마다 다를 때 합성 순서는 근사가 된다.
-원논문은 Gaussian이 픽셀 크기에 가까워질수록 이 근사의 영향이 작아지고, 수렴한 장면에서는 눈에 띄는 오류가 없었다고 보고한다.
-이 과정 전체가 미분 가능하므로 픽셀 오차의 gradient는 그 픽셀에 겹친 모든 Gaussian의 중심, 공분산, 불투명도, SH 계수로 전달된다.
+겹치는 Gaussian이 작으면 화면에서 앞뒤 순서가 뒤바뀌는 영역도 작아져 오차가 덜 눈에 띈다.
+정렬 순서와 픽셀에 기여하는 Gaussian 집합이 고정된 구간에서는 투영과 알파 합성을 미분할 수 있다.
+픽셀 오차의 gradient는 그 색에 기여한 Gaussian의 중심, 공분산, 불투명도와 SH 계수로 전달된다.
 
 ### 3-3. NeRF와 같은 합성 식
 
-3DGS의 픽셀 색은 그 픽셀에 겹친 Gaussian을 깊이 순으로 놓은 집합 $\mathcal N$으로 계산한다.
+3DGS의 픽셀 색은 그 픽셀에 겹친 Gaussian을 깊이 순으로 정렬한 목록 $\mathcal N$으로 계산한다.
 NeRF의 이산 식과 나란히 놓으면 다음과 같다.
 
 $$
@@ -230,13 +243,17 @@ $$
 $$
 
 두 식 모두 $T_i=\prod_{j=1}^{i-1}(1-\alpha_j)$를 쓰므로, 이미지를 만드는 식은 같다.[^3dgs]<Sidenote>3DGS 원논문은 NeRF의 식을 이 곱의 꼴로 옮겨 적으면서 곱 안쪽을 $(1-\alpha_i)$로 인쇄했다. NeRF의 이산 식에서 유도하면 $(1-\alpha_j)$가 맞고, 이 노트는 맞는 식을 쓴다.</Sidenote>
-앞의 예시에서 세 점을 불투명도가 $(0,\,0.50,\,0.90)$인 Gaussian 세 개로 바꾸고 같은 색과 순서를 주면 픽셀 색은 똑같이 $(0.50,\,0,\,0.45)$다.
+앞의 빨강·파랑 예에서 해당 픽셀의 유효 불투명도 $o_iG_i^{2D}(\mathbf p)$가 각각 0.50, 0.90이라 하자.
+검은 배경에서 빨강이 앞이면 색은 $(0.50,0,0.45)$다. 파랑이 앞이면 빨강에는 남은 빛의 10%만 도달해 색이 $(0.05,0,0.90)$으로 바뀐다.
+빨강 Gaussian의 중심 불투명도가 $o=0.50$이면, 한 주축을 따라 표준편차 하나 떨어진 픽셀에서는 유효 불투명도가 $0.50e^{-1/2}\approx0.30$이다.
 
 다른 것은 $\alpha_i$와 $\mathbf c_i$를 얻는 방법이다.
 NeRF는 픽셀에서 광선을 쏘아 장면 안의 점을 찾아가고, 점마다 MLP를 계산해 밀도에서 $\alpha_i$를 만든다.
 3DGS는 장면의 Gaussian을 화면으로 보내고, 저장된 불투명도와 2D Gaussian 값에서 $\alpha_i$를 바로 얻는다.
 렌더링의 방향으로 보면 NeRF는 화면에서 장면으로 가는 ray casting이고, 3DGS는 장면에서 화면으로 가는 rasterization이다.[^survey]
-또 NeRF의 $\sigma$는 단위 길이당 밀도라서 간격 $\delta_i$를 곱해야 불투명도가 되지만, 3DGS의 $o_i$는 처음부터 불투명도로 학습한다.
+NeRF에서 밀도와 구간 길이의 곱 $\sigma_i\delta_i$는 광학 깊이다.
+이 구간을 통과하는 비율은 $\exp(-\sigma_i\delta_i)$이고 남은 몫이 불투명도다.
+3DGS에서는 중심의 불투명도 $o_i$를 직접 학습한다.
 
 ### 3-4. Adaptive density control
 
@@ -244,25 +261,20 @@ NeRF는 픽셀에서 광선을 쏘아 장면 안의 점을 찾아가고, 점마�
 손실은 픽셀 오차의 L1 항과 D-SSIM 항을 섞은 $\mathcal L=(1-\lambda)\mathcal L_1+\lambda\mathcal L_{\text{D-SSIM}}$이고, $\lambda=0.2$다.
 D-SSIM은 국소 영역의 밝기, 대비, 구조를 비교하는 SSIM(structural similarity index)에서 만든 손실이다.[^ssim]
 
-Gradient descent는 Gaussian을 움직이고 모양을 바꿀 수 있지만 개수를 바꾸지는 못한다.
-SfM 점이 없던 곳에 형상이 있으면 Gaussian이 모자라고(under-reconstruction), Gaussian 하나가 넓은 영역을 덮으면 세부가 뭉개진다(over-reconstruction).
-그래서 3DGS는 최적화 도중에 Gaussian을 늘리고 지우는 adaptive density control을 끼워 넣는다.
-여기서 density는 Gaussian이 공간에 얼마나 빽빽한지를 뜻하며, NeRF의 밀도 $\sigma$와는 다른 말이다.
+Gradient descent는 Gaussian의 위치와 모양을 바꾸지만 개수는 그대로 둔다.
+3DGS는 주기적으로 화면에 투영된 중심 위치에 대한 손실 gradient의 크기를 확인한다.
+이 Gaussian이 보였던 여러 카메라 뷰에서 이 값이 평균적으로 크면, 위치를 조정할 필요가 큰 Gaussian으로 보고 크기에 따라 복제하거나 분할한다.[^3dgs]
+이를 포함해 공간에 놓는 Gaussian의 개수를 조절하는 절차를 *adaptive density control*이라 한다.
 
-늘리는 기준은 화면 공간에서의 위치 gradient다.
-Gaussian이 모자란 곳과 하나가 너무 넓게 덮은 곳에서는 이 gradient가 크다.
-원논문은 두 경우 모두 아직 복원이 덜 되어 최적화가 Gaussian을 옮기려 하기 때문으로 본다.
-그래서 주기적으로 이 gradient가 큰 Gaussian을 골라 늘린다.
+<Figure src={cloneSplit.src} alt="검은 윤곽과 녹색 Gaussian을 비교한 두 행의 그림. 윗줄의 작은 Gaussian은 복제되고 아랫줄의 큰 Gaussian은 작은 둘로 나뉜다. 최적화를 계속하면 두 경우 모두 녹색 영역이 윤곽에 가까워진다." caption="검은 선은 복원할 형상의 윤곽이다. 윗줄에서는 작은 Gaussian이 닿지 않는 부분이 있어 같은 크기의 복제본을 추가한다(clone). 아랫줄에서는 큰 Gaussian이 윤곽 밖까지 덮으므로 작은 둘로 바꾼다(split). 오른쪽 열은 추가 최적화까지 마친 결과다." source="Kerbl et al. (2023), Figure 4 · CC BY 4.0 · 원본" />
 
-- 작은 Gaussian은 같은 크기로 복제(clone)해 gradient 방향으로 옮긴다.
-- 큰 Gaussian은 둘로 나누고(split) scale을 줄인다. 새 위치는 원래 Gaussian을 확률분포로 삼아 뽑는다.
-
+분할할 때는 원래 Gaussian을 확률분포로 삼아 새 중심을 뽑는다.
 지우는 쪽에서는 불투명도가 임계값보다 낮아 거의 투명한 Gaussian을 지운다(prune).
 또 주기적으로 모든 불투명도를 0 가까이로 낮춘다.
 필요한 Gaussian은 최적화가 불투명도를 다시 올리고, 나머지는 투명하게 남아 지워진다.
 카메라 근처에 불필요한 Gaussian이 늘어나는 것을 막는 장치다.
 
-이렇게 학습한 장면은 Gaussian 100만~500만 개로 표현된다.
+원논문에서 복원한 실제 장면은 Gaussian 약 100만~500만 개로 표현되었다.[^3dgs]
 
 <Video src="https://www.youtube.com/watch?v=T_kXY43VZnk" caption="3DGS 저자들(Inria GraphDeco)이 공식 프로젝트 페이지에 공개한 소개 영상, 약 5분. 방법 개요, 최적화 중의 Gaussian 시각화, 실시간 렌더링 결과, 기존 방법과의 비교 순서로 이어진다." />
 
@@ -277,7 +289,9 @@ Novel view synthesis는 보통 사진 일부를 학습에서 빼 두고, 그 카
 
 여기에 학습 시간, 렌더링 속도(fps), 저장 용량을 함께 본다.
 다음 표는 3DGS 논문이 Mip-NeRF360 데이터셋에서 보고한 값이다.[^3dgs]
-Mip-NeRF 360은 당시 품질이 가장 높던 NeRF 계열 방법이며, 표의 학습 시간은 GPU 한 대로 환산한 값이다.
+Mip-NeRF 360은 비교 대상인 NeRF 계열 방법이고, 3DGS 수치는 30,000회 최적화한 설정이다.
+Mip-NeRF 360의 세 화질 지표는 그 방법의 원논문에서 인용한 값이고, 3DGS의 화질 지표는 3DGS 저자들이 측정한 값이다.
+표의 Mip-NeRF 360 학습 시간은 GPU 한 대로 환산한 값이다.
 
 | 방법 | PSNR ↑ | SSIM ↑ | LPIPS ↓ | 학습 시간 | fps | 저장 용량 |
 |---|---|---|---|---|---|---|
@@ -287,17 +301,21 @@ Mip-NeRF 360은 당시 품질이 가장 높던 NeRF 계열 방법이며, 표의 
 3DGS는 PSNR에서 Mip-NeRF 360보다 조금 낮지만 SSIM과 LPIPS에서는 앞선다.
 이처럼 지표마다 순위가 달라질 수 있어서 세 지표를 함께 본다.
 속도와 저장 용량은 반대 방향으로 갈린다.
-3DGS는 렌더링이 2000배 넘게 빠르지만(134 대 0.06 fps, 계산값), 저장 용량은 약 85배 크다(734MB 대 8.6MB, 계산값).
+표의 fps를 한 장에 걸린 시간으로 바꾸면 Mip-NeRF 360은 약 17초($1/0.06$), 3DGS는 약 7.5밀리초($1/134$)다.
+그 대신 3DGS가 저장하는 장면은 약 85배 크다($734/8.6$, 계산값).
 
 메모리는 3DGS의 가장 분명한 비용이다.
-학습한 장면은 큰 경우 수백 MB이고, 원논문의 최적화하지 않은 구현은 큰 장면을 학습할 때 GPU 메모리를 20GB 넘게 쓴다.[^3dgs]
+학습한 장면은 큰 경우 수백 MB이고, 원논문의 구현은 큰 장면을 학습할 때 GPU 메모리를 20GB 넘게 쓴다.[^3dgs]
 화질에도 한계가 있다.
 관측이 부족한 영역에는 artifact가 남고, 길게 늘어진 Gaussian이 보이기도 한다.
+
+<Figure src={trainComparison.src} alt="같은 시점에서 본 주황색과 청록색 기관차의 두 렌더링. 왼쪽은 기관차 앞에 얼룩이 떠 있고, 오른쪽은 전면이 더 선명하지만 먼 산의 경계와 배경 구조가 뭉개져 있다." caption="두 방법 모두 여러 시점에서 촬영한 같은 기관차 장면의 사진으로 학습했다. 두 패널은 학습한 장면을 같은 새 시점에서 렌더링한 결과다. 왼쪽 Mip-NeRF 360에서는 기관차 전면에 떠 있는 얼룩이, 오른쪽 3DGS에서는 세부가 뭉개진 배경이 보인다. 이 한 시점의 결함은 데이터셋 전체 평균과 구분해서 읽어야 한다." source="Kerbl et al. (2023), Figure 11 · CC BY 4.0 · 두 결과 패널을 원래 순서로 배치" wide />
+
 시점을 옮길 때 화면이 튀는 popping도 생기며, 원논문은 그 원인의 하나로 Gaussian의 합성 순서가 갑자기 바뀔 수 있는 단순한 가시성 처리를 든다.
 표면도 문제다.
 NeRF의 밀도와 3DGS의 Gaussian은 모두 표면을 직접 저장하지 않으므로, 게임이나 시뮬레이션에 쓰는 mesh가 필요하면 별도의 추출 과정을 거쳐야 한다.
 
-## 4. 최적화 없는 예측
+## 4. 관측 사진에서 카메라와 장면 예측
 
 NeRF와 3DGS의 파이프라인에는 무거운 단계가 둘 있다.
 하나는 SfM으로 카메라를 추정하는 단계다.
@@ -306,11 +324,11 @@ DUSt3R 논문은 시점이 적거나, 보는 방향에 따라 겉모습이 크�
 이 단계는 3DGS로도 수십 분, NeRF로는 하루 이상 걸린다.
 또 장면별 최적화로 좋은 품질을 내려면 한 장면에 사진 수십 장이 필요하다.[^pixelsplat]
 두 단계는 서로 다른 문제라서 이를 줄이는 연구도 두 갈래로 나뉜다.
-두 갈래는 큰 데이터로 학습한 신경망이 한 번의 forward pass로 답을 낸다는 방향을 공유한다.
+두 갈래 모두 많은 장면으로 미리 학습한 신경망에 새 사진을 넣어 결과를 예측한다.
 
-### 4-1. 이미지 쌍의 pointmap
+### 4-1. 이미지 쌍에서 카메라 추정
 
-Pose 추정 갈래의 출발점인 DUSt3R는 내부 parameter를 포함한 카메라 정보 없이 이미지 두 장만 받아 3D 형상을 바로 회귀한다.[^dust3r]
+DUSt3R는 카메라 정보를 주지 않아도 사진 두 장에서 각 픽셀에 보이는 점의 3D 위치를 예측한다.[^dust3r]
 출력은 pointmap이다.
 Pointmap은 이미지의 픽셀마다 그 픽셀에 보이는 3D 점의 좌표를 담은 $W\times H\times3$ 배열이다.
 DUSt3R는 두 이미지의 pointmap $X^{1,1}$, $X^{2,1}$을 모두 첫 이미지의 카메라 좌표계로 낸다.
@@ -318,73 +336,63 @@ DUSt3R는 두 이미지의 pointmap $X^{1,1}$, $X^{2,1}$을 모두 첫 이미지
 두 이미지의 점이 한 좌표계에 놓이므로, 두 카메라 사이의 상대 pose가 pointmap 안에 암묵적으로 들어 있다.
 다만 전체 크기(scale)는 정해지지 않아서, 예측은 알 수 없는 배율까지만 맞는다.
 
-카메라 parameter는 pointmap에서 꺼낸다.
-첫 카메라의 주점(principal point)이 이미지 중심에 있고 픽셀이 정사각형이라고 가정하면, 내부 parameter 가운데 남는 미지수는 초점 거리 $f$뿐이다.
+카메라 파라미터는 pointmap에서 꺼낸다.
+첫 카메라의 주점(principal point)이 이미지 중심에 있고 픽셀이 정사각형이라고 가정하면, 내부 파라미터 가운데 남는 미지수는 초점 거리 $f$뿐이다.
 Pointmap의 각 점을 카메라로 투영하면 자기 픽셀에 떨어져야 하므로, 모든 픽셀에서 이 조건을 가장 잘 맞추는 $f$를 고르면 된다.
 예를 들어 이미지 중심에서 오른쪽으로 100픽셀 떨어진 픽셀의 점이 $(x,y,z)=(0.5,\,0,\,2.5)$라면, 투영 관계 $100=f\times0.5/2.5$에서 $f=500$픽셀이다.
-상대 pose도 같은 점들을 두 카메라의 좌표계로 각각 나타낸 pointmap을 서로 맞추는 회전과 이동으로 구할 수 있다.
-
-DUSt3R는 두 이미지를 같은 ViT(vision transformer) encoder로 처리하고, 두 decoder가 cross-attention으로 정보를 주고받으며 pointmap과 신뢰도 map을 낸다.
-학습 데이터는 합성 렌더링, SfM 복원, 센서 측정으로 정답 pointmap을 얻은 공개 데이터셋들이고, 여기서 이미지 쌍 850만 개를 뽑아 회귀 손실로 학습한다.
+두 카메라의 상대 pose를 구하는 한 방법은 사진 순서를 뒤집어 모델을 한 번 더 호출하는 것이다.
+그러면 첫 사진의 각 픽셀에 대해 첫 카메라 기준 좌표 $X^{1,1}$과 둘째 카메라 기준 좌표 $X^{1,2}$를 모두 얻는다.
+같은 픽셀에서 나온 점끼리 짝지은 뒤 두 예측의 배율 차이까지 고려해 정렬하면, 첫 좌표계를 둘째 좌표계에 맞추는 회전과 상대적 이동을 구할 수 있다.[^dust3r]
 
 DUSt3R는 쌍 단위로 동작한다.
 이미지가 여러 장이면 여러 쌍의 pointmap을 따로 예측한 뒤, 이들을 한 좌표계로 맞추는 global alignment 최적화를 따로 돌린다.
 VGGT 논문의 측정으로 이 정렬에는 장면당 대개 10초 넘게 걸린다.[^vggt]
 
-### 4-2. 여러 장의 동시 추정
+### 4-2. 여러 카메라의 동시 추정
 
-VGGT는 이미지 한 장부터 수백 장까지를 한 번에 받아, 카메라의 내부·외부 parameter, depth map, point map, 점 추적(track)을 한 번의 forward pass로 예측한다.[^vggt]
+VGGT는 이미지 한 장부터 수백 장까지를 한 번에 받아, 카메라의 내부·외부 파라미터, depth map, point map, 점 추적(track)을 한 번의 순전파로 예측한다.[^vggt]
 점 추적은 한 이미지에서 고른 query 점이 다른 이미지들의 어느 2D 위치에 있는지를 내는 출력이다.
 DUSt3R처럼 3D 출력은 모두 첫 카메라의 좌표계로 표현한다.
 
-VGGT는 약 12억 parameter의 큰 Transformer다.
-각 이미지를 DINOv2로 patch token으로 바꾼 뒤, 한 이미지 안의 token끼리만 보는 frame-wise attention과 모든 이미지의 token을 함께 보는 global attention을 번갈아 쌓는다.
-그 위에 카메라를 내는 head와 픽셀 단위 출력을 내는 head가 붙는다.
 모든 이미지를 한 번에 보므로, DUSt3R와 달리 여러 장을 맞추는 별도 최적화가 필요 없다.
-출력은 SfM의 결과물과 같은 종류(카메라 parameter와 3D 점)라서 SfM 자리에 들어갈 수 있다.
-원논문은 수백 장까지를 1초 안에 처리한다고 소개하지만, 본문의 측정에서 1초 안에 끝나는 것은 수십 장까지이고 수백 장이면 몇 초가 걸린다.
+예측한 카메라와 3D 점은 SfM으로 구한 값 대신 장면 복원의 입력으로 쓸 수 있다.
 
-### 4-3. Feed-forward 3DGS
+### 4-3. 두 사진에서 Gaussian 예측
 
 두 번째 갈래는 장면별 최적화를 없앤다.
-pixelSplat은 이미지 두 장과 그 카메라 parameter를 받아, 장면의 3D Gaussian을 한 번의 forward pass로 예측한다.[^pixelsplat]
-카메라 parameter가 입력으로 필요하므로 이 갈래는 SfM 같은 pose 추정 단계를 없애지 않는다.
+pixelSplat은 이미지 두 장과 그 카메라 파라미터를 받아, 장면의 3D Gaussian을 한 번의 순전파로 예측한다.[^pixelsplat]
+카메라 파라미터가 입력으로 필요하므로 이 갈래는 SfM 같은 pose 추정 단계를 없애지 않는다.
 
 pixelSplat은 픽셀마다 Gaussian을 예측한다(pixel-aligned).
-픽셀의 광선 위 어느 깊이에 Gaussian을 둘지 확률분포를 예측해 그 분포에서 중심을 뽑고, 공분산, 불투명도, SH 계수도 픽셀마다 낸다.
+각 픽셀에서 광선 위의 깊이를 구간으로 나누고, Gaussian 중심이 각 구간에 있을 확률을 예측한다.
+이 분포에서 깊이를 뽑아 중심을 정하고, 공분산과 방향별 색의 SH 계수도 예측한다.
 깊이를 정하려면 두 이미지 사이의 대응점을 찾아야 한다.
 한 이미지의 픽셀이 다른 이미지에서 놓일 수 있는 위치는 한 직선(epipolar line) 위에 있다.
 pixelSplat의 encoder는 픽셀마다 다른 이미지의 epipolar line 위 점들과 attention을 계산해 대응점을 찾고, 그 점의 깊이를 feature에 담는다.
 SfM으로 얻은 pose는 장면마다 배율이 임의로 정해지므로, 이 장치는 예측 깊이를 입력 pose와 같은 배율로 맞추는 역할도 한다.
 
-학습에는 동영상 데이터셋(RealEstate10k, ACID)을 쓴다.
-한 장면에서 두 프레임을 입력으로, 다른 프레임들을 정답으로 삼는다.
-예측한 Gaussian을 정답 프레임의 카메라로 렌더링하고, 픽셀 오차(MSE, mean squared error)와 지각적 오차를 섞은 손실로 비교해 신경망 전체를 학습한다.
-3DGS의 rasterizer가 미분 가능하므로 렌더링 오차의 gradient가 Gaussian parameter를 거쳐 신경망까지 전달된다.
-반면 3DGS의 adaptive density control은 Gaussian을 늘리고 지우는 미분 불가능한 연산이라 이 학습에 넣을 수 없다.
-Gaussian 중심을 확률분포에서 뽑게 한 설계는 이 연산 없이도 Gaussian이 생기고 사라지는 효과를 내려는 것이다.
+학습 때는 동영상의 두 프레임에서 Gaussian을 예측하고, 그 Gaussian을 다른 프레임의 카메라로 렌더링한다. 렌더링한 색과 실제 프레임이 일치하도록 픽셀 오차와 지각적 오차를 줄인다.[^pixelsplat]
+그런데 깊이 구간을 이산적으로 뽑는 선택 자체에는 gradient를 흘릴 수 없다.
+pixelSplat은 뽑힌 구간의 확률에 비례하도록 Gaussian의 불투명도를 정한다.
+그 위치의 Gaussian을 더 불투명하게 했을 때 렌더링 오차가 줄면, 같은 갱신이 그 깊이를 다시 뽑을 확률도 높인다.
 pixelSplat은 두 사진에 보인 부분을 복원하며, 원논문은 어느 사진에도 보이지 않은 부분을 생성하지 못하는 점을 한계로 밝힌다.
 
 ### 4-4. 장면별 최적화와의 비교
 
-| 방법 | 입력 | 카메라 parameter | 장면별 최적화 | 출력 |
+| 방법 | 입력 | 카메라 파라미터 | 장면별 최적화 | 출력 |
 |---|---|---|---|---|
 | SfM + 3DGS | 한 장면의 사진 수십 장 이상 | SfM으로 추정 | 필요(수십 분) | 3D Gaussian |
 | DUSt3R | 이미지 쌍 | 출력 pointmap에서 추출 | 여러 장이면 global alignment | pointmap |
 | VGGT | 한 장~수백 장 | 직접 예측 | 없음 | 카메라, depth map, point map, track |
 | pixelSplat | 이미지 쌍 | 입력으로 필요 | 없음 | 3D Gaussian |
 
-한 번의 예측은 빠르고 적은 사진으로도 동작하는 대신, 학습 데이터에서 배운 사전 지식에 기댄다.
-장면별 최적화는 느리지만 그 장면의 사진에 직접 맞춘다.
-두 접근은 이어 붙일 수도 있다.
+카메라 예측과 장면별 최적화는 함께 쓸 수 있다.
 VGGT 논문은 VGGT의 카메라 예측에서 출발해 bundle adjustment를 더 돌리면 카메라 정확도가 크게 오른다고 보고한다.[^vggt]
-같은 논문은 VGGT의 backbone을 미세조정해, 입력 이미지의 카메라 parameter 없이 새 시점의 이미지를 바로 내는 실험도 물체 데이터셋에서 보였다.
-이 실험은 pose 추정과 장면별 최적화를 한 모델이 함께 건너뛰는 방향이라, 두 갈래가 만나는 지점에 있다.
 
 [^survey]: Chen, G., & Wang, W. (2026). A Survey on 3D Gaussian Splatting. *ACM Computing Surveys*, 58(12), 1–39. [논문](https://arxiv.org/abs/2401.03890).
 [^colmap]: Schönberger, J. L., & Frahm, J.-M. (2016). Structure-from-Motion Revisited. *CVPR*. [논문](https://openaccess.thecvf.com/content_cvpr_2016/html/Schonberger_Structure-From-Motion_Revisited_CVPR_2016_paper.html).
 [^nerf]: Mildenhall, B., Srinivasan, P. P., Tancik, M., et al. (2020). NeRF: Representing Scenes as Neural Radiance Fields for View Synthesis. *ECCV*. [논문](https://arxiv.org/abs/2003.08934).
-[^3dgs]: Kerbl, B., Kopanas, G., Leimkühler, T., & Drettakis, G. (2023). 3D Gaussian Splatting for Real-Time Radiance Field Rendering. *ACM Transactions on Graphics*, 42(4). [논문](https://arxiv.org/abs/2308.04079).
+[^3dgs]: Kerbl, B., Kopanas, G., Leimkühler, T., & Drettakis, G. (2023). 3D Gaussian Splatting for Real-Time Radiance Field Rendering. *ACM Transactions on Graphics*, 42(4). [논문](https://arxiv.org/abs/2308.04079) · [복제와 분할 그림 원본](https://arxiv.org/html/2308.04079v1/density_control_01.png) · [그림 이용 조건(CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
 [^instant-ngp]: Müller, T., Evans, A., Schied, C., & Keller, A. (2022). Instant Neural Graphics Primitives with a Multiresolution Hash Encoding. *ACM Transactions on Graphics*, 41(4), 102:1–102:15. [논문](https://arxiv.org/abs/2201.05989).
 [^ssim]: Wang, Z., Bovik, A. C., Sheikh, H. R., & Simoncelli, E. P. (2004). Image quality assessment: from error visibility to structural similarity. *IEEE Transactions on Image Processing*, 13(4), 600–612. [논문](https://doi.org/10.1109/TIP.2003.819861).
 [^dust3r]: Wang, S., Leroy, V., Cabon, Y., Chidlovskii, B., & Revaud, J. (2024). DUSt3R: Geometric 3D Vision Made Easy. *CVPR*. [논문](https://arxiv.org/abs/2312.14132).
