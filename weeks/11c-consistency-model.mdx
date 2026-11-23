@@ -6,7 +6,8 @@ order: 2
 
 import consistencyTrajectories from "./assets/week11-consistency-trajectories.png";
 
-Reflow는 생성 궤적을 곧게 펴서 적은 단계로 이동하게 한다. 그래도 현재의 속도만으로는 휘어진 궤적의 끝을 한 번에 찾기 어렵다.
+Reflow는 생성 궤적을 곧게 펴서 적은 단계로 이동하게 한다.
+그래도 현재 위치의 velocity만으로는 휘어진 궤적의 끝을 한 번에 찾기 어렵다.
 Consistency model은 궤적 위의 어느 점을 입력해도 그 궤적의 **데이터 끝점**을 바로 예측하는 함수를 학습한다.[^survey]
 여기서는 시간을 생성 방향으로 재어 $t=0$이 noise, $t=1$이 데이터다.
 
@@ -14,9 +15,9 @@ Consistency model은 궤적 위의 어느 점을 입력해도 그 궤적의 **�
 
 ### 1-1. Euler 한 단계와 정확한 끝점
 
-상미분방정식(ODE)을 수치적으로 푸는 solver는 모델이 예측한 속도로 다음 위치를 계산한다.
+상미분방정식(ordinary differential equation, ODE)을 수치적으로 푸는 solver는 모델이 예측한 velocity로 다음 위치를 계산한다.
 궤적을 따라 velocity가 달라지면 시작점의 예측만으로는 먼 시점의 위치를 정확히 계산하기 어렵다.
-Stable Diffusion 2.1 Base로 LAION-Aesthetics-6+의 512×512 이미지를 생성했을 때 DPM-Solver++의 FID(Fréchet inception distance, 낮을수록 좋음)는 8 step에서 12.20, 2 step에서 72.81이었다.[^lcm]
+Stable Diffusion 2.1 Base로 LAION-Aesthetics-6+의 512×512 이미지를 생성했을 때, DPM-Solver의 후속 solver인 DPM-Solver++의 FID(Fréchet inception distance, 낮을수록 좋음)는 8 step에서 12.20, 2 step에서 72.81이었다.[^lcm]
 
 <Callout type="example">
 1차원에서 noise $z\sim\mathcal N(0,1)$과 데이터 $y\sim\mathcal N(3,0.5^2)$를 독립으로 뽑아 $x_t=(1-t)z+ty$로 잇는 가상 예를 보자.
@@ -46,7 +47,9 @@ Student가 생성할 때 방문할 시간 격자에서 $t$를 고르고, 학습 
 Teacher는 결정론적 DDIM으로 $x_t$에서 시간 간격 $\Delta$로 두 번 이동해 $x_{t+2\Delta}$에 도착한다.
 Student는 간격 $2\Delta$의 한 단계로 같은 $x_{t+2\Delta}$에 도착하도록 학습한다.
 실제 구현은 DDIM의 한 단계를 거꾸로 풀어, student가 그 점에 도착하려면 내야 할 예측값을 손실의 목표로 삼는다.
-[텍사스대 CS391L 강의 그림](https://utcs-ml-course.github.io/assets/lectures/Score%20Matching%20%26%20Diffusion%20Models.pdf#page=64)에서 각 열을 위에서 아래로 따라가면 같은 noise에서 출발하는 샘플러가 보인다. 초록 화살표는 한 번의 갱신이고, 노란 화살표는 한 모델이 다음 모델을 가르치는 과정이다. 가운데 열은 첫 라운드에서는 두 단계로 생성하는 student이고, 다음 라운드에서는 한 단계로 생성할 모델을 가르치는 teacher다.
+[텍사스대 CS391L 강의 그림](https://utcs-ml-course.github.io/assets/lectures/Score%20Matching%20%26%20Diffusion%20Models.pdf#page=64)에서 각 열을 위에서 아래로 따라가면 같은 noise에서 출발하는 샘플러가 보인다.
+초록 화살표는 한 번의 갱신이고, 노란 화살표는 한 모델이 다음 모델을 가르치는 과정이다.
+가운데 열은 첫 라운드에서는 두 단계로 생성하는 student이고, 다음 라운드에서는 한 단계로 생성할 모델을 가르치는 teacher다.
 
 같은 $x_t$에서도 원래의 깨끗한 데이터는 여러 값이 가능하다.
 여기서 student가 맞추는 학습 표적은 $x_t$를 고정하면 teacher가 두 번 갱신한 결과 하나로 정해진다.
@@ -75,7 +78,8 @@ $$
 
 같은 궤적 위의 점은 모두 같은 끝점으로 가므로, 같은 궤적의 어느 두 시점 $t$, $t'$에 대해서도 $f(x_t,t)=f(x_{t'},t')$이다.
 이 성질을 **self-consistency**라 한다.
-아래 그림에서 붉은 화살표 세 개를 따라가 보자. 출발점의 noise 수준은 달라도 같은 초록 궤적 위에 있어 도착점은 하나다.
+아래 그림에서 붉은 화살표 세 개를 따라가 보자.
+출발점의 noise 수준은 달라도 같은 초록 궤적 위에 있어 도착점은 하나다.
 
 <Figure
   src={consistencyTrajectories.src}
@@ -83,6 +87,8 @@ $$
   caption="초록 곡선은 PF-ODE의 궤적이고, 붉은 화살표는 세 입력 각각에서 consistency function을 한 번 적용한 결과다. 원논문의 초록 화살표는 오른쪽(잡음)으로 향한다. 이 노트에서는 오른쪽 잡음에서 왼쪽 데이터로 갈 때 시간이 0에서 1로 증가하므로, 그림 왼쪽의 x₀가 본문의 x₁이다."
   source="Song et al. (2023), Figure 2 · CC BY 4.0"
 />
+
+[PMLR 논문 페이지](https://proceedings.mlr.press/v202/song23a.html) · [그림 이용 조건](https://creativecommons.org/licenses/by/4.0/)
 
 또 $t=1$의 점은 이미 끝점이므로 $f$는 그 점을 그대로 내야 한다.
 
@@ -111,7 +117,7 @@ $t=1$의 점 $2.5$에서는 $\sigma_1=0.5$이므로 $3+0.5\times(2.5-3)/0.5=2.5$
 경계 조건 $f(x,1)=x$는 이런 자명한 해를 막는다.
 Self-consistency는 출력끼리만 비교하므로, 출력을 실제 데이터와 잇는 것은 경계 조건이다.
 
-<Details summary="경계 조건을 만족하는 신경망과 평균 속도">
+<Details summary="경계 조건을 만족하는 신경망과 평균 velocity">
 
 Consistency model은 경계 조건이 학습 전에도 성립하도록 입력 $x$와 신경망 출력 $F_\theta(x,t)$를 섞는다.
 
@@ -132,10 +138,11 @@ $t=1$에서는 $F_\theta$가 무엇을 내든 $f_\theta(x,1)=x$다.
 
 ### 3-2. Consistency distillation의 이웃점
 
-**Consistency distillation**(CD)은 한 점에서 teacher의 ODE를 짧게 풀어 같은 궤적 위 이웃점을 근사한다.
-데이터 $y$와 noise $z$로 $x_t=(1-t)z+ty$를 만들고, teacher의 PF-ODE를 solver 한 단계로 풀어 조금 더 데이터 쪽의 점 $\hat x_{t'}$($t'=t+\Delta$)을 얻는다.
-Teacher가 velocity 모델 $v_\psi$이고 solver가 Euler라면 $\hat x_{t'}=x_t+\Delta\,v_\psi(x_t,t)$다.
-여기까지 이웃점을 계산한 diffusion teacher의 가중치 $\psi$는 고정한다.
+**Consistency distillation**(CD)은 사전학습한 teacher의 ODE를 짧게 풀어 같은 궤적 위의 이웃점을 근사한다.
+여기서는 teacher를 velocity 모델 $v_\psi$로 쓰고, 그 가중치 $\psi$는 학습 내내 고정한다.
+데이터 $y$와 noise $z$로 $x_t=(1-t)z+ty$를 만들고, teacher의 ODE를 solver 한 단계로 풀어 조금 더 데이터 쪽의 점 $\hat x_{t'}$($t'=t+\Delta$)을 얻는다.
+Solver가 Euler라면 $\hat x_{t'}=x_t+\Delta\,v_\psi(x_t,t)$다.
+원논문에서는 사전학습한 diffusion model의 score로 PF-ODE를 한 단계 푼다.[^cm]
 이제 student $f_\theta$는 원래 점에서 끝점을 예측하고, target network $f_{\theta^-}$는 teacher가 구한 이웃점에서 끝점을 예측한다.
 
 $$
@@ -145,18 +152,22 @@ $$
 $d$는 두 이미지의 거리로, 제곱 오차나 사전학습한 신경망의 특징 차이로 재는 지각 거리 LPIPS(learned perceptual image patch similarity)를 쓴다.
 손실의 gradient로 갱신하는 가중치는 student의 $\theta$뿐이다.
 Target의 예측은 이번 갱신의 정답으로 고정하고, 다음 갱신에 쓸 $\theta^-$는 student 가중치의 지수 이동 평균(exponential moving average, EMA)으로 갱신한다.
-[MIT 6.S978 강의 슬라이드 23](https://mit-6s978.github.io/assets/pdfs/CM_lecture.pdf#page=23)에서는 아래쪽 초록 화살표 하나가 고정한 teacher로 계산한 이웃점까지의 이동이다. 그 화살표의 양 끝에서 위쪽 빨간 화살표를 하나씩 따라가면, 손실이 비교하는 두 끝점 예측을 찾을 수 있다.
+[MIT 6.S978 강의의 distillation 도식](https://mit-6s978.github.io/assets/pdfs/CM_lecture.pdf#page=23)에서는 아래쪽 초록 화살표 하나가 고정한 teacher로 계산한 이웃점까지의 이동이다.
+그 화살표의 양 끝에서 위쪽 빨간 화살표를 하나씩 따라가면, 손실이 비교하는 두 끝점 예측을 찾을 수 있다.
 
 데이터 끝점에 바로 이웃한 입력을 학습할 때 목표는 경계 조건으로 이미 정해져 있다.
 그 점의 예측이 정확해지면 한 칸 더 먼 점에도 더 좋은 목표를 제공한다.
-같은 diffusion teacher를 distillation했을 때, CIFAR-10의 1 step FID는 progressive distillation이 8.34, CD가 3.55였다.
+Consistency model 원논문은 같은 diffusion teacher에 두 방법을 적용해 비교했다.[^cm]
+이 비교에서 CIFAR-10의 1 step FID는 progressive distillation이 8.34, CD가 3.55였다.
 ImageNet 64×64에서는 15.39와 6.20이었다.
 CD도 progressive distillation과 마찬가지로 미리 만든 (noise, 이미지) 쌍이 필요 없다.
 
 ### 3-3. Consistency training의 이웃점
 
-**Consistency training**(CT)은 사전학습한 diffusion teacher 없이 학습한다. 원래의 CT에서도 student는 끝점을 예측하고 EMA target network는 비교할 끝점을 예측한다.
-달라지는 것은 이웃점을 만드는 방법이다. 같은 데이터 $y$와 같은 noise $z$를 두 시점에 대입한다.
+**Consistency training**(CT)은 사전학습한 diffusion teacher 없이 학습한다.
+원래의 CT에서도 student는 끝점을 예측하고 EMA target network는 비교할 끝점을 예측한다.
+달라지는 것은 이웃점을 만드는 방법이다.
+같은 데이터 $y$와 같은 noise $z$를 두 시점에 대입한다.
 
 $$
 x_t=(1-t)z+ty,\qquad x_{t'}=(1-t')z+t'y=x_t+\Delta\,(y-z).
@@ -164,13 +175,17 @@ $$
 
 $y-z$는 한 쌍의 조건부 velocity이고, CD의 teacher가 근사하는 주변 velocity는 같은 $x_t$를 지나는 조건부 velocity들의 평균이다.
 따라서 CT의 두 입력은 같은 noise를 공유하지만 일반적으로 같은 생성 ODE 궤적 위에 있지는 않다.
-원논문에서는 $x_\sigma=y+\sigma z$의 이웃한 두 noise 수준에서 출력을 맞췄다.[^cm] [같은 강의의 슬라이드 31](https://mit-6s978.github.io/assets/pdfs/CM_lecture.pdf#page=31)에서 두 입력 식을 비교하면 데이터와 noise 표본은 그대로이고 noise에 곱한 계수만 달라진다.
+원논문에서는 $x_\sigma=y+\sigma z$의 이웃한 두 noise 수준에서 출력을 맞췄다.[^cm]
+[같은 강의의 consistency training 목적식](https://mit-6s978.github.io/assets/pdfs/CM_lecture.pdf#page=31)에서 두 입력 식을 비교하면 데이터와 noise 표본은 그대로이고 noise에 곱한 계수만 달라진다.
 정확한 score와 Euler step 등 논문의 가정 아래에서는 noise 간격을 줄일 때 CD 손실과 CT 손실의 차이가 간격보다 빠르게 작아진다.
-후속 연구는 두 손실값이 가까워져도 가중치를 올바르게 갱신할 수 없는 경우를 보였다.[^ict]
-처음 제안된 CT의 CIFAR-10 1 step FID는 8.70으로 CD보다 나빴다.
-이후 improved consistency training(iCT)은 거리를 pseudo-Huber 손실로 바꾸고, noise 수준을 lognormal 분포로 뽑고, 학습이 진행될수록 시점 간격을 좁혔다.[^ict]
-iCT에서는 목표값을 계산할 때 현재 모델의 가중치를 그대로 쓰되, 그 목표값을 통해서는 가중치를 갱신하지 않는다.
+그래도 처음 제안된 CT의 CIFAR-10 1 step FID는 8.70으로 CD보다 나빴다.
+
+Improved consistency training(iCT)은 먼저 EMA target network를 문제 삼았다.[^ict]
+이 논문은 데이터가 한 점뿐인 예에서, target의 가중치가 student와 다르면 간격을 줄인 극한의 CT 손실이 그 데이터 점과 무관해짐을 보였다.
+손실값이 CD에 가까워져도 그 손실로는 데이터 쪽으로 가중치를 갱신할 수 없다는 뜻이다.
+그래서 iCT는 목표값을 계산할 때 현재 모델의 가중치를 그대로 쓰되, 그 목표값을 통해서는 가중치를 갱신하지 않는다.
 두 모델의 가중치가 같고 논문이 가정한 미분 가능성 등의 조건을 만족하면, 간격에 맞게 재조정한 CT gradient와 CD gradient는 같은 극한을 갖는다.
+iCT는 또 거리를 pseudo-Huber 손실로 바꾸고, noise 수준을 lognormal 분포로 뽑고, 학습이 진행될수록 시점 간격을 좁혔다.
 더 깊은 모델인 iCT-deep은 teacher 없이 CIFAR-10 1 step FID 2.51, ImageNet 64×64 3.25를 얻어 CD 결과를 앞섰다.
 
 ### 3-4. 끝점 예측을 여러 번 사용하는 샘플링
@@ -188,7 +203,7 @@ Student는 guidance scale을 입력으로 받아 그 궤적의 끝점을 바로 
 또 Stable Diffusion의 시간 단계는 1,000개라 바로 이웃한 두 점은 너무 가깝고 손실이 작아 학습이 느리다.
 LCM 학습에서는 teacher가 DDIM 한 단계로 시간 격자 20칸을 건너뛴 위치를 구해 두 끝의 출력을 맞췄다.
 LAION-Aesthetics-6+에서 512×512 이미지를 생성한 실험을 보자.
-원논문의 guidance scale $\omega=8$로 고정하고 네 단계로 생성했을 때, Stable Diffusion 2.1 Base의 예측을 DPM-Solver++로 푼 결과는 FID 18.43, LCM의 결과는 11.10이었다.[^lcm]
+Guidance scale을 $\omega=8$로 두고 네 단계로 생성했을 때, Stable Diffusion 2.1 Base의 예측을 DPM-Solver++로 푼 결과는 FID 18.43, LCM의 결과는 11.10이었다.[^lcm]
 
 ## 4. 끝점 예측과 분포 일치
 
@@ -200,11 +215,12 @@ Distribution matching distillation(DMD)은 student가 만든 이미지에 noise�
 고정한 teacher는 데이터 쪽 score를 추정하고, 따로 학습하는 diffusion model은 현재 student의 생성 분포 쪽 score를 추정한다.
 Score는 로그 밀도의 기울기다.
 따라서 데이터 쪽 score에서 student 쪽 score를 빼면, student 밀도에 대한 데이터 밀도의 비가 커지는 방향을 얻는다.
+Student는 자기가 만든 이미지가 이 방향으로 움직이도록 가중치를 갱신한다.
 
 <Callout type="example">
 어떤 noise 수준에서 데이터 분포가 $\mathcal N(2,1)$이고 student 분포가 $\mathcal N(0,1)$인 예를 보자.
 두 score는 각각 $2-x$와 $-x$다.
-그 차이는 모든 위치에서 $2$여서, student 분포 전체를 오른쪽으로 이동시킨다.
+그 차이는 모든 위치에서 $2$여서, student가 만든 표본을 어디에 있든 오른쪽으로 민다.
 이미 두 분포가 같으면 score 차이도 모든 위치에서 0이다.
 </Callout>
 
@@ -217,7 +233,7 @@ DMD2는 회귀용 이미지 쌍을 미리 만드는 비용을 줄이기 위해 �
 [^lcm]: Luo, S., Tan, Y., Huang, L., Li, J., & Zhao, H. (2023). Latent Consistency Models: Synthesizing High-Resolution Images with Few-Step Inference. *arXiv*. [논문](https://arxiv.org/abs/2310.04378).
 [^instaflow]: Liu, X., Zhang, X., Ma, J., Peng, J., & Liu, Q. (2024). InstaFlow: One Step is Enough for High-Quality Diffusion-Based Text-to-Image Generation. *ICLR*. [논문](https://arxiv.org/abs/2309.06380).
 [^pd]: Salimans, T., & Ho, J. (2022). Progressive Distillation for Fast Sampling of Diffusion Models. *ICLR*. [논문](https://arxiv.org/abs/2202.00512).
-[^cm]: Song, Y., Dhariwal, P., Chen, M., & Sutskever, I. (2023). Consistency Models. *ICML*. [논문](https://proceedings.mlr.press/v202/song23a.html). [그림 이용 조건](https://creativecommons.org/licenses/by/4.0/).
+[^cm]: Song, Y., Dhariwal, P., Chen, M., & Sutskever, I. (2023). Consistency Models. *ICML*. [논문](https://proceedings.mlr.press/v202/song23a.html).
 [^ict]: Song, Y., & Dhariwal, P. (2024). Improved Techniques for Training Consistency Models. *ICLR*. [논문](https://arxiv.org/abs/2310.14189).
 [^dmd]: Yin, T., Gharbi, M., Zhang, R., et al. (2024). One-step Diffusion with Distribution Matching Distillation. *CVPR*. [논문](https://arxiv.org/abs/2311.18828).
 [^dmd2]: Yin, T., Gharbi, M., Park, T., et al. (2024). Improved Distribution Matching Distillation for Fast Image Synthesis. *NeurIPS*. [논문](https://arxiv.org/abs/2405.14867).

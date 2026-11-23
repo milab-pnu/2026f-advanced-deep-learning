@@ -4,6 +4,7 @@ week: 10
 order: 4
 ---
 
+import diffusionLmOverview from "./assets/week10-diffusion-lm-overview.png";
 import mdlmMaskedLoss from "./assets/week10-mdlm-masked-loss.png";
 
 문장 가운데 두 단어가 비어 있다면 왼쪽과 오른쪽 문맥이 모두 단서가 된다.
@@ -24,8 +25,8 @@ p(x^1,\ldots,x^L)=\prod_{i=1}^{L}p(x^i\mid x^1,\ldots,x^{i-1}).
 $$
 
 생성할 때 AR 모델은 첫 token을 뽑고, 그 결과를 조건으로 두 번째 token을 뽑는다.
-하지만 일반적인 순차 decoding에서는 앞 token이 정해지기 전에 다음 token을 확정할 수 없다.
-학습할 때는 정답 sequence를 이미 알고 있으므로, 모델은 causal attention으로 여러 위치의 예측을 병렬로 계산할 수 있다.
+이런 순차 decoding에서는 앞 token이 정해지기 전에 다음 token을 확정할 수 없다.
+반면 학습할 때는 정답 sequence를 이미 알고 있으므로, 모델은 causal attention으로 여러 위치의 예측을 병렬로 계산할 수 있다.
 
 ### 1-2. Continuous와 discrete 상태
 
@@ -45,17 +46,19 @@ Diffusion에서 continuous와 discrete는 우선 모델이 손상시키는 **상
 
 Continuous 접근에서 `고양이` token을 embedding 벡터로 바꾼 뒤 벡터에 noise를 더하면, 중간 상태는 어느 단어 하나의 ID가 아니라 실수 벡터다.
 Diffusion-LM은 우선 각 token의 학습 가능한 embedding을 중심으로 작은 Gaussian noise를 더해 연속 시작 상태 $x_0$를 뽑는다.
-그다음 $x_0$에 단계별 noise를 섞는다. 모델은 손상된 벡터에서 $x_0$를 추정하도록 학습한다.[^diffusion-lm]
+그다음 $x_0$에 단계별 noise를 섞는다.
+모델은 손상된 벡터에서 $x_0$를 추정하도록 학습한다.[^diffusion-lm]
 생성할 때 모델은 연속 noise 벡터에서 출발해 벡터를 반복해서 갱신한다.
 마지막에는 그 벡터들을 어휘의 기호로 바꾸는 decoding 단계가 필요하다.
 예를 들어 Diffusion-LM은 각 위치의 최종 벡터에서 token 확률을 계산하고 가장 확률이 높은 token을 선택하는 rounding을 사용한다.[^diffusion-lm]
 확률이 비슷한 두 후보의 경계에서는 벡터의 작은 변화가 다른 token 선택으로 이어질 수도 있다.
 이 변환을 어떻게 학습하고 처리할지가 continuous 접근의 별도 설계 문제다.
 
-<Figure src="https://arxiv.org/html/2205.14217v1/fig1_v2.png" alt="연속 Gaussian noise 벡터가 여러 denoising 단계를 거쳐 단어 벡터가 되고 텍스트로 바뀐다. 아래에는 문장 구조 조건을 제공하는 classifier가 연결되어 있다." caption="연속 벡터에서 텍스트를 생성하는 Diffusion-LM. 위쪽은 noise에서 단어 벡터로 이동하는 경로이고, 아래 classifier는 원하는 문장 구조를 추가로 반영하는 선택적 제어다." source="Li et al. (2022), Figure 1 · CC BY 4.0" wide />
+<Figure src={diffusionLmOverview.src} alt="연속 Gaussian noise 벡터가 여러 denoising 단계를 거쳐 단어 벡터가 되고 텍스트로 바뀐다. 아래에는 문장 구조 조건을 제공하는 classifier가 연결되어 있다." caption="연속 벡터에서 텍스트를 생성하는 Diffusion-LM. 위쪽은 noise에서 단어 벡터로 이동하는 경로이고, 아래 classifier는 원하는 문장 구조를 추가로 반영하는 선택적 제어다." source="Li et al. (2022), Figure 1 · CC BY 4.0" wide />
+
+[그림 원문](https://arxiv.org/abs/2205.14217) · [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 
 그림에서 $x_T,\ldots,x_0$는 연속 벡터이고 $w$는 최종 텍스트다.
-[원논문](https://arxiv.org/abs/2205.14217)은 이 그림을 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)으로 공개했다.
 
 ### 1-3. Mask를 이용한 이산 손상
 
@@ -127,7 +130,7 @@ $t$는 각 token이 mask될 확률이자 mask 비율의 기댓값이다.
 이 값은 두 위치의 log probability를 합한 다음 $1/t=2$를 곱한 것이다.
 
 MDLM, MD4, RADD는 이 꼴의 목적함수가 데이터의 평균 negative log-likelihood(NLL), 즉 $-\mathbb{E}_{x_0\sim p_{\mathrm{data}}}[\log p_\theta(x_0)]$의 상한임을 보였다.[^md4][^mdlm][^radd]
-여기서 $p_\theta$는 모델이 정의한 확률적 역전이를 따라 생성했을 때의 분포다. 뒤에서 설명할 신뢰도 기반 sampler는 다음에 채울 위치를 고르는 규칙을 바꾼다.
+여기서 $p_\theta$는 모델이 정의한 확률적 역전이를 따라 생성했을 때의 분포다.
 NLL이 작을수록 모델이 실제 데이터에 높은 확률을 주므로, 이 상한을 낮추는 학습은 근사적인 maximum likelihood 학습이 된다.
 일반식에서 가중치는 masking schedule에 따라 정해지고, mask 확률이 $t$와 같은 LLaDA의 선형 schedule에서 $1/t$가 된다.[^md4]
 RADD는 또 mask된 위치에서 맞혀야 할 분포가 시간과 무관한, 깨끗한 데이터의 조건부 분포임을 보였다.[^radd]
@@ -171,20 +174,26 @@ Forward 과정에서는 한 번 가린 위치가 계속 가려지므로, 더 이
 열리는 위치를 고른 뒤에는 모델의 예측 분포에서 그 자리에 놓을 token을 뽑는다.
 LLaDA의 low-confidence remasking은 이 무작위 위치 선택을 바꾼다.
 방금 예측한 후보 중 신뢰도가 높은 위치를 채우고 낮은 위치를 mask로 남긴다.[^llada]
-저자들은 이 방법이 AR 생성에서 온도를 낮출 때처럼 다양성을 줄여 정확도를 높일 수 있다고 해석했다.[^llada]
+저자들은 이 방법이 AR 모델에서 흔히 쓰는 annealed sampling처럼 생성 문장의 다양성을 줄여 정확도를 높인다는 가설을 제시했다.[^llada]
 이렇게 정책을 바꾼 sampler의 분포는 앞의 NLL 상한이 다루는 분포와 다르다.
 
 ### 2-3. Instruction 학습과 응답 길이
 
 Instruction을 따르는 모델은 prompt를 조건으로 두고 응답만 생성해야 한다.
 LLaDA의 supervised fine-tuning(SFT)은 prompt를 그대로 보존하고 응답 부분의 token만 pre-training과 같은 방식으로 mask한다.[^llada]
-Mini-batch 안에서 짧은 응답 뒤에는 종료 token(EOS)을 덧붙여 길이를 맞추고, 모델은 EOS도 일반 token처럼 예측하도록 학습한다.
+Mini-batch 안에서 짧은 응답 뒤에는 EOS(end of sequence) token을 덧붙여 길이를 맞추고, 모델은 EOS도 일반 token처럼 예측하도록 학습한다.
 
 LLaDA의 기본 diffusion sampler는 미리 지정한 응답 길이만큼 mask를 놓고 시작한다.
 생성이 끝나면 EOS 뒤의 token은 버린다.
-이 설정에서는 응답이 짧아도 매 단계 정해 둔 길이 전체를 다시 처리한다.
-원논문의 평가에서 Base 모델은 응답 전체에서 신뢰도가 높은 위치부터 채웠다. Instruct 모델은 32개 token씩 왼쪽 block부터 처리하고, 현재 block 안에서 신뢰도가 높은 위치를 먼저 채웠다.[^llada]
-생성할 자리를 짧은 block 단위로 덧붙이는 sampler는 EOS가 나오면 종료할 수 있다.[^llada]
+원논문의 주 평가는 Base 모델과 Instruct 모델 모두 이 방식으로, 응답 전체에서 신뢰도가 높은 위치부터 채웠다.[^llada]
+이 설정에는 두 가지 문제가 있다.
+응답이 짧아도 sampler는 매 단계 정해 둔 길이 전체를 다시 처리한다.
+또 SFT 데이터에는 길이를 맞추려고 넣은 EOS가 많아서, Instruct 모델은 응답을 지나치게 일찍 끝내기 쉽다.
+
+원논문은 sampling 전략을 비교하면서 응답을 32개 token짜리 block으로 나누는 방식도 평가했다.
+이 sampler는 왼쪽 block부터 처리하고, 현재 block 안에서는 신뢰도가 높은 위치를 먼저 채운다.
+Instruct 모델의 GSM8K 정확도는 응답 전체를 한 번에 채울 때 69.4, block으로 나눌 때 78.6이었고, 저자들은 EOS padding에 따른 조기 종료를 그 차이의 원인으로 들었다.[^llada]
+Block 단위로 생성하는 sampler는 EOS가 나오면 종료할 수도 있다.
 
 ### 2-4. 가변 길이 생성
 
@@ -219,11 +228,13 @@ Prompt가 `오늘 날씨는`이고 block 길이가 4라고 하자.
 
 병렬로 여러 위치를 예측할 수 있다는 점은 잠재적 이점이다.
 하지만 모델은 denoising 단계마다 전체 sequence를 다시 처리한다.
-AR 모델은 앞 token의 key와 value를 KV cache에 저장해 두고 다음 token을 만들 때 재사용한다.
+AR 모델은 앞 token의 key와 value를 KV cache(key-value cache)에 저장해 두고 다음 token을 만들 때 재사용한다.
 LLaDA 원논문은 LLaDA가 KV cache와 호환되지 않는다고 밝힌다.[^llada]
 양방향 attention에서는 새 token이 채워질 때마다 이미 계산한 다른 위치의 key와 value도 바뀔 수 있기 때문이다.
 이후 KV cache와 비슷한 재사용 방식을 diffusion 언어 모델에 맞게 고친 방법들이 제안되었다.[^dkv]
 그래서 실제 속도는 denoising 단계 수, batch 크기, cache 활용, hardware 구현에 따라 AR 모델보다 빠를 수도 느릴 수도 있다.
+LLaDA 원논문의 측정에서 추론 최적화를 쓰지 않은 LLaDA 8B Base는 GSM8K와 Math에서 KV cache를 쓴 LLaMA3 8B Base와 비슷한 성능을 내면서 처리량이 각각 1.5배와 1.8배였다.
+MBPP에서는 LLaMA3 쪽이 앞섰다.[^llada]
 
 두 방식을 잇는 길도 있다.
 처음부터 diffusion 모델을 학습하는 LLaDA와 달리, Dream은 사전학습한 AR 모델의 가중치에서 출발해 diffusion 언어 모델로 바꾼다.[^dream]

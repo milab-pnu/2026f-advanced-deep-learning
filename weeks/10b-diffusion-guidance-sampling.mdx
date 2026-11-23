@@ -8,8 +8,8 @@ import cfgStaticComparison from "./assets/week10-cfg-static-comparison.jpg";
 
 같은 diffusion model이라도 어떤 조건을 주고 어떤 단계로 샘플링하느냐에 따라 생성 결과와 비용이 달라진다.[^survey]
 예를 들어 ‘개’라는 조건을 얼마나 강조할지와, noise에서 사진까지 몇 번에 걸쳐 이동할지는 서로 다른 선택이다.
-두 방법을 함께 쓸 때는 샘플링 한 단계 안에서 역할이 드러난다. 먼저 classifier-free guidance(CFG)로 조건부 예측과 무조건부 예측을 결합한다.
-그다음 DDIM(denoising diffusion implicit model)은 그 예측을 사용해 현재 이미지 상태를 다음에 방문할 시점으로 옮긴다. 어느 시점을 방문할지와 조건을 얼마나 강하게 반영할지는 각각 정할 수 있다.
+조건의 강도는 classifier-free guidance(CFG)의 scale이 정한다.
+이동 횟수는 sampler와 방문할 단계 수가 정하고, 여기서는 DDIM(denoising diffusion implicit model)을 sampler의 예로 다룬다.
 
 ## 1. 조건을 반영하는 생성
 
@@ -63,10 +63,10 @@ $$
 
 따라서 CFG는 따로 학습한 classifier 대신, 두 예측의 차로 만든 암묵적 classifier의 gradient를 $s$배로 키워 더하는 guidance로 볼 수 있다.[^cfg]
 두 score가 정확하다고 가정하면, 한 시점 $t$에서 결합된 score는 $p_t(x)\,p(c\mid x_t=x)^s$에 비례하는 밀도의 log gradient다.
-학습된 두 예측에는 오차가 있고, 정확한 score를 써도 이 식만으로 마지막에 얻는 표본의 분포까지 정해지지는 않는다.
+학습된 두 예측에는 오차가 있고, 정확한 score를 써도 이 식만으로 마지막에 얻는 표본의 분포까지 정해지지는 않는다.[^cfg-sampler]
 
 Scale을 높이면 조건이 더 강하게 반영된다.
-하지만 scale을 계속 높이면 결과의 다양성이나 품질이 나빠질 수 있다.
+하지만 scale을 계속 높이면 결과의 다양성이나 품질이 나빠질 수 있다.[^cfg]
 
 <Figure src={cfgStaticComparison.src} alt="배 위에 무장한 고양이가 있는 두 생성 이미지. 왼쪽에는 고양이 뒤편의 밧줄과 배 안의 도구가 보이고, 오른쪽에서는 밝은 단색 배경 위로 고양이와 무기의 경계가 선명하게 드러난다." caption="저자들이 서로 다른 고정 CFG 강도에서 생성한 두 이미지. 왼쪽은 이 노트의 scale s=3, 오른쪽은 s=15다. 오른쪽 고양이의 눈과 갑옷 윤곽은 또렷하지만, 뒤에 있던 밧줄과 배 안의 질감은 단순해졌다. 한 쌍의 이미지에서는 이런 차이를 볼 수 있고, 다양성을 비교하려면 여러 표본이 필요하다." source="Wang et al. (2024), Figure 1 · CC BY 4.0 · 두 고정 강도 행의 첫 표본만 발췌해 좌우로 배치" wide />
 
@@ -81,13 +81,26 @@ CFG는 단계마다 예측을 두 번 구하므로 계산 비용이 늘어난다
 
 ### 2-1. 학습에서의 noise 수준
 
-DDPM의 forward 과정에서 $\beta_t$는 각 단계에 더하는 noise의 분산이다.
+Denoising diffusion probabilistic model(DDPM)의 forward 과정에서 $\beta_t$는 각 단계에 더하는 noise의 분산이다.
 $\bar\alpha_t=\prod_{k=1}^{t}(1-\beta_k)$는 원본 신호가 얼마나 남는지를 정한다.
 Noise schedule은 각 단계에 어떤 noise 수준을 배정할지 정한다.
 DDPM은 $\beta_t$를 선형으로 늘리는 schedule을 썼다.
 Improved DDPM은 32×32, 64×64 같은 낮은 해상도에서 이 선형 schedule의 마지막 구간이 거의 순수한 noise여서, 그 단계들이 표본 품질에 별로 기여하지 않는다고 보았다.[^improved]
 그래서 $\bar\alpha_t$가 중간에서는 직선에 가깝게 줄고 처음과 끝 근처에서는 천천히 변하는 cosine schedule을 제안했다.
-학습할 때 $t$를 뽑는 분포는 모델이 각 noise 수준을 얼마나 자주 학습할지를 정한다.
+
+다음은 $T=1000$에서 두 schedule의 $\bar\alpha_t$를 직접 계산한 값이다.
+선형 schedule은 DDPM의 설정대로 $\beta_t$를 $10^{-4}$에서 0.02까지 늘렸다.
+
+| $t$ | 선형 schedule의 $\bar\alpha_t$ | Cosine schedule의 $\bar\alpha_t$ |
+|---|---|---|
+| 100 | 0.897 | 0.972 |
+| 250 | 0.524 | 0.847 |
+| 500 | 0.079 | 0.494 |
+| 750 | 0.003 | 0.144 |
+| 900 | 0.0003 | 0.024 |
+
+선형 schedule에서는 절반 지점인 $t=500$에서 $\bar\alpha_t$가 이미 0.08 아래로 내려가고, $t=750$부터는 원본 신호가 거의 남지 않는다.
+Cosine schedule은 같은 지점에서 0.49와 0.14가 남아, 뒤쪽 단계에서도 신호가 조금씩 줄어든다.
 
 ### 2-2. 생성에서의 단계와 갱신식
 
@@ -96,13 +109,13 @@ Sampler를 쓰려면 생성할 때 방문할 시간 단계도 정해야 한다.
 일부 도구는 이 시간표와 갱신 알고리즘을 묶어 scheduler라고 부른다.
 예를 들어 1,000개 noise 수준에서 학습한 모델에 대해, 그중 50개만 방문할 시간표와 그 사이를 이동할 갱신식을 선택할 수 있다.
 
-다음 표는 `개` 조건으로 생성할 때 **생성의 한 단계**에서 각 부분이 맡는 역할을 보여 준다.
+다음 표는 ‘개’ 조건으로 생성할 때 **생성의 한 단계**에서 각 부분이 맡는 역할을 보여 준다.
 학습된 denoiser의 가중치는 이 과정에서 바뀌지 않는다.
 현재 시간 $t$에서 noise가 더 적은 다음 선택 단계 $r$로 이동한다고 하자.
 
 | 순서 | 입력과 계산 | 결과 |
 |---|---|---|
-| 모델 예측 | 같은 $x_t$와 $t$를 조건 없이, 또 `개` 조건과 함께 전달 | $\epsilon_u$, $\epsilon_c$ |
+| 모델 예측 | 같은 $x_t$와 $t$를 조건 없이, 또 ‘개’ 조건과 함께 전달 | $\epsilon_u$, $\epsilon_c$ |
 | Guidance | 두 예측의 차이에 scale을 적용 | $\epsilon_{\mathrm{cfg}}$ |
 | Sampler | 현재 상태와 결합된 예측을 선택한 갱신식에 넣음 | 다음 상태 $x_r$ |
 | 반복 | 다음 상태를 새 입력으로 사용 | 마지막 단계까지 갱신 |
@@ -156,5 +169,4 @@ CFG를 적용할 때도 모델 예측을 결합하는 일과 그 예측으로 �
 [^cfg]: Ho, J., & Salimans, T. (2022). Classifier-Free Diffusion Guidance. *arXiv*. [논문](https://arxiv.org/abs/2207.12598).
 [^improved]: Nichol, A. Q., & Dhariwal, P. (2021). Improved Denoising Diffusion Probabilistic Models. *ICML*. [논문](https://proceedings.mlr.press/v139/nichol21a.html).
 [^ddim]: Song, J., Meng, C., & Ermon, S. (2021). Denoising Diffusion Implicit Models. *ICLR*. [논문](https://arxiv.org/abs/2010.02502).
-
 [^cfg-sampler]: Bradley, A., & Nakkiran, P. (2025). Classifier-Free Guidance is a Predictor-Corrector. *Transactions on Machine Learning Research*. [논문](https://arxiv.org/abs/2408.09000).

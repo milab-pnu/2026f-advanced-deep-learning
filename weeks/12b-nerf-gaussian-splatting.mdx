@@ -4,11 +4,14 @@ week: 12
 order: 1
 ---
 
+import gsRaster from "./assets/week12-3dgs-rasterization.png";
 import cloneSplit from "./assets/week12-gaussian-clone-split.png";
 import trainComparison from "./assets/week12-train-novel-view.webp";
 
-여러 방향에서 찍은 기관차 사진이 있다. 사진 사이로 카메라를 옮겼을 때 차체 뒤로 가려지는 선로와 반대쪽 배경이 어떻게 보일까?
-NeRF는 광선 위의 밀도와 색을 합쳐 이 픽셀들을 계산한다. 3D Gaussian Splatting(3DGS)은 반투명한 타원체를 화면에 투영해 앞뒤 순서에 따라 색을 합성하면서 렌더링을 빠르게 했다.[^survey]
+여러 방향에서 찍은 기관차 사진이 있다.
+사진 사이로 카메라를 옮겼을 때 차체 뒤로 가려지는 선로와 반대쪽 배경이 어떻게 보일까?
+NeRF는 광선 위의 밀도와 색을 합쳐 이 픽셀들을 계산한다.
+3D Gaussian Splatting(3DGS)은 반투명한 타원체를 화면에 투영해 앞뒤 순서에 따라 색을 합성하면서 렌더링을 빠르게 했다.[^survey]
 
 ## 1. 관측한 장면의 새 시점
 
@@ -112,7 +115,9 @@ MLP가 낸 밀도는 $\sigma=(0,\,1.4,\,4.6)$이고, 둘째 점의 색은 빨강
 각 픽셀의 광선을 따라 색을 렌더링하고 실제 픽셀 색과의 제곱 오차를 줄인다.
 식의 모든 연산이 미분 가능하므로, 오차의 gradient는 각 점의 $\sigma_i$와 $\mathbf c_i$를 거쳐 MLP의 가중치까지 전달된다.
 
-스탠퍼드 CS248A 강의 그림의 아래쪽에는 같은 굴착기 장면을 지나는 광선 두 개가 있다. 두 번째 광선의 밀도 곡선에는 봉우리가 둘이다. 각각의 위치에서 얻은 색은 앞쪽을 통과한 빛의 비율에 따라 한 픽셀에 섞이고, 오른쪽 끝에서 그 픽셀과 사진 속 같은 픽셀의 색을 비교한다. [NeRF 학습과 렌더링 그림](https://gfxcourses.stanford.edu/cs248a/winter25content/media/scenerecovery/16_scenerecovery.pdf#page=22)
+[스탠퍼드 CS248A 강의의 NeRF 학습과 렌더링 그림](https://gfxcourses.stanford.edu/cs248a/winter25content/media/scenerecovery/16_scenerecovery.pdf#page=22) 아래쪽에는 같은 굴착기 장면을 지나는 광선 두 개가 있다.
+두 번째 광선의 밀도 곡선에는 봉우리가 둘이다.
+각각의 위치에서 얻은 색은 앞쪽을 통과한 빛의 비율에 따라 한 픽셀에 섞이고, 오른쪽 끝에서 그 픽셀과 사진 속 같은 픽셀의 색을 비교한다.
 
 ### 2-3. Positional encoding
 
@@ -157,11 +162,11 @@ NeRF는 렌더링할 때 광선 하나에 coarse 64번, fine 192번, 모두 256�
 이미지 한 장은 광선 64만~76만 개라서 MLP 계산이 1.5억~2억 번 필요하고, V100 GPU(graphics processing unit) 한 대로 장당 약 30초가 걸린다.
 학습도 장면 하나에 V100 한 대로 약 1~2일 동안 10만~30만 회 갱신한다.
 
-Hybrid 표현은 이 비용 가운데 MLP의 크기를 줄인다.
+격자와 작은 MLP를 함께 쓰는 hybrid 표현은 이 비용 가운데 MLP의 크기를 줄인다.
 Instant-NGP는 여러 해상도의 격자에 학습 가능한 feature를 저장하는 hash grid를 두고, 표본점마다 주변 feature를 보간해 작은 MLP에 넣는다.[^instant-ngp]
 원논문은 NeRF를 포함한 여러 task에서 학습 시간을 초에서 분 단위로 줄였다고 보고한다.
 하지만 광선마다 많은 점을 뽑아 하나씩 계산하는 구조는 그대로다.
-3DGS 논문이 큰 실제 장면으로 이루어진 Mip-NeRF360 데이터셋에서 잰 Instant-NGP(Base 설정)는 학습에 5분 37초가 걸렸고, 렌더링 속도는 11.7 fps(frames per second)였다.[^3dgs]
+3DGS 논문이 큰 실제 장면으로 이루어진 Mip-NeRF 360 데이터셋에서 잰 Instant-NGP(Base 설정)는 학습에 5분 37초가 걸렸고, 렌더링 속도는 11.7 fps(frames per second)였다.[^3dgs]
 
 ## 3. 3D Gaussian Splatting
 
@@ -189,6 +194,8 @@ $$
 $$
 
 $S$는 3차원 scale 벡터 $\mathbf s$를 대각에 놓은 행렬이고, $R$은 단위 quaternion $\mathbf q$에서 만든 회전 행렬이다.
+예를 들어 $\mathbf s=(0.2,0.1,0.1)$이고 회전이 없으면 $\Sigma=\operatorname{diag}(0.04,0.01,0.01)$로, x축 방향으로 긴 타원체다.
+이 타원체를 z축 둘레로 90도 돌리면 $\Sigma=\operatorname{diag}(0.01,0.04,0.01)$이 되어 긴 축이 y축으로 옮겨 간다.
 학습한 축별 크기 변수에는 지수 함수를 적용해 양수로 만들고, 회전 변수는 길이 1로 정규화한 뒤 사용한다.
 이렇게 구성한 $\Sigma$는 양의 정부호여서 Gaussian 식의 역행렬도 정의된다.
 
@@ -211,18 +218,39 @@ $$
 
 $W$는 세계 좌표에서 카메라 좌표로 옮기는 변환의 선형 부분(회전)이다.
 평행이동을 해도 카메라 좌표계에서의 3D 공분산은 그대로다.
-$J$는 그 중심에서 화면 좌표 $(u,v)$를 카메라 좌표 $(X_c,Y_c,Z_c)$로 미분한 $2\times3$ Jacobian이다. 중심의 깊이가 달라지면 $J$도 변하므로 같은 Gaussian이라도 화면에 맺히는 타원의 크기는 달라진다.
+$J$는 그 중심에서 화면 좌표 $(u,v)$를 카메라 좌표 $(X_c,Y_c,Z_c)$로 미분한 $2\times3$ Jacobian이다.
+Pinhole 투영 $u=f_xX_c/Z_c+c_x$, $v=f_yY_c/Z_c+c_y$를 미분하면 다음과 같다.
+
+$$
+J=\begin{pmatrix}
+f_x/Z_c&0&-f_xX_c/Z_c^2\\
+0&f_y/Z_c&-f_yY_c/Z_c^2
+\end{pmatrix}.
+$$
+
+중심의 깊이가 달라지면 $J$도 변하므로 같은 Gaussian이라도 화면에 맺히는 타원의 크기는 달라진다.
 이 표기에서 $W$와 $\Sigma$는 각각 $3\times3$이고, $\Sigma'$는 곧바로 화면 타원의 모양을 정하는 $2\times2$ 공분산이다.
+
+<Callout type="example">
+초점거리가 $f_x=f_y=500$픽셀인 카메라의 광축 위, 깊이 $Z_c=4$에 $\Sigma=0.01I$인 둥근 Gaussian이 있고 $W=I$라고 하자.
+$X_c=Y_c=0$이므로 $J$의 셋째 열은 0이고 앞의 두 열은 $125I$다.
+따라서 $\Sigma'=125^2\times0.01\,I=156.25I$이고, 화면에서는 표준편차가 12.5픽셀인 원이 된다.
+같은 Gaussian을 깊이 8로 옮기면 $\Sigma'=62.5^2\times0.01\,I\approx39.06I$가 되어 표준편차는 6.25픽셀로 줄어든다.
+</Callout>
+
 픽셀 $\mathbf p$에서 $i$번째 Gaussian의 불투명도는, 학습한 불투명도에 그 픽셀에서의 2D Gaussian 값을 곱한 $\alpha_i=o_i\,G_i^{2D}(\mathbf p)$다.
 색 $\mathbf c_i$는 보는 방향을 넣어 SH를 계산해 얻는다.
 
 알파 합성을 하려면 Gaussian을 앞에서 뒤로 정렬해야 한다.
 픽셀마다 따로 정렬하면 비싸므로, 3DGS는 이미지 전체의 Gaussian을 한 번에 정렬한다.
-화면을 16×16 픽셀 tile로 나누고, 각 Gaussian이 걸치는 모든 tile의 목록에 그 Gaussian의 번호를 기록한다. GPU는 이 항목들을 (tile ID, 깊이) 순으로 한 번에 정렬한다.
+화면을 16×16 픽셀 tile로 나누고, 각 Gaussian이 걸치는 모든 tile의 목록에 그 Gaussian의 번호를 기록한다.
+GPU는 이 항목들을 (tile ID, 깊이) 순으로 한 번에 정렬한다.
 그러면 tile마다 깊이 순서의 목록이 생긴다.
 각 픽셀은 자기 tile의 목록을 앞에서부터 읽으며 알파 합성하다가, 누적 불투명도가 1에 가까워지면 멈춘다.
 
-<Figure src="https://arxiv.org/html/2401.03890v9/fig_3dgs.png" alt="(a) 빨강, 초록, 파랑 3D Gaussian이 화면에 타원으로 투영된다. (b) 화면이 네 tile로 나뉘고 각 타원이 하나 이상의 tile에 걸친다. (c) 여러 tile에 걸친 Gaussian의 번호가 각 tile의 목록에 기록되고, 목록 항목들이 tile 번호와 깊이 순으로 정렬된다. (d) Tile 하나의 픽셀들이 정렬된 Gaussian을 읽어 병렬로 계산된다." caption="3DGS의 렌더링 순서. (a) Gaussian을 화면에 투영하고 (b) 화면을 tile로 나눈 뒤 (c) Gaussian 번호를 (tile ID, 깊이) 순으로 정렬하고 (d) tile마다 독립적으로 픽셀 색을 계산한다." source="Chen & Wang (2026), Figure 2 · CC BY 4.0" wide />
+<Figure src={gsRaster.src} alt="(a) 빨강, 초록, 파랑 3D Gaussian이 화면에 타원으로 투영된다. (b) 화면이 네 tile로 나뉘고 각 타원이 하나 이상의 tile에 걸친다. (c) 여러 tile에 걸친 Gaussian의 번호가 각 tile의 목록에 기록되고, 목록 항목들이 tile 번호와 깊이 순으로 정렬된다. (d) Tile 하나 안의 픽셀 C1부터 C4마다, 정렬된 Gaussian의 불투명도와 색으로 쓴 합성 식이 적혀 있다." caption="3DGS의 렌더링 순서. (a) Gaussian을 화면에 투영하고 (b) 화면을 tile로 나눈 뒤 (c) Gaussian 번호를 (tile ID, 깊이) 순으로 정렬하고 (d) tile마다 독립적으로 픽셀 색을 계산한다." source="Chen & Wang (2026), Figure 2 · CC BY 4.0" wide />
+
+[그림 원문](https://arxiv.org/abs/2401.03890) · [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 
 정렬은 Gaussian마다 하나의 깊이로 한 번만 하고, 픽셀별로 다시 정렬하지 않는다.
 그래서 겹친 Gaussian의 실제 앞뒤가 픽셀마다 다를 때 합성 순서는 근사가 된다.
@@ -244,7 +272,8 @@ $$
 
 두 식 모두 $T_i=\prod_{j=1}^{i-1}(1-\alpha_j)$를 쓰므로, 이미지를 만드는 식은 같다.[^3dgs]<Sidenote>3DGS 원논문은 NeRF의 식을 이 곱의 꼴로 옮겨 적으면서 곱 안쪽을 $(1-\alpha_i)$로 인쇄했다. NeRF의 이산 식에서 유도하면 $(1-\alpha_j)$가 맞고, 이 노트는 맞는 식을 쓴다.</Sidenote>
 앞의 빨강·파랑 예에서 해당 픽셀의 유효 불투명도 $o_iG_i^{2D}(\mathbf p)$가 각각 0.50, 0.90이라 하자.
-검은 배경에서 빨강이 앞이면 색은 $(0.50,0,0.45)$다. 파랑이 앞이면 빨강에는 남은 빛의 10%만 도달해 색이 $(0.05,0,0.90)$으로 바뀐다.
+검은 배경에서 빨강이 앞이면 색은 $(0.50,0,0.45)$다.
+파랑이 앞이면 빨강에는 남은 빛의 10%만 도달해 색이 $(0.05,0,0.90)$으로 바뀐다.
 빨강 Gaussian의 중심 불투명도가 $o=0.50$이면, 한 주축을 따라 표준편차 하나 떨어진 픽셀에서는 유효 불투명도가 $0.50e^{-1/2}\approx0.30$이다.
 
 다른 것은 $\alpha_i$와 $\mathbf c_i$를 얻는 방법이다.
@@ -266,7 +295,9 @@ Gradient descent는 Gaussian의 위치와 모양을 바꾸지만 개수는 그�
 이 Gaussian이 보였던 여러 카메라 뷰에서 이 값이 평균적으로 크면, 위치를 조정할 필요가 큰 Gaussian으로 보고 크기에 따라 복제하거나 분할한다.[^3dgs]
 이를 포함해 공간에 놓는 Gaussian의 개수를 조절하는 절차를 *adaptive density control*이라 한다.
 
-<Figure src={cloneSplit.src} alt="검은 윤곽과 녹색 Gaussian을 비교한 두 행의 그림. 윗줄의 작은 Gaussian은 복제되고 아랫줄의 큰 Gaussian은 작은 둘로 나뉜다. 최적화를 계속하면 두 경우 모두 녹색 영역이 윤곽에 가까워진다." caption="검은 선은 복원할 형상의 윤곽이다. 윗줄에서는 작은 Gaussian이 닿지 않는 부분이 있어 같은 크기의 복제본을 추가한다(clone). 아랫줄에서는 큰 Gaussian이 윤곽 밖까지 덮으므로 작은 둘로 바꾼다(split). 오른쪽 열은 추가 최적화까지 마친 결과다." source="Kerbl et al. (2023), Figure 4 · CC BY 4.0 · 원본" />
+<Figure src={cloneSplit.src} alt="검은 윤곽과 녹색 Gaussian을 비교한 두 행의 그림. 윗줄의 작은 Gaussian은 복제되고 아랫줄의 큰 Gaussian은 작은 둘로 나뉜다. 최적화를 계속하면 두 경우 모두 녹색 영역이 윤곽에 가까워진다." caption="검은 선은 복원할 형상의 윤곽이다. 윗줄에서는 작은 Gaussian이 닿지 않는 부분이 있어 같은 크기의 복제본을 추가한다(clone). 아랫줄에서는 큰 Gaussian이 윤곽 밖까지 덮으므로 작은 둘로 바꾼다(split). 오른쪽 열은 추가 최적화까지 마친 결과다." source="Kerbl et al. (2023), Figure 4 · CC BY 4.0" />
+
+[그림 원문](https://arxiv.org/abs/2308.04079) · [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 
 분할할 때는 원래 Gaussian을 확률분포로 삼아 새 중심을 뽑는다.
 지우는 쪽에서는 불투명도가 임계값보다 낮아 거의 투명한 Gaussian을 지운다(prune).
@@ -288,8 +319,9 @@ Novel view synthesis는 보통 사진 일부를 학습에서 빼 두고, 그 카
 - LPIPS(learned perceptual image patch similarity): 사전학습한 신경망의 feature 사이 거리로 잰 지각적 차이다. 사람의 유사도 판단 데이터로 타당성을 검증했고, 낮을수록 좋다.[^lpips]
 
 여기에 학습 시간, 렌더링 속도(fps), 저장 용량을 함께 본다.
-다음 표는 3DGS 논문이 Mip-NeRF360 데이터셋에서 보고한 값이다.[^3dgs]
-Mip-NeRF 360은 비교 대상인 NeRF 계열 방법이고, 3DGS 수치는 30,000회 최적화한 설정이다.
+다음 표는 3DGS 논문이 Mip-NeRF 360 데이터셋에서 보고한 값이다.[^3dgs]
+Mip-NeRF 360은 이 데이터셋을 함께 제시한 NeRF 계열 방법으로, 여기서는 비교 대상이다.[^mipnerf360]
+3DGS 수치는 30,000회 최적화한 설정이다.
 Mip-NeRF 360의 세 화질 지표는 그 방법의 원논문에서 인용한 값이고, 3DGS의 화질 지표는 3DGS 저자들이 측정한 값이다.
 표의 Mip-NeRF 360 학습 시간은 GPU 한 대로 환산한 값이다.
 
@@ -371,7 +403,8 @@ pixelSplat은 픽셀마다 Gaussian을 예측한다(pixel-aligned).
 pixelSplat의 encoder는 픽셀마다 다른 이미지의 epipolar line 위 점들과 attention을 계산해 대응점을 찾고, 그 점의 깊이를 feature에 담는다.
 SfM으로 얻은 pose는 장면마다 배율이 임의로 정해지므로, 이 장치는 예측 깊이를 입력 pose와 같은 배율로 맞추는 역할도 한다.
 
-학습 때는 동영상의 두 프레임에서 Gaussian을 예측하고, 그 Gaussian을 다른 프레임의 카메라로 렌더링한다. 렌더링한 색과 실제 프레임이 일치하도록 픽셀 오차와 지각적 오차를 줄인다.[^pixelsplat]
+학습 때는 동영상의 두 프레임에서 Gaussian을 예측하고, 그 Gaussian을 다른 프레임의 카메라로 렌더링한다.
+렌더링한 색과 실제 프레임이 일치하도록 픽셀 오차와 지각적 오차를 줄인다.[^pixelsplat]
 그런데 깊이 구간을 이산적으로 뽑는 선택 자체에는 gradient를 흘릴 수 없다.
 pixelSplat은 뽑힌 구간의 확률에 비례하도록 Gaussian의 불투명도를 정한다.
 그 위치의 Gaussian을 더 불투명하게 했을 때 렌더링 오차가 줄면, 같은 갱신이 그 깊이를 다시 뽑을 확률도 높인다.
@@ -392,9 +425,11 @@ VGGT 논문은 VGGT의 카메라 예측에서 출발해 bundle adjustment를 더
 [^survey]: Chen, G., & Wang, W. (2026). A Survey on 3D Gaussian Splatting. *ACM Computing Surveys*, 58(12), 1–39. [논문](https://arxiv.org/abs/2401.03890).
 [^colmap]: Schönberger, J. L., & Frahm, J.-M. (2016). Structure-from-Motion Revisited. *CVPR*. [논문](https://openaccess.thecvf.com/content_cvpr_2016/html/Schonberger_Structure-From-Motion_Revisited_CVPR_2016_paper.html).
 [^nerf]: Mildenhall, B., Srinivasan, P. P., Tancik, M., et al. (2020). NeRF: Representing Scenes as Neural Radiance Fields for View Synthesis. *ECCV*. [논문](https://arxiv.org/abs/2003.08934).
-[^3dgs]: Kerbl, B., Kopanas, G., Leimkühler, T., & Drettakis, G. (2023). 3D Gaussian Splatting for Real-Time Radiance Field Rendering. *ACM Transactions on Graphics*, 42(4). [논문](https://arxiv.org/abs/2308.04079) · [복제와 분할 그림 원본](https://arxiv.org/html/2308.04079v1/density_control_01.png) · [그림 이용 조건(CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
+[^3dgs]: Kerbl, B., Kopanas, G., Leimkühler, T., & Drettakis, G. (2023). 3D Gaussian Splatting for Real-Time Radiance Field Rendering. *ACM Transactions on Graphics*, 42(4). [논문](https://arxiv.org/abs/2308.04079).
 [^instant-ngp]: Müller, T., Evans, A., Schied, C., & Keller, A. (2022). Instant Neural Graphics Primitives with a Multiresolution Hash Encoding. *ACM Transactions on Graphics*, 41(4), 102:1–102:15. [논문](https://arxiv.org/abs/2201.05989).
-[^ssim]: Wang, Z., Bovik, A. C., Sheikh, H. R., & Simoncelli, E. P. (2004). Image quality assessment: from error visibility to structural similarity. *IEEE Transactions on Image Processing*, 13(4), 600–612. [논문](https://doi.org/10.1109/TIP.2003.819861).
+[^mipnerf360]: Barron, J. T., Mildenhall, B., Verbin, D., Srinivasan, P. P., & Hedman, P. (2022). Mip-NeRF 360: Unbounded Anti-Aliased Neural Radiance Fields. *CVPR*. [논문](https://arxiv.org/abs/2111.12077).
+[^ssim]: Wang, Z.,
+ Bovik, A. C., Sheikh, H. R., & Simoncelli, E. P. (2004). Image quality assessment: from error visibility to structural similarity. *IEEE Transactions on Image Processing*, 13(4), 600–612. [논문](https://doi.org/10.1109/TIP.2003.819861).
 [^dust3r]: Wang, S., Leroy, V., Cabon, Y., Chidlovskii, B., & Revaud, J. (2024). DUSt3R: Geometric 3D Vision Made Easy. *CVPR*. [논문](https://arxiv.org/abs/2312.14132).
 [^pixelsplat]: Charatan, D., Li, S., Tagliasacchi, A., & Sitzmann, V. (2024). pixelSplat: 3D Gaussian Splats from Image Pairs for Scalable Generalizable 3D Reconstruction. *CVPR*. [논문](https://arxiv.org/abs/2312.12337).
 [^vggt]: Wang, J., Chen, M., Karaev, N., et al. (2025). VGGT: Visual Geometry Grounded Transformer. *CVPR*. [논문](https://arxiv.org/abs/2503.11651).

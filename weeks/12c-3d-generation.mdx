@@ -27,18 +27,19 @@ Text-to-image 모델은 인터넷에서 모은 이미지와 설명문 쌍으로 
 | 데이터셋 | 내용 | 규모 |
 |---|---|---|
 | LAION-5B | 이미지·텍스트 쌍 | 58.5억 개 |
-| ShapeNetCore | 3D 모델 | 약 5.1만 개 |
+| ShapeNet | 3D 모델 | 약 5.1만 개 |
 | Objaverse | 3D 자산 | 80만 개 이상 |
 | Objaverse-XL | 3D 자산 | 약 1,020만 개 |
 
-Objaverse는 10만 명 이상의 제작자가 올린 자산을 모아 ShapeNet보다 열 배 이상 키웠다.[^objaverse]
+Objaverse는 10만 명 이상의 제작자가 올린 자산을 모았다.[^objaverse]
+같은 논문이 비교 대상으로 든 ShapeNet의 약 5.1만 개와 견주면, 계산상 15배가 넘는 규모다.
 Objaverse-XL은 웹의 여러 출처를 더해 1,000만 개를 넘겼다.[^objaverse-xl]
 이미지·텍스트 쌍과 3D 자산은 단위가 다르지만, 학습에 쓸 수 있는 자산의 수에서 규모 차이가 드러난다.
 품질도 고르지 않다.
 예를 들어 MVDream은 Objaverse에서 렌더링 이미지가 물체 이름과 맞지 않는 자산을 CLIP 점수로 걸러 약 35만 개만 학습에 썼다.[^mvdream]
 
 3D 학습 자료가 부족할 때도 사진으로 학습한 2D diffusion 모델은 활용할 수 있다.
-가령 의자의 3D 형상을 조금 바꿔 옆에서 렌더링하면, 그 변화가 ‘파란 의자’라는 문장에 더 어울리는 이미지를 만드는지 2D 모델의 예측으로 가늠할 수 있다.
+가령 의자의 3D 형상을 조금 바꿔 옆에서 렌더링하면, 그 변화가 “파란 의자”라는 문장에 더 어울리는 이미지를 만드는지 2D 모델의 예측으로 가늠할 수 있다.
 보는 방향을 바꿔 가며 이 신호로 하나의 3D 표현을 갱신하는 것이 DreamFusion의 출발점이다.[^dreamfusion]
 
 ## 2. Score distillation
@@ -48,7 +49,7 @@ Objaverse-XL은 웹의 여러 출처를 더해 1,000만 개를 넘겼다.[^objav
 DreamFusion은 텍스트에서 3D를 만드는 문제를 최적화 문제로 바꾼다.[^dreamfusion]
 3D 표현의 파라미터를 $\theta$라 하자.
 DreamFusion은 NeRF 계열의 radiance field를 쓰므로 $\theta$는 MLP의 가중치다.
-카메라 $\pi$를 하나 고르면, 미분 가능한 volume rendering이 이미지 $x=g(\theta,\pi)$를 만든다.
+카메라의 내부·외부 파라미터 $\pi$를 하나 고르면, 미분 가능한 volume rendering이 이미지 $x=g(\theta,\pi)$를 만든다.
 목표는 어떤 카메라에서 렌더링해도 $x$가 텍스트 조건 $c$에 맞는 그럴듯한 이미지가 되게 하는 $\theta$를 찾는 것이다.
 
 Text-to-image diffusion 모델은 noise가 섞인 렌더링 이미지를 받아 각 픽셀과 색 채널의 noise를 예측한다.
@@ -61,11 +62,13 @@ DreamFusion은 Imagen의 64×64 base 모델을 쓰고, 그 가중치는 최적�
 3. 고정된 diffusion 모델이 섞인 noise를 예측한다.
 4. 예측한 noise와 실제로 섞은 noise의 차로 $\theta$를 갱신한다.
 
+DreamFusion은 이 갱신 방법을 score distillation sampling(SDS)이라 부른다.
 사진으로 NeRF를 학습할 때는 정답 사진과 렌더링 이미지의 오차를 렌더러를 거쳐 $\theta$로 역전파한다.
-Score distillation도 렌더러를 거쳐 역전파하는 길은 같다.
+SDS도 렌더러를 거쳐 역전파하는 길은 같다.
 다른 점은 정답 사진이 없고, diffusion 모델이 이미지를 어느 쪽으로 고쳐야 하는지를 대신 알려 준다는 것이다.
 
-카네기멜런대 강의 그림에서는 서핑보드 위 공작을 한 시점에서 렌더링한 뒤 그 이미지에 잡음을 섞는다. 역전파 화살표를 따라가면, diffusion 모델이 예측한 잡음과 넣어 준 잡음의 차가 렌더러를 거쳐 장면의 밀도와 색을 바꾸는 과정을 확인할 수 있다. [DreamFusion의 학습 과정](https://www.cs.cmu.edu/~mgormley/courses/10423-f25/slides/lecture26-world-models.pdf#page=15)
+[카네기멜런대 강의의 DreamFusion 학습 그림](https://www.cs.cmu.edu/~mgormley/courses/10423-f25/slides/lecture26-world-models.pdf#page=15)에서는 서핑보드 위 공작을 한 시점에서 렌더링한 뒤 그 이미지에 noise를 섞는다.
+역전파 화살표를 따라가면, diffusion 모델이 예측한 noise와 넣어 준 noise의 차가 렌더러를 거쳐 장면의 밀도와 색을 바꾸는 과정을 확인할 수 있다.
 
 ### 2-2. SDS gradient
 
@@ -77,7 +80,8 @@ $$
 
 모델의 noise 예측은 classifier-free guidance(CFG)를 적용한 값 $\hat\epsilon=\epsilon_u+s(\epsilon_c-\epsilon_u)$를 쓴다.
 $\epsilon_c$와 $\epsilon_u$는 같은 $x_t$에서 텍스트 조건이 있을 때와 없을 때의 예측이고, $s$는 guidance scale이다.
-이제 렌더링 이미지에서 얻은 값을 어느 파라미터에 전달할지 보자. SDS는 각 픽셀에서 예측한 noise와 실제로 넣은 noise의 차를 구하고, 시간별 가중치 $w(t)$를 곱한다. 렌더러를 통해 이 신호를 장면 파라미터 $\theta$의 기울기로 바꾸면 다음과 같다.[^dreamfusion]
+SDS는 각 픽셀에서 예측한 noise와 실제로 넣은 noise의 차를 구하고, 시간별 가중치 $w(t)$를 곱한다.
+렌더러를 통해 이 신호를 장면 파라미터 $\theta$의 기울기로 바꾸면 다음과 같다.[^dreamfusion]
 
 $$
 \nabla_\theta L_{\mathrm{SDS}}=\mathbb{E}_{t,\epsilon}\Bigl[w(t)\,\bigl(\hat\epsilon(x_t,t,c)-\epsilon\bigr)\frac{\partial x}{\partial\theta}\Bigr].
@@ -105,13 +109,17 @@ $\epsilon$을 빼지 않고 $\hat\epsilon$만 쓰면 gradient가 $-2.17$, $-3.67
 DreamFusion은 이 보정으로 갱신 방향의 분산을 줄였다.
 </Callout>
 
-이 갱신은 현재 렌더링에 잡음을 더한 분포 $q$를 diffusion 모델이 선호하는 이미지 분포 $p$에 가까이 옮긴다. DreamFusion은 모델의 score가 정확할 때 이 방향이 시간별 $\mathrm{KL}(q\|p)$의 가중합을 줄이는 방향임을 보였다.[^dreamfusion]
+이 갱신은 현재 렌더링에 noise를 더한 분포 $q$를 diffusion 모델이 선호하는 이미지 분포 $p$에 가까이 옮긴다.
+DreamFusion은 모델의 score가 정확할 때 이 방향이 시간별 $\mathrm{KL}(q\|p)$의 가중합을 줄이는 방향임을 보였다.[^dreamfusion]
 최적화하는 쪽 $q$를 앞에 둔 이 reverse KL은 $p$의 여러 봉우리 가운데 하나에 $q$를 몰아넣기만 해도 작아진다.
 이 성질을 mode-seeking이라 한다.
 
 <Details summary="SDS gradient가 KL divergence의 gradient인 이유">
 
-Noise 예측의 제곱 오차를 장면에 대해 그대로 미분하면 U-Net의 입력에 대한 미분까지 필요하다. SDS는 고정된 U-Net의 출력에서 목표 분포의 score를 바로 읽으므로, 렌더러만 역전파한다. Score는 로그 밀도를 입력에 대해 미분한 벡터이고, noise 예측에 대응하는 score는 $\hat s(x_t)=-\hat\epsilon/\sqrt{1-\bar\alpha_t}$다. CFG를 적용하면 이 식은 guidance로 조정된 목표의 score를 근사한다.
+Noise 예측의 제곱 오차를 장면에 대해 그대로 미분하면 U-Net의 입력에 대한 미분까지 필요하다.
+SDS는 고정된 U-Net의 출력에서 목표 분포의 score를 바로 읽으므로, 렌더러만 역전파한다.
+Score는 로그 밀도를 입력에 대해 미분한 벡터이고, noise 예측에 대응하는 score는 $\hat s(x_t)=-\hat\epsilon/\sqrt{1-\bar\alpha_t}$다.
+CFG를 적용하면 이 식은 guidance로 조정된 목표의 score를 근사한다.
 
 시간 $t$와 카메라를 하나 고정하자.
 이 시점의 모델 score가 목표 밀도 $p(x_t\mid c)$의 정확한 로그 기울기라고 가정하자.
@@ -152,29 +160,43 @@ ProlificDreamer는 렌더러를 항등 함수로 둔 2D 실험으로 이 문제�
 큰 guidance scale의 2D 결과에는 3D에서 본 과포화와 과평활이 그대로 나타났다.
 ProlificDreamer는 원인을 두 가지에서 함께 찾았다.
 하나는 3D 물체의 분포를 한 점으로 둔 지나치게 단순한 근사이고, 다른 하나는 SDS가 쓰는 큰 guidance다.
+그래서 variational score distillation(VSD)을 제안했다.
+VSD는 3D 파라미터를 한 점 대신 분포로 두고, 몇 개의 particle로 그 분포를 나타낸다.
+SDS가 넣어 준 noise $\epsilon$을 빼던 자리에는 현재 렌더링 이미지 분포의 score를 추정하는 모델의 예측을 쓴다.
+이 모델은 사전학습한 diffusion 모델에 LoRA(low-rank adaptation)를 붙인 것으로, particle과 번갈아 갱신한다.
+VSD는 이미지 생성에서 흔히 쓰는 guidance scale 7.5에서 동작하지만, 물체 하나를 만드는 데 여전히 몇 시간이 걸린다.
 
 둘째 한계는 여러 방향에 앞면이 생기는 문제다.
 DreamFusion은 시점에 따른 문구 없이 최적화하면 얼굴이 여러 개인 개가 나온다고 보고했다.
 MVDream은 이 현상을 multi-face Janus 문제라고 부른다.[^mvdream]
 Janus는 앞뒤로 두 얼굴을 가진 로마 신이다.
 2D 모델은 각 시점의 렌더링만 보고 noise를 예측한다.
-그 모델이 아는 것은 "이 텍스트에 맞는 사진이 어떻게 생겼는가"이고, 인터넷 사진은 물체의 정면을 담은 경우가 많다.
+그 모델이 아는 것은 “이 텍스트에 맞는 사진이 어떻게 생겼는가”이고, 인터넷 사진은 물체의 정면을 담은 경우가 많다.
 Zero-1-to-3의 저자들도 Stable Diffusion이 의자를 대부분 정면을 향한 표준 자세로 그린다는 점을 지적했다.[^zero123]
 그래서 뒤나 옆에서 렌더링한 이미지도 정면 사진처럼 보이는 방향으로 고쳐지고, 몸 여러 곳에 얼굴이 생긴다.
-DreamFusion은 카메라 방위각에 따라 프롬프트 끝에 "front view", "side view", "back view"를, 높은 고도에서는 "overhead view"를 붙여 이 문제를 줄였다.
+DreamFusion은 카메라 방위각에 따라 프롬프트 끝에 “front view”, “side view”, “back view”를, 높은 고도에서는 “overhead view”를 붙여 이 문제를 줄였다.
 하지만 문구만으로 2D 모델에 시점 사이의 관계를 가르칠 수는 없다.
 
 <Figure src={mvdreamHorse.src} alt="노란 배경에서 걷는 말을 여덟 방향에서 렌더링한 이미지. 뒤쪽에서 본 왼쪽 두 장에서 꼬리가 있어야 할 자리에 또 하나의 말 얼굴이 보인다." caption="2D diffusion 모델만으로 최적화한 3D 결과를 여덟 시점에서 렌더링한 예(프롬프트 A photo of a horse walking). 뒤에서 본 왼쪽 두 장에서 꼬리 자리에 두 번째 얼굴이 생겼다. 배경과 털의 색이 지나치게 진한 것은 과포화로 볼 수 있다." source="Shi et al. (2024), Figure 1 · CC BY 4.0 · 왼쪽 예시만 실음" wide />
+
+[그림 원문](https://arxiv.org/abs/2308.16512) · [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 
 셋째 한계는 비용이다.
 DreamFusion은 TPU v4 칩 네 개로 프롬프트 하나당 15,000회 갱신하는 데 약 1.5시간이 걸렸다고 보고했다.
 새 프롬프트가 오면 이 최적화를 처음부터 다시 한다.
 
+DreamGaussian은 SDS로 최적화하는 표현을 NeRF에서 3D Gaussian으로 바꿔 이 시간을 줄였다.[^dreamgaussian]
+저자들은 Gaussian을 점차 늘려 가는 방식이 빈 공간을 걸러 내는 NeRF의 방식보다 빨리 수렴한다고 보았다.
+Gaussian에서 바로 얻은 결과는 흐릿해서, mesh를 추출한 뒤 texture를 다듬는 둘째 단계를 둔다.
+V100 한 대에서 사진 한 장을 입력으로 받으면 두 단계가 각각 약 1분, 텍스트를 입력으로 받으면 각각 약 2분이 걸렸다.
+표현을 바꿔도 2D prior에서 오는 한계는 남아서, 저자들은 Janus 문제와 과포화된 texture를 한계로 적었다.
+
 ## 3. 시점 정보를 이용한 3D 생성
 
 Janus 문제를 줄이는 한 방법은 각 이미지의 시점과 여러 이미지 사이의 관계를 학습시키는 것이다.
 Multi-view diffusion은 2D diffusion 모델을 3D 자산의 렌더링 이미지로 미세조정해 카메라를 알게 만든다.
-학습한 시점 정보는 두 가지 방식으로 쓰인다. 현재 3D 물체를 렌더링해 그 결과를 평가하고 물체를 갱신할 수도 있고, 여러 시점의 이미지를 먼저 생성한 뒤 그 이미지들에서 3D를 복원할 수도 있다.
+학습한 시점 정보는 두 가지 방식으로 쓰인다.
+현재 3D 물체를 렌더링해 그 결과를 평가하고 물체를 갱신할 수도 있고, 여러 시점의 이미지를 먼저 생성한 뒤 그 이미지들에서 3D를 복원할 수도 있다.
 3D 자산을 렌더링할 때는 카메라를 직접 배치하므로, 같은 물체를 다른 시점에서 본 이미지와 각 시점의 정답 카메라를 함께 얻는다.
 
 ### 3-1. 카메라를 조건으로 한 새 시점
@@ -188,7 +210,7 @@ Zero-1-to-3는 이 쌍으로 Stable Diffusion을 미세조정한다.
 입력 사진의 CLIP embedding에 상대 시점을 붙인 벡터는 cross-attention으로 들어가 물체가 무엇인지를 전한다.
 입력 사진을 이미지 encoder로 압축한 latent는 생성 중인 latent와 채널 방향으로 이어 붙인다.
 이렇게 하면 입력 사진의 어느 위치에 어떤 세부가 있었는지도 모델에 전달된다.
-상대 시점은 고도의 변화, 방위각 변화의 sin과 cos, 거리의 변화라는 네 값이다.
+공식 구현에서 상대 시점은 극각(polar angle)의 변화, 방위각 변화의 sin과 cos, 거리의 변화라는 네 값이다.
 
 이렇게 학습한 모델은 텍스트 대신 입력 사진과 카메라를 조건으로 하는 2D prior가 된다.
 Zero-1-to-3도 3D를 얻을 때는 이 모델을 score distillation 계열의 최적화인 SJC(score Jacobian chaining)에 넣어 neural field를 최적화한다.
@@ -214,7 +236,7 @@ MVDream은 이렇게 학습한 모델을 고정하고, SDS로 3D 표현을 맞�
 뒤에서 본 말의 꼬리 자리에 얼굴이 생기면, 모델은 그 이미지와 나머지 세 시점의 관계도 함께 평가할 수 있다.
 MVDream의 비교에서 카메라를 아는 한 시점 모델은 여전히 Janus 문제가 심했고, 두 시점 모델은 크게 줄었으며, 네 시점 모델에서는 거의 사라졌다.
 물체마다 최적화를 거치는 비용은 여전히 남는다.
-MVDream은 음영을 적용한 SDS 설정에서 V100 한 대로 물체 하나에 약 1.5시간을 보고했다.
+MVDream은 음영을 적용한 SDS 설정에서 V100 한 대로 물체 하나에 약 1.5시간이 걸린다고 부록에 적었고, 본문의 비교에서는 약 2시간이라고 적었다.
 
 ### 3-3. 많은 시점의 생성과 3D 복원
 
@@ -229,6 +251,8 @@ SV3D는 Stable Video Diffusion을 미세조정해, 사진 한 장에서 물체 �
 카메라 궤적을 조건으로 받는 SV3D-p는 각 시점의 고도와 방위각을 사인·코사인 함수로 인코딩해 입력한다.
 
 <Figure src={sv3dViews.src} alt="크림색 손잡이와 하늘색 몸체, 검은 바퀴가 달린 장난감을 서로 다른 네 방향에서 본 생성 이미지. 시점에 따라 바퀴와 손잡이가 몸체에 가려지는 부분이 달라진다." caption="사진 한 장을 입력한 뒤 SV3D가 생성한 21개 시점 중 네 장을 골랐다. 몸체에 붙은 바퀴와 손잡이의 위치를 따라가 보자. 여기까지의 출력은 시점별 2D 이미지이고, mesh는 이 이미지들을 이용하는 다음 단계에서 얻는다." source="Voleti et al. (2024), Figure 1 · CC BY 4.0 · 다시점 생성 패널 중 네 시점만 발췌" wide />
+
+[그림 원문](https://arxiv.org/abs/2403.12008) · [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 
 3D는 이 시점들로 NeRF를 최적화한 뒤 mesh로 바꿔 다듬어 얻고, 보이지 않는 부분에는 SDS 손실을 더할 수 있다.
 SV3D의 mesh 추출은 SDS 손실을 생략하면 약 8분, 포함하면 약 20분이 걸렸다.
@@ -247,14 +271,18 @@ CAT3D는 합성 3D 자산과 카메라를 아는 실사 사진·영상으로 학
 CAT3D의 단일 입력 실험에서는 A100 GPU 16대로 80개 시점을 생성하는 데 5초, 장면을 복원하는 데 55초가 걸렸다.
 CAT3D는 물체뿐 아니라 장면 전체도 만든다.
 
-SV3D와 CAT3D에서는 시점 이미지를 생성한 뒤에도 물체나 장면마다 3D 표현을 최적화하는 시간이 든다. 많은 물체에서 이미지와 3D 표현의 대응을 미리 배우면, 이 마지막 단계를 신경망의 순전파 한 번으로 바꿀 수 있다.
+SV3D와 CAT3D에서는 시점 이미지를 생성한 뒤에도 물체나 장면마다 3D 표현을 최적화하는 시간이 든다.
+많은 물체에서 이미지와 3D 표현의 대응을 미리 배우면, 이 마지막 단계를 신경망의 순전파 한 번으로 바꿀 수 있다.
 
 ### 3-4. 사진 한 장에서 물체 추정
 
-시점 생성과 복원이 각각 어떤 역할을 하는지 보려면, 관측한 사진만 쓰는 경우부터 생각해 보자. LRM(Large Reconstruction Model)은 사진 한 장을 입력받아 물체 전체의 triplane NeRF를 예측한다.[^lrm]
+시점 생성과 복원이 각각 어떤 역할을 하는지 보려면, 관측한 사진만 쓰는 경우부터 생각해 보자.
+LRM(Large Reconstruction Model)은 사진 한 장을 입력받아 물체 전체의 triplane NeRF를 예측한다.[^lrm]
 Transformer가 이미지의 patch feature에서 세 평면에 저장할 feature를 만들고, 공유 MLP가 그 평면을 읽어 3D 점의 색과 밀도를 낸다.
-학습 때는 입력 사진의 카메라와 다른 세 카메라에서 렌더링해, 각 카메라의 정답 이미지와 비교한다. 앞면이 잘 맞아도 다른 각도에서 드러나는 형상과 무늬가 어긋나면 그 오차가 손실에 남는다.
-LRM은 Objaverse의 합성 자산과 MVImgNet의 촬영 영상으로 이런 대응을 학습했다. 추론할 때는 다른 시점의 정답 없이 입력 사진만으로 mesh 추출까지 A100 한 대에서 5초가 채 걸리지 않았다.
+학습 때는 입력 사진의 카메라와 다른 세 카메라에서 렌더링해, 각 카메라의 정답 이미지와 비교한다.
+앞면이 잘 맞아도 다른 각도에서 드러나는 형상과 무늬가 어긋나면 그 오차가 손실에 남는다.
+LRM은 Objaverse의 합성 자산과 MVImgNet의 촬영 영상으로 이런 대응을 학습했다.
+추론할 때는 다른 시점의 정답 없이 입력 사진만으로 mesh 추출까지 A100 한 대에서 5초가 채 걸리지 않았다.
 
 LRM은 보이지 않는 부분의 texture가 흐릿해지는 실패 사례를 보고했다.
 저자들은 LRM이 같은 입력에 하나의 결과를 내므로, 뒷면처럼 가능한 답이 여럿인 곳에서는 서로 다른 무늬가 평균처럼 섞일 수 있다고 추정했다.
@@ -270,7 +298,12 @@ Instant3D는 추론할 때 물체의 다른 시점을 diffusion 모델에서 먼
 보이지 않던 부분은 생성 모델이 채우고, 3D로 올리는 일은 feed-forward 복원이 맡는다.
 Instant3D는 A100 한 대에서 두 단계를 합쳐 물체 하나에 약 20초를 보고했다.
 
-남는 문제도 원논문이 밝힌다.
+LGM은 복원기가 내는 표현을 triplane NeRF에서 3D Gaussian으로 바꿨다.[^lgm]
+저자들은 triplane과 volume rendering의 비용이 학습 해상도를 낮게 묶는다고 보았다.
+LGM에서는 U-Net이 multi-view diffusion 모델로 생성한 네 시점을 받아 시점마다 Gaussian을 예측하고, 이를 합쳐 최대 65,536개의 Gaussian으로 물체를 나타낸다.
+LGM은 512 해상도에서 학습했고, 물체 하나를 약 5초에 생성한다고 보고했다.
+
+남는 문제는 Instant3D 원논문이 밝힌다.
 Multi-view 생성에는 3D 구조를 강제하는 inductive bias가 없어서 네 시점이 서로 어긋날 수 있고, 그러면 복원한 형상과 texture가 망가진다.
 Instant3D에서 무작위로 달라지는 것은 네 시점의 이미지다.
 이 네 장을 고정하면 복원기는 같은 3D 표현을 낸다.
@@ -292,7 +325,7 @@ Objaverse-XL 같은 데이터가 생기자, 품질이 좋은 수십만 개만 �
 둘째, 3D latent의 모양을 정하기 어렵다.
 이미지 latent는 픽셀 격자를 줄인 격자라 자연스럽지만, 3D 자산은 대부분이 빈 공간이고 dense voxel 격자는 해상도의 세제곱으로 커진다.
 TRELLIS는 표면 근처의 sparse voxel로, Hunyuan3D 2.0은 순서 없는 token의 집합으로 이 문제를 푼다.
-생성 모델 쪽은 이미지·비디오 생성에서 쓰는 DiT 계열 backbone과 flow matching 목표를 거의 그대로 가져온다.
+생성 모델 쪽은 이미지·비디오 생성에서 쓰는 DiT(diffusion Transformer) 계열 backbone과 flow matching 목표를 거의 그대로 가져온다.
 
 ### 4-2. TRELLIS의 구조화된 latent
 
@@ -301,7 +334,7 @@ SLAT는 voxel 위치 $p_i$와 그 위치의 latent 벡터 $h_i$의 쌍을 모은
 64³ 격자에서 표면과 만나는 voxel만 남기므로, 26만여 칸 중 평균 약 2만 개만 쓴다(계산하면 8% 정도).
 위치는 대략의 형상을, latent는 그 근처의 세부 형상과 색을 담는다.
 
-Encoder는 3D 자산을 여러 시점에서 렌더링하고, 각 voxel을 여러 이미지에 투영해 해당 위치의 DINOv2 feature를 읽고 평균한 뒤 sparse Transformer VAE로 압축한다.
+Encoder는 3D 자산을 여러 시점에서 렌더링하고, 각 voxel을 여러 이미지에 투영해 해당 위치의 DINOv2 feature를 읽고 평균한 뒤 sparse Transformer VAE(variational autoencoder)로 압축한다.
 사전학습한 이미지 feature를 빌려 형상과 외관 정보를 함께 담는 것이다.
 Decoder는 같은 latent에서 세 가지 3D 표현을 낸다.
 
@@ -310,20 +343,24 @@ Decoder는 같은 latent에서 세 가지 3D 표현을 낸다.
 - Mesh: SDF와, 미분 가능한 mesh 추출 방법인 FlexiCubes의 파라미터를 내 mesh를 얻는다.
 
 사용자는 렌더링 품질이 필요하면 Gaussian을, 게임 엔진에 넣으려면 mesh를 고른다.
-Encoder는 Gaussian decoder와 함께 학습하고, 다른 decoder는 encoder를 고정한 채 decoder만 학습한다.
 
 생성은 두 단계다.
 1단계는 어느 voxel이 차는지, 곧 구조를 생성한다.
 64³ binary occupancy 격자를 작은 3D convolution VAE로 압축하고, Transformer가 그 압축 격자를 생성한다.
 2단계는 정해진 voxel 위에 latent $h_i$를 생성한다.
 Voxel 수가 물체마다 다르므로 sparse 구조를 다루는 Transformer를 쓴다.
-두 단계 모두 timestep은 DiT처럼 adaLN으로 넣고, 텍스트 조건(CLIP feature)과 이미지 조건(DINOv2 feature)은 cross-attention으로 넣는다.
 
 TRELLIS는 두 생성 모델을 rectified flow라고 부른다.
 여기서 rectified flow는 noise와 데이터를 직선으로 잇는 경로에서 velocity를 회귀하는 flow matching 목표를 뜻하고, reflow는 하지 않는다.
-TRELLIS의 시간 표기에서는 $t=0$이 데이터, $t=1$이 noise이므로 생성은 시간을 줄이는 방향으로 진행한다.
 TRELLIS는 각 단계의 diffusion 모델을 rectified flow 모델로 바꾸면 생성 품질과 프롬프트 일치가 모두 좋아졌다고 보고했다.
 학습 데이터는 Objaverse-XL 등 공개 데이터셋 네 곳에서 고른 약 50만 개 자산이고, 모델은 최대 20억 파라미터다.
+
+<Details summary="TRELLIS의 학습과 조건 입력 세부">
+
+Encoder는 Gaussian decoder와 함께 학습하고, 다른 decoder는 encoder를 고정한 채 decoder만 학습한다.
+두 생성 단계 모두 timestep은 DiT처럼 adaptive layer normalization(adaLN)으로 넣고, 텍스트 조건(CLIP feature)과 이미지 조건(DINOv2 feature)은 cross-attention으로 넣는다.
+TRELLIS의 시간 표기에서는 $t=0$이 데이터, $t=1$이 noise이므로 생성은 시간을 줄이는 방향으로 진행한다.
+</Details>
 
 ### 4-3. Hunyuan3D 2.0의 형상과 texture
 
@@ -331,7 +368,7 @@ Hunyuan3D 2.0은 사진 한 장에서 형상과 texture를 따로 만든다.[^hu
 먼저 Hunyuan3D-DiT가 texture 없는 mesh를 생성하고, 그다음 Hunyuan3D-Paint가 그 mesh에 texture를 입힌다.
 
 형상 쪽의 latent는 격자가 아니라 순서 없는 벡터의 집합이다.
-ShapeVAE의 encoder는 표면에서 뽑은 point cloud의 좌표와 normal을 받아 cross-attention으로 정해진 개수의 latent token에 모은다.
+ShapeVAE의 encoder는 표면에서 뽑은 point cloud의 좌표와 법선을 받아 cross-attention으로 정해진 개수의 latent token에 모은다.
 모서리처럼 형상이 급하게 변하는 곳에서는 점을 더 많이 뽑는다.
 Decoder는 임의의 3D 점에서 SDF를 예측하고, marching cubes가 그 SDF에서 mesh를 뽑는다.
 Hunyuan3D-DiT는 이 latent token을 생성하는 Transformer이고, 학습 목표는 noise와 데이터를 직선으로 잇는 flow matching이다.
@@ -359,7 +396,8 @@ DreamFusion의 ablation에서 시점 문구를 쓰지 않은 기본 설정은 �
 그래서 DreamFusion은 색을 빼고 형상만 음영으로 렌더링한 이미지에서도 같은 지표를 쟀다.
 
 TRELLIS는 학습에 쓰지 않은 Toys4k 데이터셋에서 여러 지표를 함께 쓴다.
-렌더링 이미지에서 추출한 특징과 3D 점군에서 추출한 특징을 따로 평가한다. 각각에 대해 생성 결과와 기준 데이터의 특징 분포를 비교하고, FID에 쓰이는 Fréchet 거리와 커널 거리를 함께 보고한다.[^trellis]
+렌더링 이미지에서 추출한 특징과 point cloud에서 추출한 특징을 따로 평가하고, 각각 생성 결과와 기준 데이터의 특징 분포를 비교한다.
+이미지 특징에는 FID(Fréchet inception distance)에 쓰이는 Fréchet 거리와 커널 거리를, point cloud 특징에는 Fréchet 거리를 보고한다.[^trellis]
 프롬프트와의 일치는 CLIP score로 재고, 사용자 평가를 더했다.
 아직 하나로 정해진 지표는 없고, 논문마다 렌더링 기반 지표와 사람 평가를 함께 보고한다.
 
@@ -368,15 +406,17 @@ TRELLIS는 학습에 쓰지 않은 Toys4k 데이터셋에서 여러 지표를 �
 | 방식 | 대표 방법 | 학습에 쓰는 3D 데이터 | 물체마다 최적화 | 출력 |
 |---|---|---|---|---|
 | Score distillation | DreamFusion | 쓰지 않음 | 필요(약 1.5시간) | NeRF |
-| Multi-view diffusion + SDS | MVDream | 렌더링으로 2D 모델 미세조정 | 필요(약 1.5시간) | NeRF |
+| Score distillation | DreamGaussian | 2D prior에 따라 다름 | 필요(단계마다 약 1분에서 2분) | 3D Gaussian, mesh |
+| Multi-view diffusion + SDS | MVDream | 렌더링으로 2D 모델 미세조정 | 필요(약 1.5시간에서 2시간) | NeRF |
 | Multi-view diffusion + 복원 | SV3D, CAT3D | 다시점 렌더링 또는 카메라를 아는 실사 사진으로 학습 | 필요(약 1분에서 20분) | mesh, NeRF |
 | Feed-forward 복원 | LRM | 3D 자산의 렌더링과 실제 촬영 영상으로 학습 | 없음(약 5초) | triplane NeRF, mesh |
-| Multi-view diffusion + feed-forward 복원 | Instant3D | 렌더링으로 2D 모델 미세조정과 복원 모델 학습 | 없음(약 20초) | triplane NeRF |
+| Multi-view diffusion + feed-forward 복원 | Instant3D, LGM | 렌더링으로 2D 모델 미세조정과 복원 모델 학습 | 없음(약 5초에서 20초) | triplane NeRF, 3D Gaussian |
 | 3D latent 생성 | TRELLIS, Hunyuan3D 2.0 | 3D autoencoder와 생성 모델 학습 | 없음 | Gaussian, radiance field, mesh |
 
 표의 시간은 각 논문이 서로 다른 하드웨어와 설정에서 보고한 값이다.
 같은 조건의 속도 순위로 해석하기 어렵다.
-표에서 살펴볼 차이는 두 가지다. 어떤 데이터가 3D에 대한 제약을 주는지, 그리고 새 물체마다 3D 파라미터를 다시 최적화하는지다.
+표에서 살펴볼 차이는 두 가지다.
+어떤 데이터가 3D에 대한 제약을 주는지, 그리고 새 물체마다 3D 파라미터를 다시 최적화하는지다.
 
 남은 문제로는 생성 단위와 자산의 활용성을 들 수 있다.
 여기서 다룬 방법 대부분은 물체 하나를 정해진 크기와 중심에 맞춰 생성한다.
@@ -390,9 +430,12 @@ CAT3D는 장면도 만들지만, 생성한 시점으로 장면마다 다시 최�
 [^objaverse-xl]: Deitke, M., Liu, R., Wallingford, M., et al. (2023). Objaverse-XL: A Universe of 10M+ 3D Objects. *NeurIPS Datasets and Benchmarks*. [논문](https://arxiv.org/abs/2307.05663).
 [^mvdream]: Shi, Y., Wang, P., Ye, J., et al. (2024). MVDream: Multi-view Diffusion for 3D Generation. *ICLR*. [논문](https://arxiv.org/abs/2308.16512).
 [^dreamfusion]: Poole, B., Jain, A., Barron, J. T., & Mildenhall, B. (2023). DreamFusion: Text-to-3D using 2D Diffusion. *ICLR*. [논문](https://arxiv.org/abs/2209.14988).
-[^prolificdreamer]: Wang, Z., Lu, C., Wang, Y., et al. (2023). ProlificDreamer: High-Fidelity and Diverse Text-to-3D Generation with Variational Score Distillation. *NeurIPS*. [논문](https://arxiv.org/abs/2305.16213).
+[^dreamgaussian]: Tang, J., Ren, J., Zhou, H., Liu, Z., & Zeng, G. (2024). DreamGaussian: Generative Gaussian Splatting for Efficient 3D Content Creation. *ICLR*. [논문](https://arxiv.org/abs/2309.16653).
+[^lgm]: Tang, J., Chen, Z., Chen, X., Wang, T., Zeng, G., & Liu, Z. (2024). LGM: Large Multi-View Gaussian Model for High-Resolution 3D Content Creation. *ECCV*. [논문](https://arxiv.org/abs/2402.05054).
+[^prolificdreamer]: Wang, Z.,
+ Lu, C., Wang, Y., et al. (2023). ProlificDreamer: High-Fidelity and Diverse Text-to-3D Generation with Variational Score Distillation. *NeurIPS*. [논문](https://arxiv.org/abs/2305.16213).
 [^zero123]: Liu, R., Wu, R., Van Hoorick, B., et al. (2023). Zero-1-to-3: Zero-shot One Image to 3D Object. *ICCV*. [논문](https://arxiv.org/abs/2303.11328).
-[^sv3d]: Voleti, V., Yao, C.-H., Boss, M., et al. (2024). SV3D: Novel Multi-view Synthesis and 3D Generation from a Single Image using Latent Video Diffusion. *ECCV*. [논문](https://arxiv.org/abs/2403.12008) · [그림 이용 조건(CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
+[^sv3d]: Voleti, V., Yao, C.-H., Boss, M., et al. (2024). SV3D: Novel Multi-view Synthesis and 3D Generation from a Single Image using Latent Video Diffusion. *ECCV*. [논문](https://arxiv.org/abs/2403.12008).
 [^cat3d]: Gao, R., Holynski, A., Henzler, P., et al. (2024). CAT3D: Create Anything in 3D with Multi-View Diffusion Models. *NeurIPS*. [논문](https://arxiv.org/abs/2405.10314).
 [^lrm]: Hong, Y., Zhang, K., Gu, J., et al. (2024). LRM: Large Reconstruction Model for Single Image to 3D. *ICLR*. [논문](https://arxiv.org/abs/2311.04400).
 [^instant3d]: Li, J., Tan, H., Zhang, K., et al. (2024). Instant3D: Fast Text-to-3D with Sparse-View Generation and Large Reconstruction Model. *ICLR*. [논문](https://arxiv.org/abs/2311.06214).

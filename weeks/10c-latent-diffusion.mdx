@@ -22,7 +22,7 @@ $512\times512$ RGB 이미지는 색 채널을 포함해 786,432개의 값을 가
 이 공간에서 수십 번 denoising하면, 신경망은 매번 이 큰 배열을 처리해야 한다.
 Latent diffusion은 encoder $E$로 이미지를 더 작은 latent $z_0=E(x)$로 바꾼다.
 Decoder $D$는 latent에서 이미지를 복원하도록 학습된다.
-이 autoencoder는 이미지의 중요한 구조를 남기면서 공간 해상도를 줄인다.<Sidenote>여기서 스케일 조정은 배열의 높이·너비가 아니라 latent 원소의 수치를 바꾼다. 예를 들어 Stable Diffusion v1-4의 VAE 설정값은 0.18215이고,[^sd] 구현은 encoder 출력에 이 값을 곱해 diffusion에 쓰고 decoder에 넣기 전에 같은 값으로 나눈다.[^sd-vae] 이 노트의 $E$와 $D$는 이 조정까지 포함한 표기다.</Sidenote>
+이 autoencoder는 이미지의 중요한 구조를 남기면서 공간 해상도를 줄인다.
 
 <Callout type="example">
 초기 Stable Diffusion 계열은 흔히 $512\times512\times3$ 이미지를 $64\times64\times4$ latent로 바꾼다.
@@ -41,7 +41,7 @@ Autoencoder의 손실에는 복원 품질을 높이는 항과 latent 공간의 �
 LDM 원논문은 latent에 약한 KL penalty를 거는 정규화와 decoder 안에 vector quantization 층을 두는 정규화를 모두 실험했다.[^ldm]
 Stable Diffusion v1-4의 autoencoder는 KL 정규화를 쓰는 VAE(variational autoencoder)다.[^sd]
 Diffusion을 학습할 때는 autoencoder를 고정한다.
-VAE encoder가 이미지 $x$마다 Gaussian 분포의 평균과 분산을 정하면, 그 분포에서 뽑은 표본에 스케일을 곱해 $z_0$를 얻는다.
+VAE encoder가 이미지 $x$마다 Gaussian 분포의 평균과 분산을 정하면, 그 분포에서 뽑은 표본에 스케일을 곱해 $z_0$를 얻는다.<Sidenote>이 스케일 조정은 배열의 높이·너비가 아니라 latent 원소의 수치를 바꾼다. 예를 들어 Stable Diffusion v1-4의 VAE 설정값은 0.18215이고,[^sd] 구현은 encoder 출력에 이 값을 곱해 diffusion에 쓰고 decoder에 넣기 전에 같은 값으로 나눈다.[^sd-vae] 이 노트의 $E$와 $D$는 이 조정까지 포함한 표기다.</Sidenote>
 그리고 학습 과정은 임의의 시간 $t$와 noise $\epsilon$을 뽑아 $z_t$를 만든다.
 텍스트 조건 $c$가 있을 때 noise 예측 손실은 다음과 같다.
 
@@ -63,7 +63,7 @@ $\bar\alpha_t$는 단계 $t$에서 원본 신호가 얼마나 남는지를 정�
 
 ## 2. U-Net과 텍스트 조건
 
-<Figure src="https://upload.wikimedia.org/wikipedia/commons/f/f6/Stable_Diffusion_architecture.png" alt="왼쪽 encoder는 학습 이미지를 latent로 압축한다. 가운데 U-Net은 latent의 noise를 예측하고 오른쪽 decoder는 latent를 이미지로 바꾼다. 텍스트 등 조건은 cross-attention을 거쳐 U-Net에 전달된다." caption="Latent diffusion의 전체 구조. 학습할 때는 왼쪽 encoder로 이미지의 latent를 구한다. 텍스트만으로 생성할 때는 가운데에서 무작위 latent로 시작해 문장을 조건으로 noise를 차례로 제거하고, 오른쪽 decoder로 이미지를 얻는다." source="Copyright (c) 2022 Machine Vision and Learning Group, LMU Munich · MIT License" wide />
+<Figure src="https://upload.wikimedia.org/wikipedia/commons/f/f6/Stable_Diffusion_architecture.png" alt="왼쪽 encoder는 학습 이미지를 latent로 압축한다. 가운데 U-Net은 latent의 noise를 예측하고 오른쪽 decoder는 latent를 이미지로 바꾼다. 텍스트 등 조건은 cross-attention을 거쳐 U-Net에 전달된다." caption="Latent diffusion의 전체 구조. 학습할 때는 왼쪽 encoder로 이미지의 latent를 구한다. 텍스트만으로 생성할 때는 가운데에서 무작위 latent로 시작해 문장을 조건으로 noise를 차례로 제거하고, 오른쪽 decoder로 이미지를 얻는다." source="CompVis latent-diffusion 저장소, modelfigure.png · Copyright (c) 2022 Machine Vision and Learning Group, LMU Munich · MIT License" wide />
 
 이 그림은 [Wikimedia Commons 파일 페이지](https://commons.wikimedia.org/wiki/File:Stable_Diffusion_architecture.png)에서 MIT License로 공개되어 있다.
 
@@ -111,9 +111,12 @@ Diffusion용 U-Net은 segmentation용으로 처음 제안된 U-Net에 residual b
 
 ### 2-2. Text encoder와 cross-attention
 
-Text encoder는 prompt를 token별 문맥 벡터로 바꾼다. Cross-attention에서 query는 U-Net의 각 공간 위치에서, key와 value는 텍스트에서 나온다. 같은 문장을 입력해도 이미지 위치마다 단어에 주는 가중치가 달라질 수 있다.
+Text encoder는 prompt를 token별 문맥 벡터로 바꾼다.
+Cross-attention에서 query는 U-Net의 각 공간 위치에서, key와 value는 텍스트에서 나온다.
+같은 문장을 입력해도 이미지 위치마다 단어에 주는 가중치가 달라질 수 있다.
 
-아래는 “monkey with hat walking”으로 생성한 이미지다. 원숭이의 이마와 다리 중 어디에 주목하는지는 단어에 따라 어떻게 달라질까?[^daam]
+아래는 “monkey with hat walking”으로 생성한 이미지다.
+원숭이의 이마와 다리 중 어디에 주목하는지는 단어에 따라 어떻게 달라질까?[^daam]
 
 <Figure src={wordAttention.src} alt="왼쪽은 모자를 쓴 원숭이 이미지다. 같은 이미지에 겹친 세 열지도에서 monkey는 얼굴, hat은 모자, walking은 다리 주변이 붉게 나타난다." caption="여러 층과 생성 단계의 cross-attention 가중치를 모아 단어별로 표시했다. 붉을수록 해당 단어에 대한 반응이 강하다. ‘walking’의 반응은 다리 바깥에도 퍼져 있다." source="Tang et al. (2023), Figure 1 · © Association for Computational Linguistics · CC BY 4.0" wide />
 
@@ -133,9 +136,7 @@ Stable Diffusion v1-4는 이미 학습된 CLIP ViT-L/14의 text encoder를 고�
 | denoising | 임의 단계에서 추가된 noise를 맞히도록 학습 | 예측과 sampler를 이용해 여러 단계 갱신 |
 | 마지막 계산 | 예측과 실제 noise의 제곱 오차로 U-Net 갱신 | decoder로 최종 latent에서 이미지 복원 |
 
-Classifier-free guidance(CFG)를 쓰면 각 단계에서 같은 latent에 대해 조건이 있는 예측과 없는 예측이 모두 필요하다.
-두 입력을 한 batch로 묶으면 U-Net을 한 번 호출해 두 예측을 얻을 수 있다.
-결과 이미지는 prompt, 초기 noise, 학습된 모델, guidance scale과 sampler의 영향을 함께 받는다.
+그래서 같은 모델과 같은 prompt를 써도 초기 noise, classifier-free guidance(CFG)의 scale, sampler가 달라지면 결과 이미지가 달라진다.
 
 ## 4. 이미지 조건을 쓰는 생성
 
@@ -156,8 +157,8 @@ $$
 SDEdit은 입력에 noise를 넣은 뒤 학습된 diffusion prior로 denoising하는 이 접근을 연속 시간 SDE(stochastic differential equation)의 틀에서 제안했다.[^sdedit]
 앞의 식은 같은 생각을 latent DDPM의 표기로 쓴 것이다.
 
-[코넬 CS 5670의 SDEdit 예시(PDF, 222 MiB)](https://www.cs.cornell.edu/courses/cs5670/2025fa/slides/lec15-diffusion-part2.pdf#page=21)에서 아래줄 왼쪽은 침대와 벽을 몇 개의 색면으로 표시한 입력이다.
-오른쪽 두 결과는 침대의 대략적인 위치를 따르면서도 창틀과 침구 모양은 서로 다르게 채웠다.
+[SDEdit 저자들의 예시 모음](https://sde-image-editing.github.io/)에는 침대와 벽, 창을 몇 개의 색면으로 그린 입력에서 침실 사진을 만든 예가 있다.
+두 출력은 침대와 벽, 창의 위치를 따르면서도 침구와 창밖 모습은 서로 다르게 채웠다.
 일반적으로 시작할 때 noise를 적게 넣으면 입력의 구도가 많이 남고, 많이 넣으면 건물이나 가구의 배치까지 달라질 수 있다.
 즉 이 방법은 원본을 얼마나 남길지와 얼마나 바꿀지를 noise 수준 하나로 함께 정한다.
 SDEdit 원논문은 바꾸지 않을 영역을 mask로 지정하는 변형도 제시했지만,[^sdedit] 바꿀 영역 안에서는 여전히 이 값 하나가 둘을 함께 정한다.
@@ -241,7 +242,8 @@ ControlNet은 edge map, depth map, pose 같은 공간 조건을 사전학습한 
 
 <Figure src={controlNetOwl.src} alt="왼쪽 스케치에는 왼쪽 위의 작은 원과 그 아래 큰 타원, 바닥의 가로 막대가 있다. 오른쪽에는 같은 배치로 나뭇가지에 앉은 올빼미가 그려져 있다." caption="스케치가 정해 준 것은 머리와 몸통, 횃대의 대략적인 위치다. 눈의 방향과 깃털 무늬는 생성 결과에서 새로 생겼다." source="MrAlanKoh (2024), Wikimedia Commons · CC0 1.0" wide />
 
-사람의 자세를 조건으로 줄 때도 마찬가지다. 관절 위치는 팔과 다리의 배치를 안내하지만, 얼굴이나 옷차림까지 지정하지는 않는다.
+사람의 자세를 조건으로 줄 때도 마찬가지다.
+관절 위치는 팔과 다리의 배치를 안내하지만, 얼굴이나 옷차림까지 지정하지는 않는다.
 
 ControlNet은 기존 모델의 가중치를 고정한다.
 U-Net의 인코더와 가운데 block을 복사해 학습할 경로를 만들고, 이 경로의 입력으로 공간 조건을 전달한다.

@@ -17,6 +17,9 @@ U-Net은 convolution으로 공간 해상도를 낮췄다 높이는 계층 구조
 DiT는 latent를 일정한 크기의 조각으로 나누어 token으로 바꾼다.
 각 Transformer block은 token 수를 유지하면서 self-attention으로 여러 위치의 정보를 섞는다.
 
+DiT 원논문은 U-Net의 inductive bias가 diffusion model의 성능에 꼭 필요하지 않고, 표준 Transformer로 바꿀 수 있음을 보이려 했다.
+구조를 표준 Transformer에 가깝게 둔 것은 depth, width, token 수를 늘려 성능을 올리는 Transformer의 scaling 성질을 그대로 가져오기 위해서다.[^dit]
+
 두 구조 모두 noisy 입력, 시간 정보, 조건을 받아 sampler에 전달할 출력을 만든다.
 Sampler가 denoiser를 여러 번 호출해야 한다는 diffusion의 비용도 두 구조에 똑같이 남는다.
 
@@ -54,7 +57,8 @@ Patch가 작을수록 token 하나가 나타내는 영역이 작아져, 모델�
 Token 수를 4배로 늘리면 그 행렬의 원소 수는 16배가 된다.
 다만 전체 모델의 계산량까지 16배가 되지는 않는다.
 Transformer block 안에서 각 token의 query, key, value를 만드는 선형층과 MLP(multi-layer perceptron)의 비용은 hidden dimension이 같으면 token 수에 비례해 4배로 는다.
-입력 patch를 token으로 바꾸는 첫 투영은 다르다. Patch 수는 4배가 되지만 patch 하나의 입력 값은 4분의 1로 줄어, 이 층의 행렬 곱에 드는 연산 수는 같다.
+입력 patch를 token으로 바꾸는 첫 투영은 다르다.
+Patch 수는 4배가 되지만 patch 하나의 입력 값은 4분의 1로 줄어, 이 층의 행렬 곱에 드는 연산 수는 같다.
 
 ## 3. DiT block의 조건 주입
 
@@ -118,13 +122,13 @@ $$
 
 다음 block은 $h_2$를 받아 자체 가중치로 같은 순서의 연산을 수행한다.
 
-DiT의 공식 구현은 조건 처리층의 마지막 선형층을 0으로 초기화한다.
+DiT의 공식 구현은 조건 처리층의 마지막 선형층을 0으로 초기화한다.[^dit]
 그래서 처음에는 $\gamma(c)$, $\beta(c)$, $g(c)$가 모두 0이고, gate $g(c)$가 0이므로 각 block은 입력을 그대로 전달한다.
 예를 들어 어떤 차원에서 입력이 2이고 $F$의 출력이 0.4라면 gate가 0일 때 출력은 2, gate가 0.5일 때 출력은 2.2다.
 Block의 gate가 0이면 그 block의 residual branch 내부로 전달되는 gradient는 처음에 0이다.
 DiT 구현은 최종 출력층도 0으로 초기화한다.
 그래서 학습 초기에는 출력층이 먼저 갱신되고, 그다음 gate와 block 내부로 gradient가 전파된다.
-이 초기화는 block의 학습을 막지 않고, 모델이 입력을 그대로 전달하는 상태에서 출발해 residual 경로를 점차 쓰게 한다.[^dit]
+이 초기화는 block의 학습을 막지 않고, 모델이 입력을 그대로 전달하는 상태에서 출발해 residual 경로를 점차 쓰게 한다.
 
 ## 4. Unpatchify와 출력
 
@@ -162,8 +166,7 @@ FID는 실제 이미지 묶음과 생성 이미지 묶음을 모두 ImageNet으�
 DiT 원논문은 생성 이미지 5만 장으로 계산한 값(FID-50K)을 보고한다.
 
 Patch 크기를 줄이면 token이 늘어 계산량은 크게 늘지만, 모든 patch가 같은 가중치를 쓰므로 파라미터 수는 거의 그대로다.
-원논문은 두 설계의 계산 비용을 denoiser 한 번에 드는 부동소수점 연산 수로 비교한다.
-표의 Gflops는 10억 회 단위다.
+원논문은 두 설계의 계산 비용을 denoiser 한 번에 드는 부동소수점 연산 수로 비교하고, 10억 회를 1 Gflops로 적는다.
 원논문은 depth와 width가 다른 네 구성(S, B, L, XL)과 세 patch 크기(8, 4, 2)를 조합해 DiT 12개를 같은 조건으로 학습했다.
 이름의 숫자가 patch 크기다.
 예를 들어 DiT-XL/2는 가장 큰 XL 구성에 $p=2$를 쓴 모델이다.
@@ -186,7 +189,7 @@ XL 세 모델은 파라미터 수가 거의 같지만, patch를 줄여 Gflops가
 이 비교에서는 파라미터 수만 보는 것보다 patch 크기에 따른 연산량까지 보는 편이 관측한 FID 차이를 더 잘 설명한다.
 </Callout>
 
-이 분석에서 가장 Gflops가 큰 DiT-XL/2를 700만 step까지 학습하자, ImageNet $256\times256$ class 조건 생성에서 FID-50K가 CFG 없이 9.62, 네 latent 채널 중 처음 세 채널에 CFG scale 1.5를 적용했을 때 2.27이었다.[^dit]
+이 분석에서 가장 Gflops가 큰 DiT-XL/2를 700만 step까지 학습하자, ImageNet $256\times256$ class 조건 생성에서 FID-50K가 CFG 없이 9.62, CFG scale 1.5에서 2.27이었다.[^dit]
 같은 평가에서 latent U-Net인 LDM-4는 CFG scale 1.5에서 3.60을 기록했다.
 Denoiser를 한 번 실행하는 연산량은 DiT-XL/2가 118.6 Gflops, LDM-4가 103.6 Gflops였다.
 이미지 한 장을 만드는 전체 비용을 구하려면 여기에 sampler의 호출 횟수와 decoder 실행 비용도 반영해야 한다.
@@ -198,17 +201,29 @@ Denoiser를 한 번 실행하는 연산량은 DiT-XL/2가 118.6 Gflops, LDM-4가
 원래 DiT는 class label 하나를 조건 벡터로 받는다.
 텍스트 prompt처럼 여러 token으로 된 조건을 넣으려면 조건을 주는 방식을 다시 정해야 한다.
 Stable Diffusion 3 연구의 multimodal diffusion transformer(MMDiT)는 이미지와 텍스트 표현에 별도의 가중치를 사용하면서 두 종류의 token이 attention을 통해 정보를 교환하도록 설계한다.[^sd3]
-그림 위쪽에서 텍스트 표현 $c$와 이미지 표현 $x$의 경로를 따라가 보자. 두 경로의 Linear 층은 각자의 가중치로 query, key, value를 만든다. 맨 위의 $y$는 시간 단계와 텍스트 전체의 요약을 담은 조건 벡터로, 양쪽 경로의 정규화와 게이트를 조절한다.
+그림 위쪽에서 텍스트 표현 $c$와 이미지 표현 $x$의 경로를 따라가 보자.
+두 경로의 Linear 층은 각자의 가중치로 query, key, value를 만든다.
+맨 위의 $y$는 시간 단계와 텍스트 전체의 요약을 담은 조건 벡터로, 양쪽 경로의 정규화와 게이트를 조절한다.
 
 <Figure src={mmditBlock.src} alt="텍스트 경로 c와 이미지 경로 x가 나란히 내려온다. 두 경로가 만든 Q, K, V가 각각 연결되어 중앙의 Attention에 들어가고, 그 아래에서 두 경로가 다시 갈라진다." caption="가운데 Q, K, V 바로 위의 동그라미(⊙)는 두 경로의 토큰을 이어 붙이는 자리다. 하나의 Attention을 함께 거친 뒤, 아래에서는 각 경로의 Linear 층이 자기 토큰을 처리한다." source="Esser et al. (2024), Figure 2(b) · CC BY 4.0 · 오른쪽 패널 발췌" />
 
-이미지 query는 텍스트와 이미지 양쪽의 key·value를 읽을 수 있고, 텍스트 query도 마찬가지다. 이미지 query가 텍스트의 key·value를 읽는 기본 cross-attention과 비교하면, 여기서는 텍스트 표현도 이미지에 따라 바뀐다.
+이미지 query는 텍스트와 이미지 양쪽의 key·value를 읽을 수 있고, 텍스트 query도 마찬가지다.
+이미지 query가 텍스트의 key·value를 읽는 기본 cross-attention과 비교하면, 여기서는 텍스트 표현도 이미지에 따라 바뀐다.
 
 Stable Diffusion 3는 학습 방식도 바꿨다.
 원래 DiT의 noise 예측은 latent에 섞은 noise를 학습 정답으로 삼는다.
-Stable Diffusion 3의 rectified flow에서는 데이터와 noise 한 쌍을 직선으로 이은 뒤, 그 위의 중간 위치와 시간을 주고 직선의 속도 벡터를 맞히게 한다.[^sd3]
+Stable Diffusion 3는 rectified flow를 쓴다.[^rf][^sd3]
+데이터 $x_0$와 noise $\epsilon$ 한 쌍을 직선으로 이으면 시간 $t$의 중간 위치는 다음과 같다.
+
+$$
+z_t=(1-t)x_0+t\epsilon.
+$$
+
+이 위치를 시간으로 미분한 $\epsilon-x_0$가 직선 위를 움직이는 속도다.
+모델은 $z_t$와 $t$를 받아 이 속도를 맞히도록 학습한다.
+예를 들어 1차원에서 $x_0=2$, $\epsilon=0.5$, $t=0.25$이면 $z_t=1.625$이고 정답 속도는 $-1.5$다.
 생성할 때는 목표 이미지가 주어지지 않는다.
-그래서 초기 noise에서 출발해 모델이 현재 위치와 텍스트 조건에서 예측한 속도로 다음 위치를 계산한다.
+그래서 sampler는 초기 noise($t=1$)에서 출발하고, 시간을 0까지 줄여 가며 모델이 현재 위치와 텍스트 조건에서 예측한 속도만큼 위치를 옮긴다.
 
 ### 6-2. Spacetime patch와 Sora
 
@@ -223,10 +238,12 @@ OpenAI는 Sora를 이미지와 영상 latent의 spacetime patch를 처리하는 
 
 예를 들어 “카메라가 눈 내리는 숲을 지나간다”는 prompt에서 영상의 시간축은 카메라가 움직이는 순서를 뜻한다.
 Denoising의 시간 단계는 그 영상 전체에 남아 있는 noise 수준을 뜻한다.
-숲 사진까지 조건으로 주면 모델은 사진 속 배치를 바탕으로 카메라 이동 중 새로 보일 영역까지 생성해야 한다.[^sora]
+Sora는 이미지도 prompt로 받을 수 있다.[^sora]
+이 예에 숲 사진까지 조건으로 주면, 모델은 사진 속 배치를 바탕으로 카메라 이동 중 새로 보일 영역까지 생성해야 한다.
 
 [^survey]: Yang, L., Zhang, Z., Song, Y., et al. (2024). Diffusion Models: A Comprehensive Survey of Methods and Applications. *ACM Computing Surveys*, 56(4), 105:1–105:39. [논문](https://arxiv.org/abs/2209.00796).
-[^dit]: Peebles, W., & Xie, S. (2023). Scalable Diffusion Models with Transformers. *ICCV*. [논문](https://arxiv.org/abs/2212.09748), [공식 구현](https://github.com/facebookresearch/DiT/blob/main/diffusion/gaussian_diffusion.py).
+[^dit]: Peebles, W., & Xie, S. (2023). Scalable Diffusion Models with Transformers. *ICCV*. [논문](https://arxiv.org/abs/2212.09748), [공식 구현](https://github.com/facebookresearch/DiT).
 [^fid]: Heusel, M., Ramsauer, H., Unterthiner, T., Nessler, B., & Hochreiter, S. (2017). GANs Trained by a Two Time-Scale Update Rule Converge to a Local Nash Equilibrium. *NeurIPS*. [논문](https://arxiv.org/abs/1706.08500).
 [^sd3]: Esser, P., Kulal, S., Blattmann, A., et al. (2024). Scaling Rectified Flow Transformers for High-Resolution Image Synthesis. *ICML*. [출판본](https://proceedings.mlr.press/v235/esser24a.html), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+[^rf]: Liu, X., Gong, C., & Liu, Q. (2023). Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow. *ICLR*. [논문](https://arxiv.org/abs/2209.03003).
 [^sora]: OpenAI. (2024). Video generation models as world simulators. *OpenAI*. [기술 보고](https://openai.com/index/video-generation-models-as-world-simulators/).

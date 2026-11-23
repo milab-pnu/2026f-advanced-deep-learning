@@ -5,6 +5,7 @@ order: 0
 ---
 
 import reversePosterior from "./assets/week10-reverse-posterior.png";
+import scoreField from "./assets/week10-score-field.png";
 
 Diffusion model은 무작위 잡음에서 출발해 이미지를 조금씩 만들어 낸다.[^survey]
 Denoising diffusion probabilistic model(DDPM)을 학습할 때는 깨끗한 이미지에 정해진 규칙으로 noise를 더한다.
@@ -352,6 +353,8 @@ DDPM 원논문은 모든 실험에서 $T=1000$을 썼으므로, 표본 하나를
 
 ### 2-5. ELBO와 학습 목적
 
+앞의 학습 절차는 noise의 제곱 오차를 줄인다.
+이 손실이 왜 생성 모델의 학습 목적이 되는지는 likelihood에서 출발하면 드러난다.
 연속값 데이터를 모델링할 때 우리는 학습 데이터의 likelihood, 즉 밀도 $p_\theta(x_0)$를 키우고 싶다.
 그러나 생성 모델의 결합 분포를 $x_1,\ldots,x_T$에 대해 모두 적분해야 하므로 likelihood를 직접 계산하기 어렵다.
 이 결합 분포는 시작 prior와 모델의 역방향 전이를 곱한 것이다.
@@ -372,7 +375,8 @@ L_{\mathrm{VLB}}(x_0)&=\mathbb{E}_{q(x_{1:T}\mid x_0)}
 \end{aligned}
 $$
 
-$L_{\mathrm{VLB}}(x_0)=-\operatorname{ELBO}(x_0)$이고, 이 부등식은 Jensen 부등식에서 나온다.
+아래첨자 VLB는 variational lower bound를 줄인 것으로, $L_{\mathrm{VLB}}(x_0)=-\operatorname{ELBO}(x_0)$다.
+이 부등식은 Jensen 부등식에서 나온다.
 즉 학습은 $-\log p_\theta(x_0)$를 직접 최소화하는 대신, 계산과 표본 추출이 가능한 상한을 최적화한다.
 모든 $x_0$에 대한 학습 목적은 데이터 분포에서 이 상한을 평균한 값이다.
 
@@ -426,6 +430,8 @@ $$
 첫 항은 forward 끝의 분포와 생성 출발 분포의 차이다.
 중간 항은 원본을 알 때 계산할 수 있는 posterior와 원본 없이 작동하는 모델의 역방향 분포를 비교한다.
 마지막 항은 $x_1$이 주어졌을 때 모델이 실제 $x_0$에 부여한 음의 로그우도를 평균한 복원 손실이다.
+DDPM은 이 마지막 단계의 분포 $p_\theta(x_0\mid x_1)$을 평균이 $\mu_\theta(x_1,1)$인 Gaussian에서 만든다.
+픽셀값은 256개 정수 중 하나이므로, 각 정수가 차지하는 구간에서 이 Gaussian을 적분한 값을 그 픽셀값의 확률로 쓴다.[^ddpm]
 Forward schedule과 prior를 고정하면 첫 항은 모델 파라미터 $\theta$에 의존하지 않는다.
 
 <Figure src={reversePosterior.src} alt="시간순으로 배열한 상태 사이에 아래쪽 검은 화살표가 오른쪽으로 향한다. 가운데의 현재 상태에서 한 단계 왼쪽으로 분홍색과 초록색 화살표가 나란히 향한다." caption="가운데 xₜ에서 왼쪽 xₜ₋₁로 가는 두 화살표를 비교해 보자. 분홍색 분포 q는 원본 x₀까지 알고 계산한 학습 기준이다. 초록색 분포 p는 현재 상태와 시간만 받은 모델의 예측이다. 두 분포 사이의 KL이 중간 단계의 손실이다." source="Luo (2022), Figure 5 · CC BY 4.0 · 가운데 세 시점만 발췌" wide />
@@ -647,7 +653,7 @@ Score는 현재 위치 $x$에서 log 밀도가 가장 빠르게 커지는 방향
 $\log p_t(x)=-x^2/2-\frac12\log(2\pi)$이므로 $x$에 대해 미분하면 $-x$가 된다.
 $x=2$이면 score가 $-2$이므로 더 높은 밀도가 있는 0 쪽을 가리킨다.
 
-<Figure src="https://instructor.deeplearning.neuromatch.io/_images/d30fa4ac8108fcc50bc7d466a26ff566ca6587ea380a2957aacad51b0e83a316.png" alt="두 봉우리를 가진 2차원 Gaussian 혼합 분포의 등고선과, 각 위치에서 더 높은 밀도 쪽을 향하는 score 벡터 화살표." caption="두 Gaussian을 섞은 2차원 분포의 score. 등고선은 같은 밀도의 위치를 잇고 화살표는 각 위치에서 log 밀도가 가장 빨리 증가하는 방향을 보여 준다." source="Neuromatch Academy, Diffusion models · CC BY 4.0 · 변경 없음" wide />
+<Figure src={scoreField.src} alt="두 봉우리를 가진 2차원 Gaussian 혼합 분포의 등고선과, 각 위치에서 더 높은 밀도 쪽을 향하는 score 벡터 화살표." caption="두 Gaussian을 섞은 2차원 분포의 score. 등고선은 같은 밀도의 위치를 잇고 화살표는 각 위치에서 log 밀도가 가장 빨리 증가하는 방향을 보여 준다." source="Neuromatch Academy, Diffusion models · CC BY 4.0 · 변경 없음" wide />
 
 그림은 [Neuromatch Academy의 튜토리얼](https://instructor.deeplearning.neuromatch.io/tutorials/W2D4_DiffusionGenerativeModels/instructor/W2D4_Tutorial1.html)에 실려 있고, [강의 자료 저장소](https://github.com/NeuromatchAcademy/course-content-dl)가 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 조건을 밝힌다.
 
