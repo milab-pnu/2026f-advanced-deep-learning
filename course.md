@@ -17,7 +17,7 @@ weeks:
   - { n: 6, topic: "Inference Optimization 1" }
   - { n: 7, topic: "Inference Optimization 2", submissionUrl: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/5" }
   - { n: 8, topic: "Final Project Proposal — Open Peer Review", submissionUrl: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/6" }
-  - { n: 9, topic: "Multi-/Omni-modal LLM" }
+  - { n: 9, topic: "Multi-/Omni-modal LLM", submissionUrl: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/8" }
   - { n: 10, topic: "Diffusion Model, Diffusion LLM" }
   - { n: 11, topic: "Flow Matching, Rectified Flow, Consistency Model" }
   - { n: 12, topic: "3D Representation & Generation: NeRF, Gaussian Splatting" }
