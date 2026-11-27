@@ -22,7 +22,7 @@ weeks:
   - { n: 11, topic: "Flow Matching, Rectified Flow, Consistency Model" }
   - { n: 12, topic: "3D Representation & Generation: NeRF, Gaussian Splatting" }
   - { n: 13, topic: "Vision-Language-Action Model, World Model", submissionLinks: [{ label: "초청 특강 (조준호)", url: "https://drive.google.com/file/d/14mos0-JMv1W7-zb4nYl8FuZ4OLY-00rp/view?usp=sharing" }, { label: "과제 제출", url: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/7" }] }
-  - { n: 14, topic: "Safety", submissionLinks: [{ label: "초청 특강 (최명섭)" }, { label: "과제 제출", url: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/9" }] }
+  - { n: 14, topic: "Safety", submissionLinks: [{ label: "초청 특강 (최명섭)", url: "https://drive.google.com/file/d/1iuXeHz3GEv4W_P7-y1xv3E1wrb7HomL3/view?usp=drive_link" }, { label: "과제 제출", url: "https://github.com/milab-pnu/2026f-advanced-deep-learning/discussions/9" }] }
   - { n: 15, topic: "Final Project — Open Peer Review" }
 ---
 
