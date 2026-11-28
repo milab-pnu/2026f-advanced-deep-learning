@@ -8,14 +8,24 @@ import imageDiffusionProcess from "./assets/week10-image-diffusion-process.webp"
 import reversePosterior from "./assets/week10-reverse-posterior.png";
 import scoreField from "./assets/week10-score-field.png";
 
-Diffusion model은 무작위 잡음에서 출발해 이미지를 조금씩 만들어 낸다.[^survey]
-Denoising diffusion probabilistic model(DDPM)을 학습할 때는 깨끗한 이미지에 정해진 규칙으로 noise를 더한다.
-이때는 원본과 더한 noise를 모두 알기 때문에, 신경망이 손상된 이미지에서 noise를 얼마나 잘 예측했는지 측정할 수 있다.[^ddpm]
-생성할 때는 복원할 원본 사진이 주어지지 않는다.
-신경망의 예측으로 한 단계 전 상태의 분포를 정하고, 거기서 표본을 뽑는 계산을 반복하면 새 이미지가 만들어진다.
+Diffusion model은 무작위 noise에서 출발해 noise를 조금씩 걷어 내며 이미지를 만든다.[^survey]
+Noise를 걷어 내는 법은 반대 방향에서 배운다.
+학습할 때는 깨끗한 이미지에 정해진 규칙으로 noise를 조금씩 더해 손상된 이미지를 만든다.
+원본과 손상된 이미지를 모두 알고 있으므로, 신경망이 손상된 이미지를 원본 쪽으로 얼마나 잘 되돌리는지 채점할 수 있다.
+생성할 때는 되돌릴 원본이 없다.
+순수한 noise에서 시작해, 학습한 신경망으로 noise가 조금 덜한 상태를 만드는 계산을 반복하면 새 이미지가 나온다.
 
 ## 1. 데이터에서 noise로
 
+Noise를 조금씩 더하는 forward 과정을 정해 두고 그 역방향을 신경망으로 학습한다는 틀은 Sohl-Dickstein 등이 비평형 통계물리에서 착안해 제안했다.[^sohl]
+이 틀은 두 가지 관찰 위에 서 있다.
+첫째, 데이터 분포의 구조를 여러 단계에 걸쳐 천천히 무너뜨리면 마지막에는 Gaussian처럼 다루기 쉬운 분포가 남는다.
+둘째, 한 단계에 더하는 noise가 충분히 작으면 그 단계를 거꾸로 가는 분포도 forward 전이와 같은 꼴인 Gaussian이 된다.
+그래서 복잡한 데이터 분포를 한 번에 모델링하지 않고, 신경망이 단계마다 Gaussian의 평균과 분산만 정하면 된다.
+다만 이 계열의 모델이 고품질 표본을 만들 수 있는지는 한동안 확인되지 않았다.
+
+Denoising diffusion probabilistic model(DDPM)은 같은 틀에서 신경망이 noise를 예측하게 하고 손실을 단순한 제곱 오차로 정리해, 고품질 이미지를 생성할 수 있음을 보였다.[^ddpm]
+이 노트는 DDPM의 정식화를 따라간다.
 DDPM의 상태 $x_t$는 시간 단계 $t$에서의 이미지 픽셀 값 또는 latent처럼 실수 값으로 이루어진다.
 Latent는 이미지를 압축해 얻은 연속 표현이다.
 상태는 연속값이지만, 시간은 $0,1,\ldots,T$의 이산 단계로 나누고 $t=0$은 원본이다.
@@ -761,6 +771,7 @@ $\lambda(t)=1-\bar\alpha(t)$를 선택하면 noise 오차의 가중치가 1이 �
 텍스트 같은 조건을 주면 어떤 이미지를 그릴지 지정할 수 있고, 생성에 사용하는 시간 단계를 줄이면 신경망을 호출하는 횟수도 줄일 수 있다.
 
 [^survey]: Yang, L., Zhang, Z., Song, Y., et al. (2024). Diffusion Models: A Comprehensive Survey of Methods and Applications. *ACM Computing Surveys*, 56(4), 105:1–105:39. [논문](https://arxiv.org/abs/2209.00796).
+[^sohl]: Sohl-Dickstein, J., Weiss, E. A., Maheswaranathan, N., & Ganguli, S. (2015). Deep Unsupervised Learning using Nonequilibrium Thermodynamics. *ICML*. [논문](https://arxiv.org/abs/1503.03585).
 [^ddpm]: Ho, J., Jain, A., & Abbeel, P. (2020). Denoising Diffusion Probabilistic Models. *NeurIPS*. [논문](https://arxiv.org/abs/2006.11239).
 [^vdm]: Kingma, D. P., Salimans, T., Poole, B., & Ho, J. (2021). Variational Diffusion Models. *NeurIPS*. [논문](https://arxiv.org/abs/2107.00630).
 [^reparam]: Kingma, D. P., & Welling, M. (2014). Auto-Encoding Variational Bayes. *ICLR*. [논문](https://arxiv.org/abs/1312.6114).
