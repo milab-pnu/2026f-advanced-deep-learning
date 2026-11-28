@@ -4,6 +4,7 @@ week: 10
 order: 0
 ---
 
+import imageDiffusionProcess from "./assets/week10-image-diffusion-process.webp";
 import reversePosterior from "./assets/week10-reverse-posterior.png";
 import scoreField from "./assets/week10-score-field.png";
 
@@ -19,7 +20,7 @@ DDPM의 상태 $x_t$는 시간 단계 $t$에서의 이미지 픽셀 값 또는 l
 Latent는 이미지를 압축해 얻은 연속 표현이다.
 상태는 연속값이지만, 시간은 $0,1,\ldots,T$의 이산 단계로 나누고 $t=0$은 원본이다.
 
-<Figure src="https://upload.wikimedia.org/wikipedia/commons/7/76/Image_diffusion_process.png" alt="고양이 이미지에서 오른쪽으로 갈수록 noise가 많아진다. 위 화살표는 forward diffusion을, 아래의 반대 방향 화살표는 학습된 reverse denoising을 나타낸다." caption="위 화살표는 데이터에 noise를 추가하는 forward 과정, 아래 화살표는 noise에서 데이터를 생성하는 reverse 과정을 나타낸다." source="Dragweb, Image diffusion process · CC BY-SA 4.0 · 변경 없음" wide />
+<Figure src={imageDiffusionProcess.src} alt="고양이 이미지에서 오른쪽으로 갈수록 noise가 많아진다. 위 화살표는 forward diffusion을, 아래의 반대 방향 화살표는 학습된 reverse denoising을 나타낸다." caption="위 화살표는 데이터에 noise를 추가하는 forward 과정, 아래 화살표는 noise에서 데이터를 생성하는 reverse 과정을 나타낸다." source="Dragweb, Image diffusion process · CC BY-SA 4.0 · 크기 축소·WebP 변환" wide />
 
 이 그림은 [Wikimedia Commons 파일 페이지](https://commons.wikimedia.org/wiki/File:Image_diffusion_process.png)에서 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)으로 공개되어 있다.
 
@@ -537,7 +538,8 @@ $$
 첫 항은 현재 상태를 0 쪽으로 당기는 예측 가능한 변화이고, 둘째 항은 매 시간 구간에 새로 생기는 무작위 변화다.
 독립된 작은 구간의 noise 분산은 구간 길이 $\Delta t$에 비례하므로 표준편차에는 $\sqrt{\Delta t}$가 붙는다.
 예를 들어 간격을 4분의 1로 줄이면 한 구간의 noise 표준편차는 절반이 된다.
-일정한 noise 계수에서 같은 전체 시간에 해당하는 독립 구간은 네 개가 되고, 각 구간의 noise 분산이 4분의 1이므로 네 증가량을 더한 분산은 기존 구간과 같다.
+대신 같은 시간을 채우는 구간이 네 개로 늘어난다.
+각 구간의 noise 분산이 4분의 1이므로, 네 구간의 noise를 더한 분산은 원래 한 구간의 분산과 같다.
 
 이 극한을 SDE로 쓰면 다음과 같다.[^score-sde]
 
